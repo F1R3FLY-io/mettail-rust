@@ -1015,6 +1015,52 @@ Theorem cohort_cache_overflow_preserves_unresolved_evidence :
     attempted.
 Proof. reflexivity. Qed.
 
+Definition span_anchored_coercion_jobs
+    (direct : bool)
+    (coercions : list nat) : list (option nat) :=
+  if direct then [None] else map Some coercions.
+
+Definition crosswrap_drain_key : Type :=
+  (nat * nat * nat * option nat)%type.
+
+Definition make_crosswrap_drain_key
+    (dispatch_key symbol_id member_id : nat)
+    (coercion : option nat) : crosswrap_drain_key :=
+  (dispatch_key, symbol_id, member_id, coercion).
+
+Theorem span_anchored_coercion_jobs_preserve_count :
+  forall coercions,
+    length (span_anchored_coercion_jobs false coercions) =
+    length coercions.
+Proof.
+  intros coercions.
+  unfold span_anchored_coercion_jobs.
+  rewrite length_map.
+  reflexivity.
+Qed.
+
+Theorem span_anchored_coercion_jobs_preserve_membership :
+  forall coercions coercion,
+    In coercion coercions ->
+    In (Some coercion) (span_anchored_coercion_jobs false coercions).
+Proof.
+  intros coercions coercion Hin.
+  unfold span_anchored_coercion_jobs.
+  apply in_map.
+  exact Hin.
+Qed.
+
+Theorem crosswrap_drain_key_distinguishes_coercions :
+  forall dispatch_key symbol_id member_id left right,
+    left <> right ->
+    make_crosswrap_drain_key dispatch_key symbol_id member_id (Some left) <>
+    make_crosswrap_drain_key dispatch_key symbol_id member_id (Some right).
+Proof.
+  intros dispatch_key symbol_id member_id left right Hneq Hkey.
+  inversion Hkey.
+  contradiction.
+Qed.
+
 Inductive token_class : Type :=
   | OpenDelimiter
   | CloseDelimiter

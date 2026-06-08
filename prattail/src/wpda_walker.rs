@@ -16697,9 +16697,14 @@ mod tests {
         let _ = w
             .dispatch_cohort_cache
             .register(dispatch_key.clone(), lex(0.0, 0, 0));
-        w.dispatch_cohort_cache
-            .crosswrap_drained
-            .insert((dispatch_key.clone(), 1, 1));
+        w.dispatch_cohort_cache.crosswrap_drained.insert(
+            crate::dispatch_cohort::CrossWrapDrainKey {
+                dispatch_key: dispatch_key.clone(),
+                symbol_id: 1,
+                member_id: 1,
+                coercion: None,
+            },
+        );
         w.pending_cohort_drain_keys.insert(dispatch_key);
 
         let recovery_key = crate::recovery_cohort::RecoveryDispatchKey::new(

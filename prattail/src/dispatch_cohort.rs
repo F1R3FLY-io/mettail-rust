@@ -660,6 +660,31 @@ pub struct CrossWrapSpliceJob<W: SemiringRef> {
     pub coercion: Option<(u16, u16)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CrossWrapDrainKey {
+    pub dispatch_key: DispatchKey,
+    pub symbol_id: SppfId,
+    pub member_id: u64,
+    pub coercion: Option<(u16, u16)>,
+}
+
+impl CrossWrapDrainKey {
+    #[inline]
+    fn new(
+        dispatch_key: &DispatchKey,
+        symbol_id: SppfId,
+        member_id: u64,
+        coercion: Option<(u16, u16)>,
+    ) -> Self {
+        Self {
+            dispatch_key: dispatch_key.clone(),
+            symbol_id,
+            member_id,
+            coercion,
+        }
+    }
+}
+
 impl<W: SemiringRef> std::fmt::Debug for CrossWrapSpliceJob<W> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CrossWrapSpliceJob")
@@ -710,18 +735,15 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     /// loss is entirely in the `InFlight` branch.)
     pub failed_orphan_members_total: u64,
     /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): take-once
-    /// idempotence set for `take_pending_for_drain_crosswrap`. Keyed by
-    /// `(K_sib, R.symbol_id, member_id)` — the sibling key whose member
-    /// was cross-wrap-spliced, paired with the resolved symbol that
-    /// supplied the body, and the concrete paused continuation that was
-    /// revived. A repeated drain pass over the SAME triple is suppressed
-    /// so a member is cross-revived AT MOST once per resolved-body
-    /// symbol (R3: prevents the re-injection loop), while later members
-    /// under the same dispatch key still receive evidence. The member's
-    /// own-wrap entry is left intact, so this set — not entry removal —
-    /// is the sole idempotence guard for the cross-wrap path.
+    /// idempotence set for cross-wrap drains. Keyed by the sibling key
+    /// whose member was spliced, the resolved body Symbol, the concrete
+    /// paused continuation, and the optional coercion interposed by the
+    /// span-anchored drain. The coercion axis is load-bearing: two grammar
+    /// rules that both bridge `(body_cat -> target_cat)` are ambiguous
+    /// alternatives, so idempotence must suppress repeats of the same
+    /// coercion without draining its sibling coercion jobs.
     /// Cleared at the parse boundary by `clear`.
-    pub crosswrap_drained: rustc_hash::FxHashSet<(DispatchKey, SppfId, u64)>,
+    pub crosswrap_drained: rustc_hash::FxHashSet<CrossWrapDrainKey>,
     /// Sig-B Blocker-2 (2026-05-31): cumulative count of cross-wrap
     /// body-splice jobs emitted (one per member × snapshot). Observability
     /// for experiment #9 — a non-zero count on a failing cross-cat test is
@@ -1224,11 +1246,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// `resolved_key`'s EquivKey is READ-only; the cache stays full
     /// `DispatchKey` (R5). One job per `(member × non-terminal R snapshot)`.
     ///
-    /// **Take-once idempotence (§3a / R3).** `crosswrap_drained` records
-    /// `(K_sib, R.symbol_id, member_id)`; a repeated drain pass over the same
-    /// concrete member/body pair is suppressed so a member is cross-revived at
-    /// most once per resolved body symbol — no entry removal, no re-injection
-    /// loop.
+    /// **Take-once idempotence (§3a / R3).** `crosswrap_drained` records the
+    /// concrete member/body pair plus the optional coercion. A repeated drain
+    /// pass over the same concrete alternative is suppressed so a member is
+    /// cross-revived at most once per resolved body/coercion alternative — no
+    /// entry removal, no re-injection loop.
     #[allow(clippy::type_complexity)]
     pub fn take_pending_for_drain_crosswrap(
         &mut self,
@@ -1256,7 +1278,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             // ── Scan siblings (immutable borrow). Collect, per eligible
             //    `K_sib`, its materialized members. `crosswrap_drained` is
             //    consulted after materialization to skip already-spliced
-            //    `(K_sib, R.symbol_id, member_id)` triples.
+            //    non-coercion body/member alternatives.
             let mut eligible: Vec<(DispatchKey, Vec<CohortMember<W>>)> = Vec::new();
             for (k_sib, entry) in self.entries.iter() {
                 // Clause 1 + 2 + 3: equiv match, distinct wrap, dispatch-site
@@ -1346,10 +1368,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 let members: Vec<CohortMember<W>> = members
                     .into_iter()
                     .filter(|member| {
-                        !self.crosswrap_drained.contains(&(
-                            k_sib.clone(),
+                        !self.crosswrap_drained.contains(&CrossWrapDrainKey::new(
+                            k_sib,
                             r_symbol_id,
                             member.member_id,
+                            None,
                         ))
                     })
                     .collect();
@@ -1393,14 +1416,16 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
 
             // ── Build jobs (immutable borrow dropped). One job per
             //    (eligible K_sib × member × non-terminal R snapshot). Mark each
-            //    `(K_sib, R.symbol_id, member_id)` drained so repeat passes are
-            //    idempotent without blocking later members under the same key.
+            //    non-coercion body/member alternative drained so repeat passes
+            //    are idempotent without blocking later members under the same
+            //    key.
             for (k_sib, members) in eligible {
                 for member in members {
-                    if !self.crosswrap_drained.insert((
-                        k_sib.clone(),
+                    if !self.crosswrap_drained.insert(CrossWrapDrainKey::new(
+                        &k_sib,
                         r_symbol_id,
                         member.member_id,
+                        None,
                     )) {
                         continue;
                     }
@@ -1460,9 +1485,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///      via a coercion, the job carries `coercion = Some((cat, rule))` so
     ///      the walker interposes it before the cast fires (§2.4c); when
     ///      `body_cat == tgt_cat`, `coercion = None` (direct splice).
-    ///   5. take-once: `(K_sib, R.symbol_id, member_id) ∉ crosswrap_drained`
-    ///      (the SAME monotone set the forward drain + §3d backstop share —
-    ///      §3 termination).
+    ///   5. take-once: the body/member/coercion alternative is not in
+    ///      `crosswrap_drained` (the SAME monotone set the forward drain +
+    ///      §3d backstop share — §3 termination).
     ///
     /// Span anchor (3) + category compat (4) are FAR more selective than
     /// M5.1's equiv-only pairing — they cut the 16251-cursor over-fire while
@@ -1586,59 +1611,64 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     }
                 }
                 // Clause 4: category compatibility. Direct iff body_cat ==
-                // tgt_cat; else a single-hop coercion must bridge body_cat ->
-                // tgt_cat.
-                let coercion: Option<(u16, u16)> = if body.body_cat == tgt_cat {
-                    None
+                // tgt_cat; otherwise every single-hop coercion is a distinct
+                // grammar alternative and must get its own splice job.
+                let coercions: Vec<Option<(u16, u16)>> = if body.body_cat == tgt_cat {
+                    vec![None]
                 } else {
-                    match engine.single_hop_coercion(body.body_cat, tgt_cat).first() {
-                        Some(&(cc, cr)) => Some((cc, cr)),
-                        None => continue, // cat-incompatible → reject
+                    let coercions = engine.single_hop_coercion(body.body_cat, tgt_cat);
+                    if coercions.is_empty() {
+                        continue; // cat-incompatible -> reject
                     }
+                    coercions.iter().copied().map(Some).collect()
                 };
-                // Clause 5: take-once (shared monotone set), per concrete
-                // member. A previous span/forward drain for one continuation
-                // must not block later continuations parked under the same
-                // DispatchKey.
-                let undrained_members: Vec<CohortMember<W>> = members
-                    .iter()
-                    .filter(|member| {
-                        !self.crosswrap_drained.contains(&(
-                            k_sib.clone(),
+                for coercion in coercions {
+                    // Clause 5: take-once (shared monotone set), per concrete
+                    // member and per coercion. A previous span/forward drain
+                    // for one continuation must not block later continuations
+                    // parked under the same DispatchKey, and one coercion
+                    // alternative must not drain its siblings.
+                    let undrained_members: Vec<CohortMember<W>> = members
+                        .iter()
+                        .filter(|member| {
+                            !self.crosswrap_drained.contains(&CrossWrapDrainKey::new(
+                                k_sib,
+                                body.symbol_id,
+                                member.member_id,
+                                coercion,
+                            ))
+                        })
+                        .cloned()
+                        .collect();
+                    if undrained_members.is_empty() {
+                        continue;
+                    }
+                    if sigb_crosswrap_trace() {
+                        eprintln!(
+                            "[SIGB_SPAN] PAIR R{{sym={},span=[{},{}],body_cat={}}} | \
+                             K_sib{{pos:{},src:{},bp:{},wrap:({},{}),members={}}} tgt_cat={} \
+                             coercion={:?}",
                             body.symbol_id,
-                            member.member_id,
-                        ))
-                    })
-                    .cloned()
-                    .collect();
-                if undrained_members.is_empty() {
-                    continue;
-                }
-                if sigb_crosswrap_trace() {
-                    eprintln!(
-                        "[SIGB_SPAN] PAIR R{{sym={},span=[{},{}],body_cat={}}} | \
-                         K_sib{{pos:{},src:{},bp:{},wrap:({},{}),members={}}} tgt_cat={} \
-                         coercion={:?}",
-                        body.symbol_id,
-                        body.span_lo,
-                        body.span_hi,
-                        body.body_cat,
-                        k_sib.pos,
-                        k_sib.source_src_idx,
-                        k_sib.inner_cur_bp,
-                        k_sib.wrap_cat,
-                        k_sib.wrap_rule,
-                        undrained_members.len(),
-                        tgt_cat,
+                            body.span_lo,
+                            body.span_hi,
+                            body.body_cat,
+                            k_sib.pos,
+                            k_sib.source_src_idx,
+                            k_sib.inner_cur_bp,
+                            k_sib.wrap_cat,
+                            k_sib.wrap_rule,
+                            undrained_members.len(),
+                            tgt_cat,
+                            coercion,
+                        );
+                    }
+                    pairings.push(Pairing {
+                        k_sib: k_sib.clone(),
+                        body_idx,
                         coercion,
-                    );
+                        members: undrained_members,
+                    });
                 }
-                pairings.push(Pairing {
-                    k_sib: k_sib.clone(),
-                    body_idx,
-                    coercion,
-                    members: undrained_members,
-                });
             }
         }
         if pairings.is_empty() {
@@ -1646,16 +1676,17 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
 
         // ── Pass 3: build jobs (one per pairing × member × R snapshot). Mark
-        //    each `(K_sib, R.symbol_id, member_id)` drained (take-once,
+        //    each body/member/coercion alternative drained (take-once,
         //    idempotent).
         let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::new();
         for p in pairings {
             let body = &bodies[p.body_idx];
             for member in &p.members {
-                if !self.crosswrap_drained.insert((
-                    p.k_sib.clone(),
+                if !self.crosswrap_drained.insert(CrossWrapDrainKey::new(
+                    &p.k_sib,
                     body.symbol_id,
                     member.member_id,
+                    p.coercion,
                 )) {
                     continue;
                 }
@@ -1941,10 +1972,10 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///    pause we additionally require `K_pause.hi_pos < R'.hi_pos` so the
     ///    parens-inner self-resolution (equal hi) is still excluded.
     ///
-    /// **Idempotence.** Shares `crosswrap_drained` keyed `(K_pause,
-    /// R'.symbol_id, M.member_id)` with the drain, so this concrete member is
-    /// cross-revived at most once per resolved-body symbol regardless of which
-    /// path fires first. `R'` is NOT removed (only ADDS the body `M` needs).
+    /// **Idempotence.** Shares `crosswrap_drained` with the drain using the
+    /// non-coercion key, so this concrete member is cross-revived at most once
+    /// per resolved-body symbol regardless of which path fires first. `R'` is
+    /// NOT removed (only ADDS the body `M` needs).
     #[allow(clippy::type_complexity)]
     pub fn crosswrap_backstop_for_pausing_member(
         &mut self,
@@ -1991,10 +2022,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     }
                     // Idempotence: skip if this concrete member already saw
                     // R'.symbol_id. Other members under K_pause remain eligible.
-                    if self.crosswrap_drained.contains(&(
-                        k_pause.clone(),
+                    if self.crosswrap_drained.contains(&CrossWrapDrainKey::new(
+                        k_pause,
                         body.symbol_id,
                         member.member_id,
+                        None,
                     )) {
                         continue;
                     }
@@ -2038,10 +2070,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 .sum::<usize>(),
         );
         for (symbol_id, hi_pos, pos_at_dispatch, sib_wrap_cat, sib_wrap_rule, snaps) in sources {
-            if !self
-                .crosswrap_drained
-                .insert((k_pause.clone(), symbol_id, member.member_id))
-            {
+            if !self.crosswrap_drained.insert(CrossWrapDrainKey::new(
+                k_pause,
+                symbol_id,
+                member.member_id,
+                None,
+            )) {
                 continue;
             }
             for snap in snaps {
@@ -2120,7 +2154,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // Sig-B Blocker-2 (2026-05-31): cross-wrap body-splice accounting.
         writeln!(
             f,
-            "  crosswrap_splices={}  crosswrap_drained_triples={}",
+            "  crosswrap_splices={}  crosswrap_drain_keys={}",
             self.crosswrap_splices_total,
             self.crosswrap_drained.len(),
         )?;
@@ -2193,6 +2227,30 @@ mod tests {
             worker_pending_packing_weight: lex_one(),
             worker_weight: lex_one(),
             worker_pre_dispatch_weight: lex_one(),
+        }
+    }
+
+    struct TwoCoercionEngine;
+
+    impl crate::wpda_walker::WpdaEngine<LexicographicWeight> for TwoCoercionEngine {
+        fn step(
+            &self,
+            _state: &WpdaState,
+            _gss: &crate::gss::WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&crate::gss::WpdaGssNode>,
+            _pos: usize,
+            _tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+        ) -> crate::wpda_walker::WpdaStepAction<LexicographicWeight> {
+            crate::wpda_walker::WpdaStepAction::Idle
+        }
+
+        fn single_hop_coercion(&self, from_cat: u16, to_cat: u16) -> &[(u16, u16)] {
+            static COERCIONS: [(u16, u16); 2] = [(7, 1), (7, 2)];
+            if from_cat == 9 && to_cat == 7 {
+                &COERCIONS
+            } else {
+                &[]
+            }
         }
     }
 
@@ -2437,6 +2495,40 @@ mod tests {
         assert_eq!(second_jobs.len(), 1);
         assert_ne!(second_jobs[0].member.member_id, 0);
         assert_ne!(second_jobs[0].member.member_id, first_member_id);
+    }
+
+    #[test]
+    fn span_anchored_drain_preserves_every_coercion_alternative() {
+        let mut sppf = crate::sppf::Sppf::<LexicographicWeight>::new();
+        let body_symbol = sppf.intern_symbol(9, 3, 9);
+
+        let resolved_key = DispatchKey::new(6, 7, 0, 2, 16);
+        let pause_key = DispatchKey::new(3, 7, 0, 3, 17);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(resolved_key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert!(matches!(
+            cache.register(pause_key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert_eq!(
+            cache.resolve(resolved_key, body_symbol, 9, 6, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        assert!(cache.pause_cohort_member(pause_key, cohort_member(branch_cursor())));
+
+        let jobs = cache.take_span_anchored_outer_cast(&sppf, &TwoCoercionEngine);
+        let mut coercions: Vec<Option<(u16, u16)>> = jobs.iter().map(|job| job.coercion).collect();
+        coercions.sort_unstable();
+
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(coercions, vec![Some((7, 1)), Some((7, 2))]);
+        assert_eq!(cache.crosswrap_drained.len(), 2);
+        assert!(cache
+            .take_span_anchored_outer_cast(&sppf, &TwoCoercionEngine)
+            .is_empty());
     }
 
     #[test]
