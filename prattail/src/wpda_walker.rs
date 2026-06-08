@@ -4495,6 +4495,16 @@ where
                 eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
             }
         }
+        // Lazy-budget fix (2026-06-08): decode structured frontier
+        // overflow before any EOI materialization. The sentinel already
+        // carries the full logical frontier count, and forcing cohorts
+        // here would turn a bounded overflow report into the very state
+        // explosion the budget was meant to avoid.
+        if let WpdaState::Error { ref message } = self.state {
+            if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
+                return WpdaResolveResult::AmbiguityBudget { budget, actual, position };
+            }
+        }
         // Phase F.13 Stage L3.6 (2026-05-25): force-materialize all
         // remaining cohort frames at EOI so resolution operates on
         // concrete cursors. The full ambiguity multiset is preserved
@@ -4583,7 +4593,9 @@ where
             };
         }
         // Fanout mode: also decode the AMBIGUITY_BUDGET_EXCEEDED sentinel
-        // BEFORE the per-cursor accepting/dead classification.
+        // BEFORE the per-cursor accepting/dead classification. The normal
+        // path above catches this before force-materialization; this arm is
+        // retained as a defensive backstop for future control-flow changes.
         if let WpdaState::Error { ref message } = self.state {
             if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
                 return WpdaResolveResult::AmbiguityBudget { budget, actual, position };
@@ -11659,18 +11671,11 @@ where
     /// Called from `step_fanout` after the per-cursor step pass so the
     /// checked frontier is the input to the next saturation iteration.
     fn maybe_prune_frontier(&mut self) {
-        // Phase F.13 Stage L3.6 (2026-05-25): force-materialize cohort
-        // frames before bounding so the budget is checked against the full
-        // logical frontier. Unbounded mode is a no-op so the materialization
-        // is also a no-op.
-        if !matches!(self.bounding_mode, crate::wpda_runtime::CursorBoundingMode::Unbounded) {
-            self.force_materialize_cohort_frames();
-        }
         match self.bounding_mode {
             crate::wpda_runtime::CursorBoundingMode::Unbounded => {},
             crate::wpda_runtime::CursorBoundingMode::BeamSize(n)
             | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
-                let actual = self.branch_cursors.len();
+                let actual = self.logical_frontier_len();
                 if actual <= n {
                     return;
                 }
@@ -11685,6 +11690,17 @@ where
                 };
             },
         }
+    }
+
+    /// Count the logical cursor frontier without materializing lazy cohort
+    /// frames. This is the authoritative count for structured ambiguity
+    /// budgets: `Frame::Cohort` represents every member as unresolved
+    /// evidence, but expanding those members is unnecessary just to report
+    /// that the budget was exceeded.
+    fn logical_frontier_len(&self) -> usize {
+        self.branch_cursors
+            .iter()
+            .fold(0usize, |acc, frame| acc.saturating_add(frame.logical_cursor_count()))
     }
 
     // Phase 5.6-tail follow-up (2026-05-12): two more orphaned methods
@@ -16897,6 +16913,58 @@ mod tests {
             },
             other => panic!("expected AmbiguityBudget overflow, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn ambiguity_budget_counts_cohort_members_without_materializing() {
+        let mut w: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(IdleEngine, 0).with_ambiguity_budget(2);
+        w.deterministic = false;
+        w.pos = 7;
+        w.state = WpdaState::AmbiguityFanout { branches: vec![10] };
+
+        let key = crate::dispatch_cohort::DispatchKey::new(0, 1, 0, 0, 0);
+        let shell_cursor = queue_cursor(0, lex(1.0, 0, 0));
+        let shell = std::sync::Arc::new(crate::cohort_lazy::CohortShell::from_branch_cursor(
+            &shell_cursor,
+            key,
+        ));
+        let mut cohort = crate::cohort_lazy::CohortFrame::new(shell);
+        for (member_id, cost) in [(1_u64, 1.0), (2, 2.0), (3, 3.0)] {
+            let member_cursor = queue_cursor(0, lex(cost, member_id as u16, 0));
+            cohort.push_member(
+                crate::cohort_lazy::CohortMemberState::from_branch_cursor_with_member_id(
+                    &member_cursor,
+                    member_cursor.weight.clone(),
+                    member_id,
+                ),
+            );
+        }
+        w.branch_cursors = vec![crate::cohort_lazy::Frame::Cohort(Box::new(cohort))];
+
+        w.maybe_prune_frontier();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            1,
+            "budget accounting must not expand one lazy cohort frame"
+        );
+        assert!(
+            matches!(w.branch_cursors.as_slice(), [crate::cohort_lazy::Frame::Cohort(_)]),
+            "overflow reporting must preserve the lazy cohort frame"
+        );
+        match w.resolve_at_end_of_input(&empty_tokens()) {
+            WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                assert_eq!(budget, 2);
+                assert_eq!(actual, 3);
+                assert_eq!(position, 7);
+            },
+            other => panic!("expected AmbiguityBudget overflow, got {:?}", other),
+        }
+        assert!(
+            matches!(w.branch_cursors.as_slice(), [crate::cohort_lazy::Frame::Cohort(_)]),
+            "resolving a structured budget overflow must not force the cohort"
+        );
     }
 
     #[test]

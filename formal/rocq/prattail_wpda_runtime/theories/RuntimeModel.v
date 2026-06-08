@@ -911,6 +911,92 @@ Definition cursor_bound_frontier_len
     (actual_frontier_len : nat) : nat :=
   actual_frontier_len.
 
+Inductive lazy_frontier_frame : Type :=
+  | LazyConcrete
+  | LazyCohort (members : nat).
+
+Definition frame_logical_cursor_count (frame : lazy_frontier_frame) : nat :=
+  match frame with
+  | LazyConcrete => 1
+  | LazyCohort members => members
+  end.
+
+Fixpoint lazy_logical_frontier_len
+    (frames : list lazy_frontier_frame) : nat :=
+  match frames with
+  | [] => 0
+  | frame :: rest =>
+      frame_logical_cursor_count frame + lazy_logical_frontier_len rest
+  end.
+
+Definition frame_materialized_cursor_count
+    (frame : lazy_frontier_frame) : list nat :=
+  match frame with
+  | LazyConcrete => [0]
+  | LazyCohort members => repeat 0 members
+  end.
+
+Definition materialized_frontier_len
+    (frames : list lazy_frontier_frame) : nat :=
+  length (flat_map frame_materialized_cursor_count frames).
+
+Definition lazy_cursor_bound_check
+    (mode : cursor_bounding_mode)
+    (frames : list lazy_frontier_frame) : option (nat * nat) :=
+  cursor_bound_check mode (lazy_logical_frontier_len frames).
+
+Definition lazy_bound_physical_frontier_len
+    (_mode : cursor_bounding_mode)
+    (frames : list lazy_frontier_frame) : nat :=
+  length frames.
+
+Lemma lazy_logical_frontier_len_matches_materialized :
+  forall frames,
+    lazy_logical_frontier_len frames =
+    materialized_frontier_len frames.
+Proof.
+  induction frames as [|frame rest IH].
+  - reflexivity.
+  - simpl.
+    unfold materialized_frontier_len in *.
+    simpl.
+    rewrite length_app.
+    rewrite <- IH.
+    destruct frame; simpl.
+    + lia.
+    + rewrite repeat_length. lia.
+Qed.
+
+Theorem lazy_budget_check_matches_eager_materialization :
+  forall mode frames,
+    lazy_cursor_bound_check mode frames =
+    cursor_bound_check mode (materialized_frontier_len frames).
+Proof.
+  intros mode frames.
+  unfold lazy_cursor_bound_check.
+  rewrite lazy_logical_frontier_len_matches_materialized.
+  reflexivity.
+Qed.
+
+Theorem lazy_budget_overflow_preserves_physical_frontier :
+  forall budget frames,
+    budget < lazy_logical_frontier_len frames ->
+    lazy_cursor_bound_check (CursorAmbiguityBudget budget) frames =
+      Some (budget, lazy_logical_frontier_len frames) /\
+    lazy_bound_physical_frontier_len
+      (CursorAmbiguityBudget budget)
+      frames =
+    length frames.
+Proof.
+  intros budget frames Hlt.
+  split.
+  - unfold lazy_cursor_bound_check, cursor_bound_check, cursor_bound_budget.
+    assert (Hltb : (budget <? lazy_logical_frontier_len frames) = true).
+    { apply Nat.ltb_lt. exact Hlt. }
+    now rewrite Hltb.
+  - reflexivity.
+Qed.
+
 Theorem beam_size_matches_ambiguity_budget :
   forall budget actual_frontier_len,
     cursor_bound_check

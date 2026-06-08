@@ -410,6 +410,19 @@ impl DivergenceClass {
 }
 
 impl<W: SemiringRef> Frame<W> {
+    /// Number of concrete logical cursors represented by this frame.
+    ///
+    /// `Frame::Cohort` is a lazy compression of N members; counting those
+    /// members must not force materialization just to enforce a frontier
+    /// budget or report overflow evidence.
+    #[inline(always)]
+    pub fn logical_cursor_count(&self) -> usize {
+        match self {
+            Frame::Concrete(_) => 1,
+            Frame::Cohort(cf) => cf.member_count(),
+        }
+    }
+
     /// Get a shared reference to the underlying concrete cursor.
     ///
     /// **L1 invariant**: `Frame::Cohort` is never constructed; this
