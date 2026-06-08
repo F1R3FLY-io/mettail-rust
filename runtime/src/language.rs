@@ -3,7 +3,8 @@
 //! These types are shared between the macro-generated code and the REPL.
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt;
 
 use crate::LanguageMetadata;
@@ -468,6 +469,163 @@ impl<'a> Iterator for ReachableNormalForms<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct WeightedQueueEntry {
+    term_id: u64,
+    weight: f64,
+    sequence: usize,
+}
+
+impl PartialEq for WeightedQueueEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.term_id == other.term_id
+            && self.weight.total_cmp(&other.weight) == Ordering::Equal
+            && self.sequence == other.sequence
+    }
+}
+
+impl Eq for WeightedQueueEntry {}
+
+impl PartialOrd for WeightedQueueEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for WeightedQueueEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // BinaryHeap pops the greatest element, so reverse the natural order:
+        // lower weight first, then lower insertion sequence.
+        other
+            .weight
+            .total_cmp(&self.weight)
+            .then_with(|| other.sequence.cmp(&self.sequence))
+            .then_with(|| other.term_id.cmp(&self.term_id))
+    }
+}
+
+/// Lazy priority traversal over normal forms reachable from weighted seeds.
+///
+/// The queue orders work by the caller-provided seed weight, with seed order as
+/// the deterministic tie breaker. Expansion indexes are still built only when a
+/// non-normal term is popped, so an already-normal best seed can satisfy a
+/// bounded prefix request without scanning the rewrite relation.
+pub struct WeightedReachableNormalForms<'a> {
+    results: &'a AscentResults,
+    queue: BinaryHeap<WeightedQueueEntry>,
+    visited: HashSet<u64>,
+    term_index: Option<HashMap<u64, usize>>,
+    rewrites_by_from: Option<HashMap<u64, Vec<u64>>>,
+    next_sequence: usize,
+}
+
+impl<'a> WeightedReachableNormalForms<'a> {
+    fn new(results: &'a AscentResults, weighted_seed_ids: &[(u64, f64)]) -> Self {
+        let mut best_by_id: HashMap<u64, (f64, usize)> = HashMap::new();
+        for (sequence, &(term_id, weight)) in weighted_seed_ids.iter().enumerate() {
+            let weight = if weight.is_nan() {
+                f64::INFINITY
+            } else {
+                weight
+            };
+            best_by_id
+                .entry(term_id)
+                .and_modify(|best| {
+                    if weight.total_cmp(&best.0) == Ordering::Less
+                        || (weight.total_cmp(&best.0) == Ordering::Equal && sequence < best.1)
+                    {
+                        *best = (weight, sequence);
+                    }
+                })
+                .or_insert((weight, sequence));
+        }
+
+        let mut queue = BinaryHeap::new();
+        let mut visited = HashSet::new();
+        let mut next_sequence = weighted_seed_ids.len();
+        for (term_id, (weight, sequence)) in best_by_id {
+            visited.insert(term_id);
+            next_sequence = next_sequence.max(sequence.saturating_add(1));
+            queue.push(WeightedQueueEntry { term_id, weight, sequence });
+        }
+
+        Self {
+            results,
+            queue,
+            visited,
+            term_index: None,
+            rewrites_by_from: None,
+            next_sequence,
+        }
+    }
+
+    fn term_info(&self, id: u64) -> Option<&'a TermInfo> {
+        if let Some(index) = &self.term_index {
+            return index.get(&id).map(|&idx| &self.results.all_terms[idx]);
+        }
+        self.results.all_terms.iter().find(|t| t.term_id == id)
+    }
+
+    fn ensure_expansion_indexes(&mut self) {
+        if self.term_index.is_none() {
+            self.term_index = Some(
+                self.results
+                    .all_terms
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, term)| (term.term_id, idx))
+                    .collect(),
+            );
+        }
+        if self.rewrites_by_from.is_none() {
+            let mut rewrites_by_from: HashMap<u64, Vec<u64>> = HashMap::new();
+            for rewrite in &self.results.rewrites {
+                rewrites_by_from
+                    .entry(rewrite.from_id)
+                    .or_default()
+                    .push(rewrite.to_id);
+            }
+            self.rewrites_by_from = Some(rewrites_by_from);
+        }
+    }
+}
+
+impl<'a> Iterator for WeightedReachableNormalForms<'a> {
+    type Item = &'a TermInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(entry) = self.queue.pop() {
+            let info = match self.term_info(entry.term_id) {
+                Some(info) => info,
+                None => continue,
+            };
+            if info.is_normal_form {
+                return Some(info);
+            }
+
+            self.ensure_expansion_indexes();
+            let next_ids = self
+                .rewrites_by_from
+                .as_ref()
+                .and_then(|index| index.get(&entry.term_id))
+                .cloned()
+                .unwrap_or_default();
+            for to_id in next_ids {
+                if self.visited.insert(to_id) {
+                    let sequence = self.next_sequence;
+                    self.next_sequence = self.next_sequence.saturating_add(1);
+                    self.queue.push(WeightedQueueEntry {
+                        term_id: to_id,
+                        weight: entry.weight,
+                        sequence,
+                    });
+                }
+            }
+        }
+        None
+    }
+}
+
 impl AscentResults {
     /// Create empty results
     pub fn empty() -> Self {
@@ -550,6 +708,37 @@ impl AscentResults {
     /// deliberately does not choose by display length or any other heuristic.
     pub fn normal_form_reachable_from_seeds(&self, seed_ids: &[u64]) -> Option<&TermInfo> {
         self.normal_forms_reachable_from_seeds_iter(seed_ids).next()
+    }
+
+    /// Multi-source normal-form traversal ordered by seed weight.
+    ///
+    /// This is the explicit priority-queue surface for callers that carry
+    /// parser/evidence weights through to evaluation. It is demand bounded:
+    /// callers can use `.take(n)` or `.next()` without collecting all reachable
+    /// normal forms.
+    pub fn normal_forms_reachable_from_weighted_seeds_iter<'a>(
+        &'a self,
+        weighted_seed_ids: &[(u64, f64)],
+    ) -> WeightedReachableNormalForms<'a> {
+        WeightedReachableNormalForms::new(self, weighted_seed_ids)
+    }
+
+    /// Collect all normal forms reachable from weighted seeds.
+    pub fn normal_forms_reachable_from_weighted_seeds(
+        &self,
+        weighted_seed_ids: &[(u64, f64)],
+    ) -> Vec<&TermInfo> {
+        self.normal_forms_reachable_from_weighted_seeds_iter(weighted_seed_ids)
+            .collect()
+    }
+
+    /// Return the first normal form from the lazy weighted traversal.
+    pub fn normal_form_reachable_from_weighted_seeds(
+        &self,
+        weighted_seed_ids: &[(u64, f64)],
+    ) -> Option<&TermInfo> {
+        self.normal_forms_reachable_from_weighted_seeds_iter(weighted_seed_ids)
+            .next()
     }
 
     /// Get the equivalence class containing a term
@@ -700,5 +889,108 @@ mod tests {
             first.display, "longer-but-first",
             "single-witness helper must not choose the shortest display"
         );
+    }
+
+    #[test]
+    fn weighted_reachable_normal_forms_choose_lower_weight_seed_first() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 1,
+                    display: "higher_weight_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 2,
+                    display: "lower_weight_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 10,
+                    display: "higher_weight_result".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 20,
+                    display: "lower_weight_result".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 1,
+                    to_id: 10,
+                    rule_name: Some("high".to_string()),
+                },
+                Rewrite {
+                    from_id: 2,
+                    to_id: 20,
+                    rule_name: Some("low".to_string()),
+                },
+            ],
+            equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let first = results
+            .normal_form_reachable_from_weighted_seeds(&[(1, 9.0), (2, 1.0)])
+            .expect("weighted normal form should be reachable");
+        assert_eq!(first.display, "lower_weight_result");
+
+        let all: Vec<_> = results
+            .normal_forms_reachable_from_weighted_seeds(&[(1, 9.0), (2, 1.0)])
+            .into_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(all, vec!["lower_weight_result", "higher_weight_result"]);
+    }
+
+    #[test]
+    fn weighted_reachable_normal_forms_preserve_equal_weight_seed_order() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 1,
+                    display: "first_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 2,
+                    display: "second_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 10,
+                    display: "first_result".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 20,
+                    display: "second_result".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 1,
+                    to_id: 10,
+                    rule_name: Some("first".to_string()),
+                },
+                Rewrite {
+                    from_id: 2,
+                    to_id: 20,
+                    rule_name: Some("second".to_string()),
+                },
+            ],
+            equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let all: Vec<_> = results
+            .normal_forms_reachable_from_weighted_seeds(&[(1, 3.0), (2, 3.0)])
+            .into_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(all, vec!["first_result", "second_result"]);
     }
 }

@@ -2393,6 +2393,11 @@ Record seed_normal_forms_model : Type := {
   snfm_normals : list eval_term_info_model
 }.
 
+Definition eager_seed_normal_forms
+    (seeds : list seed_normal_forms_model)
+    : list eval_term_info_model :=
+  flat_map snfm_normals seeds.
+
 Fixpoint lazy_seed_normal_forms_observation
     (seeds : list seed_normal_forms_model)
     (demand : nat) : list eval_term_info_model :=
@@ -2443,3 +2448,154 @@ Theorem lazy_seed_normal_forms_skips_later_seed_after_demand_filled :
        {| snfm_seed := seed_b; snfm_normals := later |}]
       1 = [nf_a].
 Proof. reflexivity. Qed.
+
+Theorem lazy_seed_normal_forms_observation_is_eager_prefix :
+  forall seeds demand,
+    lazy_seed_normal_forms_observation seeds demand =
+    firstn demand (eager_seed_normal_forms seeds).
+Proof.
+  intros seeds.
+  induction seeds as [| seed rest IH]; intros demand;
+    destruct demand as [| demand'];
+    cbn [lazy_seed_normal_forms_observation];
+    try reflexivity.
+  change (eager_seed_normal_forms (seed :: rest)) with
+    (snfm_normals seed ++ eager_seed_normal_forms rest).
+  rewrite (@firstn_app eval_term_info_model
+             (Datatypes.S demand')
+             (snfm_normals seed)
+             (eager_seed_normal_forms rest)).
+  f_equal.
+  assert (
+    Datatypes.S demand' -
+      length (firstn (Datatypes.S demand') (snfm_normals seed)) =
+    Datatypes.S demand' - length (snfm_normals seed)
+  ) as Hremaining.
+  {
+    rewrite length_firstn.
+    lia.
+  }
+  rewrite Hremaining.
+  apply IH.
+Qed.
+
+Record weighted_seed_normal_forms_model : Type := {
+  wsnfm_seed : nat;
+  wsnfm_weight : nat;
+  wsnfm_sequence : nat;
+  wsnfm_normals : list eval_term_info_model
+}.
+
+Definition weighted_seed_precedes
+    (left right : weighted_seed_normal_forms_model)
+    : bool :=
+  (wsnfm_weight left <? wsnfm_weight right) ||
+  ((wsnfm_weight left =? wsnfm_weight right) &&
+   (wsnfm_sequence left <=? wsnfm_sequence right)).
+
+Fixpoint insert_weighted_seed
+    (seed : weighted_seed_normal_forms_model)
+    (sorted : list weighted_seed_normal_forms_model)
+    : list weighted_seed_normal_forms_model :=
+  match sorted with
+  | [] => [seed]
+  | head :: rest =>
+      if weighted_seed_precedes seed head
+      then seed :: sorted
+      else head :: insert_weighted_seed seed rest
+  end.
+
+Fixpoint sort_weighted_seeds
+    (seeds : list weighted_seed_normal_forms_model)
+    : list weighted_seed_normal_forms_model :=
+  match seeds with
+  | [] => []
+  | seed :: rest => insert_weighted_seed seed (sort_weighted_seeds rest)
+  end.
+
+Definition erase_weighted_seed
+    (seed : weighted_seed_normal_forms_model)
+    : seed_normal_forms_model :=
+  {| snfm_seed := wsnfm_seed seed;
+     snfm_normals := wsnfm_normals seed |}.
+
+Definition eager_weighted_seed_normal_forms
+    (seeds : list weighted_seed_normal_forms_model)
+    : list eval_term_info_model :=
+  eager_seed_normal_forms
+    (map erase_weighted_seed (sort_weighted_seeds seeds)).
+
+Definition lazy_weighted_seed_normal_forms_observation
+    (seeds : list weighted_seed_normal_forms_model)
+    (demand : nat)
+    : list eval_term_info_model :=
+  lazy_seed_normal_forms_observation
+    (map erase_weighted_seed (sort_weighted_seeds seeds))
+    demand.
+
+Theorem lazy_weighted_seed_normal_forms_is_eager_prefix :
+  forall seeds demand,
+    lazy_weighted_seed_normal_forms_observation seeds demand =
+    firstn demand (eager_weighted_seed_normal_forms seeds).
+Proof.
+  intros seeds demand.
+  unfold lazy_weighted_seed_normal_forms_observation,
+    eager_weighted_seed_normal_forms.
+  apply lazy_seed_normal_forms_observation_is_eager_prefix.
+Qed.
+
+Theorem weighted_seed_lower_weight_preempts_later_seed :
+  forall seed_a seed_b nf_a nf_b weight_a weight_b seq_a seq_b,
+    weight_b < weight_a ->
+    lazy_weighted_seed_normal_forms_observation
+      [{| wsnfm_seed := seed_a;
+          wsnfm_weight := weight_a;
+          wsnfm_sequence := seq_a;
+          wsnfm_normals := [nf_a] |};
+       {| wsnfm_seed := seed_b;
+          wsnfm_weight := weight_b;
+          wsnfm_sequence := seq_b;
+          wsnfm_normals := [nf_b] |}]
+      1 = [nf_b].
+Proof.
+  intros seed_a seed_b nf_a nf_b weight_a weight_b seq_a seq_b Hlt.
+  destruct (weight_a <? weight_b) eqn:Hweight.
+  - apply Nat.ltb_lt in Hweight. lia.
+  - destruct (weight_a =? weight_b) eqn:Heq.
+    + apply Nat.eqb_eq in Heq. lia.
+    + unfold lazy_weighted_seed_normal_forms_observation.
+      cbn [sort_weighted_seeds insert_weighted_seed weighted_seed_precedes
+           lazy_seed_normal_forms_observation erase_weighted_seed].
+      unfold weighted_seed_precedes.
+      cbn [wsnfm_weight wsnfm_sequence].
+      rewrite Hweight, Heq.
+      reflexivity.
+Qed.
+
+Theorem weighted_seed_equal_weight_preserves_lower_sequence :
+  forall seed_a seed_b nf_a nf_b weight seq_a seq_b,
+    seq_a <= seq_b ->
+    lazy_weighted_seed_normal_forms_observation
+      [{| wsnfm_seed := seed_a;
+          wsnfm_weight := weight;
+          wsnfm_sequence := seq_a;
+          wsnfm_normals := [nf_a] |};
+       {| wsnfm_seed := seed_b;
+          wsnfm_weight := weight;
+          wsnfm_sequence := seq_b;
+          wsnfm_normals := [nf_b] |}]
+      1 = [nf_a].
+Proof.
+  intros seed_a seed_b nf_a nf_b weight seq_a seq_b Hseq.
+  destruct (weight <? weight) eqn:Hweight.
+  - apply Nat.ltb_lt in Hweight. lia.
+  - destruct (seq_a <=? seq_b) eqn:Hle.
+    + unfold lazy_weighted_seed_normal_forms_observation.
+      cbn [sort_weighted_seeds insert_weighted_seed weighted_seed_precedes
+           lazy_seed_normal_forms_observation erase_weighted_seed].
+      unfold weighted_seed_precedes.
+      cbn [wsnfm_weight wsnfm_sequence].
+      rewrite Hweight, Nat.eqb_refl, Hle.
+      reflexivity.
+    + apply Nat.leb_gt in Hle. lia.
+Qed.
