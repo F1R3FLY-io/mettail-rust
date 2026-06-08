@@ -1320,6 +1320,14 @@ Inductive orphan_revival_result : Type :=
   | OrphanRevivalBudgetExceeded (budget actual : nat).
 
 Definition bounded_orphan_revival
+    (budget actual_orphans : nat) : orphan_revival_result :=
+  if budget <? actual_orphans
+  then OrphanRevivalBudgetExceeded budget actual_orphans
+  else if actual_orphans =? 0
+       then OrphanRevivalIdle
+       else OrphanRevivalInjected actual_orphans.
+
+Definition old_acceptance_guarded_orphan_revival
     (budget actual_orphans : nat)
     (parse_already_succeeds : bool) : orphan_revival_result :=
   if (budget <? actual_orphans) && parse_already_succeeds
@@ -1343,7 +1351,7 @@ Definition orphan_revival_remaining_evidence
 Theorem orphan_revival_overflow_reports_budget :
   forall budget actual_orphans,
     budget < actual_orphans ->
-    bounded_orphan_revival budget actual_orphans true =
+    bounded_orphan_revival budget actual_orphans =
       OrphanRevivalBudgetExceeded budget actual_orphans.
 Proof.
   intros budget actual_orphans Hlt.
@@ -1353,6 +1361,11 @@ Proof.
   rewrite Hltb.
   reflexivity.
 Qed.
+
+Theorem old_acceptance_guarded_orphan_revival_can_inject_over_budget :
+  old_acceptance_guarded_orphan_revival 256 257 false =
+    OrphanRevivalInjected 257.
+Proof. reflexivity. Qed.
 
 Theorem orphan_revival_budget_exceeded_is_not_acceptance :
   forall budget actual_orphans,

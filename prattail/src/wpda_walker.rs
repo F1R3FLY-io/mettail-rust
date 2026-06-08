@@ -1035,11 +1035,11 @@ pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 /// re-injects orphaned `InFlight` cohort members as fresh workers
 /// (`revive_orphaned_cohort_members_once`). A small cap bounds the rare
 /// pathological case of an orphan whose re-driven sub-parse re-dies and
-/// re-orphans every round; in practice a successful revive resolves in a
-/// single round (the orphan becomes a worker and runs to EOI). 4 mirrors
-/// the conservative bound style used elsewhere in this walker (cohort
-/// caps, recovery depth) and is comfortably above the observed
-/// single-round need while preventing livelock.
+/// re-orphans every round. Large orphan sets are handled by the separate
+/// frontier budget inside `revive_orphaned_cohort_members_once`, which
+/// reports unresolved evidence before draining rather than materializing an
+/// unbounded batch. 4 mirrors the conservative bound style used elsewhere
+/// in this walker while preventing livelock.
 const MAX_REVIVAL_ROUNDS: u32 = 4;
 
 /// Cohort orphan revival is a bounded, evidence-preserving search step.
@@ -9583,7 +9583,7 @@ where
     /// `h3_chain_correctness` invariants are preserved.
     fn revive_orphaned_cohort_members_once(
         &mut self,
-        tokens: &dyn WpdaTokenSource,
+        _tokens: &dyn WpdaTokenSource,
     ) -> OrphanRevivalOutcome
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
@@ -9599,40 +9599,16 @@ where
         }
         // Resource bound for eager orphan revival. Above this size, re-driving
         // every parked member may turn an otherwise linear deep-mixfix parse
-        // into quadratic work. The bound is a search budget only: it must not
-        // decide that hidden alternatives are absent.
+        // into quadratic work. The bound is a search budget only: overflow is
+        // unresolved evidence whether or not another accepting cursor is
+        // already available.
         const ORPHAN_REVIVAL_FRONTIER_BUDGET: usize = 256;
         if orphan_count > ORPHAN_REVIVAL_FRONTIER_BUDGET {
-            let parse_already_succeeds = {
-                let candidate_roots: Vec<crate::sppf::SppfId> = self
-                    .branch_cursors
-                    .iter()
-                    .filter_map(|frame| match frame {
-                        crate::cohort_lazy::Frame::Concrete(c)
-                            if self.is_logical_eoi(c.pos, tokens)
-                                && self.is_accepting_config(c, tokens) =>
-                        {
-                            self.sppf_stack_arena.top(c.sppf_stack_id)
-                        },
-                        _ => None,
-                    })
-                    .filter(|&sid| sid != crate::sppf::SPPF_ID_NONE)
-                    .collect();
-                candidate_roots
-                    .iter()
-                    .any(|&root| !self.realize_root_to_terms(root, Some(1)).is_empty())
+            return OrphanRevivalOutcome::BudgetExceeded {
+                budget: ORPHAN_REVIVAL_FRONTIER_BUDGET,
+                actual: orphan_count,
+                position: self.pos,
             };
-            if parse_already_succeeds {
-                // The parse has a realizable accepting cursor, but the
-                // over-budget orphan set is still unresolved evidence. Report
-                // overflow instead of accepting while those alternatives are
-                // hidden in the cohort cache.
-                return OrphanRevivalOutcome::BudgetExceeded {
-                    budget: ORPHAN_REVIVAL_FRONTIER_BUDGET,
-                    actual: orphan_count,
-                    position: self.pos,
-                };
-            }
         }
         let orphans = self.dispatch_cohort_cache.drain_orphaned_inflight_members();
         if orphans.is_empty() {
@@ -18253,6 +18229,37 @@ mod tests {
             "over-budget revival must report unresolved evidence without draining it"
         );
         assert_eq!(walker.branch_cursors.len(), 1);
+    }
+
+    #[test]
+    fn orphan_revival_over_budget_reports_before_accepting_cursor_exists() {
+        let tokens = [TokenKind::Integer, TokenKind::Eof];
+        let texts = ["42", ""];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
+        walker.branch_cursors.clear();
+        walker.pos = 1;
+        seed_revivable_orphans(&mut walker, 257);
+
+        match walker.revive_orphaned_cohort_members_once(&token_src) {
+            OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
+                assert_eq!(budget, 256);
+                assert_eq!(actual, 257);
+                assert_eq!(position, 1);
+            },
+            other => panic!("expected orphan revival budget overflow, got {other:?}"),
+        }
+        assert_eq!(
+            walker
+                .dispatch_cohort_cache
+                .revivable_inflight_member_count(),
+            257,
+            "over-budget revival must report before draining hidden evidence"
+        );
+        assert!(
+            walker.branch_cursors.is_empty(),
+            "overflow reporting must not materialize orphan cursors"
+        );
     }
 
     #[test]
