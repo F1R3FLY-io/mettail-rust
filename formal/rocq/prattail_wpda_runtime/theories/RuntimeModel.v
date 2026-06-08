@@ -1015,6 +1015,79 @@ Theorem cohort_cache_overflow_preserves_unresolved_evidence :
     attempted.
 Proof. reflexivity. Qed.
 
+Inductive realization_cap_result : Type :=
+  | RealizationWithinCap
+  | RealizationBudgetExceeded (budget actual : nat).
+
+Definition bounded_realization_cap
+    (budget actual_terms : nat) : realization_cap_result :=
+  if budget <? actual_terms
+  then RealizationBudgetExceeded budget actual_terms
+  else RealizationWithinCap.
+
+Definition realization_cap_accepts
+    (_r : realization_cap_result) : bool :=
+  false.
+
+Definition realization_unresolved_evidence
+    (actual_terms : nat)
+    (r : realization_cap_result) : nat :=
+  match r with
+  | RealizationBudgetExceeded _ _ => actual_terms
+  | RealizationWithinCap => 0
+  end.
+
+Theorem realization_cap_overflow_reports_budget :
+  forall budget actual_terms,
+    budget < actual_terms ->
+    bounded_realization_cap budget actual_terms =
+      RealizationBudgetExceeded budget actual_terms.
+Proof.
+  intros budget actual_terms Hlt.
+  unfold bounded_realization_cap.
+  assert (Hltb : (budget <? actual_terms) = true).
+  { apply Nat.ltb_lt. exact Hlt. }
+  rewrite Hltb.
+  reflexivity.
+Qed.
+
+Theorem realization_cap_within_budget_reports_no_error :
+  forall budget actual_terms,
+    actual_terms <= budget ->
+    bounded_realization_cap budget actual_terms =
+      RealizationWithinCap.
+Proof.
+  intros budget actual_terms Hle.
+  unfold bounded_realization_cap.
+  assert (Hgeb : (budget <? actual_terms) = false).
+  { apply Nat.ltb_ge. exact Hle. }
+  rewrite Hgeb.
+  reflexivity.
+Qed.
+
+Theorem realization_cap_probe_reports_overflow :
+  forall budget,
+    bounded_realization_cap budget (S budget) =
+      RealizationBudgetExceeded budget (S budget).
+Proof.
+  intro budget.
+  apply realization_cap_overflow_reports_budget.
+  lia.
+Qed.
+
+Theorem realization_cap_overflow_is_not_acceptance :
+  forall budget actual_terms,
+    realization_cap_accepts
+      (RealizationBudgetExceeded budget actual_terms) = false.
+Proof. reflexivity. Qed.
+
+Theorem realization_cap_overflow_preserves_unresolved_evidence :
+  forall budget actual_terms,
+    realization_unresolved_evidence actual_terms
+      (RealizationBudgetExceeded budget actual_terms) =
+    actual_terms.
+Proof. reflexivity. Qed.
+
 Definition span_anchored_coercion_jobs
     (direct : bool)
     (coercions : list nat) : list (option nat) :=

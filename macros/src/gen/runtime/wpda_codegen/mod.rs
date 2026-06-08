@@ -551,6 +551,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_all_facade_reports_realization_cap_overflow() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(ts.contains("parse_Expr_via_wpda_all_with_source"));
+        assert!(ts.contains("saturating_sub"));
+        assert!(ts.contains("saturating_add"));
+        assert!(ts.contains("WpdaParseError :: AmbiguityBudget"));
+        assert!(ts.contains("actual : REALIZE_CAP + 1"));
+        assert!(
+            !ts.contains("realize_root_to_terms (root , Some (REALIZE_CAP))"),
+            "parse_all must probe for overflow instead of silently truncating at the cap",
+        );
+    }
+
+    #[test]
     fn walker_routes_identifier_lex_alternatives_to_var_rules() {
         let lang = var_only_language();
         let ts = generate_wpda_engine_module(&lang).to_string();

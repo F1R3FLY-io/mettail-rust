@@ -261,27 +261,41 @@ pub(crate) fn emit_parse_fns(
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
                         WpdaResolveResult::Accepted { weights, roots, .. } => {
-                            *pos = walker.position();
                             // C7b (Phase 3.1.6, 2026-05-15): realize all
                             // SPPF roots; packing-fanout produces the
-                            // ambiguity-preserving Vec<Cat>. `Some(64)` caps
-                            // exponential AST counts (plan §4.3).
+                            // ambiguity-preserving Vec<Cat>. The cap is a
+                            // lazy probe guard: the 65th term is evidence
+                            // that the API cannot faithfully return all
+                            // alternatives within this budget.
                             const REALIZE_CAP: usize = 64;
+                            let completion_position = walker.position();
+                            *pos = completion_position;
                             let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                            let mut overflowed_realization = false;
                             for &root in &roots {
-                                if typed_terms.len() >= REALIZE_CAP {
-                                    break;
-                                }
-                                for term in walker.realize_root_to_terms(root, Some(REALIZE_CAP)) {
+                                let probe_limit =
+                                    REALIZE_CAP.saturating_sub(typed_terms.len()).saturating_add(1);
+                                for term in walker.realize_root_to_terms(root, Some(probe_limit)) {
+                                    if typed_terms.len() >= REALIZE_CAP {
+                                        overflowed_realization = true;
+                                        break;
+                                    }
                                     let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                         .map_err(|_| WpdaParseError::EmptyResult)?;
                                     let typed = std::sync::Arc::try_unwrap(arc)
                                         .unwrap_or_else(|arc| (*arc).clone());
                                     typed_terms.push(typed);
-                                    if typed_terms.len() >= REALIZE_CAP {
-                                        break;
-                                    }
                                 }
+                                if overflowed_realization {
+                                    break;
+                                }
+                            }
+                            if overflowed_realization {
+                                return Err(WpdaParseError::AmbiguityBudget {
+                                    budget: REALIZE_CAP,
+                                    actual: REALIZE_CAP + 1,
+                                    position: completion_position,
+                                });
                             }
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
@@ -301,20 +315,31 @@ pub(crate) fn emit_parse_fns(
                             *pos = position;
                             const REALIZE_CAP: usize = 64;
                             let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                            let mut overflowed_realization = false;
                             for &root in &roots {
-                                if typed_terms.len() >= REALIZE_CAP {
-                                    break;
-                                }
-                                for term in walker.realize_root_to_terms(root, Some(REALIZE_CAP)) {
+                                let probe_limit =
+                                    REALIZE_CAP.saturating_sub(typed_terms.len()).saturating_add(1);
+                                for term in walker.realize_root_to_terms(root, Some(probe_limit)) {
+                                    if typed_terms.len() >= REALIZE_CAP {
+                                        overflowed_realization = true;
+                                        break;
+                                    }
                                     let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                         .map_err(|_| WpdaParseError::EmptyResult)?;
                                     let typed = std::sync::Arc::try_unwrap(arc)
                                         .unwrap_or_else(|arc| (*arc).clone());
                                     typed_terms.push(typed);
-                                    if typed_terms.len() >= REALIZE_CAP {
-                                        break;
-                                    }
                                 }
+                                if overflowed_realization {
+                                    break;
+                                }
+                            }
+                            if overflowed_realization {
+                                return Err(WpdaParseError::AmbiguityBudget {
+                                    budget: REALIZE_CAP,
+                                    actual: REALIZE_CAP + 1,
+                                    position,
+                                });
                             }
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
