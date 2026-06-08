@@ -971,3 +971,73 @@ Proof. reflexivity. Qed.
 Theorem nonambiguous_dag_facade_falls_back_to_flat_lex :
   flat_lex_demand_for_dag_facade false = 1.
 Proof. reflexivity. Qed.
+
+Record parse_alternative_model : Type := {
+  pam_semantic_key : nat;
+  pam_payload : nat
+}.
+
+Definition semantic_key_represented
+    (alt : parse_alternative_model)
+    (output : list parse_alternative_model) : Prop :=
+  exists kept,
+    In kept output /\
+    pam_semantic_key kept = pam_semantic_key alt.
+
+Definition parser_assembly_preserves_semantic_keys
+    (input output : list parse_alternative_model) : Prop :=
+  forall alt,
+    In alt input ->
+    semantic_key_represented alt output.
+
+Theorem parser_assembly_identity_preserves_semantic_keys :
+  forall alts,
+    parser_assembly_preserves_semantic_keys alts alts.
+Proof.
+  intros alts alt Hin.
+  exists alt.
+  split; [exact Hin | reflexivity].
+Qed.
+
+Theorem parser_assembly_preserves_distinct_pair_without_evidence :
+  forall left right,
+    parser_assembly_preserves_semantic_keys [left; right] [left; right].
+Proof.
+  intros left right.
+  apply parser_assembly_identity_preserves_semantic_keys.
+Qed.
+
+Record eval_term_info_model : Type := {
+  eti_id : nat;
+  eti_normal : bool
+}.
+
+Definition eager_normal_forms
+    (terms : list eval_term_info_model) : list eval_term_info_model :=
+  filter eti_normal terms.
+
+Definition lazy_normal_forms_observation
+    (terms : list eval_term_info_model)
+    (demand : nat) : list eval_term_info_model :=
+  firstn demand (eager_normal_forms terms).
+
+Theorem lazy_normal_forms_observation_is_eager_prefix :
+  forall terms demand,
+    lazy_normal_forms_observation terms demand =
+    firstn demand (eager_normal_forms terms).
+Proof. reflexivity. Qed.
+
+Theorem lazy_normal_forms_zero_demand :
+  forall terms,
+    lazy_normal_forms_observation terms 0 = [].
+Proof. reflexivity. Qed.
+
+Theorem normal_forms_collecting_matches_lazy_all :
+  forall terms,
+    lazy_normal_forms_observation terms (length (eager_normal_forms terms)) =
+    eager_normal_forms terms.
+Proof.
+  intros terms.
+  unfold lazy_normal_forms_observation.
+  apply firstn_all.
+Qed.

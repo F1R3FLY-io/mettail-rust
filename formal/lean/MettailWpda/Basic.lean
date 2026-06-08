@@ -684,6 +684,63 @@ theorem nonAmbiguousDagFacadeFallsBackToFlatLex :
     flatLexDemandForDagFacade false = 1 := by
   rfl
 
+structure ParseAlternativeModel where
+  semanticKey : Nat
+  payload : Nat
+  deriving DecidableEq, Repr
+
+def semanticKeyRepresented
+    (alt : ParseAlternativeModel)
+    (output : List ParseAlternativeModel) : Prop :=
+  ∃ kept, kept ∈ output ∧ kept.semanticKey = alt.semanticKey
+
+def parserAssemblyPreservesSemanticKeys
+    (input output : List ParseAlternativeModel) : Prop :=
+  ∀ alt, alt ∈ input -> semanticKeyRepresented alt output
+
+theorem parserAssemblyIdentityPreservesSemanticKeys
+    (alts : List ParseAlternativeModel) :
+    parserAssemblyPreservesSemanticKeys alts alts := by
+  intro alt hin
+  exact ⟨alt, hin, rfl⟩
+
+theorem parserAssemblyPreservesDistinctPairWithoutEvidence
+    (left right : ParseAlternativeModel) :
+    parserAssemblyPreservesSemanticKeys [left, right] [left, right] := by
+  exact parserAssemblyIdentityPreservesSemanticKeys [left, right]
+
+structure EvalTermInfoModel where
+  termId : Nat
+  isNormal : Bool
+  deriving DecidableEq, Repr
+
+def eagerNormalForms
+    (terms : List EvalTermInfoModel) : List EvalTermInfoModel :=
+  terms.filter (fun term => term.isNormal)
+
+def lazyNormalFormsObservation
+    (terms : List EvalTermInfoModel)
+    (demand : Nat) : List EvalTermInfoModel :=
+  (eagerNormalForms terms).take demand
+
+theorem lazyNormalFormsObservationIsEagerPrefix
+    (terms : List EvalTermInfoModel)
+    (demand : Nat) :
+    lazyNormalFormsObservation terms demand =
+      (eagerNormalForms terms).take demand := by
+  rfl
+
+theorem lazyNormalFormsZeroDemand
+    (terms : List EvalTermInfoModel) :
+    lazyNormalFormsObservation terms 0 = [] := by
+  simp [lazyNormalFormsObservation]
+
+theorem normalFormsCollectingMatchesLazyAll
+    (terms : List EvalTermInfoModel) :
+    lazyNormalFormsObservation terms (eagerNormalForms terms).length =
+      eagerNormalForms terms := by
+  simp [lazyNormalFormsObservation]
+
 def normalizeRecoveryBeamWidth : Option Int -> Option Int
   | none => none
   | some width =>

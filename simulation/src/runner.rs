@@ -468,19 +468,19 @@ impl<'a> SimulationRunner<'a> {
         } else {
             // No normal form found but didn't hit step limit.
             // Check if there are any normal forms at all.
-            let nfs = results.normal_forms();
-            if nfs.is_empty() && !results.all_terms.is_empty() {
+            let mut nfs = results.normal_forms_iter();
+            if let Some(nf) = nfs.next() {
+                // There is a normal form but we couldn't find a path to it.
+                TraceOutcome::NormalForm {
+                    term: nf.display.clone(),
+                    steps: step_index,
+                }
+            } else if !results.all_terms.is_empty() {
                 TraceOutcome::StepLimitReached {
                     final_term: steps
                         .last()
                         .map(|s| s.term_display.clone())
                         .unwrap_or_default(),
-                }
-            } else if let Some(nf) = nfs.first() {
-                // There is a normal form but we couldn't find a path to it.
-                TraceOutcome::NormalForm {
-                    term: nf.display.clone(),
-                    steps: step_index,
                 }
             } else {
                 // Truly empty results (identity term?).

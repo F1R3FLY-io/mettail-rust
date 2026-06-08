@@ -398,17 +398,24 @@ impl AscentResults {
         }
     }
 
-    /// Get normal forms (terms with no outgoing rewrites)
+    /// Lazily iterate normal forms (terms with no outgoing rewrites).
+    pub fn normal_forms_iter(&self) -> impl Iterator<Item = &TermInfo> {
+        self.all_terms.iter().filter(|t| t.is_normal_form)
+    }
+
+    /// Get normal forms (terms with no outgoing rewrites).
     pub fn normal_forms(&self) -> Vec<&TermInfo> {
-        self.all_terms.iter().filter(|t| t.is_normal_form).collect()
+        self.normal_forms_iter().collect()
+    }
+
+    /// Lazily iterate rewrites from a specific term.
+    pub fn rewrites_from_iter(&self, term_id: u64) -> impl Iterator<Item = &Rewrite> {
+        self.rewrites.iter().filter(move |r| r.from_id == term_id)
     }
 
     /// Get rewrites from a specific term
     pub fn rewrites_from(&self, term_id: u64) -> Vec<&Rewrite> {
-        self.rewrites
-            .iter()
-            .filter(|r| r.from_id == term_id)
-            .collect()
+        self.rewrites_from_iter(term_id).collect()
     }
 
     /// Find a normal form reachable from the given term by following rewrites.
@@ -424,7 +431,7 @@ impl AscentResults {
         let mut queue = std::collections::VecDeque::from([start_id]);
         visited.insert(start_id);
         while let Some(id) = queue.pop_front() {
-            for rw in self.rewrites_from(id) {
+            for rw in self.rewrites_from_iter(id) {
                 let to_id = rw.to_id;
                 if visited.insert(to_id) {
                     if let Some(info) = term_by_id(to_id) {
@@ -479,5 +486,91 @@ impl AscentResults {
         self.equivalences
             .iter()
             .find(|ec| ec.term_ids.contains(&term_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_results() -> AscentResults {
+        AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 1,
+                    display: "start".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 2,
+                    display: "mid".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 3,
+                    display: "done".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 1,
+                    to_id: 2,
+                    rule_name: Some("step1".to_string()),
+                },
+                Rewrite {
+                    from_id: 2,
+                    to_id: 3,
+                    rule_name: Some("step2".to_string()),
+                },
+            ],
+            equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn normal_forms_iter_matches_collecting_api() {
+        let results = sample_results();
+        let lazy: Vec<_> = results
+            .normal_forms_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        let eager: Vec<_> = results
+            .normal_forms()
+            .iter()
+            .map(|term| term.display.as_str())
+            .collect();
+
+        assert_eq!(lazy, eager);
+        assert_eq!(lazy, vec!["done"]);
+    }
+
+    #[test]
+    fn rewrites_from_iter_matches_collecting_api() {
+        let results = sample_results();
+        let lazy: Vec<_> = results
+            .rewrites_from_iter(1)
+            .map(|rewrite| rewrite.to_id)
+            .collect();
+        let eager: Vec<_> = results
+            .rewrites_from(1)
+            .iter()
+            .map(|rewrite| rewrite.to_id)
+            .collect();
+
+        assert_eq!(lazy, eager);
+        assert_eq!(lazy, vec![2]);
+    }
+
+    #[test]
+    fn reachable_normal_form_uses_lazy_rewrite_iteration() {
+        let results = sample_results();
+        let nf = results
+            .normal_form_reachable_from(1)
+            .expect("normal form should be reachable");
+
+        assert_eq!(nf.term_id, 3);
+        assert_eq!(nf.display, "done");
     }
 }

@@ -252,8 +252,6 @@ fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenS
 fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> TokenStream {
     let term_name = format_ident!("{}Term", name);
     let inner_enum_name = format_ident!("{}TermInner", name);
-    // C1: Grammar name as a string literal for WeightCorrection category field
-    let name_str_lit = LitStr::new(&name.to_string(), name.span());
 
     let enum_variants: Vec<TokenStream> = language
         .types
@@ -327,17 +325,6 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                     }
                 }
             }
-        })
-        .collect();
-
-    // Generate per-variant is_accepting arms: delegates to is_ground() for deep
-    // recursive variable checking (no wasted arithmetic, handles nested variables).
-    let is_accepting_arms: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let variant = format_ident!("{}", t.name);
-            quote! { #inner_enum_name::#variant(inner) => inner.is_ground() }
         })
         .collect();
 
@@ -594,21 +581,15 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                 }
             }
 
-            /// Check if this alternative is "accepting" — i.e., fully resolved to a
-            /// concrete/ground term (no free variables, evaluable for native types).
-            fn is_accepting(&self) -> bool {
-                match self {
-                    #(#is_accepting_arms),*,
-                    #inner_enum_name::Ambiguous(_) => false,
-                }
-            }
-
             /// Collapse a vec of alternatives into a single term.
-            /// Invariants: flattens nested Ambiguous, panics on empty, unwraps singletons.
-            /// Final disambiguation: if only one alternative is "accepting" (concrete/ground),
-            /// choose it even if more candidates exist.
+            /// Invariants: flattens nested Ambiguous, panics on empty, unwraps singletons,
+            /// and deduplicates only by observational equivalence.
+            ///
+            /// This deliberately does not use groundness, WFST weight, or declaration order
+            /// to choose a single representative from semantically distinct alternatives.
+            /// Evaluation evidence is allowed to reject alternatives later; parse assembly is
+            /// only allowed to merge alternatives that share a semantic hash.
             fn from_alternatives(alts: Vec<Self>) -> Self {
-                let n_alts = alts.len();
                 let flat: Vec<Self> = alts.into_iter().flat_map(|a| match a {
                     Self::Ambiguous(inner) => inner,
                     other => vec![other],
@@ -617,102 +598,34 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                     0 => panic!("from_alternatives: empty alternatives"),
                     1 => flat.into_iter().next().expect("checked len == 1"),
                     _ => {
-                        /* Final disambiguation: if exactly one alternative is accepting
-                           (concrete/ground), choose it regardless of how many candidates exist. */
-                        let accepting: Vec<(usize, &Self)> = flat.iter()
-                            .enumerate()
-                            .filter(|(_, a)| a.is_accepting())
-                            .collect();
-                        match accepting.len() {
-                            1 => {
-                                /* C1: Single accepting alternative — if the weight-best was NOT this
-                                   one, record a weight correction (the WFST's predicted best was wrong). */
-                                let weights = AMBIGUOUS_WEIGHTS.with(|cell| cell.take());
-                                if weights.len() == n_alts && flat.len() == n_alts {
-                                    let accepted_idx = accepting[0].0;
-                                    let primary_idx = weights.iter()
-                                        .enumerate()
-                                        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                                        .map(|(i, _)| i)
-                                        .unwrap_or(0);
-                                    if accepted_idx != primary_idx {
-                                        WEIGHT_CORRECTIONS.with(|cell| {
-                                            let mut corrections = cell.take();
-                                            corrections.push(mettail_prattail::wfst::WeightCorrection {
-                                                category: #name_str_lit,
-                                                primary_weight: weights[primary_idx],
-                                                selected_weight: weights[accepted_idx],
-                                                alternatives_considered: n_alts,
-                                            });
-                                            cell.set(corrections);
-                                        });
-                                    }
-                                }
-                                accepting[0].1.clone()
+                        // Phase F.13 Stage 2.3.1 (2026-05-22):
+                        // semantic_hash dedup — equivalence class under
+                        // Ascent's rewrite relation, not structural identity
+                        // and not Display identity. Transparent projection
+                        // wrappers (cast-permutation cohorts like IntToBigRat /
+                        // BigIntToBigRat / IntToBigInt) collapse to a canonical
+                        // core; evaluatively-distinct alts (like -3! Fact vs
+                        // Neg(Fact)) are preserved.
+                        //
+                        // Replaces both weight/groundness selection and
+                        // Display-dedup. Groundness is not semantic rejection
+                        // evidence, and display-equivalent alternatives can
+                        // still differ evaluatively.
+                        let mut seen_hashes: std::collections::HashSet<u64> =
+                            std::collections::HashSet::with_capacity(flat.len());
+                        let mut deduped: Vec<Self> = Vec::with_capacity(flat.len());
+                        for a in flat.into_iter() {
+                            use std::hash::Hasher;
+                            let mut hasher = rustc_hash::FxHasher::default();
+                            a.semantic_hash(&mut hasher);
+                            let h = hasher.finish();
+                            if seen_hashes.insert(h) {
+                                deduped.push(a);
                             }
-                            _ => {
-                                /* Multiple accepting alternatives: preserve them as
-                                   Ambiguous so downstream code (tests, env
-                                   substitution, cross-category resolution) can see
-                                   every distinct interpretation. Prior behavior
-                                   picked a weight-best alt and discarded the others,
-                                   which masked semantically-distinct parses (e.g.
-                                   `42` as direct `Int(NumLit)` vs
-                                   `Proc(ProcInt(Int(NumLit)))`). Callers that want
-                                   a single value can inspect `alts[0]` or rely on
-                                   `run_ascent` to collapse to a normal form.
-
-                                   Display-based dedup (2026-05-18,
-                                   replicated-conjuring-turtle.md follow-up): the
-                                   WPDS parser can produce structurally-distinct
-                                   alternatives whose Display output is identical
-                                   (e.g., rhocalc `{true and true}` produced 9
-                                   alts from lex-ambiguity of `true`/`and`
-                                   between Ident and keyword paths). Feeding the
-                                   duplicates into Ascent caused exponential
-                                   fixpoint blowup. Per Tomita 1986 §6.3 SPPF
-                                   Symbol-dedup, display-equivalent alts are
-                                   observationally indistinguishable to the
-                                   evaluator (normal_forms compares by display
-                                   string); collapse by first occurrence. NOT a
-                                   weight-based pruning — equivalent terms
-                                   collapse by observational equivalence per
-                                   feedback_never_disambiguate_early.md. */
-                                // Phase F.13 Stage 2.3.1 (2026-05-22):
-                                // semantic_hash dedup — equivalence
-                                // class under Ascent's rewrite relation,
-                                // not structural identity. Transparent
-                                // projection wrappers (cast-permutation
-                                // cohorts like IntToBigRat / BigIntToBigRat /
-                                // IntToBigInt) collapse to a canonical
-                                // core; evaluatively-distinct alts (like
-                                // -3! Fact vs Neg(Fact)) are preserved.
-                                //
-                                // Replaces Stage 2.2's Hash-dedup which
-                                // correctly fixed `-3!` but caused Ascent
-                                // congruence-closure divergence
-                                // (O(|eq_X|² · |rw_X|) iteration over
-                                // N display-identical cast-wrapper alts)
-                                // — confirmed empirically at
-                                // calculator-datalog.rs:11571-11641 in
-                                // sim_calculator_proptest_campaign.
-                                let mut seen_hashes: std::collections::HashSet<u64> =
-                                    std::collections::HashSet::with_capacity(flat.len());
-                                let mut deduped: Vec<Self> = Vec::with_capacity(flat.len());
-                                for a in flat.into_iter() {
-                                    use std::hash::Hasher;
-                                    let mut hasher = rustc_hash::FxHasher::default();
-                                    a.semantic_hash(&mut hasher);
-                                    let h = hasher.finish();
-                                    if seen_hashes.insert(h) {
-                                        deduped.push(a);
-                                    }
-                                }
-                                match deduped.len() {
-                                    1 => deduped.into_iter().next().expect("dedup retained 1"),
-                                    _ => Self::Ambiguous(deduped),
-                                }
-                            }
+                        }
+                        match deduped.len() {
+                            1 => deduped.into_iter().next().expect("dedup retained 1"),
+                            _ => Self::Ambiguous(deduped),
                         }
                     }
                 }
@@ -2088,12 +2001,6 @@ fn generate_language_struct_multi(
             // is preserved because static-analysis lints still consume
             // the enumerated rule-label fanout set for diagnostics).
             //
-            // `success_weights` retained with default `0.5` so
-            // `from_alternatives` (via `AMBIGUOUS_WEIGHTS`) keeps its
-            // length-equal invariant. WeightCorrection emissions are
-            // now quiescent (all weights tie); future Stage 10b-prime
-            // can wire real per-cat WPDS weights via
-            // `parse_<Cat>_via_wpda_with_weight`.
             // M8b (2026-05-14): use parse_via_wpda_all so within-cat
             // multi-result is surfaced into `successes`. The cross-cat
             // flatten below (match-on-len at lines 2718-2727) then
@@ -2104,7 +2011,6 @@ fn generate_language_struct_multi(
                     Ok(terms) => {
                         for t in terms {
                             successes.push(#inner_enum_name::#variant(t));
-                            success_weights.push(0.5);
                         }
                     },
                     Err(e) => {
@@ -3027,24 +2933,6 @@ fn generate_language_struct_multi(
         /// Language implementation struct (multi-category: one parser/relation per type).
         pub struct #language_name;
 
-        thread_local! {
-            /// WFST weights for NFA-ambiguous alternatives, parallel to the `successes`
-            /// vec in `parse_preserving_vars`. Set before `from_alternatives` so it can
-            /// use weights as tiebreaker when multiple alternatives are accepting.
-            static AMBIGUOUS_WEIGHTS: std::cell::Cell<Vec<f64>> =
-                std::cell::Cell::new(Vec::new());
-
-            /// C1: Accumulated weight corrections from semantic disambiguation.
-            /// When `from_alternatives` selects a non-weight-best alternative
-            /// (because only it was accepting or because semantic tiebreaking
-            /// overrode the WFST ordering), a `WeightCorrection` is recorded.
-            ///
-            /// Drain via `drain_weight_corrections()` after each parse to
-            /// collect feedback for offline weight training.
-            static WEIGHT_CORRECTIONS: std::cell::Cell<Vec<mettail_prattail::wfst::WeightCorrection>> =
-                std::cell::Cell::new(Vec::new());
-        }
-
         impl #language_name {
             /// A-RT05: Maximum term depth threshold for post-fixpoint convergence check.
             ///
@@ -3071,7 +2959,6 @@ fn generate_language_struct_multi(
                 #lexer_probe
 
                 let mut successes = Vec::new();
-                let mut success_weights: Vec<f64> = Vec::new();
                 let mut first_err = None;
                 #(#parse_tries)*
                 // Stage 3.12.8 M2 (2026-05-03): post-parse spurious cross-cat
@@ -3089,42 +2976,23 @@ fn generate_language_struct_multi(
                         .any(|s| !s.is_uniformly_auto_injected());
                     if any_non_spurious {
                         let mut filtered = Vec::with_capacity(successes.len());
-                        let mut filtered_weights = Vec::with_capacity(success_weights.len());
-                        for (s, w) in successes.into_iter().zip(success_weights.into_iter()) {
+                        for s in successes.into_iter() {
                             if !s.is_uniformly_auto_injected() {
                                 filtered.push(s);
-                                filtered_weights.push(w);
                             }
                         }
                         successes = filtered;
-                        success_weights = filtered_weights;
                     }
                 }
-                // Display-based dedup (2026-05-18, replicated-conjuring-turtle.md
-                // follow-up): the WPDS parser can produce structurally-distinct
-                // alternatives whose Display output is identical (e.g.,
-                // rhocalc `{true and true}` produces 9 alts from lex-ambiguity
-                // of `true`/`and` between Ident and keyword). Feeding the
-                // duplicates into Ascent caused exponential fixpoint blowup —
-                // diagnosed empirically at `docs/design/notes/2026-05-18-
-                // cursor-explosion-rhocalc.md`. Dedup by Display string;
-                // first occurrence wins (and its WFST weight is kept).
-                //
-                // Rationale: structurally-distinct-but-display-identical alts
-                // represent the SAME semantic parse with different lex paths
-                // through ambiguous keyword/identifier dispatches. The Ascent
-                // evaluator is display-driven (normal_forms compared by
-                // display string), so display-identical alts are
-                // semantically indistinguishable to it. Per
-                // `feedback_never_disambiguate_early.md` this is NOT
-                // weight-based pruning — equivalent terms collapse by
-                // observational equivalence, which is the principled
-                // ambiguity-resolution mechanism (Tomita 1986 §6.3 SPPF
-                // Symbol-dedup, lifted from SPPF nodes to user-AST terms).
-                // Phase F.13 Stage 2.2 (2026-05-22): structural
-                // (Hash-based) dedup. Display equivalence is NOT
-                // observational equivalence (see from_alternatives
-                // commentary). `-3!` produces both
+                // Phase F.13 Stage 2.2 (2026-05-22): semantic-hash dedup.
+                // The WPDS parser can produce structurally-distinct
+                // alternatives that are observationally equivalent (for
+                // example, transparent auto-injection wrappers reached through
+                // different lex paths). Feeding those duplicates into Ascent
+                // caused exponential fixpoint blowup. Collapse only by
+                // semantic_hash: Display equivalence, WFST weight, and
+                // groundness are not valid parse-time rejection evidence.
+                // `-3!` produces both
                 // CalculatorTermInner::Int(Fact(NumLit(-3))) (evals
                 // "error") and CalculatorTermInner::Int(Neg(Fact(NumLit(3))))
                 // (evals "-6") — both display "-3!" but their ASTs
@@ -3133,56 +3001,38 @@ fn generate_language_struct_multi(
                     let mut seen_hashes: std::collections::HashSet<u64> =
                         std::collections::HashSet::with_capacity(successes.len());
                     let mut deduped: Vec<_> = Vec::with_capacity(successes.len());
-                    let mut deduped_weights: Vec<f64> = Vec::with_capacity(success_weights.len());
-                    for (s, w) in successes.into_iter().zip(success_weights.into_iter()) {
+                    for s in successes.into_iter() {
                         use std::hash::Hasher;
                         let mut hasher = rustc_hash::FxHasher::default();
                         s.semantic_hash(&mut hasher);
                         let h = hasher.finish();
                         if seen_hashes.insert(h) {
                             deduped.push(s);
-                            deduped_weights.push(w);
                         }
                     }
                     successes = deduped;
-                    success_weights = deduped_weights;
                 }
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
                     1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
-                    _ => {
-                        /* Set AMBIGUOUS_WEIGHTS thread-local so from_alternatives can use
-                           WFST weights for tiebreaking when multiple alternatives are accepting. */
-                        AMBIGUOUS_WEIGHTS.with(|cell| cell.set(success_weights));
-                        Ok(#term_name(#inner_enum_name::from_alternatives(successes)))
-                    }
+                    _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes)))
                 }
             }
 
-            /// C1: Drain accumulated weight corrections from semantic disambiguation.
+            /// Drain accumulated weight corrections from semantic disambiguation.
             ///
-            /// Returns all `WeightCorrection` events recorded since the last drain.
-            /// Call after each `parse()` to collect feedback for weight training:
-            ///
-            /// ```ignore
-            /// let term = MyLanguage::parse("input")?;
-            /// let corrections = MyLanguage::drain_weight_corrections();
-            /// for c in &corrections {
-            ///     eprintln!("WFST correction in {}: primary_w={}, selected_w={}, delta={}",
-            ///               c.category, c.primary_weight, c.selected_weight, c.weight_delta());
-            /// }
-            /// ```
-            ///
-            /// The returned vec is empty when the WFST's weight ordering was correct
-            /// for all disambiguation decisions in the most recent parse.
+            /// Parse assembly no longer chooses one semantically distinct
+            /// alternative by WFST weight or groundness, so it records no
+            /// correction events. The method is kept as a stable API surface
+            /// for callers that already drain after parse.
             pub fn drain_weight_corrections() -> Vec<mettail_prattail::wfst::WeightCorrection> {
-                WEIGHT_CORRECTIONS.with(|cell| cell.take())
+                Vec::new()
             }
 
             /// Run Ascent on a typed term (seeds the relation for the term's category).
-            /// For Ambiguous terms, evaluates only the first alternative by declaration
-            /// order. All alternatives that reach Stage C are valid parses, so evaluating
-            /// only the first-declared is deterministic and avoids redundant Ascent runs.
+            /// For Ambiguous terms, seeds every alternative that survived observational
+            /// deduplication so evaluator evidence, not parser declaration order, resolves
+            /// the ambiguity.
             ///
             /// SCC splitting: when available, core-category inputs (e.g., Proc, Name) use
             /// a smaller Ascent struct with fewer rules, reducing fixpoint iteration cost.

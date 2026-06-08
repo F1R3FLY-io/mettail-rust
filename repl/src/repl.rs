@@ -1164,14 +1164,14 @@ impl Repl {
         println!("Computed:");
         println!("  - {} terms", results.all_terms.len());
         println!("  - {} rewrites", results.rewrites.len());
-        println!("  - {} normal forms", results.normal_forms().len());
+        println!("  - {} normal forms", results.normal_forms_iter().count());
         println!();
 
         let initial_id = term.term_id();
 
         if step_mode {
             // Step: always show initial term so user can apply rewrites one by one
-            let available = results.rewrites_from(initial_id).len();
+            let available = results.rewrites_from_iter(initial_id).count();
             println!("{}", "Current term (initial):".bold());
             let formatted = format_term_pretty(&format!("{}", term));
             println!("{}", formatted.cyan());
@@ -1332,7 +1332,7 @@ impl Repl {
     fn cmd_normal_forms(&self) -> Result<()> {
         let results = self.get_results()?;
 
-        let normal_forms = results.normal_forms();
+        let normal_forms: Vec<_> = results.normal_forms_iter().collect();
 
         println!();
         if normal_forms.is_empty() {
@@ -1541,16 +1541,12 @@ impl Repl {
 
         let results = self.get_results()?;
 
-        let normal_forms = results.normal_forms();
-
-        if idx >= normal_forms.len() {
-            anyhow::bail!(
+        let target_info = results.normal_forms_iter().nth(idx).ok_or_else(|| {
+            anyhow::anyhow!(
                 "Normal form {} not found. Use 'normal-forms' to see available normal forms.",
                 idx
-            );
-        }
-
-        let target_info = &normal_forms[idx];
+            )
+        })?;
 
         // Parse the target term
         let target_term = language

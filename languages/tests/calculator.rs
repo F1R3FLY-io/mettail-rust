@@ -760,6 +760,41 @@ fn test_factorial_ambiguous_negation_preserves_both_parse_alternatives() {
 }
 
 #[test]
+fn test_factorial_ambiguous_language_parse_preserves_both_alternatives() {
+    use calc::{CalculatorTermInner, Int};
+
+    mettail_runtime::clear_var_cache();
+    let term = calc::CalculatorLanguage::parse("-3!").expect("-3! should parse as language term");
+    let alts = match &term.0 {
+        CalculatorTermInner::Ambiguous(alts) => alts,
+        other => panic!("expected Ambiguous language term for -3!, got {:?}", other),
+    };
+
+    assert!(
+        alts.iter().any(|alt| {
+            matches!(
+                alt,
+                CalculatorTermInner::Int(Int::Fact(a))
+                    if matches!(a.as_ref(), Int::NumLit(-3))
+            )
+        }),
+        "expected atomic-negative branch Fact(NumLit(-3)); got {:?}",
+        alts
+    );
+    assert!(
+        alts.iter().any(|alt| {
+            matches!(
+                alt,
+                CalculatorTermInner::Int(Int::Neg(a))
+                    if matches!(a.as_ref(), Int::Fact(b) if matches!(b.as_ref(), Int::NumLit(3)))
+            )
+        }),
+        "expected prefix-negative branch Neg(Fact(NumLit(3))); got {:?}",
+        alts
+    );
+}
+
+#[test]
 fn test_factorial_ambiguous_negation_rejects_invalid_branch_by_evidence() {
     calc_normal_form("-3!", "-6");
 }
