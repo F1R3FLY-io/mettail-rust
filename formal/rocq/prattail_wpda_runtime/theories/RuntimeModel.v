@@ -1066,6 +1066,49 @@ Definition materialized_eoi_count
     (frames : list lazy_eoi_frame) : nat :=
   count_eoi_classes predicate (flat_map materialized_eoi_frame frames).
 
+Fixpoint first_eoi_class_offset
+    (predicate : eoi_cursor_class -> bool)
+    (classes : list eoi_cursor_class) : option nat :=
+  match classes with
+  | [] => None
+  | class :: rest =>
+      if predicate class then Some 0
+      else option_map S (first_eoi_class_offset predicate rest)
+  end.
+
+Definition lazy_eoi_frame_first_offset
+    (predicate : eoi_cursor_class -> bool)
+    (frame : lazy_eoi_frame) : option nat :=
+  first_eoi_class_offset predicate (materialized_eoi_frame frame).
+
+Fixpoint lazy_eoi_first_offset
+    (predicate : eoi_cursor_class -> bool)
+    (frames : list lazy_eoi_frame) : option nat :=
+  match frames with
+  | [] => None
+  | frame :: rest =>
+      match lazy_eoi_frame_first_offset predicate frame with
+      | Some offset => Some offset
+      | None =>
+          option_map
+            (Nat.add (length (materialized_eoi_frame frame)))
+            (lazy_eoi_first_offset predicate rest)
+      end
+  end.
+
+Definition materialized_eoi_first_offset
+    (predicate : eoi_cursor_class -> bool)
+    (frames : list lazy_eoi_frame) : option nat :=
+  first_eoi_class_offset predicate (flat_map materialized_eoi_frame frames).
+
+Definition lazy_eoi_first_accepting_offset
+    (frames : list lazy_eoi_frame) : option nat :=
+  lazy_eoi_first_offset eoi_accepting_class frames.
+
+Definition materialized_eoi_first_accepting_offset
+    (frames : list lazy_eoi_frame) : option nat :=
+  materialized_eoi_first_offset eoi_accepting_class frames.
+
 Definition lazy_eoi_physical_frontier_len
     (frames : list lazy_eoi_frame) : nat :=
   length frames.
@@ -1080,6 +1123,32 @@ Proof.
   induction xs as [|x xs IH].
   - reflexivity.
   - simpl. rewrite IH. now destruct (predicate x).
+Qed.
+
+Lemma first_eoi_class_offset_app :
+  forall predicate xs ys,
+    first_eoi_class_offset predicate (xs ++ ys) =
+    match first_eoi_class_offset predicate xs with
+    | Some offset => Some offset
+    | None =>
+        option_map
+          (Nat.add (length xs))
+          (first_eoi_class_offset predicate ys)
+    end.
+Proof.
+  intros predicate xs ys.
+  induction xs as [|x xs IH].
+  - simpl.
+    destruct (first_eoi_class_offset predicate ys) as [offset |];
+      reflexivity.
+  - simpl.
+    destruct (predicate x) eqn:Hpred.
+    + reflexivity.
+    + rewrite IH.
+      destruct (first_eoi_class_offset predicate xs) as [offset |].
+      * reflexivity.
+      * destruct (first_eoi_class_offset predicate ys) as [offset |];
+          reflexivity.
 Qed.
 
 Lemma lazy_eoi_frame_count_matches_materialized :
@@ -1132,6 +1201,36 @@ Theorem lazy_eoi_survivor_count_matches_eager_materialization :
     materialized_eoi_count eoi_survives_premature_filter frames.
 Proof.
   apply lazy_eoi_count_matches_eager_materialization.
+Qed.
+
+Theorem lazy_eoi_first_offset_matches_eager_materialization :
+  forall predicate frames,
+    lazy_eoi_first_offset predicate frames =
+    materialized_eoi_first_offset predicate frames.
+Proof.
+  intros predicate frames.
+  unfold materialized_eoi_first_offset.
+  induction frames as [|frame rest IH].
+  - reflexivity.
+  - simpl.
+    unfold lazy_eoi_frame_first_offset.
+    rewrite first_eoi_class_offset_app.
+    destruct
+      (first_eoi_class_offset predicate (materialized_eoi_frame frame))
+      as [offset |].
+    + reflexivity.
+    + now rewrite IH.
+Qed.
+
+Theorem lazy_eoi_first_accepting_offset_matches_eager_materialization :
+  forall frames,
+    lazy_eoi_first_accepting_offset frames =
+    materialized_eoi_first_accepting_offset frames.
+Proof.
+  intros frames.
+  unfold lazy_eoi_first_accepting_offset,
+    materialized_eoi_first_accepting_offset.
+  apply lazy_eoi_first_offset_matches_eager_materialization.
 Qed.
 
 Theorem lazy_eoi_snapshot_preserves_physical_frontier :

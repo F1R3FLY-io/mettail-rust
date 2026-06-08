@@ -16970,6 +16970,76 @@ mod tests {
     }
 
     #[test]
+    fn eoi_accepts_from_lazy_cohort_and_commits_first_candidate() {
+        let token_kinds = [TokenKind::Integer];
+        let token_texts = ["42"];
+        let token_src =
+            crate::wpda_runtime::SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
+        w.deterministic = false;
+        w.pos = 1;
+        w.state = WpdaState::AmbiguityFanout { branches: vec![10] };
+
+        let root = install_atomic_int_success_root(&mut w);
+        w.sppf_symbol_terms.insert(
+            root,
+            SppfSymbolTerm {
+                value: Arc::new(42_i64),
+                output_cat: Some(0),
+            },
+        );
+
+        let mut shell_cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::Accepted,
+        );
+        shell_cursor.sppf_stack_id = w
+            .sppf_stack_arena
+            .intern_push(shell_cursor.sppf_stack_id, root);
+        let key = crate::dispatch_cohort::DispatchKey::new(1, 1, 0, 0, 0);
+        let shell = std::sync::Arc::new(crate::cohort_lazy::CohortShell::from_branch_cursor(
+            &shell_cursor,
+            key,
+        ));
+        let mut cohort = crate::cohort_lazy::CohortFrame::new(shell);
+        let expected_weights = [lex(1.0, 1, 0), lex(2.0, 2, 0)];
+        for (idx, weight) in expected_weights.iter().copied().enumerate() {
+            let mut member_cursor = shell_cursor.clone();
+            member_cursor.weight = weight;
+            cohort.push_member(
+                crate::cohort_lazy::CohortMemberState::from_branch_cursor_with_member_id(
+                    &member_cursor,
+                    weight,
+                    idx as u64 + 1,
+                ),
+            );
+        }
+        w.branch_cursors = vec![crate::cohort_lazy::Frame::Cohort(Box::new(cohort))];
+
+        match w.resolve_at_end_of_input(&token_src) {
+            WpdaResolveResult::Accepted { weights, terms, roots } => {
+                assert_eq!(weights, expected_weights);
+                assert_eq!(terms.len(), expected_weights.len());
+                for term in terms {
+                    let value = term.downcast::<i64>().expect("accepted cohort term is i64");
+                    assert_eq!(*value, 42);
+                }
+                assert_eq!(roots, vec![root, root]);
+            },
+            other => panic!("expected Accepted from lazy cohort, got {:?}", other),
+        }
+        assert_eq!(*w.state(), WpdaState::Accepted);
+        assert_eq!(w.position(), 1);
+        assert_eq!(*w.weight(), expected_weights[0]);
+        assert!(
+            matches!(w.branch_cursors.as_slice(), [crate::cohort_lazy::Frame::Concrete(_)]),
+            "EOI commit should install only the selected winner cursor"
+        );
+    }
+
+    #[test]
     fn process_event_inspect_yields_no_change() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
         let t = w.process_event(WpdaEvent::Inspect, &empty_tokens());
