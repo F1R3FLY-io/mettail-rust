@@ -2225,6 +2225,91 @@ Proof.
   - reflexivity.
 Qed.
 
+Record weighted_parse_alternative_model : Type := {
+  wpam_alt : exact_parse_alternative_model;
+  wpam_weight : nat;
+  wpam_sequence : nat
+}.
+
+Definition erase_weighted_parse_alternative
+    (alt : weighted_parse_alternative_model)
+    : exact_parse_alternative_model :=
+  wpam_alt alt.
+
+Definition weighted_exact_key_pair_dedup
+    (left right : weighted_parse_alternative_model)
+    : list weighted_parse_alternative_model :=
+  if semantic_key_eq_dec
+       (epam_semantic_key (erase_weighted_parse_alternative left))
+       (epam_semantic_key (erase_weighted_parse_alternative right))
+  then [left]
+  else [left; right].
+
+Definition weighted_exact_semantic_key_represented
+    (alt : exact_parse_alternative_model)
+    (output : list weighted_parse_alternative_model) : Prop :=
+  exists kept,
+    In kept output /\
+    epam_semantic_key
+      (erase_weighted_parse_alternative kept) =
+      epam_semantic_key alt.
+
+Definition weighted_parser_assembly_preserves_semantic_keys
+    (input : list exact_parse_alternative_model)
+    (output : list weighted_parse_alternative_model) : Prop :=
+  forall alt,
+    In alt input ->
+    weighted_exact_semantic_key_represented alt output.
+
+Theorem weighted_exact_key_pair_dedup_preserves_distinct_keys :
+  forall left right,
+    epam_semantic_key (erase_weighted_parse_alternative left) <>
+      epam_semantic_key (erase_weighted_parse_alternative right) ->
+    weighted_exact_key_pair_dedup left right = [left; right].
+Proof.
+  intros left right Hdistinct.
+  unfold weighted_exact_key_pair_dedup.
+  destruct (semantic_key_eq_dec
+              (epam_semantic_key (erase_weighted_parse_alternative left))
+              (epam_semantic_key (erase_weighted_parse_alternative right)))
+    as [Heq | _].
+  - contradiction.
+  - reflexivity.
+Qed.
+
+Theorem weighted_parser_alternatives_preserve_unweighted_set :
+  forall left right weight_left weight_right seq_left seq_right,
+    epam_semantic_key left <> epam_semantic_key right ->
+    weighted_parser_assembly_preserves_semantic_keys
+      [left; right]
+      (weighted_exact_key_pair_dedup
+         {| wpam_alt := left;
+            wpam_weight := weight_left;
+            wpam_sequence := seq_left |}
+         {| wpam_alt := right;
+            wpam_weight := weight_right;
+            wpam_sequence := seq_right |}).
+Proof.
+  intros left right weight_left weight_right seq_left seq_right Hdistinct.
+  unfold weighted_parser_assembly_preserves_semantic_keys.
+  intros alt Hin.
+  rewrite weighted_exact_key_pair_dedup_preserves_distinct_keys.
+  - destruct Hin as [Hleft | [Hright | Hnone]].
+    + subst alt.
+      exists {| wpam_alt := left;
+                wpam_weight := weight_left;
+                wpam_sequence := seq_left |}.
+      split; [simpl; auto | reflexivity].
+    + subst alt.
+      exists {| wpam_alt := right;
+                wpam_weight := weight_right;
+                wpam_sequence := seq_right |}.
+      split; [simpl; auto | reflexivity].
+    + contradiction.
+  - simpl.
+    exact Hdistinct.
+Qed.
+
 Record substitution_alt_model : Type := {
   sam_before : exact_parse_alternative_model;
   sam_after : exact_parse_alternative_model
