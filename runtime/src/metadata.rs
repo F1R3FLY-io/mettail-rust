@@ -198,12 +198,13 @@ pub struct RewriteDef {
     /// Right-hand side in user syntax
     pub rhs: &'static str,
 
-    /// Whether this rewrite rule has a `BehavioralGuard` premise.
+    /// Whether this rewrite rule has a guard premise.
     ///
-    /// Set by the macro codegen when the rewrite's premise list contains
-    /// a `Premise::BehavioralGuard(...)` entry. The simulator uses this
-    /// field to identify guarded rewrites for the `GuardSatisfaction`
-    /// invariant and for guard-aware rule scheduling.
+    /// Set by the macro codegen when the rewrite's premise list contains a
+    /// user-authored `Premise::BehavioralGuard(...)` entry or a generated
+    /// `Premise::SyntheticInjGuard { .. }` entry. The simulator uses this
+    /// field to identify guarded rewrites for guard-aware invariants and
+    /// scheduling.
     pub is_guarded: bool,
 }
 

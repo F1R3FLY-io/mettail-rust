@@ -2724,3 +2724,63 @@ Proof.
     eager_parse_weighted_evaluation_prefix.
   apply lazy_weighted_seed_normal_forms_is_eager_prefix.
 Qed.
+
+Inductive cast_normalization_step_result : Type :=
+  | CastNormalizationApplied (next_depth : nat)
+  | CastNormalizationBudgetExceeded (budget actual : nat)
+  | CastNormalizationGuardRejected.
+
+Inductive cast_normalization_bound_source : Type :=
+  | BoundBySyntheticInjGuard
+  | BoundByGeneratedNormCast.
+
+Definition cast_normalization_bound_applies
+    (source : cast_normalization_bound_source)
+    (is_auto_injected_norm_cast has_synthetic_guard : bool)
+    : Prop :=
+  match source with
+  | BoundBySyntheticInjGuard => has_synthetic_guard = true
+  | BoundByGeneratedNormCast => is_auto_injected_norm_cast = true
+  end.
+
+Definition guarded_cast_normalization_step
+    (budget depth : nat)
+    (guard_allows : bool)
+    : cast_normalization_step_result :=
+  if guard_allows then
+    if depth <? budget
+    then CastNormalizationApplied (S depth)
+    else CastNormalizationBudgetExceeded budget (S depth)
+  else CastNormalizationGuardRejected.
+
+Theorem cast_normalization_budget_sound :
+  forall budget depth,
+    match guarded_cast_normalization_step budget depth true with
+    | CastNormalizationApplied next =>
+        depth < budget /\ next = S depth
+    | CastNormalizationBudgetExceeded reported_budget actual =>
+        budget <= depth /\
+        reported_budget = budget /\
+        actual = S depth
+    | CastNormalizationGuardRejected => False
+    end.
+Proof.
+  intros budget depth.
+  unfold guarded_cast_normalization_step.
+  destruct (depth <? budget) eqn:Hlt.
+  - apply Nat.ltb_lt in Hlt.
+    split; [exact Hlt | reflexivity].
+  - apply Nat.ltb_ge in Hlt.
+    repeat split; try exact Hlt; reflexivity.
+Qed.
+
+Theorem cast_normalization_guard_rejection_is_explicit :
+  forall budget depth,
+    guarded_cast_normalization_step budget depth false =
+      CastNormalizationGuardRejected.
+Proof. reflexivity. Qed.
+
+Theorem generated_norm_cast_bound_is_independent_of_guard_metadata :
+  cast_normalization_bound_applies
+    BoundByGeneratedNormCast true false.
+Proof. reflexivity. Qed.

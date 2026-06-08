@@ -916,6 +916,36 @@ fn emit_cancellation_pair_lints(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeneratedDepthBound {
+    SyntheticInjGuard,
+    AutoNormCast,
+}
+
+fn generated_rewrite_depth_bound(
+    language: &LanguageDef,
+    rule_name: &str,
+) -> Option<GeneratedDepthBound> {
+    let rw = language
+        .rewrites
+        .iter()
+        .find(|rw| rw.name.to_string() == rule_name)?;
+
+    if rw
+        .premises
+        .iter()
+        .any(|p| matches!(p, mettail_ast::language::Premise::SyntheticInjGuard { .. }))
+    {
+        return Some(GeneratedDepthBound::SyntheticInjGuard);
+    }
+
+    if rw.is_auto_injected && rw.name.to_string().starts_with("NormCast") {
+        return Some(GeneratedDepthBound::AutoNormCast);
+    }
+
+    None
+}
+
 /// A-RT05: Emit compile-time lint diagnostics for depth delta analysis.
 ///
 /// Analyzes all equation/rewrite patterns and warns when:
@@ -931,15 +961,18 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
         return;
     }
 
-    let is_bounded = rules::is_depth_bounded(&results);
-
     let mut diagnostics = Vec::new();
 
     // Collect individual depth-increasing rules
     let increasing: Vec<&rules::DepthDeltaResult> =
         results.iter().filter(|r| r.delta > 0).collect();
+    let unbounded_increasing: Vec<&rules::DepthDeltaResult> = increasing
+        .iter()
+        .copied()
+        .filter(|r| generated_rewrite_depth_bound(language, &r.rule_name).is_none())
+        .collect();
 
-    for r in &increasing {
+    for r in &unbounded_increasing {
         let rule_kind = if r.is_equation { "equation" } else { "rewrite" };
 
         // Derive the category from the equation/rewrite's LHS pattern
@@ -970,8 +1003,8 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
                 rule_kind, r.rule_name, r.lhs_depth, r.rhs_depth, r.delta,
             ),
             hint: Some(
-                "depth-increasing rules can cause unbounded term growth during fixpoint computation; \
-                 consider whether a complementary depth-reducing rule exists"
+                "depth-increasing rules can cause unbounded term growth during fixpoint \
+                 computation; consider whether a complementary depth-reducing rule exists"
                     .to_string(),
             ),
             grammar_name: Some(grammar_name.to_string()),
@@ -979,8 +1012,10 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
         });
     }
 
+    let generated_bounded_count = increasing.len() - unbounded_increasing.len();
+
     // Summary diagnostic: bounded vs unbounded
-    if is_bounded {
+    if rules::is_depth_bounded(&results) {
         diagnostics.push(build_lint(
             mettail_prattail::lint::DiagnosticId::A01,
             "depth-bounded-grammar",
@@ -992,7 +1027,7 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
             None,
             Some(grammar_name.to_string()),
         ));
-    } else if !increasing.is_empty() {
+    } else if !unbounded_increasing.is_empty() {
         diagnostics.push(build_lint(
             mettail_prattail::lint::DiagnosticId::A01,
             "depth-unbounded-grammar",
@@ -1000,12 +1035,49 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
             format!(
                 "grammar has {} depth-increasing rule(s) out of {} total — \
                  fixpoint may not converge without runtime depth bound (A-RT05)",
-                increasing.len(),
+                unbounded_increasing.len(),
                 results.len(),
             ),
             Some(
                 "a runtime depth bound of 100 is applied to detect non-convergence; \
                  review depth-increasing rules or increase the bound if needed"
+                    .to_string(),
+            ),
+            Some(grammar_name.to_string()),
+        ));
+        if generated_bounded_count > 0 {
+            diagnostics.push(build_lint(
+                mettail_prattail::lint::DiagnosticId::A01,
+                "generated-bounded-depth-growth",
+                mettail_prattail::lint::LintSeverity::Note,
+                format!(
+                    "{} generated depth-increasing cast-normalization rule(s) were classified \
+                     as bounded by synthetic injection guards or auto-injected NormCast \
+                     canonicalization",
+                    generated_bounded_count,
+                ),
+                Some(
+                    "generated cast-normalization evidence prevents these synthetic rules from \
+                     being treated as user grammar growth; no regular-expression change is \
+                     required"
+                        .to_string(),
+                ),
+                Some(grammar_name.to_string()),
+            ));
+        }
+    } else if !increasing.is_empty() {
+        diagnostics.push(build_lint(
+            mettail_prattail::lint::DiagnosticId::A01,
+            "guard-bounded-depth-growth",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!(
+                "all {} depth-increasing rule(s) are generated-bounded by synthetic injection \
+                 guards or auto-injected NormCast canonicalization",
+                increasing.len(),
+            ),
+            Some(
+                "generated cast-normalization evidence prevents these synthetic rules from being \
+                 treated as user grammar growth; no regular-expression change is required"
                     .to_string(),
             ),
             Some(grammar_name.to_string()),

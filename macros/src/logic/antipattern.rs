@@ -559,7 +559,10 @@ fn detect_unbounded_rewrite_growth(lang: &LanguageDef) -> Vec<AntipatternWarning
     // For each category, check if there are positive-delta rewrites without
     // compensating negative-delta rewrites
     for (category, deltas) in &rewrite_deltas {
-        let positive: Vec<&(String, i32)> = deltas.iter().filter(|(_, d)| *d > 0).collect();
+        let positive: Vec<&(String, i32)> = deltas
+            .iter()
+            .filter(|(rule_name, d)| *d > 0 && !is_generated_cast_bounded_rewrite(lang, rule_name))
+            .collect();
         let has_negative = deltas.iter().any(|(_, d)| *d < 0);
 
         if positive.is_empty() {
@@ -589,6 +592,18 @@ fn detect_unbounded_rewrite_growth(lang: &LanguageDef) -> Vec<AntipatternWarning
     }
 
     warnings
+}
+
+fn is_generated_cast_bounded_rewrite(lang: &LanguageDef, rule_name: &str) -> bool {
+    lang.rewrites
+        .iter()
+        .find(|rw| rw.name.to_string() == rule_name)
+        .is_some_and(|rw| {
+            rw.premises
+                .iter()
+                .any(|p| matches!(p, mettail_ast::language::Premise::SyntheticInjGuard { .. }))
+                || (rw.is_auto_injected && rw.name.to_string().starts_with("NormCast"))
+        })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1032,6 +1047,142 @@ mod tests {
         );
         assert!(warnings.iter().all(|w| w.code == "C-AP04"));
         assert!(warnings[0].message.contains("WrapAll"));
+    }
+
+    #[test]
+    fn cap04_ignores_synthetic_injection_guarded_positive_delta() {
+        use mettail_ast::pattern::{Pattern, PatternTerm};
+
+        let mut lang = minimal_lang();
+        lang.types = vec![LangType {
+            name: make_ident("Proc"),
+            native_type: None,
+            collection_kind: None,
+        }];
+        lang.terms = vec![
+            GrammarRule {
+                label: make_ident("PNil"),
+                category: make_ident("Proc"),
+                items: vec![GrammarItem::Terminal("nil".to_string())],
+                bindings: Vec::new(),
+                term_context: None,
+                syntax_pattern: None,
+                rust_code: None,
+                eval_mode: None,
+                is_right_assoc: false,
+                prefix_bp: None,
+                tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
+            },
+            GrammarRule {
+                label: make_ident("PWrap"),
+                category: make_ident("Proc"),
+                items: vec![
+                    GrammarItem::Terminal("wrap".to_string()),
+                    GrammarItem::non_terminal(make_ident("Proc")),
+                ],
+                bindings: Vec::new(),
+                term_context: None,
+                syntax_pattern: None,
+                rust_code: None,
+                eval_mode: None,
+                is_right_assoc: false,
+                prefix_bp: None,
+                tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
+            },
+        ];
+
+        lang.rewrites = vec![mettail_ast::language::RewriteRule {
+            name: make_ident("NormCastProcToProcInProc"),
+            type_context: Vec::new(),
+            premises: vec![mettail_ast::language::Premise::SyntheticInjGuard {
+                inner_var: make_ident("P"),
+                source_category: make_ident("Proc"),
+                excluded_variants: vec![make_ident("PWrap")],
+            }],
+            left: Pattern::Term(PatternTerm::Var(make_ident("P"))),
+            right: Pattern::Term(PatternTerm::Apply {
+                constructor: make_ident("PWrap"),
+                args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
+            }),
+            is_auto_injected: true,
+        }];
+
+        let warnings = detect_unbounded_rewrite_growth(&lang);
+        assert!(
+            warnings.is_empty(),
+            "synthetic injection guard should bound positive delta: {:?}",
+            warnings,
+        );
+    }
+
+    #[test]
+    fn cap04_ignores_auto_injected_norm_cast_positive_delta() {
+        use mettail_ast::pattern::{Pattern, PatternTerm};
+
+        let mut lang = minimal_lang();
+        lang.types = vec![LangType {
+            name: make_ident("Proc"),
+            native_type: None,
+            collection_kind: None,
+        }];
+        lang.terms = vec![
+            GrammarRule {
+                label: make_ident("PNil"),
+                category: make_ident("Proc"),
+                items: vec![GrammarItem::Terminal("nil".to_string())],
+                bindings: Vec::new(),
+                term_context: None,
+                syntax_pattern: None,
+                rust_code: None,
+                eval_mode: None,
+                is_right_assoc: false,
+                prefix_bp: None,
+                tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
+            },
+            GrammarRule {
+                label: make_ident("PWrap"),
+                category: make_ident("Proc"),
+                items: vec![
+                    GrammarItem::Terminal("wrap".to_string()),
+                    GrammarItem::non_terminal(make_ident("Proc")),
+                ],
+                bindings: Vec::new(),
+                term_context: None,
+                syntax_pattern: None,
+                rust_code: None,
+                eval_mode: None,
+                is_right_assoc: false,
+                prefix_bp: None,
+                tier_directive: None,
+                is_auto_injected: false,
+                doc_comment: None,
+            },
+        ];
+
+        lang.rewrites = vec![mettail_ast::language::RewriteRule {
+            name: make_ident("NormCastProcToProcInProc"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: Pattern::Term(PatternTerm::Var(make_ident("P"))),
+            right: Pattern::Term(PatternTerm::Apply {
+                constructor: make_ident("PWrap"),
+                args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
+            }),
+            is_auto_injected: true,
+        }];
+
+        let warnings = detect_unbounded_rewrite_growth(&lang);
+        assert!(
+            warnings.is_empty(),
+            "auto-injected NormCast rules should be classified as generated-bounded: {:?}",
+            warnings,
+        );
     }
 
     #[test]

@@ -1287,6 +1287,38 @@ fn test_nested_int_float() {
 }
 
 #[test]
+fn cast_normalization_budget_preserves_in_bound_alternatives() {
+    let lang = calc::CalculatorLanguage;
+    let metadata = lang.metadata();
+    let rewrites = metadata.rewrites();
+    for name in ["NormCastUInt32ToBigRatInProc"] {
+        let rw = rewrites
+            .iter()
+            .find(|rw| rw.name == Some(name))
+            .unwrap_or_else(|| panic!("missing generated rewrite {name}"));
+        assert!(rw.is_guarded, "{name} must expose SyntheticInjGuard as guarded metadata");
+        assert!(
+            rw.conditions
+                .iter()
+                .any(|condition| condition.starts_with("synthetic_inj_guard(")),
+            "{name} must retain synthetic guard evidence in metadata: {:?}",
+            rw.conditions
+        );
+    }
+
+    for name in ["NormCastBoolToUInt32InProc", "NormCastFloatToBigRatInProc"] {
+        let rw = rewrites
+            .iter()
+            .find(|rw| rw.name == Some(name))
+            .unwrap_or_else(|| panic!("missing generated rewrite {name}"));
+        assert!(
+            !rw.lhs.is_empty() && !rw.rhs.is_empty(),
+            "{name} must remain present as generated cast-normalization evidence"
+        );
+    }
+}
+
+#[test]
 fn test_nested_float_int_arithmetic() {
     calc_normal_form("sin(3.14) + 3.0 * float(float(10, 64), 64)", "30.001592652916486");
 }

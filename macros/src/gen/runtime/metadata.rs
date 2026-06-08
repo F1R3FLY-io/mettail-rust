@@ -738,13 +738,13 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     let lhs_lit = LitStr::new(&lhs, Span::call_site());
     let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
-    // Sim-B: detect whether any premise is a BehavioralGuard. The macro
-    // codegen sets `is_guarded: true` on the generated RewriteDef so the
-    // simulator can identify guarded rewrites at runtime.
+    // Detect whether any premise guards rewrite applicability. Behavioral
+    // guards are user-authored; SyntheticInjGuard is generated for NormCast
+    // rewrites to bound auto-injection cascades.
     let is_guarded = rw
         .premises
         .iter()
-        .any(|p| matches!(p, Premise::BehavioralGuard(_)));
+        .any(|p| matches!(p, Premise::BehavioralGuard(_) | Premise::SyntheticInjGuard { .. }));
 
     quote! {
         mettail_runtime::RewriteDef {
@@ -1324,5 +1324,53 @@ mod tests {
             element: Box::new(TypeExpr::Base(elem)),
         };
         assert_eq!(type_expr_to_string(&ty), "HashMap(Proc)");
+    }
+
+    #[test]
+    fn rewrite_metadata_marks_synthetic_injection_guard_as_guarded() {
+        let proc = syn::Ident::new("Proc", Span::call_site());
+        let p = syn::Ident::new("P", Span::call_site());
+        let rw = RewriteRule {
+            name: syn::Ident::new("NormCastProcToProcInProc", Span::call_site()),
+            type_context: Vec::new(),
+            premises: vec![Premise::SyntheticInjGuard {
+                inner_var: p.clone(),
+                source_category: proc.clone(),
+                excluded_variants: vec![syn::Ident::new("PWrap", Span::call_site())],
+            }],
+            left: Pattern::Term(PatternTerm::Var(p.clone())),
+            right: Pattern::Term(PatternTerm::Var(p)),
+            is_auto_injected: true,
+        };
+        let language = LanguageDef {
+            name: syn::Ident::new("TestLang", Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        };
+
+        let rendered = generate_rewrite_def(&rw, 0, &language).to_string();
+        assert!(
+            rendered.contains("is_guarded : true"),
+            "synthetic injection guards must be visible in metadata: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("synthetic_inj_guard"),
+            "metadata should retain the synthetic guard condition display: {}",
+            rendered
+        );
     }
 }
