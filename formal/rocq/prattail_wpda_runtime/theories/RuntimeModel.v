@@ -1494,6 +1494,90 @@ Definition realized_terms_for_roots (roots : list nat) : list nat :=
 Definition realized_weights_for_roots (roots : list nat) : list nat :=
   flat_map (fun count => repeat 1 count) roots.
 
+Fixpoint lazy_prefix_realized_terms
+    (budget : nat)
+    (packing_counts : list nat) : list nat :=
+  match budget, packing_counts with
+  | 0, _ => []
+  | _, [] => []
+  | _, count :: rest =>
+      let terms := firstn budget (repeat 0 count) in
+      terms ++
+      lazy_prefix_realized_terms
+        (budget - length terms)
+        rest
+  end.
+
+Theorem lazy_prefix_realization_matches_eager_prefix :
+  forall budget packing_counts,
+    lazy_prefix_realized_terms budget packing_counts =
+    firstn budget (realized_terms_for_roots packing_counts).
+Proof.
+  intros budget packing_counts.
+  revert budget.
+  induction packing_counts as [|count rest IH].
+  - intro budget. now destruct budget.
+  - intro budget. destruct budget as [|budget'].
+    + reflexivity.
+    + cbn [lazy_prefix_realized_terms].
+      change (firstn (S budget') (realized_terms_for_roots (count :: rest))) with
+        (firstn (S budget') (repeat 0 count ++ realized_terms_for_roots rest)).
+      rewrite (@firstn_app nat (S budget') (repeat 0 count) (realized_terms_for_roots rest)).
+      f_equal.
+      assert (
+        S budget' - length (firstn (S budget') (repeat 0 count)) =
+        S budget' - length (repeat 0 count)
+      ) as Hremaining.
+      {
+        rewrite length_firstn.
+        lia.
+      }
+      rewrite Hremaining.
+      apply IH.
+Qed.
+
+Theorem lazy_prefix_realization_length_bounded :
+  forall budget packing_counts,
+    length (lazy_prefix_realized_terms budget packing_counts) <= budget.
+Proof.
+  intros budget packing_counts.
+  rewrite lazy_prefix_realization_matches_eager_prefix.
+  rewrite length_firstn.
+  lia.
+Qed.
+
+Theorem lazy_prefix_realization_zero_demand :
+  forall packing_counts,
+    lazy_prefix_realized_terms 0 packing_counts = [].
+Proof.
+  intro packing_counts.
+  now destruct packing_counts.
+Qed.
+
+Theorem lazy_prefix_realization_skips_tail_after_cap_filled :
+  forall budget first_count rest,
+    budget <= first_count ->
+    lazy_prefix_realized_terms budget (first_count :: rest) =
+    firstn budget (repeat 0 first_count).
+Proof.
+  intros budget first_count rest Hfills.
+  destruct budget as [|budget'].
+  - reflexivity.
+  - cbn [lazy_prefix_realized_terms].
+    remember (firstn (S budget') (repeat 0 first_count)) as terms.
+    assert (Hlen : length terms = S budget').
+    {
+      subst terms.
+      rewrite length_firstn.
+      rewrite repeat_length.
+      lia.
+    }
+    rewrite Hlen.
+    rewrite Nat.sub_diag.
+    rewrite lazy_prefix_realization_zero_demand.
+    apply app_nil_r.
+Qed.
+
 Inductive weighted_facade_result : Type :=
   | WeightedFacadeAccepted (terms weights : list nat)
   | WeightedFacadeBudgetExceeded (budget actual : nat).

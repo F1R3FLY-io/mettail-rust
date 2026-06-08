@@ -719,6 +719,11 @@ enum RealizeColor {
     Black,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RealizeLazyAbort {
+    Cycle,
+}
+
 pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     state: WpdaState,
     gss: WpdaGss<W>,
@@ -4990,6 +4995,26 @@ where
     where
         W: StarSemiringRef,
     {
+        match limit {
+            Some(0) => Vec::new(),
+            Some(cap) => match self.try_realize_root_to_terms_with_weights_lazy(root, cap) {
+                Ok(results) => results,
+                Err(RealizeLazyAbort::Cycle) => {
+                    self.realize_root_to_terms_with_weights_eager(root, limit)
+                },
+            },
+            None => self.realize_root_to_terms_with_weights_eager(root, limit),
+        }
+    }
+
+    fn realize_root_to_terms_with_weights_eager(
+        &self,
+        root: crate::sppf::SppfId,
+        limit: Option<usize>,
+    ) -> Vec<(Arc<dyn Any + Send + Sync>, W)>
+    where
+        W: StarSemiringRef,
+    {
         if root == crate::sppf::SPPF_ID_NONE {
             return Vec::new();
         }
@@ -5124,6 +5149,101 @@ where
                 _ => None,
             })
             .collect()
+    }
+
+    fn try_realize_root_to_terms_with_weights_lazy(
+        &self,
+        root: crate::sppf::SppfId,
+        cap: usize,
+    ) -> Result<Vec<(Arc<dyn Any + Send + Sync>, W)>, RealizeLazyAbort>
+    where
+        W: StarSemiringRef,
+    {
+        if root == crate::sppf::SPPF_ID_NONE || cap == 0 {
+            return Ok(Vec::new());
+        }
+        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
+            std::collections::HashMap::new();
+        let mut colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
+            std::collections::HashMap::new();
+        let realized = self.realize_node_lazy_prefix(root, cap, &mut memo, &mut colors)?;
+        Ok(realized
+            .into_iter()
+            .filter_map(|(arg, w)| match arg {
+                ActionArg::Term { value, .. } => Some((value, w)),
+                _ => None,
+            })
+            .collect())
+    }
+
+    fn realize_node_lazy_prefix(
+        &self,
+        id: crate::sppf::SppfId,
+        cap: usize,
+        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        colors: &mut std::collections::HashMap<crate::sppf::SppfId, RealizeColor>,
+    ) -> Result<Vec<(ActionArg, W)>, RealizeLazyAbort>
+    where
+        W: StarSemiringRef,
+    {
+        if cap == 0 {
+            return Ok(Vec::new());
+        }
+        match colors.get(&id).copied() {
+            Some(RealizeColor::Black) => return Ok(memo.get(&id).cloned().unwrap_or_default()),
+            Some(RealizeColor::Gray) => return Err(RealizeLazyAbort::Cycle),
+            None => {},
+        }
+        colors.insert(id, RealizeColor::Gray);
+        let realized = match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Symbol { lo_pos: sym_lo, hi_pos: sym_hi, .. }) => {
+                let mut out: Vec<(ActionArg, W)> = Vec::new();
+                for &packing in self.sppf.packings_of(id) {
+                    if out.len() >= cap {
+                        break;
+                    }
+                    if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
+                        self.sppf.node(packing)
+                    {
+                        if !self.packing_satisfies_min_terminal_span(
+                            *rule_idx, children, *sym_lo, *sym_hi,
+                        ) {
+                            continue;
+                        }
+                    }
+                    let remaining = cap.saturating_sub(out.len());
+                    let packing_results =
+                        self.realize_node_lazy_prefix(packing, remaining, memo, colors)?;
+                    for entry in packing_results {
+                        out.push(entry);
+                        if out.len() >= cap {
+                            break;
+                        }
+                    }
+                }
+                out
+            },
+            Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                for &child in children {
+                    if colors.get(&child) != Some(&RealizeColor::Black) {
+                        let _ = self.realize_node_lazy_prefix(child, cap, memo, colors)?;
+                    }
+                }
+                self.realize_node_leave(id, memo, colors, Some(cap))
+            },
+            Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                for &item in items {
+                    if colors.get(&item) != Some(&RealizeColor::Black) {
+                        let _ = self.realize_node_lazy_prefix(item, cap, memo, colors)?;
+                    }
+                }
+                self.realize_node_leave(id, memo, colors, Some(cap))
+            },
+            Some(_) | None => self.realize_node_leave(id, memo, colors, Some(cap)),
+        };
+        memo.insert(id, realized.clone());
+        colors.insert(id, RealizeColor::Black);
+        Ok(realized)
     }
 
     fn packing_satisfies_min_terminal_span(
@@ -17935,6 +18055,55 @@ mod tests {
         root
     }
 
+    static REALIZE_LAZY_ACTION_CALLS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    fn counting_realize_action(b: &mut SemanticBuilder, _args: Vec<ActionArg>) {
+        let next = REALIZE_LAZY_ACTION_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        b.push_term::<i64>(next as i64);
+    }
+
+    static COUNTING_REALIZE_ACTION: ActionEntry = ActionEntry {
+        action_fn: counting_realize_action,
+        arity: 0,
+        expected_input_cats: &[],
+        output_cat: 0,
+    };
+
+    struct CountingRealizeEngine;
+
+    impl WpdaEngine<LexicographicWeight> for CountingRealizeEngine {
+        fn step(
+            &self,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
+            _pos: usize,
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            WpdaStepAction::Idle
+        }
+
+        fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
+            if src_idx == 0 && rule_idx <= 1 {
+                Some(&COUNTING_REALIZE_ACTION)
+            } else {
+                None
+            }
+        }
+    }
+
+    fn install_counting_realize_ambiguous_root(
+        walker: &mut WpdaWalker<LexicographicWeight, CountingRealizeEngine>,
+    ) -> crate::sppf::SppfId {
+        let first = walker.sppf.intern_packing(0, Vec::new(), lex(1.0, 0, 0));
+        let second = walker.sppf.intern_packing(1, Vec::new(), lex(2.0, 0, 0));
+        let root = walker.sppf.intern_symbol(0, 0, 0);
+        walker.sppf.link_packing_to_symbol(root, first);
+        walker.sppf.link_packing_to_symbol(root, second);
+        root
+    }
+
     fn seed_revivable_orphans<E: WpdaEngine<LexicographicWeight>>(
         walker: &mut WpdaWalker<LexicographicWeight, E>,
         count: usize,
@@ -18002,6 +18171,47 @@ mod tests {
         assert_eq!(*result_i64, 42);
         // Position should have advanced past the literal.
         assert_eq!(walker.position(), 1);
+    }
+
+    #[test]
+    fn capped_realization_forces_only_demanded_root_packings() {
+        REALIZE_LAZY_ACTION_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut walker: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(CountingRealizeEngine, 0);
+        let root = install_counting_realize_ambiguous_root(&mut walker);
+
+        let first = walker.realize_root_to_terms_with_weights(root, Some(1));
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            REALIZE_LAZY_ACTION_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "cap=1 must not realize the second root packing"
+        );
+        let first_value = Arc::clone(&first[0].0)
+            .downcast::<i64>()
+            .expect("counting action pushes i64");
+        assert_eq!(*first_value, 1);
+        assert_eq!(first[0].1, lex(1.0, 0, 0));
+
+        REALIZE_LAZY_ACTION_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        let all = walker.realize_root_to_terms_with_weights(root, Some(2));
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            REALIZE_LAZY_ACTION_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "larger demand should still realize later alternatives"
+        );
+        let values: Vec<i64> = all
+            .iter()
+            .map(|(term, _)| {
+                *Arc::clone(term)
+                    .downcast::<i64>()
+                    .expect("counting action pushes i64")
+            })
+            .collect();
+        assert_eq!(values, vec![1, 2]);
+        let weights: Vec<LexicographicWeight> = all.iter().map(|(_, weight)| *weight).collect();
+        assert_eq!(weights, vec![lex(1.0, 0, 0), lex(2.0, 0, 0)]);
     }
 
     #[test]
