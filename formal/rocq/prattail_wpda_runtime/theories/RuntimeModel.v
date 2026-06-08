@@ -2070,6 +2070,90 @@ Proof.
   apply parser_assembly_identity_preserves_semantic_keys.
 Qed.
 
+Definition semantic_key : Type := list nat.
+
+Lemma semantic_key_eq_dec :
+  forall x y : semantic_key, {x = y} + {x <> y}.
+Proof. decide equality; apply Nat.eq_dec. Defined.
+
+Record exact_parse_alternative_model : Type := {
+  epam_semantic_key : semantic_key;
+  epam_payload : nat
+}.
+
+Definition exact_semantic_key_represented
+    (alt : exact_parse_alternative_model)
+    (output : list exact_parse_alternative_model) : Prop :=
+  exists kept,
+    In kept output /\
+    epam_semantic_key kept = epam_semantic_key alt.
+
+Definition exact_key_assembly_preserves_semantic_keys
+    (input output : list exact_parse_alternative_model) : Prop :=
+  forall alt,
+    In alt input ->
+    exact_semantic_key_represented alt output.
+
+Definition exact_key_pair_dedup
+    (left right : exact_parse_alternative_model)
+    : list exact_parse_alternative_model :=
+  if semantic_key_eq_dec
+       (epam_semantic_key left)
+       (epam_semantic_key right)
+  then [left]
+  else [left; right].
+
+Theorem exact_key_pair_dedup_preserves_distinct_keys :
+  forall left right,
+    epam_semantic_key left <> epam_semantic_key right ->
+    exact_key_pair_dedup left right = [left; right].
+Proof.
+  intros left right Hdistinct.
+  unfold exact_key_pair_dedup.
+  destruct (semantic_key_eq_dec
+              (epam_semantic_key left)
+              (epam_semantic_key right)) as [Heq | _].
+  - contradiction.
+  - reflexivity.
+Qed.
+
+Theorem exact_key_assembly_preserves_distinct_pair_without_evidence :
+  forall left right,
+    epam_semantic_key left <> epam_semantic_key right ->
+    exact_key_assembly_preserves_semantic_keys
+      [left; right]
+      (exact_key_pair_dedup left right).
+Proof.
+  intros left right Hdistinct alt Hin.
+  rewrite exact_key_pair_dedup_preserves_distinct_keys by exact Hdistinct.
+  exists alt.
+  split; [exact Hin | reflexivity].
+Qed.
+
+Definition hash_only_pair_dedup
+    (hash : semantic_key -> nat)
+    (left right : exact_parse_alternative_model)
+    : list exact_parse_alternative_model :=
+  if Nat.eqb
+       (hash (epam_semantic_key left))
+       (hash (epam_semantic_key right))
+  then [left]
+  else [left; right].
+
+Theorem hash_only_pair_dedup_can_drop_distinct_keys :
+  exists hash left right,
+    epam_semantic_key left <> epam_semantic_key right /\
+    hash_only_pair_dedup hash left right = [left].
+Proof.
+  exists (fun _ => 0).
+  exists {| epam_semantic_key := [0]; epam_payload := 10 |}.
+  exists {| epam_semantic_key := [1]; epam_payload := 20 |}.
+  split.
+  - intro Heq.
+    now inversion Heq.
+  - reflexivity.
+Qed.
+
 Record eval_term_info_model : Type := {
   eti_id : nat;
   eti_normal : bool

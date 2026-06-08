@@ -40,8 +40,9 @@
 //!
 //! ## Use sites
 //!
-//! - `from_alternatives` codegen (Stage 2.3.1): dedup by semantic_hash to
-//!   collapse cast-permutation cohorts without losing the `-3!`-style
+//! - `from_alternatives` codegen (Stage 2.3.1): dedup by an exact
+//!   semantic key collected from the `semantic_hash` write stream. This
+//!   collapses cast-permutation cohorts without losing the `-3!`-style
 //!   evaluatively-distinct alts.
 //! - `substitute_env` codegen (Stage 2.3.2): same.
 //! - `parse_preserving_vars` codegen (Stage 2.3.3): same, weight-aligned.
@@ -608,9 +609,10 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
             /// Hash by observational equivalence under Ascent's rewrite
             /// relation. Transparent projection wrappers (identity
             /// cross-cat casts) are skipped — the inner term's hash is
-            /// written directly. Two alts produce identical
-            /// semantic_hash iff Ascent would reach identical normal
-            /// forms from each (modulo 2⁻⁶⁴ hash collision).
+            /// written directly. Runtime ambiguity dedup compares the
+            /// collected semantic write stream, not a finished 64-bit
+            /// digest, so distinct streams are not lost to digest
+            /// collisions.
             ///
             /// Stack-safe via trampolined iterative engine (mirrors
             /// `iterative_hash.rs`). No recursion across category

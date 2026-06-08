@@ -448,6 +448,91 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             Ambiguous(Vec<#inner_enum_name>),
         }
 
+        #[derive(Default)]
+        struct __MettailSemanticKeyHasher {
+            bytes: Vec<u8>,
+        }
+
+        impl __MettailSemanticKeyHasher {
+            fn into_key(self) -> Vec<u8> {
+                self.bytes
+            }
+
+            fn push_raw(&mut self, tag: u8, payload: &[u8]) {
+                self.bytes.push(tag);
+                self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+                self.bytes.extend_from_slice(payload);
+            }
+
+            fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
+                self.bytes.push(tag);
+                self.bytes.extend_from_slice(payload);
+            }
+        }
+
+        impl std::hash::Hasher for __MettailSemanticKeyHasher {
+            fn finish(&self) -> u64 {
+                let mut h = 0xcbf29ce484222325u64;
+                for b in &self.bytes {
+                    h ^= *b as u64;
+                    h = h.wrapping_mul(0x100000001b3);
+                }
+                h
+            }
+
+            fn write(&mut self, bytes: &[u8]) {
+                self.push_raw(0, bytes);
+            }
+
+            fn write_u8(&mut self, i: u8) {
+                self.push_fixed(1, &[i]);
+            }
+
+            fn write_u16(&mut self, i: u16) {
+                self.push_fixed(2, &i.to_le_bytes());
+            }
+
+            fn write_u32(&mut self, i: u32) {
+                self.push_fixed(3, &i.to_le_bytes());
+            }
+
+            fn write_u64(&mut self, i: u64) {
+                self.push_fixed(4, &i.to_le_bytes());
+            }
+
+            fn write_u128(&mut self, i: u128) {
+                self.push_fixed(5, &i.to_le_bytes());
+            }
+
+            fn write_usize(&mut self, i: usize) {
+                self.push_fixed(6, &(i as u128).to_le_bytes());
+            }
+
+            fn write_i8(&mut self, i: i8) {
+                self.push_fixed(7, &i.to_le_bytes());
+            }
+
+            fn write_i16(&mut self, i: i16) {
+                self.push_fixed(8, &i.to_le_bytes());
+            }
+
+            fn write_i32(&mut self, i: i32) {
+                self.push_fixed(9, &i.to_le_bytes());
+            }
+
+            fn write_i64(&mut self, i: i64) {
+                self.push_fixed(10, &i.to_le_bytes());
+            }
+
+            fn write_i128(&mut self, i: i128) {
+                self.push_fixed(11, &i.to_le_bytes());
+            }
+
+            fn write_isize(&mut self, i: isize) {
+                self.push_fixed(12, &(i as i128).to_le_bytes());
+            }
+        }
+
         impl Clone for #inner_enum_name {
             fn clone(&self) -> Self {
                 // Iterative Ambiguous-chain walk. For deeply nested
@@ -554,12 +639,10 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             /// on the inner enum — emit a per-variant discriminant byte
             /// (so distinct categories with structurally-similar inners
             /// don't accidentally collide) then delegate to the inner
-            /// Cat's `semantic_hash`. Used by `from_alternatives` to
-            /// dedup by observational equivalence under Ascent's rewrite
-            /// relation.
+            /// Cat's `semantic_hash`.
             ///
-            /// For `Ambiguous(alts)`: hash sorted child semantic_hashes
-            /// so that nested Ambiguous wrappers (rare; flattened before
+            /// For `Ambiguous(alts)`: record sorted child semantic keys
+            /// so nested Ambiguous wrappers (rare; flattened before
             /// dedup) remain canonical.
             #[allow(dead_code)]
             pub fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -568,17 +651,26 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                     #(#semantic_hash_dispatch_arms),*,
                     #inner_enum_name::Ambiguous(alts) => {
                         state.write_u8(255u8);
-                        let mut sub: Vec<u64> = alts.iter().map(|a| {
-                            let mut h = std::collections::hash_map::DefaultHasher::new();
-                            a.semantic_hash(&mut h);
-                            h.finish()
-                        }).collect();
+                        let mut sub: Vec<Vec<u8>> = alts
+                            .iter()
+                            .map(|a| a.semantic_fingerprint())
+                            .collect();
                         sub.sort_unstable();
-                        for h in sub {
-                            state.write_u64(h);
+                        for key in sub {
+                            state.write_usize(key.len());
+                            state.write(&key);
                         }
                     }
                 }
+            }
+
+            /// Exact semantic observation key used by ambiguity deduplication.
+            /// This records the `semantic_hash` write stream itself rather than
+            /// comparing a 64-bit digest of that stream.
+            fn semantic_fingerprint(&self) -> Vec<u8> {
+                let mut hasher = __MettailSemanticKeyHasher::default();
+                self.semantic_hash(&mut hasher);
+                hasher.into_key()
             }
 
             /// Collapse a vec of alternatives into a single term.
@@ -599,7 +691,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                     1 => flat.into_iter().next().expect("checked len == 1"),
                     _ => {
                         // Phase F.13 Stage 2.3.1 (2026-05-22):
-                        // semantic_hash dedup — equivalence class under
+                        // semantic-key dedup — equivalence class under
                         // Ascent's rewrite relation, not structural identity
                         // and not Display identity. Transparent projection
                         // wrappers (cast-permutation cohorts like IntToBigRat /
@@ -611,15 +703,12 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                         // Display-dedup. Groundness is not semantic rejection
                         // evidence, and display-equivalent alternatives can
                         // still differ evaluatively.
-                        let mut seen_hashes: std::collections::HashSet<u64> =
+                        let mut seen_keys: std::collections::HashSet<Vec<u8>> =
                             std::collections::HashSet::with_capacity(flat.len());
                         let mut deduped: Vec<Self> = Vec::with_capacity(flat.len());
                         for a in flat.into_iter() {
-                            use std::hash::Hasher;
-                            let mut hasher = rustc_hash::FxHasher::default();
-                            a.semantic_hash(&mut hasher);
-                            let h = hasher.finish();
-                            if seen_hashes.insert(h) {
+                            let key = a.semantic_fingerprint();
+                            if seen_keys.insert(key) {
                                 deduped.push(a);
                             }
                         }
@@ -669,18 +758,15 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             progressed.into_iter().map(|i| results[i].clone()).collect()
                         };
 
-                        // Phase F.13 Stage 2.2 (2026-05-22): Hash-dedup
+                        // Phase F.13 Stage 2.2 (2026-05-22): semantic-key dedup
                         // (NOT Display-dedup). Display equivalence is
                         // NOT observational equivalence — see
                         // from_alternatives commentary above.
-                        let mut seen_hashes: std::collections::HashSet<u64> =
+                        let mut seen_keys: std::collections::HashSet<Vec<u8>> =
                             std::collections::HashSet::new();
                         let unique: Vec<Self> = kept.into_iter()
                             .filter(|a| {
-                                use std::hash::Hasher;
-                                let mut hasher = rustc_hash::FxHasher::default();
-                                a.semantic_hash(&mut hasher);
-                                seen_hashes.insert(hasher.finish())
+                                seen_keys.insert(a.semantic_fingerprint())
                             })
                             .collect();
 
@@ -2161,25 +2247,24 @@ fn generate_language_struct_multi(
                         // to a transparent identity cast (e.g. `2.0 + 2.5`
                         // parses to BOTH `Float::AddFloat(..)` AND
                         // `Proc::ProcFloat(AddFloat(..))`). `ProcFloat` is a
-                        // transparent projection wrapper, so both produce
-                        // the SAME `semantic_hash` (observational equivalence
+                        // transparent projection wrapper, so both produce the
+                        // SAME semantic key (observational equivalence
                         // under Ascent's rewrite relation; the wrapper has no
                         // syntax / no action). Collapsing them keeps
                         // `all_terms` free of these cross-cat duplicates
                         // WITHOUT collapsing evaluatively-distinct alts: the
                         // `-3!` pair `Int::Fact(NumLit(-3))` (evals "error")
                         // vs `Int::Neg(Fact(NumLit(3)))` (evals "-6") carry
-                        // DIFFERENT semantic_hashes (`Fact`/`Neg` are
+                        // DIFFERENT semantic keys (`Fact`/`Neg` are
                         // non-transparent → discriminants emitted) and so are
                         // BOTH retained. This is observational dedup, not
                         // Display dedup. Equivalent terms share NF status
                         // (transparent casts are pure identity), so keeping
                         // the first-seen representative is sound.
                         let __sem_key = {
-                            use std::hash::Hasher;
-                            let mut __h = std::collections::hash_map::DefaultHasher::new();
+                            let mut __h = __MettailSemanticKeyHasher::default();
                             t.semantic_hash(&mut __h);
-                            __h.finish()
+                            __h.into_key()
                         };
                         if !__seen_sem.insert(__sem_key) {
                             continue;
@@ -2254,10 +2339,10 @@ fn generate_language_struct_multi(
             let mut __all_rewrites: Vec<mettail_runtime::Rewrite> = Vec::new();
             let mut __all_equivalences: Vec<mettail_runtime::EquivClass> = Vec::new();
             // Stage 3.13d Bug B (2026-05-29): shared cross-category
-            // observational-equivalence dedup set (semantic_hash keys). See
+            // observational-equivalence dedup set (exact semantic keys). See
             // the per-category push site below for rationale and the `-3!`
             // safety argument.
-            let mut __seen_sem: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            let mut __seen_sem: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
             let mut custom_relations = std::collections::HashMap::new();
             #custom_relation_extraction
             #(#multi_cat_union_extract_blocks)*
@@ -2984,29 +3069,26 @@ fn generate_language_struct_multi(
                         successes = filtered;
                     }
                 }
-                // Phase F.13 Stage 2.2 (2026-05-22): semantic-hash dedup.
+                // Phase F.13 Stage 2.2 (2026-05-22): semantic-key dedup.
                 // The WPDS parser can produce structurally-distinct
                 // alternatives that are observationally equivalent (for
                 // example, transparent auto-injection wrappers reached through
                 // different lex paths). Feeding those duplicates into Ascent
                 // caused exponential fixpoint blowup. Collapse only by
-                // semantic_hash: Display equivalence, WFST weight, and
+                // exact semantic key: Display equivalence, WFST weight, and
                 // groundness are not valid parse-time rejection evidence.
                 // `-3!` produces both
                 // CalculatorTermInner::Int(Fact(NumLit(-3))) (evals
                 // "error") and CalculatorTermInner::Int(Neg(Fact(NumLit(3))))
                 // (evals "-6") — both display "-3!" but their ASTs
-                // hash differently and BOTH must reach Ascent.
+                // key differently and BOTH must reach Ascent.
                 if successes.len() > 1 {
-                    let mut seen_hashes: std::collections::HashSet<u64> =
+                    let mut seen_keys: std::collections::HashSet<Vec<u8>> =
                         std::collections::HashSet::with_capacity(successes.len());
                     let mut deduped: Vec<_> = Vec::with_capacity(successes.len());
                     for s in successes.into_iter() {
-                        use std::hash::Hasher;
-                        let mut hasher = rustc_hash::FxHasher::default();
-                        s.semantic_hash(&mut hasher);
-                        let h = hasher.finish();
-                        if seen_hashes.insert(h) {
+                        let key = s.semantic_fingerprint();
+                        if seen_keys.insert(key) {
                             deduped.push(s);
                         }
                     }
