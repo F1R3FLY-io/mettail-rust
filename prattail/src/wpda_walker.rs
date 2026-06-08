@@ -5783,7 +5783,7 @@ where
         // Phase F.2 (2026-05-18): SPPF-side helper.
         // Phase FV-EOI (2026-06-05): pass the token source so the helper
         // also validates the root span against the EOI delimiter-window
-        // obligation proved in the Rocq/Lean model.
+        // obligation proved in the Rocq model.
         if !self.is_cursor_accepting_terminal_at(cursor, tokens) {
             return false;
         }

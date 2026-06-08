@@ -3,7 +3,7 @@ EXTENDS Naturals, FiniteSets, TLC
 
 \* A small executable abstraction of the active Prattail WPDA runtime.
 \* It is intentionally finite: the purpose is to find quotienting and
-\* chain-absorption counterexamples against the Rocq/Lean proof mirrors.
+\* chain-absorption counterexamples against the Rocq proof model.
 
 CONSTANTS
   \* @type: Str;

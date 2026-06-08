@@ -17,9 +17,9 @@ repository-local `.formal-tmp` scratch directory. `FORMAL_MEMORY_MAX_BYTES` and
 `FORMAL_MEMORY_HIGH_BYTES` may be lowered for tighter local runs, but
 `check-capped` rejects any `FORMAL_MEMORY_MAX_BYTES` above 34359738368 bytes.
 The capped service receives a deterministic `PATH` prefix through
-`FORMAL_TOOL_PATH_PREFIX`, which defaults to the expected opam, elan, TLAPS,
+`FORMAL_TOOL_PATH_PREFIX`, which defaults to the expected opam, TLAPS,
 npm-global, and cargo binary directories. Override `FORMAL_TOOL_PATH_PREFIX`
-when Rocq/Coq, Lean, Apalache, or Cargo are installed elsewhere.
+when Rocq/Coq, Apalache, or Cargo are installed elsewhere.
 The direct `check-uncapped` target always refuses to run; formal verification
 must go through the capped entry point.
 Direct verification subtargets and formal subproject Makefiles include
@@ -44,7 +44,6 @@ The capped entry point runs:
   `egraph`, `lattice`, `logict`, `mathematical_analyses`,
   `prattail_wpda_runtime`, `predicate_dispatch`, `presburger`,
   `rule_consolidation`, `sft`, `trampoline`, and `unification`
-- Lean cross-checks in `formal/lean`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests
@@ -67,8 +66,8 @@ The active Prattail runtime proof directory includes:
   the compatibility `BeamSize(k)` mode has the same structured-overflow
   semantics as `AmbiguityBudget(k)` while preserving the full frontier length.
   Dispatch cache keys are modeled with full natural-number positions, with a
-  generic obligation that distinct positions are not quotiented; Rust and
-  Lean also exercise the concrete position above `u32::MAX` regression. The
+  generic obligation that distinct positions are not quotiented; Rust also
+  exercises the concrete position above `u32::MAX` regression. The
   model includes the lex-alt postfix/infix/mixfix operator child transition
   and proves that the child advances to the selected alternative's next
   position while recording the lex-fork stamp; the same stamp is preserved on
@@ -114,12 +113,5 @@ omitted suffix is all structural close delimiters, and both windows are exact
 in-bounds token-source windows. The runtime applies this theorem only when the
 token source advertises linear token positions; `LatticeTokenSource` positions
 are DAG node ids, so it does not scan numeric node-id intervals as token
-windows. Both Rocq and Lean prove that non-structural prefixes and out-of-range
-linear windows are rejected.
-
-Lean is invoked through `~/.elan/bin/lake` by default. Override `LAKE` when
-using a different Lean installation:
-
-```sh
-make -C formal check LAKE=/path/to/lake
-```
+windows. Rocq proves that non-structural prefixes and out-of-range linear
+windows are rejected.

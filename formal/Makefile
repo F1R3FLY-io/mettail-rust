@@ -5,11 +5,10 @@ FORMAL_TMPDIR ?= $(abspath $(REPO_ROOT)/.formal-tmp)
 TMPDIR ?= $(FORMAL_TMPDIR)
 export TMPDIR
 
-FORMAL_TOOL_PATH_PREFIX ?= $(HOME)/.opam/default/bin:$(HOME)/.elan/bin:$(HOME)/.local/tlaps/bin:$(HOME)/.npm-global/bin:$(HOME)/.cargo/bin
+FORMAL_TOOL_PATH_PREFIX ?= $(HOME)/.opam/default/bin:$(HOME)/.local/tlaps/bin:$(HOME)/.npm-global/bin:$(HOME)/.cargo/bin
 PATH := $(FORMAL_TOOL_PATH_PREFIX):$(PATH)
 export PATH
 
-LAKE ?= $(HOME)/.elan/bin/lake
 SYSTEMD_RUN ?= systemd-run
 FORMAL_MEMORY_HARD_MAX_BYTES := 34359738368
 FORMAL_MEMORY_MAX_BYTES ?= 34359738368
@@ -20,14 +19,14 @@ FORMAL_CARGO_BUILD_JOBS ?= 1
 FORMAL_CAPPED_RUN ?= 0
 
 .PHONY: check check-inner check-uncapped check-capped check-memory-cap require-capped clean prepare-tmp
-.PHONY: prattail-wpda rocq-support lean-prattail-wpda
+.PHONY: prattail-wpda rocq-support
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
 .PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
-.PHONY: rocq-sft rocq-unification lean-prattail-wpda-clean
+.PHONY: rocq-sft rocq-unification
 
 check: check-capped
 
@@ -79,7 +78,7 @@ check-capped: check-memory-cap
 prepare-tmp:
 	mkdir -p "$(TMPDIR)"
 
-prattail-wpda: require-capped prepare-tmp rocq-prattail-wpda lean-prattail-wpda tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda rust-wpda-codegen rust-wpda-generated-smoke
+prattail-wpda: require-capped prepare-tmp rocq-prattail-wpda tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda rust-wpda-codegen rust-wpda-generated-smoke
 
 rocq-support: require-capped prepare-tmp rocq-trampoline rocq-advanced-automata
 rocq-support: rocq-ascent-optimizations rocq-codegen-optimizations
@@ -129,9 +128,6 @@ rocq-sft: require-capped
 rocq-unification: require-capped
 	$(MAKE) -C rocq/unification
 
-lean-prattail-wpda: require-capped
-	cd lean && $(LAKE) build
-
 tla-prattail-wpda: require-capped
 	$(MAKE) -C tla/prattail_wpda check
 
@@ -164,8 +160,4 @@ clean:
 	$(MAKE) -C rocq/rule_consolidation clean
 	$(MAKE) -C rocq/sft clean
 	$(MAKE) -C rocq/unification clean
-	$(MAKE) lean-prattail-wpda-clean
 	$(MAKE) -C tla/prattail_wpda clean
-
-lean-prattail-wpda-clean:
-	cd lean && $(LAKE) clean

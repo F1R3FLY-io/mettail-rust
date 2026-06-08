@@ -2,7 +2,7 @@
 
 This model is a bounded counterexample harness for the active Prattail WPDA
 runtime. It checks the separation between the full dispatch cache key and the
-quotiented merge key alongside the Rocq and Lean mirrors.
+quotiented merge key alongside the Rocq proof model.
 
 The TLA+ state deliberately abstracts away semiring weights: none of the
 bounded quotient or wrap-identity obligations inspect weights, and the Rust
@@ -14,7 +14,7 @@ cursor record product that Apalache must explore.
 
 The control-state domain is also limited to states reached by these harness
 scenarios: chain iteration, recovery delegation, unwinding, and completion.
-The full Rocq and Lean mirrors keep the larger runtime control vocabulary;
+The full Rocq model keeps the larger runtime control vocabulary;
 `formal/rocq/prattail_wpda_runtime/theories/FiniteHarness.v` records the
 embedding, excluded runtime controls, and one-step quotient/config
 commutation, including the deduplicated set-level version of the quotient
