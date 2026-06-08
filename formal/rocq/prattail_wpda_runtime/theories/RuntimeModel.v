@@ -2079,21 +2079,35 @@ Definition eager_normal_forms
     (terms : list eval_term_info_model) : list eval_term_info_model :=
   filter eti_normal terms.
 
-Definition lazy_normal_forms_observation
+Fixpoint lazy_normal_forms_observation
     (terms : list eval_term_info_model)
     (demand : nat) : list eval_term_info_model :=
-  firstn demand (eager_normal_forms terms).
+  match demand, terms with
+  | 0, _ => []
+  | Datatypes.S _, [] => []
+  | Datatypes.S demand', term :: rest =>
+      if eti_normal term
+      then term :: lazy_normal_forms_observation rest demand'
+      else lazy_normal_forms_observation rest (Datatypes.S demand')
+  end.
 
 Theorem lazy_normal_forms_observation_is_eager_prefix :
   forall terms demand,
     lazy_normal_forms_observation terms demand =
     firstn demand (eager_normal_forms terms).
-Proof. reflexivity. Qed.
+Proof.
+  induction terms as [| term rest IH]; intros demand;
+    destruct demand as [| demand']; simpl; try reflexivity.
+  destruct (eti_normal term); simpl; rewrite IH; reflexivity.
+Qed.
 
 Theorem lazy_normal_forms_zero_demand :
   forall terms,
     lazy_normal_forms_observation terms 0 = [].
-Proof. reflexivity. Qed.
+Proof.
+  intros terms.
+  destruct terms; reflexivity.
+Qed.
 
 Theorem normal_forms_collecting_matches_lazy_all :
   forall terms,
@@ -2101,6 +2115,62 @@ Theorem normal_forms_collecting_matches_lazy_all :
     eager_normal_forms terms.
 Proof.
   intros terms.
-  unfold lazy_normal_forms_observation.
+  rewrite lazy_normal_forms_observation_is_eager_prefix.
   apply firstn_all.
 Qed.
+
+Record seed_normal_forms_model : Type := {
+  snfm_seed : nat;
+  snfm_normals : list eval_term_info_model
+}.
+
+Fixpoint lazy_seed_normal_forms_observation
+    (seeds : list seed_normal_forms_model)
+    (demand : nat) : list eval_term_info_model :=
+  match demand, seeds with
+  | 0, _ => []
+  | Datatypes.S _, [] => []
+  | Datatypes.S _, seed :: rest =>
+      let observed := firstn demand (snfm_normals seed) in
+      observed ++
+        lazy_seed_normal_forms_observation
+          rest
+          (demand - length observed)
+  end.
+
+Definition first_seed_normal_form_witness
+    (seeds : list seed_normal_forms_model)
+    : option eval_term_info_model :=
+  hd_error (lazy_seed_normal_forms_observation seeds 1).
+
+Theorem lazy_seed_normal_forms_zero_demand :
+  forall seeds,
+    lazy_seed_normal_forms_observation seeds 0 = [].
+Proof.
+  intros seeds.
+  destruct seeds; reflexivity.
+Qed.
+
+Theorem lazy_seed_normal_forms_preserves_two_singleton_alternatives :
+  forall seed_a seed_b nf_a nf_b,
+    lazy_seed_normal_forms_observation
+      [{| snfm_seed := seed_a; snfm_normals := [nf_a] |};
+       {| snfm_seed := seed_b; snfm_normals := [nf_b] |}]
+      2 = [nf_a; nf_b].
+Proof. reflexivity. Qed.
+
+Theorem first_seed_witness_preserves_seed_order :
+  forall seed_a seed_b nf_a nf_b,
+    first_seed_normal_form_witness
+      [{| snfm_seed := seed_a; snfm_normals := [nf_a] |};
+       {| snfm_seed := seed_b; snfm_normals := [nf_b] |}]
+      = Some nf_a.
+Proof. reflexivity. Qed.
+
+Theorem lazy_seed_normal_forms_skips_later_seed_after_demand_filled :
+  forall seed_a seed_b nf_a later,
+    lazy_seed_normal_forms_observation
+      [{| snfm_seed := seed_a; snfm_normals := [nf_a] |};
+       {| snfm_seed := seed_b; snfm_normals := later |}]
+      1 = [nf_a].
+Proof. reflexivity. Qed.

@@ -3,7 +3,7 @@
 //! These types are shared between the macro-generated code and the REPL.
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 
 use crate::LanguageMetadata;
@@ -373,6 +373,101 @@ pub struct EquivClass {
     pub term_ids: Vec<u64>,
 }
 
+/// Lazy breadth-first iterator over normal forms reachable from one or more
+/// rewrite-graph seeds.
+///
+/// The iterator preserves seed order and yields every reachable normal form by
+/// graph identity. It does not rank by display text or any other presentation
+/// heuristic. The rewrite adjacency index is built only when expansion is
+/// needed, so an already-normal seed can be observed without scanning the whole
+/// rewrite relation.
+pub struct ReachableNormalForms<'a> {
+    results: &'a AscentResults,
+    queue: VecDeque<u64>,
+    visited: HashSet<u64>,
+    term_index: Option<HashMap<u64, usize>>,
+    rewrites_by_from: Option<HashMap<u64, Vec<u64>>>,
+}
+
+impl<'a> ReachableNormalForms<'a> {
+    fn new(results: &'a AscentResults, seed_ids: &[u64]) -> Self {
+        let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+        for &id in seed_ids {
+            if visited.insert(id) {
+                queue.push_back(id);
+            }
+        }
+        Self {
+            results,
+            queue,
+            visited,
+            term_index: None,
+            rewrites_by_from: None,
+        }
+    }
+
+    fn term_info(&self, id: u64) -> Option<&'a TermInfo> {
+        if let Some(index) = &self.term_index {
+            return index.get(&id).map(|&idx| &self.results.all_terms[idx]);
+        }
+        self.results.all_terms.iter().find(|t| t.term_id == id)
+    }
+
+    fn ensure_expansion_indexes(&mut self) {
+        if self.term_index.is_none() {
+            self.term_index = Some(
+                self.results
+                    .all_terms
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, term)| (term.term_id, idx))
+                    .collect(),
+            );
+        }
+        if self.rewrites_by_from.is_none() {
+            let mut rewrites_by_from: HashMap<u64, Vec<u64>> = HashMap::new();
+            for rewrite in &self.results.rewrites {
+                rewrites_by_from
+                    .entry(rewrite.from_id)
+                    .or_default()
+                    .push(rewrite.to_id);
+            }
+            self.rewrites_by_from = Some(rewrites_by_from);
+        }
+    }
+}
+
+impl<'a> Iterator for ReachableNormalForms<'a> {
+    type Item = &'a TermInfo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(id) = self.queue.pop_front() {
+            let info = match self.term_info(id) {
+                Some(info) => info,
+                None => continue,
+            };
+            if info.is_normal_form {
+                return Some(info);
+            }
+
+            self.ensure_expansion_indexes();
+            let next_ids = self
+                .rewrites_by_from
+                .as_ref()
+                .and_then(|index| index.get(&id))
+                .cloned()
+                .unwrap_or_default();
+            for to_id in next_ids {
+                if self.visited.insert(to_id) {
+                    self.queue.push_back(to_id);
+                }
+            }
+        }
+        None
+    }
+}
+
 impl AscentResults {
     /// Create empty results
     pub fn empty() -> Self {
@@ -422,63 +517,39 @@ impl AscentResults {
     /// Returns the first normal form reached (BFS). If the start term is already
     /// a normal form, returns it. Returns `None` if the term is not in the graph.
     pub fn normal_form_reachable_from(&self, start_id: u64) -> Option<&TermInfo> {
-        let term_by_id = |id: u64| self.all_terms.iter().find(|t| t.term_id == id);
-        let start = term_by_id(start_id)?;
-        if start.is_normal_form {
-            return Some(start);
-        }
-        let mut visited = std::collections::HashSet::new();
-        let mut queue = std::collections::VecDeque::from([start_id]);
-        visited.insert(start_id);
-        while let Some(id) = queue.pop_front() {
-            for rw in self.rewrites_from_iter(id) {
-                let to_id = rw.to_id;
-                if visited.insert(to_id) {
-                    if let Some(info) = term_by_id(to_id) {
-                        if info.is_normal_form {
-                            return Some(info);
-                        }
-                        queue.push_back(to_id);
-                    }
-                }
-            }
-        }
-        None
+        self.normal_forms_reachable_from_seeds_iter(&[start_id])
+            .next()
     }
 
-    /// Phase F.12.A (2026-05-20): multi-source normal-form search.
+    /// Multi-source normal-form traversal.
     ///
-    /// Find a normal form reachable from ANY of the given start_ids by
-    /// running `normal_form_reachable_from` from each seed and returning
-    /// the canonically-shortest NF display across all seeds.
+    /// Yields every normal form reachable from the given seeds, preserving
+    /// seed/BFS order. This is the ambiguity-preserving surface for consumers
+    /// that receive an `Ambiguous` wrapper from parsing and need to carry all
+    /// alternatives into evaluation.
     ///
-    /// Canonical NF picker (lexicographic, lowest wins):
-    /// 1. `display.len()` — shorter wins ("0" beats "-0" beats "false").
-    /// 2. `display` itself — lex-smallest as tie-break (deterministic).
+    /// The rewrite adjacency index is initialized only if a non-normal seed
+    /// must be expanded; asking for the first result from an already-normal
+    /// seed does not scan the rewrite relation.
+    pub fn normal_forms_reachable_from_seeds_iter<'a>(
+        &'a self,
+        seed_ids: &[u64],
+    ) -> ReachableNormalForms<'a> {
+        ReachableNormalForms::new(self, seed_ids)
+    }
+
+    /// Collect all normal forms reachable from the given seeds.
+    pub fn normal_forms_reachable_from_seeds(&self, seed_ids: &[u64]) -> Vec<&TermInfo> {
+        self.normal_forms_reachable_from_seeds_iter(seed_ids)
+            .collect()
+    }
+
+    /// Compatibility helper for callers that explicitly want one witness.
     ///
-    /// Used by the simulation runner and REPL when the parsed initial
-    /// term is an `Ambiguous` wrapper whose `term_id()` is not in
-    /// `all_terms` (only single-category alts are pushed by
-    /// `run_ascent_typed`). Seeds come from `Term::rewrite_seed_ids()`.
+    /// This returns the first result from the lazy multi-source traversal. It
+    /// deliberately does not choose by display length or any other heuristic.
     pub fn normal_form_reachable_from_seeds(&self, seed_ids: &[u64]) -> Option<&TermInfo> {
-        let mut best: Option<&TermInfo> = None;
-        for &id in seed_ids {
-            if let Some(nf) = self.normal_form_reachable_from(id) {
-                best = Some(match best {
-                    None => nf,
-                    Some(prev) => {
-                        let key_new = (nf.display.len(), nf.display.as_str());
-                        let key_prev = (prev.display.len(), prev.display.as_str());
-                        if key_new < key_prev {
-                            nf
-                        } else {
-                            prev
-                        }
-                    },
-                });
-            }
-        }
-        best
+        self.normal_forms_reachable_from_seeds_iter(seed_ids).next()
     }
 
     /// Get the equivalence class containing a term
@@ -572,5 +643,62 @@ mod tests {
 
         assert_eq!(nf.term_id, 3);
         assert_eq!(nf.display, "done");
+    }
+
+    #[test]
+    fn reachable_normal_forms_from_seeds_preserves_ambiguous_alternatives() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 1,
+                    display: "first_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 2,
+                    display: "second_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 10,
+                    display: "longer-but-first".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 20,
+                    display: "a".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 1,
+                    to_id: 10,
+                    rule_name: Some("left".to_string()),
+                },
+                Rewrite {
+                    from_id: 2,
+                    to_id: 20,
+                    rule_name: Some("right".to_string()),
+                },
+            ],
+            equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let all: Vec<_> = results
+            .normal_forms_reachable_from_seeds(&[1, 2])
+            .into_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(all, vec!["longer-but-first", "a"]);
+
+        let first = results
+            .normal_form_reachable_from_seeds(&[1, 2])
+            .expect("at least one normal form should be reachable");
+        assert_eq!(
+            first.display, "longer-but-first",
+            "single-witness helper must not choose the shortest display"
+        );
     }
 }

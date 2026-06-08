@@ -1187,14 +1187,13 @@ impl Repl {
                 println!("  No rewrites from this term (already a normal form).");
             }
         } else {
-            // Exec: show a normal form reachable from the initial term.
+            // Exec: show normal forms reachable from the initial term.
             //
             // Phase F.12.A (2026-05-20): when the parsed term is an
             // `Ambiguous` wrapper, `initial_id` (the wrapper hash) is
             // structurally absent from `results.all_terms`. Use the
             // multi-source helper which seeds from each `rewrite_seed_ids()`
-            // alt and picks the canonically-shortest NF across all
-            // reachable NFs. For unambiguous inputs the default trait
+            // alt and preserves every reachable NF. For unambiguous inputs the default trait
             // impl returns `[(initial_id, display)]` and behavior is
             // identical to the prior single-source call.
             let seed_ids: Vec<u64> = term
@@ -1202,21 +1201,60 @@ impl Repl {
                 .into_iter()
                 .map(|(id, _)| id)
                 .collect();
-            if let Some(nf) = results.normal_form_reachable_from_seeds(&seed_ids) {
+            let reachable_nfs: Vec<(u64, String)> = results
+                .normal_forms_reachable_from_seeds(&seed_ids)
+                .into_iter()
+                .map(|nf| (nf.term_id, nf.display.clone()))
+                .collect();
+            if reachable_nfs.len() == 1 {
+                let (nf_id, nf_display) = &reachable_nfs[0];
                 let result_term: Box<dyn mettail_runtime::Term> =
-                    match language.parse_term(&nf.display) {
+                    match language.parse_term(nf_display) {
                         Ok(t) => t,
-                        Err(_) => Box::new(DisplayTerm {
-                            display: nf.display.clone(),
-                            id: nf.term_id,
-                        }),
+                        Err(_) => Box::new(DisplayTerm { display: nf_display.clone(), id: *nf_id }),
                     };
                 println!("{}", "Current term (result):".bold());
-                let formatted = format_term_pretty(&nf.display);
+                let formatted = format_term_pretty(nf_display);
                 println!("{}", formatted.cyan());
                 println!();
                 self.state
-                    .set_term_with_id(result_term, results.clone(), nf.term_id)?;
+                    .set_term_with_id(result_term, results.clone(), *nf_id)?;
+                return Ok(());
+            }
+            if !reachable_nfs.is_empty() {
+                println!("{}", "Current terms (results):".bold());
+                for (idx, (_, display)) in reachable_nfs.iter().enumerate() {
+                    println!("  {})", idx.to_string().cyan());
+                    let formatted = format_term_pretty(display);
+                    for line in formatted.lines() {
+                        println!("    {}", line.cyan());
+                    }
+                    println!();
+                }
+
+                let ambiguous_display = format!(
+                    "Ambiguous([{}])",
+                    reachable_nfs
+                        .iter()
+                        .map(|(_, display)| display.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                let ambiguous_id = {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    for nf in &reachable_nfs {
+                        nf.hash(&mut hasher);
+                    }
+                    hasher.finish()
+                };
+                let result_term: Box<dyn mettail_runtime::Term> = Box::new(DisplayTerm {
+                    display: ambiguous_display,
+                    id: ambiguous_id,
+                });
+                self.state
+                    .set_term_with_id(result_term, results.clone(), ambiguous_id)?;
                 return Ok(());
             }
             println!("{}", "Current term:".bold());
