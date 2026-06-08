@@ -10,6 +10,7 @@ From Stdlib Require Import List.
 From Stdlib Require Import Arith.
 From Stdlib Require Import Lia.
 From Stdlib Require Import Bool.
+From Stdlib Require Import Sorting.Permutation.
 
 Import ListNotations.
 
@@ -2152,6 +2153,61 @@ Proof.
   - intro Heq.
     now inversion Heq.
   - reflexivity.
+Qed.
+
+Record hashbag_order_entry_model : Type := {
+  hbo_sort_key : nat;
+  hbo_stream_key : nat;
+  hbo_count : nat
+}.
+
+Definition hashbag_entry_lane (entry : hashbag_order_entry_model) : nat :=
+  hbo_stream_key entry + 257 * hbo_count entry.
+
+Fixpoint old_ordered_hashbag_fold
+    (entries : list hashbag_order_entry_model) : nat :=
+  match entries with
+  | [] => 0
+  | entry :: rest =>
+      131 * old_ordered_hashbag_fold rest + hashbag_entry_lane entry
+  end.
+
+Fixpoint commutative_hashbag_summary
+    (entries : list hashbag_order_entry_model) : nat :=
+  match entries with
+  | [] => 0
+  | entry :: rest =>
+      hashbag_entry_lane entry + commutative_hashbag_summary rest
+  end.
+
+Theorem old_ordered_hashbag_fold_can_depend_on_colliding_sort_tie :
+  exists left right,
+    hbo_sort_key left = hbo_sort_key right /\
+    hashbag_entry_lane left <> hashbag_entry_lane right /\
+    old_ordered_hashbag_fold [left; right] <>
+    old_ordered_hashbag_fold [right; left].
+Proof.
+  exists {| hbo_sort_key := 0; hbo_stream_key := 1; hbo_count := 0 |}.
+  exists {| hbo_sort_key := 0; hbo_stream_key := 2; hbo_count := 0 |}.
+  simpl.
+  split; [reflexivity |].
+  split.
+  - intro Heq. inversion Heq.
+  - intro Heq. inversion Heq.
+Qed.
+
+Theorem commutative_hashbag_summary_permutation :
+  forall left right,
+    Permutation left right ->
+    commutative_hashbag_summary left =
+    commutative_hashbag_summary right.
+Proof.
+  intros left right Hperm.
+  induction Hperm.
+  - reflexivity.
+  - simpl. rewrite IHHperm. reflexivity.
+  - simpl. lia.
+  - transitivity (commutative_hashbag_summary l'); assumption.
 Qed.
 
 Record eval_term_info_model : Type := {

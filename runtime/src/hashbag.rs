@@ -311,39 +311,55 @@ impl<T: Clone + Hash + Eq> PartialEq for HashBag<T> {
 
 impl<T: Clone + Hash + Eq> Eq for HashBag<T> {}
 
-// Hash: hash all (element, count) pairs in a deterministic order.
+// Hash: order-independent over all (element, count) pairs.
 //
-// We can't assume `T: Ord`, so the sort key must be derived from `T: Hash` alone.
-// Using `format!("{:?}", k)` (prior implementation) was O(element_repr × digit²) for
-// element types containing BigInt — `Debug::fmt` routes through `Display::to_str_radix`
-// which is quadratic in digit count. For PPar(HashBag<Proc>) terms produced by
-// rhocalc reducers, this caused 30+ second hangs on simple inputs.
-//
-// The replacement uses a per-element `FxHasher` u64 as the sort key. This is
-// O(element_hash_cost) per element, with the same determinism guarantee (the
-// hash is a deterministic function of `T`). Collisions only reorder ties; all
-// elements are still rehashed into `state` afterward, so the resulting hash
-// remains deterministic across runs.
+// We cannot assume `T: Ord`, and sorting by a hash key is not enough: if two
+// unequal elements collide on the sort key, equal bags built in different
+// insertion orders may write their tied entries in different orders and violate
+// Hash's `a == b => hash(a) == hash(b)` contract. Use commutative summaries
+// instead. This keeps the BigInt/RhoCalc fast path O(distinct element hash
+// cost), without going back to `Debug`/`Display` sorting.
 impl<T: Clone + Hash + Eq> Hash for HashBag<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.total_count.hash(state);
+        self.counts.len().hash(state);
 
-        let mut entries: Vec<(&T, u64, usize)> = self
-            .counts
-            .iter()
-            .map(|(k, &c)| {
-                let mut h = FxHasher::default();
-                k.hash(&mut h);
-                (k, h.finish(), c)
-            })
-            .collect();
-        entries.sort_unstable_by_key(|&(_, key, _)| key);
+        let mut sum_a = 0u64;
+        let mut sum_b = 0u64;
+        let mut xor_a = 0u64;
+        let mut xor_b = 0u64;
 
-        for (elem, _, count) in entries {
-            elem.hash(state);
-            count.hash(state);
+        for (elem, count) in self.counts.iter() {
+            let mut ha = FxHasher::with_seed(0);
+            elem.hash(&mut ha);
+            count.hash(&mut ha);
+            let a = mix_hashbag_lane(ha.finish());
+
+            let mut hb = FxHasher::with_seed(0x9e37_79b9_7f4a_7c15usize);
+            count.hash(&mut hb);
+            elem.hash(&mut hb);
+            let b = mix_hashbag_lane(hb.finish());
+
+            sum_a = sum_a.wrapping_add(a);
+            sum_b = sum_b.wrapping_add(b);
+            xor_a ^= a.rotate_left((b & 63) as u32);
+            xor_b ^= b.rotate_left((a & 63) as u32);
         }
+
+        sum_a.hash(state);
+        sum_b.hash(state);
+        xor_a.hash(state);
+        xor_b.hash(state);
     }
+}
+
+#[inline]
+fn mix_hashbag_lane(mut x: u64) -> u64 {
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
 }
 
 // Ord: lexicographic ordering by sorted elements
@@ -486,5 +502,61 @@ impl<T: Clone + Hash + Eq + Ord + fmt::Display> fmt::Display for HashBag<T> {
         }
 
         write!(f, "}}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+
+    fn hash_of<T: Hash>(value: &T) -> u64 {
+        let mut h = DefaultHasher::new();
+        value.hash(&mut h);
+        h.finish()
+    }
+
+    #[test]
+    fn equal_bags_hash_equal_across_insertion_order() {
+        let mut left = HashBag::new();
+        left.insert("alpha");
+        left.insert("beta");
+        left.insert("alpha");
+        left.insert("gamma");
+
+        let mut right = HashBag::new();
+        right.insert("gamma");
+        right.insert("alpha");
+        right.insert("beta");
+        right.insert("alpha");
+
+        assert_eq!(left, right);
+        assert_eq!(hash_of(&left), hash_of(&right));
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CollidingKey(u8);
+
+    impl Hash for CollidingKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            0u8.hash(state);
+            self.0.hash(state);
+        }
+    }
+
+    #[test]
+    fn hash_depends_on_counts_not_iteration_order() {
+        let mut left = HashBag::new();
+        left.insert(CollidingKey(1));
+        left.insert(CollidingKey(2));
+        left.insert(CollidingKey(2));
+
+        let mut right = HashBag::new();
+        right.insert(CollidingKey(2));
+        right.insert(CollidingKey(1));
+        right.insert(CollidingKey(2));
+
+        assert_eq!(left, right);
+        assert_eq!(hash_of(&left), hash_of(&right));
     }
 }
