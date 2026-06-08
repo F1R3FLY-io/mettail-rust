@@ -37,12 +37,12 @@
 //! current state and stack, what should I do next?" Stage 6's codegen
 //! emits a concrete `WpdaEngine` per language. Tests use [`MockEngine`].
 //!
-//! ## Beam pruning
+//! ## Cursor bounding
 //!
-//! Optional via [`WpdaWalker::with_beam_size`]. When set, after each
-//! transition the walker prunes the GSS frontier to the K best branches
-//! by weight (lex-min on [`crate::automata::lex_weight::LexicographicWeight`]).
-//! Off by default — preserves correctness at the cost of memory.
+//! Optional via [`WpdaWalker::with_ambiguity_budget`] or the legacy
+//! [`WpdaWalker::with_beam_size`] compatibility shim. When set, the walker
+//! reports a structured ambiguity-budget overflow instead of silently dropping
+//! branches. Off by default.
 //!
 //! ## Saturation step semantics
 //!
@@ -729,9 +729,10 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     top_node: Option<crate::gss::GssNodeId>,
     /// M11.7 (2026-05-14): cursor-count bounding policy.
     /// Default `Unbounded` (M11 mandate-compliant baseline). Opt-in to
-    /// `BeamSize(k)` (legacy beam pruning, mandate-violating escape hatch)
-    /// or `AmbiguityBudget(n)` (structured-error overflow,
-    /// mandate-compliant). See `CursorBoundingMode` docs for details.
+    /// `BeamSize(k)` (legacy compatibility spelling) or
+    /// `AmbiguityBudget(n)` (structured-error overflow). Both bounded modes
+    /// preserve the frontier and report overflow instead of pruning; see
+    /// `CursorBoundingMode` docs for details.
     bounding_mode: crate::wpda_runtime::CursorBoundingMode,
     // Phase F.3c.5 (2026-05-20): `builder: SemanticBuilder` DELETED.
     // Pre-Phase-F.3c the walker maintained a live builder for legacy
@@ -3739,14 +3740,12 @@ where
     #[inline(always)]
     pub fn publish_to_hang_dump_slot(&self) {}
 
-    /// Enable beam pruning to at most `k` branches per frontier (builder style).
+    /// Set the legacy beam-size bound (builder style).
     ///
-    /// **MANDATE VIOLATION** (M11.7, 2026-05-14): beam pruning silently
-    /// drops cursors via lex-min weight without evidence — violates the
-    /// "never disambiguate early" principle. Use only as an adversarial-
-    /// input escape hatch; prefer
-    /// [`Self::with_ambiguity_budget`] for mandate-compliant cursor-count
-    /// bounding (structured error on overflow rather than silent drop).
+    /// Compatibility note: this no longer prunes. `BeamSize(k)` has the same
+    /// semantics as `AmbiguityBudget(k)`: when the frontier exceeds `k`, the
+    /// walker preserves the frontier and reports a structured ambiguity-budget
+    /// overflow.
     ///
     /// Thin shim over [`Self::with_bounding_mode`]
     /// (`CursorBoundingMode::BeamSize(k)`). Mutually exclusive with
@@ -3804,16 +3803,14 @@ where
             .collect()
     }
 
-    /// Stage 3.4 (2026-04-30): set the beam-pruning bound in place.
+    /// Stage 3.4 (2026-04-30): set the legacy beam-size bound in place.
     ///
     /// Same effect as [`Self::with_beam_size`] but mutates `self` instead
     /// of consuming. Useful when the walker is already wrapped (e.g., by
     /// a recovery driver holding a `&mut`).
     ///
-    /// **MANDATE VIOLATION**: see [`Self::with_beam_size`] for the
-    /// rationale. Passing `None` resets bounding to `Unbounded`. Mutually
-    /// exclusive with the ambiguity budget — setting one mode replaces
-    /// the other.
+    /// Passing `None` resets bounding to `Unbounded`. Mutually exclusive with
+    /// the ambiguity budget — setting one mode replaces the other.
     pub fn set_beam_size(&mut self, k: Option<usize>) {
         self.bounding_mode = match k {
             Some(n) => crate::wpda_runtime::CursorBoundingMode::BeamSize(n),
@@ -3845,7 +3842,8 @@ where
     // vector, or to read SPPF state through `walker.sppf()` /
     // `walker.winner_top_node()`.
 
-    /// Optional beam pruning bound (None = unlimited).
+    /// Optional legacy beam-size bound (None = unlimited or a non-beam
+    /// bounding mode).
     ///
     /// M11.7 backward-compat accessor: returns `Some(k)` iff the bounding
     /// mode is `BeamSize(k)`. For `AmbiguityBudget(n)` or `Unbounded`,
@@ -10241,9 +10239,9 @@ where
         // pass above; future refactors may delete the bookkeeping.
         let _ = resolved_indices;
 
-        // Stage 3.4 (2026-04-30): beam pruning. No-op when `beam_size` is
-        // None (default); when set, retains top-K by lex-min weight to
-        // bound fanout cost on highly-ambiguous grammars.
+        // Stage 3.4 (2026-04-30): cursor-count bounding. No-op when
+        // unbounded; bounded modes report structured overflow without
+        // dropping branches.
         self.maybe_prune_frontier();
 
         // Stage 3.5b (2026-05-01): WPDS configuration ⊕-merging. Two
@@ -10283,8 +10281,8 @@ where
         //   1. merge_equivalent_cursors collapsing identical ConfigKeys
         //      via plus_ref (multiset union when W is DerivationWeight;
         //      lex-min when W is LexicographicWeight today).
-        //   2. Beam pruning (maybe_prune_frontier, default None) as an
-        //      opt-in escape hatch for adversarial inputs.
+        //   2. Cursor-count bounding (maybe_prune_frontier, default None)
+        //      as an opt-in structured overflow guard for adversarial inputs.
         // Per `~/.claude/plans/wpds-ambiguity-preserving-redesign.md`
         // §C.6 ("Delete subsume_lex_dominated_cursors") and the
         // `feedback_never_disambiguate_early` memo.
@@ -11225,8 +11223,9 @@ where
     //      observationally-equivalent cursors via plus_ref (multiset
     //      union when W is DerivationWeight; same as before when W is
     //      LexicographicWeight).
-    //   2. Beam pruning via maybe_prune_frontier (opt-in, default None),
-    //      reserved as an escape hatch for adversarial inputs.
+    //   2. Cursor-count bounding via maybe_prune_frontier (opt-in, default
+    //      None), reserved as a structured overflow guard for adversarial
+    //      inputs.
     //
     // For the "LedTest cursor explosion" rationale that motivated the
     // deleted function: under multi-result preservation, the supposedly
@@ -11587,69 +11586,40 @@ where
     /// Stage 3.4 (2026-04-30): cursor-count bounding over `branch_cursors`.
     ///
     /// M11.7 (2026-05-14): dispatches on [`CursorBoundingMode`]:
-    /// - `Unbounded` (default): no-op. Mandate-compliant baseline.
-    /// - `BeamSize(k)`: legacy beam pruning. **MANDATE VIOLATION**: drops
-    ///   cursors beyond the top-`k` by lex-min weight without evidence.
-    ///   Use only as an adversarial-input escape hatch.
+    /// - `Unbounded` (default): no-op.
+    /// - `BeamSize(k)`: legacy compatibility spelling. It does not prune;
+    ///   it has the same structured-overflow semantics as
+    ///   `AmbiguityBudget(k)`.
     /// - `AmbiguityBudget(n)`: if `branch_cursors.len() > n`, transition
     ///   the walker to `WpdaState::Error` with an "AMBIGUITY_BUDGET_EXCEEDED:"
     ///   sentinel prefix the resolve step decodes into
-    ///   `WpdaResolveResult::AmbiguityBudget`. Mandate-compliant: no
-    ///   silent dropping; caller observes the structured error and reacts.
+    ///   `WpdaResolveResult::AmbiguityBudget`. No cursor is dropped; caller
+    ///   observes the structured error and reacts.
     ///
     /// Called from `step_fanout` after the per-cursor step pass so the
-    /// pruned/checked frontier is the input to the next saturation
-    /// iteration.
+    /// checked frontier is the input to the next saturation iteration.
     fn maybe_prune_frontier(&mut self) {
         // Phase F.13 Stage L3.6 (2026-05-25): force-materialize cohort
-        // frames before beam pruning. The BeamSize branch sorts by
-        // per-cursor weight, and AmbiguityBudget counts cursors —
-        // both require concrete frames. Unbounded mode is a no-op so
-        // the materialization is also a no-op (early-return on the
-        // already-concrete fast path inside the helper).
+        // frames before bounding so the budget is checked against the full
+        // logical frontier. Unbounded mode is a no-op so the materialization
+        // is also a no-op.
         if !matches!(self.bounding_mode, crate::wpda_runtime::CursorBoundingMode::Unbounded) {
             self.force_materialize_cohort_frames();
         }
         match self.bounding_mode {
             crate::wpda_runtime::CursorBoundingMode::Unbounded => {},
-            crate::wpda_runtime::CursorBoundingMode::BeamSize(k) => {
-                if self.branch_cursors.len() <= k {
-                    return;
-                }
-                // Stable sort by weight ascending under the `plus`-based
-                // lex-min comparator. Keeps source-order for ties (matching
-                // `pick_lex_min_resolved`'s tie-break semantics).
-                //
-                // **MANDATE VIOLATION**: drops cursors below the top-K
-                // without evidence. Retained only for adversarial-input
-                // recovery; see [`CursorBoundingMode::BeamSize`] docs.
-                // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete
-                // (cohorts cannot appear in beam-pruning input before L3.6).
-                self.branch_cursors.sort_by(|fa, fb| {
-                    let a = fa.as_concrete_expect();
-                    let b = fb.as_concrete_expect();
-                    let merged = a.weight.plus_ref(&b.weight);
-                    let a_wins = merged == a.weight;
-                    let b_wins = merged == b.weight;
-                    match (a_wins, b_wins) {
-                        (true, true) => std::cmp::Ordering::Equal,
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        (false, false) => std::cmp::Ordering::Equal,
-                    }
-                });
-                self.branch_cursors.truncate(k);
-            },
-            crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
+            crate::wpda_runtime::CursorBoundingMode::BeamSize(n)
+            | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
                 let actual = self.branch_cursors.len();
                 if actual <= n {
                     return;
                 }
-                // Mandate-compliant overflow: transition the walker to an
-                // Error state encoding the budget violation in the sentinel-
-                // prefixed message. `resolve_at_end_of_input` decodes the
-                // sentinel and returns `WpdaResolveResult::AmbiguityBudget
-                // { budget, actual, position }`.
+                // Mandate-compliant overflow: preserve the full frontier and
+                // transition the walker to an Error state encoding the budget
+                // violation in the sentinel-prefixed message.
+                // `resolve_at_end_of_input` decodes the sentinel and returns
+                // `WpdaResolveResult::AmbiguityBudget { budget, actual,
+                // position }`.
                 self.state = WpdaState::Error {
                     message: format!(
                         "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={}",
@@ -15815,7 +15785,9 @@ pub enum CursorDropReason {
     IdleMidStream,
     /// `recovery_deltas` exceeded `STRICT_PENDING_OPS_LIMIT`.
     RunawayPendingOps,
-    /// Beam pruning by `maybe_prune_frontier` discarded this cursor.
+    /// Legacy observer reason retained for compatibility. Current frontier
+    /// bounding reports `AmbiguityBudget` overflow instead of dropping
+    /// cursors, so this variant should not be emitted by the runtime.
     BeamPruned,
 }
 
@@ -16697,6 +16669,35 @@ mod tests {
         let w: WpdaWalker<LexicographicWeight, _> =
             WpdaWalker::new(IdleEngine, 0).with_beam_size(8);
         assert_eq!(w.beam_size(), Some(8));
+    }
+
+    #[test]
+    fn beam_size_overflow_reports_budget_without_pruning_frontier() {
+        let mut w: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(IdleEngine, 0).with_beam_size(1);
+        w.deterministic = false;
+        w.pos = 7;
+        w.state = WpdaState::AmbiguityFanout { branches: vec![10, 20] };
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Concrete(queue_cursor(0, lex(1.0, 0, 0))),
+            crate::cohort_lazy::Frame::Concrete(queue_cursor(1, lex(5.0, 0, 1))),
+        ];
+
+        w.maybe_prune_frontier();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            2,
+            "legacy BeamSize must preserve the full frontier and report overflow"
+        );
+        match w.resolve_at_end_of_input(&empty_tokens()) {
+            WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                assert_eq!(budget, 1);
+                assert_eq!(actual, 2);
+                assert_eq!(position, 7);
+            },
+            other => panic!("expected AmbiguityBudget overflow, got {:?}", other),
+        }
     }
 
     #[test]

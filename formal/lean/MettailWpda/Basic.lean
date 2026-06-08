@@ -534,6 +534,17 @@ theorem beamSizePreservesFrontierLength
       actualFrontierLen := by
   rfl
 
+theorem beamSizeOverflowPreservesFrontierAndReportsActual
+    {budget actualFrontierLen : Nat} :
+    budget < actualFrontierLen ->
+    cursorBoundFrontierLen (.beamSize budget) actualFrontierLen = actualFrontierLen ∧
+      cursorBoundCheck (.beamSize budget) actualFrontierLen =
+        some (budget, actualFrontierLen) := by
+  intro h
+  constructor
+  · exact beamSizePreservesFrontierLength budget actualFrontierLen
+  · exact beamSizeOverflowReportsActual h
+
 structure WeightedFrontierItem where
   weight : Nat
   sequence : Nat

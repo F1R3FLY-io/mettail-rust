@@ -614,6 +614,25 @@ Theorem beam_size_preserves_frontier_length :
     actual_frontier_len.
 Proof. reflexivity. Qed.
 
+Theorem beam_size_overflow_preserves_frontier_and_reports_actual :
+  forall budget actual_frontier_len,
+    budget < actual_frontier_len ->
+    cursor_bound_frontier_len
+      (CursorBeamSize budget)
+      actual_frontier_len =
+    actual_frontier_len /\
+    cursor_bound_check
+      (CursorBeamSize budget)
+      actual_frontier_len =
+    Some (budget, actual_frontier_len).
+Proof.
+  intros budget actual_frontier_len Hlt.
+  split.
+  - apply beam_size_preserves_frontier_length.
+  - apply beam_size_overflow_reports_actual.
+    exact Hlt.
+Qed.
+
 Inductive token_class : Type :=
   | OpenDelimiter
   | CloseDelimiter
