@@ -1431,6 +1431,24 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         out
     }
 
+    /// Non-mutating census of `InFlight` pending members that would be
+    /// returned by [`Self::drain_orphaned_inflight_members`].
+    ///
+    /// The walker uses this before applying revival resource bounds so an
+    /// over-budget revival can be reported without first removing evidence
+    /// from the cache.
+    pub fn revivable_inflight_member_count(&self) -> usize {
+        self.entries
+            .values()
+            .map(|entry| match entry {
+                DispatchCacheEntry::InFlight {
+                    pending_members, full_pending_members, ..
+                } => pending_member_count(pending_members, full_pending_members),
+                _ => 0,
+            })
+            .sum()
+    }
+
     /// Cohort-revive-rework M0 (2026-05-29): census of paused cohort
     /// members that are still orphaned at EOI — i.e. parked on
     /// `InFlight` entries whose owning worker never reached `Resolved`
@@ -1904,5 +1922,23 @@ mod tests {
         assert!(drained
             .iter()
             .any(|member| !member.return_frame.binder_scope_marks.is_empty()));
+    }
+
+    #[test]
+    fn revivable_inflight_member_count_is_non_mutating() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert!(cache.pause_cohort_member(key.clone(), cohort_member(branch_cursor())));
+
+        assert_eq!(cache.revivable_inflight_member_count(), 1);
+        assert_eq!(cache.revivable_inflight_member_count(), 1);
+
+        let drained = cache.drain_orphaned_inflight_members();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(cache.revivable_inflight_member_count(), 0);
     }
 }

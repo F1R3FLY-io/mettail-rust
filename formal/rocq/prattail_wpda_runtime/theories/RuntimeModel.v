@@ -656,6 +656,59 @@ Proof.
     exact Hlt.
 Qed.
 
+Inductive orphan_revival_result : Type :=
+  | OrphanRevivalIdle
+  | OrphanRevivalInjected (n : nat)
+  | OrphanRevivalBudgetExceeded (budget actual : nat).
+
+Definition bounded_orphan_revival
+    (budget actual_orphans : nat)
+    (parse_already_succeeds : bool) : orphan_revival_result :=
+  if (budget <? actual_orphans) && parse_already_succeeds
+  then OrphanRevivalBudgetExceeded budget actual_orphans
+  else if actual_orphans =? 0
+       then OrphanRevivalIdle
+       else OrphanRevivalInjected actual_orphans.
+
+Definition orphan_revival_accepts
+    (_r : orphan_revival_result) : bool :=
+  false.
+
+Definition orphan_revival_remaining_evidence
+    (actual_orphans : nat)
+    (r : orphan_revival_result) : nat :=
+  match r with
+  | OrphanRevivalBudgetExceeded _ _ => actual_orphans
+  | _ => 0
+  end.
+
+Theorem orphan_revival_overflow_reports_budget :
+  forall budget actual_orphans,
+    budget < actual_orphans ->
+    bounded_orphan_revival budget actual_orphans true =
+      OrphanRevivalBudgetExceeded budget actual_orphans.
+Proof.
+  intros budget actual_orphans Hlt.
+  unfold bounded_orphan_revival.
+  assert (Hltb : (budget <? actual_orphans) = true).
+  { apply Nat.ltb_lt. exact Hlt. }
+  rewrite Hltb.
+  reflexivity.
+Qed.
+
+Theorem orphan_revival_budget_exceeded_is_not_acceptance :
+  forall budget actual_orphans,
+    orphan_revival_accepts
+      (OrphanRevivalBudgetExceeded budget actual_orphans) = false.
+Proof. reflexivity. Qed.
+
+Theorem orphan_revival_budget_exceeded_preserves_unresolved_evidence :
+  forall budget actual_orphans,
+    orphan_revival_remaining_evidence actual_orphans
+      (OrphanRevivalBudgetExceeded budget actual_orphans) =
+    actual_orphans.
+Proof. reflexivity. Qed.
+
 Inductive token_class : Type :=
   | OpenDelimiter
   | CloseDelimiter

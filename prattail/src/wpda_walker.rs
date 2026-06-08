@@ -1037,6 +1037,20 @@ pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 /// single-round need while preventing livelock.
 const MAX_REVIVAL_ROUNDS: u32 = 4;
 
+/// Cohort orphan revival is a bounded, evidence-preserving search step.
+/// Over-budget alternatives must be surfaced as unresolved ambiguity, not
+/// silently treated as absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrphanRevivalOutcome {
+    Idle,
+    Injected(usize),
+    BudgetExceeded {
+        budget: usize,
+        actual: usize,
+        position: usize,
+    },
+}
+
 /// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
 /// disambiguation (binder multi-rule, cross-cat projection sharing a
@@ -2752,6 +2766,13 @@ impl<W: SemiringRef> LazyContinuationQueue<W> {
 ///
 /// Sentinel format (set in `maybe_prune_frontier`):
 ///   "AMBIGUITY_BUDGET_EXCEEDED: budget={n} actual={k} position={pos}"
+fn format_ambiguity_budget_sentinel(budget: usize, actual: usize, position: usize) -> String {
+    format!(
+        "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={}",
+        budget, actual, position,
+    )
+}
+
 fn parse_ambiguity_budget_sentinel(message: &str) -> Option<(usize, usize, usize)> {
     let rest = message.strip_prefix("AMBIGUITY_BUDGET_EXCEEDED: ")?;
     let mut budget: Option<usize> = None;
@@ -4176,14 +4197,11 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        // M1.PERF (2026-05-31): the spurious-blowup gate in
-        // `revive_orphaned_cohort_members_once` calls `realize_root_to_terms`
-        // (the resolver's exact success condition) to distinguish a genuine
-        // cross-cat parse from the deep-mixfix spurious O(N) orphan tail,
-        // requiring `IdempotentSemiring + StarSemiringRef`. Every real
-        // walker instantiation (production + `ScriptedEngine` unit tests)
-        // uses `LexicographicWeight`, which satisfies both, so this adds no
-        // obligation at any existing call site.
+        // Orphan revival may call `realize_root_to_terms` to decide whether
+        // an over-budget revival frontier must be reported as unresolved
+        // ambiguity. Every real walker instantiation (production +
+        // `ScriptedEngine` unit tests) uses `LexicographicWeight`, which
+        // satisfies both bounds.
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         // Phase F.13 Task #117 (2026-05-23): pin recovery cache/config
@@ -4304,10 +4322,18 @@ where
                     // end-of-step drain never fired). If so, re-inject them
                     // as fresh workers and re-drive — they run their own
                     // cross-cat sub-parse and reach EOI. Bounded by
-                    // `MAX_REVIVAL_ROUNDS`; returns 0 (and we exit) once
-                    // there are no orphans or the budget is exhausted.
-                    if self.revive_orphaned_cohort_members_once(tokens) > 0 {
-                        continue;
+                    // `MAX_REVIVAL_ROUNDS`; a resource overflow is surfaced
+                    // as structured ambiguity-budget evidence rather than
+                    // accepting a parse with hidden alternatives removed.
+                    match self.revive_orphaned_cohort_members_once(tokens) {
+                        OrphanRevivalOutcome::Injected(_) => continue,
+                        OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
+                            self.state = WpdaState::Error {
+                                message: format_ambiguity_budget_sentinel(budget, actual, position),
+                            };
+                            return Ok(());
+                        },
+                        OrphanRevivalOutcome::Idle => {},
                     }
                     // Sig-B Blocker-3 §2.4a (2026-06-01, pgmcp experiment #9):
                     // the SPAN-ANCHORED outer-cast EOI retention, alongside the
@@ -4344,7 +4370,7 @@ where
                             continue;
                         }
                     }
-                    // No orphans to revive (or budget exhausted) — true
+                    // No orphans to revive and no overflow evidence — true
                     // parked frontier. Exit cleanly.
                     return Ok(());
                 }
@@ -9334,9 +9360,11 @@ where
     /// the worker for its own sub-parse and reaching EOI on its own
     /// return context (which the dead worker's context could not).
     ///
-    /// Returns the number of cursors injected. The caller
-    /// (`run_to_end_of_input`) `continue`s the parse loop iff this is
-    /// `> 0`, re-driving the freshly-injected cursors.
+    /// Returns whether cursors were injected, no work remained, or the
+    /// revival frontier exceeded the eager-revival resource budget. The
+    /// caller (`run_to_end_of_input`) re-drives only on `Injected`; a
+    /// `BudgetExceeded` result is resolved through the same structured
+    /// `AmbiguityBudget` path as cursor-frontier overflow.
     ///
     /// **Bounded.** Guarded by `revival_rounds < MAX_REVIVAL_ROUNDS`.
     /// Each call that injects ≥1 cursor bumps `revival_rounds`. A
@@ -9358,82 +9386,28 @@ where
     /// `Ambiguous` alternate; an already-covered one merges (no
     /// double-count). The `-3!` ladder / `wpda_parity_*` /
     /// `h3_chain_correctness` invariants are preserved.
-    fn revive_orphaned_cohort_members_once(&mut self, tokens: &dyn WpdaTokenSource) -> usize
+    fn revive_orphaned_cohort_members_once(
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+    ) -> OrphanRevivalOutcome
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
         // Bounded re-drive: stop reviving once the per-parse budget is
         // exhausted. Benign — the walker parks and resolves normally.
         if self.revival_rounds >= MAX_REVIVAL_ROUNDS {
-            return 0;
+            return OrphanRevivalOutcome::Idle;
         }
-        let orphans = self.dispatch_cohort_cache.drain_orphaned_inflight_members();
-        if orphans.is_empty() {
-            return 0;
+        let orphan_count = self.dispatch_cohort_cache.revivable_inflight_member_count();
+        if orphan_count == 0 {
+            return OrphanRevivalOutcome::Idle;
         }
-        // Cohort-revive-rework M1.PERF (2026-05-31): SPURIOUS-BLOWUP GATE.
-        //
-        // M1 revives EVERY orphaned cohort member at the EOI fixpoint and
-        // re-drives each as an independent worker cursor. Two regimes:
-        //
-        //  (1) GENUINE cross-cat: the orphan set is bounded by GRAMMAR
-        //      complexity, INDEPENDENT of input length. Empirically
-        //      (2026-05-31 trace) the heaviest cross-cat tests peak at 101
-        //      orphans/round (`simulator_regression_cross_cat_dispatch_
-        //      chaining`); the full calculator.rs corpus peaks at 123
-        //      (incl. the already-failing Exp-15 doubly-nested casts); the
-        //      op-suites + edge_case produce ZERO. These NEED revival to
-        //      surface a term-bearing / promoted-category derivation (e.g.
-        //      `"42"` → `Int` rather than bare `NumLit`; `float(x)`,
-        //      `int(a > b == c)`). In these cases, revival is the route to
-        //      an accepting, realizable winner.
-        //
-        //  (2) DEEP-PARENTHESIZED-MIXFIX SPURIOUS blowup: one cross-cat
-        //      dispatch per nesting level, so the orphan set scales with
-        //      input length N (`test_deep_ternary_100` drains 1067 in one
-        //      round, ~10×N). Re-driving ~N cursors to EOI turns an O(N)
-        //      parse into O(N²) (`test_deep_ternary_500` 67.5 s; _1000
-        //      > 240 s). Crucially this parse ALREADY has a winning,
-        //      term-bearing cursor on the frontier; the O(N) orphans are
-        //      spurious dead-ends that all die.
-        //
-        // The two regimes are separated by the CONJUNCTION of two
-        // independent signals — neither alone is sufficient (each was
-        // empirically falsified in isolation, 2026-05-31):
-        //
-        //  • orphan count > `SPURIOUS_ORPHAN_THRESHOLD` (256 — 2× the 123
-        //    grammar-bounded ceiling, matching `MAX_COHORT_FRAME_MEMBERS`).
-        //    A grammar-bounded cross-cat parse NEVER exceeds this; only the
-        //    N-scaling deep-mixfix does. (Count alone is insufficient: a
-        //    blind cap/truncate still leaves O(N²) because each capped
-        //    cursor re-parses O(N) structure and re-spawns — `_1000`
-        //    measured 116 s under a blind cap=256.)
-        //
-        //  • `parse_already_succeeds`: the frontier already contains a
-        //    cursor at logical-EOI in an accepting config whose SPPF root
-        //    realizes to ≥1 term — i.e. `resolve_at_end_of_input`'s exact
-        //    success condition (wpda_walker.rs:4293-4419: `is_logical_eoi`
-        //    ∧ `is_accepting_config` ∧ `cursor_root != SPPF_ID_NONE` ∧
-        //    non-empty `realize_root_to_terms`). (This signal alone is
-        //    insufficient: it is ALSO true for `"42"` / `float(x)`, where
-        //    the realizable winner is the WRONG/un-promoted category and
-        //    revival is REQUIRED to add the right one — skipping there
-        //    regressed `test_unambiguous_int_literal` /
-        //    `test_nfa_spillover_float_int_var`, 2026-05-31.)
-        //
-        // When BOTH hold, the parse is the spurious-blowup regime: it
-        // already resolves to an accepting, term-bearing derivation AND its
-        // orphan set is the N-scaling spurious tail. Skipping revival is
-        // then exactly equivalent to M1 not having fired — the resolver
-        // finds the SAME winner — while eliminating the O(N²) re-drive
-        // (`test_deep_ternary_1000` → ~baseline). Genuine cross-cat parses
-        // (≤256 orphans) NEVER hit this branch and revive byte-for-byte as
-        // original M1, so no green cross-cat test regresses. Disambiguation-
-        // safe: a real ambiguity is grammar-bounded (≤256) and surfaces via
-        // the normal Fork/SPPF path; M1 never manufactures >256 first-class
-        // alternates for a single input.
-        const SPURIOUS_ORPHAN_THRESHOLD: usize = 256;
-        if orphans.len() > SPURIOUS_ORPHAN_THRESHOLD {
+        // Resource bound for eager orphan revival. Above this size, re-driving
+        // every parked member may turn an otherwise linear deep-mixfix parse
+        // into quadratic work. The bound is a search budget only: it must not
+        // decide that hidden alternatives are absent.
+        const ORPHAN_REVIVAL_FRONTIER_BUDGET: usize = 256;
+        if orphan_count > ORPHAN_REVIVAL_FRONTIER_BUDGET {
             let parse_already_succeeds = {
                 let candidate_roots: Vec<crate::sppf::SppfId> = self
                     .branch_cursors
@@ -9454,14 +9428,20 @@ where
                     .any(|&root| !self.realize_root_to_terms(root, Some(1)).is_empty())
             };
             if parse_already_succeeds {
-                // Spurious-blowup regime: an accepting, term-bearing winner
-                // is already on the frontier and the orphans are the
-                // N-scaling spurious tail. Skip revival entirely. Re-insert
-                // the (now-drained) orphans is unnecessary: they were
-                // removed from the cache by `drain_orphaned_inflight_members`
-                // and the parse already succeeds without them.
-                return 0;
+                // The parse has a realizable accepting cursor, but the
+                // over-budget orphan set is still unresolved evidence. Report
+                // overflow instead of accepting while those alternatives are
+                // hidden in the cohort cache.
+                return OrphanRevivalOutcome::BudgetExceeded {
+                    budget: ORPHAN_REVIVAL_FRONTIER_BUDGET,
+                    actual: orphan_count,
+                    position: self.pos,
+                };
             }
+        }
+        let orphans = self.dispatch_cohort_cache.drain_orphaned_inflight_members();
+        if orphans.is_empty() {
+            return OrphanRevivalOutcome::Idle;
         }
         let injected = orphans.len();
         // Preallocate for the cursors we are about to push.
@@ -9483,7 +9463,7 @@ where
         // state that reaches the `!progress_made` hook); the injected
         // Frame::Concrete cursors join `branch_cursors` and are stepped
         // on the next `step_fanout` iteration.
-        injected
+        OrphanRevivalOutcome::Injected(injected)
     }
 
     fn force_materialize_cohort_frames(&mut self) {
@@ -11628,10 +11608,7 @@ where
                 // `WpdaResolveResult::AmbiguityBudget { budget, actual,
                 // position }`.
                 self.state = WpdaState::Error {
-                    message: format!(
-                        "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={}",
-                        n, actual, self.pos,
-                    ),
+                    message: format_ambiguity_budget_sentinel(n, actual, self.pos),
                 };
             },
         }
@@ -16205,8 +16182,8 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        // M1.PERF (2026-05-31): propagated from `run_to_end_of_input`
-        // (the spurious-blowup gate's `realize_root_to_terms` call).
+        // Propagated from `run_to_end_of_input`'s orphan-revival overflow
+        // check, which may call `realize_root_to_terms`.
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         let max_steps = std::env::var("PRATTAIL_MAX_STEPS")
@@ -17586,6 +17563,51 @@ mod tests {
 
     use crate::wpda_runtime::{ActionArg, ActionEntry, SemanticBuilder, SliceTokenSource};
 
+    fn install_atomic_int_success_root(
+        walker: &mut WpdaWalker<LexicographicWeight, AtomicIntEngine>,
+    ) -> crate::sppf::SppfId {
+        let terminal = walker.sppf.intern_terminal(
+            TokenKind::Integer,
+            crate::sppf::PosOrSynth::Real(0),
+            Some("42"),
+            false,
+        );
+        let packing = walker
+            .sppf
+            .intern_packing(0, vec![terminal], LexicographicWeight::one());
+        let root = walker.sppf.intern_symbol(0, 0, 1);
+        walker.sppf.link_packing_to_symbol(root, packing);
+        root
+    }
+
+    fn seed_revivable_orphans<E: WpdaEngine<LexicographicWeight>>(
+        walker: &mut WpdaWalker<LexicographicWeight, E>,
+        count: usize,
+    ) {
+        for i in 0..count {
+            let key = crate::dispatch_cohort::DispatchKey::new(i, 7, 0, 2, 16);
+            assert!(matches!(
+                walker
+                    .dispatch_cohort_cache
+                    .register(key.clone(), LexicographicWeight::one()),
+                crate::dispatch_cohort::RegisterOutcome::WorkerInserted
+            ));
+            let return_frame = BranchCursor::seed_from_live(
+                crate::gss::GSS_NODE_NONE,
+                i,
+                LexicographicWeight::one(),
+                WpdaState::PrefixDispatch { pos: i, cur_bp: 0 },
+            );
+            assert!(walker.dispatch_cohort_cache.pause_cohort_member(
+                key,
+                crate::dispatch_cohort::CohortMember {
+                    return_frame,
+                    weight_at_dispatch: LexicographicWeight::one(),
+                },
+            ));
+        }
+    }
+
     #[test]
     fn atomic_int_literal_parses_end_to_end() {
         let tokens = [TokenKind::Integer];
@@ -17614,6 +17636,47 @@ mod tests {
         assert_eq!(*result_i64, 42);
         // Position should have advanced past the literal.
         assert_eq!(walker.position(), 1);
+    }
+
+    #[test]
+    fn orphan_revival_over_budget_reports_unresolved_evidence_without_draining() {
+        let tokens = [TokenKind::Integer, TokenKind::Eof];
+        let texts = ["42", ""];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
+        let root = install_atomic_int_success_root(&mut walker);
+        let mut accepting_cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::Accepted,
+        );
+        accepting_cursor.sppf_stack_id = walker
+            .sppf_stack_arena
+            .intern_push(accepting_cursor.sppf_stack_id, root);
+        walker.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(accepting_cursor)];
+        walker.state = WpdaState::AmbiguityFanout {
+            branches: vec![crate::gss::GSS_NODE_NONE],
+        };
+        walker.pos = 1;
+        seed_revivable_orphans(&mut walker, 257);
+
+        match walker.revive_orphaned_cohort_members_once(&token_src) {
+            OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
+                assert_eq!(budget, 256);
+                assert_eq!(actual, 257);
+                assert_eq!(position, 1);
+            },
+            other => panic!("expected orphan revival budget overflow, got {other:?}"),
+        }
+        assert_eq!(
+            walker
+                .dispatch_cohort_cache
+                .revivable_inflight_member_count(),
+            257,
+            "over-budget revival must report unresolved evidence without draining it"
+        );
+        assert_eq!(walker.branch_cursors.len(), 1);
     }
 
     #[test]
