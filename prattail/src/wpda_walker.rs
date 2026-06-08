@@ -4219,6 +4219,16 @@ where
             // state. No-op when `hang-dump` feature is off or
             // PRATTAIL_HANG_DUMP env var is unset.
             self.publish_to_hang_dump_slot();
+            if let Some(evidence) = self.dispatch_cohort_cache.unresolved_overflow_evidence() {
+                self.state = WpdaState::Error {
+                    message: format_ambiguity_budget_sentinel(
+                        evidence.budget,
+                        evidence.actual,
+                        evidence.position,
+                    ),
+                };
+                return Ok(());
+            }
             if self.state.is_terminal() {
                 return Ok(());
             }
@@ -15655,7 +15665,13 @@ where
                                     // Drain already scheduled by FirstResolve.
                                     self.pending_cohort_drain_keys.insert(key);
                                 },
-                                crate::dispatch_cohort::ResolveOutcome::NoOp => {},
+                                crate::dispatch_cohort::ResolveOutcome::NoOp
+                                | crate::dispatch_cohort::ResolveOutcome::SnapshotOverflow {
+                                    ..
+                                }
+                                | crate::dispatch_cohort::ResolveOutcome::ResolvedBodyOverflow {
+                                    ..
+                                } => {},
                             }
                         }
                     }
@@ -17735,6 +17751,16 @@ mod tests {
         }
     }
 
+    fn cohort_worker_snapshot() -> crate::dispatch_cohort::WorkerSnapshot<LexicographicWeight> {
+        crate::dispatch_cohort::WorkerSnapshot {
+            worker_inner_state: WpdaState::Ready { min_bp: 0 },
+            worker_last_action_output_cat: None,
+            worker_pending_packing_weight: LexicographicWeight::one(),
+            worker_weight: LexicographicWeight::one(),
+            worker_pre_dispatch_weight: LexicographicWeight::one(),
+        }
+    }
+
     #[test]
     fn atomic_int_literal_parses_end_to_end() {
         let tokens = [TokenKind::Integer];
@@ -17804,6 +17830,71 @@ mod tests {
             "over-budget revival must report unresolved evidence without draining it"
         );
         assert_eq!(walker.branch_cursors.len(), 1);
+    }
+
+    #[test]
+    fn cohort_cache_overflow_blocks_accepted_parse() {
+        let tokens = [TokenKind::Integer, TokenKind::Eof];
+        let texts = ["42", ""];
+        let token_src = SliceTokenSource::with_texts(&tokens, &texts);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
+        let root = install_atomic_int_success_root(&mut walker);
+        let mut accepting_cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::Accepted,
+        );
+        accepting_cursor.sppf_stack_id = walker
+            .sppf_stack_arena
+            .intern_push(accepting_cursor.sppf_stack_id, root);
+        walker.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(accepting_cursor)];
+        walker.state = WpdaState::Accepted;
+        walker.pos = 1;
+
+        let key = crate::dispatch_cohort::DispatchKey::new(1, 7, 0, 2, 16);
+        assert!(matches!(
+            walker
+                .dispatch_cohort_cache
+                .register(key.clone(), LexicographicWeight::one()),
+            crate::dispatch_cohort::RegisterOutcome::WorkerInserted
+        ));
+        assert_eq!(
+            walker
+                .dispatch_cohort_cache
+                .resolve(key.clone(), 42, 1, 1, cohort_worker_snapshot(),),
+            crate::dispatch_cohort::ResolveOutcome::FirstResolve,
+        );
+        for _ in 1..crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY {
+            assert_eq!(
+                walker.dispatch_cohort_cache.resolve(
+                    key.clone(),
+                    42,
+                    1,
+                    1,
+                    cohort_worker_snapshot(),
+                ),
+                crate::dispatch_cohort::ResolveOutcome::SnapshotAppended,
+            );
+        }
+        assert!(matches!(
+            walker
+                .dispatch_cohort_cache
+                .resolve(key, 42, 1, 1, cohort_worker_snapshot(),),
+            crate::dispatch_cohort::ResolveOutcome::SnapshotOverflow { .. }
+        ));
+
+        walker
+            .run_to_end_of_input(4, &token_src)
+            .expect("overflow is reported through the resolve result");
+        match walker.resolve_at_end_of_input(&token_src) {
+            WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                assert_eq!(budget, crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY);
+                assert_eq!(actual, crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY + 1);
+                assert_eq!(position, 1);
+            },
+            other => panic!("expected AmbiguityBudget, got {other:?}"),
+        }
     }
 
     #[test]

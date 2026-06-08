@@ -43,7 +43,7 @@ use crate::automata::semiring::SemiringRef;
 use crate::sppf::SppfId;
 use crate::wpda_runtime::WpdaState;
 
-const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 16;
+pub(crate) const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 16;
 const MAX_RESOLVED_BODIES_PER_KEY: usize = 16;
 
 /// Sig-B Blocker-2 (2026-05-31): is the `SIGB_CROSSWRAP` trace gate on?
@@ -502,6 +502,13 @@ fn append_snapshot_bounded<W: SemiringRef>(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CohortOverflowEvidence {
+    pub budget: usize,
+    pub actual: usize,
+    pub position: usize,
+}
+
 fn resolved_body_matches(
     symbol_id: SppfId,
     hi_pos: usize,
@@ -720,6 +727,13 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     /// for experiment #9 — a non-zero count on a failing cross-cat test is
     /// the empirical signature that the body-splice fired.
     pub crosswrap_splices_total: u64,
+    /// Unresolved evidence produced by cohort-cache caps. This is deliberately
+    /// separate from cursor-frontier caps: the cache keeps memory bounded, but
+    /// the walker must report the overflow instead of accepting with hidden
+    /// snapshots or bodies.
+    unresolved_overflow_evidence: Option<CohortOverflowEvidence>,
+    pub snapshot_overflows_total: u64,
+    pub resolved_body_overflows_total: u64,
 }
 
 impl<W: SemiringRef> DispatchCohortCache<W> {
@@ -742,6 +756,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             // Sig-B Blocker-2 (2026-05-31): fresh idempotence set + counter.
             crosswrap_drained: rustc_hash::FxHashSet::default(),
             crosswrap_splices_total: 0,
+            unresolved_overflow_evidence: None,
+            snapshot_overflows_total: 0,
+            resolved_body_overflows_total: 0,
         }
     }
 
@@ -766,6 +783,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // would be unsound to honor against a fresh SPPF arena.
         self.crosswrap_drained.clear();
         self.crosswrap_splices_total = 0;
+        self.unresolved_overflow_evidence = None;
+        self.snapshot_overflows_total = 0;
+        self.resolved_body_overflows_total = 0;
     }
 
     /// Clear token/SPPF-dependent entry state after a live token-source
@@ -776,6 +796,23 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.entries.clear();
         self.next_member_id = 0;
         self.crosswrap_drained.clear();
+        self.unresolved_overflow_evidence = None;
+    }
+
+    #[inline]
+    fn record_unresolved_overflow(&mut self, evidence: CohortOverflowEvidence) {
+        match self.unresolved_overflow_evidence {
+            Some(existing)
+                if existing.actual > evidence.actual
+                    || (existing.actual == evidence.actual
+                        && existing.position <= evidence.position) => {},
+            _ => self.unresolved_overflow_evidence = Some(evidence),
+        }
+    }
+
+    #[inline]
+    pub fn unresolved_overflow_evidence(&self) -> Option<CohortOverflowEvidence> {
+        self.unresolved_overflow_evidence
     }
 
     #[inline]
@@ -862,11 +899,15 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         pos_at_dispatch: usize,
         snap: WorkerSnapshot<W>,
     ) -> ResolveOutcome {
+        let mut increment_resolved_total = false;
+        let mut increment_snapshot_appends = false;
+        let mut snapshot_overflow = None;
+        let mut body_overflow = None;
         let entry = match self.entries.get_mut(&key) {
             Some(e) => e,
             None => return ResolveOutcome::NoOp,
         };
-        match entry {
+        let outcome = match entry {
             DispatchCacheEntry::InFlight {
                 worker_snapshots,
                 worker_pre_dispatch_weight,
@@ -900,7 +941,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     full_pending_members: preserved_full_members,
                     deferred_continuations: preserved_continuations,
                 };
-                self.resolved_total += 1;
+                increment_resolved_total = true;
                 ResolveOutcome::FirstResolve
             },
             DispatchCacheEntry::Resolved {
@@ -921,11 +962,21 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     pos_at_dispatch,
                 ) {
                     if append_snapshot_bounded(worker_snapshots, snap) {
-                        self.snapshot_appends_total += 1;
+                        increment_snapshot_appends = true;
+                        ResolveOutcome::SnapshotAppended
+                    } else {
+                        let actual = worker_snapshots.len().saturating_add(1);
+                        snapshot_overflow = Some(CohortOverflowEvidence {
+                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                            actual,
+                            position: key.pos,
+                        });
+                        ResolveOutcome::SnapshotOverflow {
+                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                            actual,
+                        }
                     }
-                    return ResolveOutcome::SnapshotAppended;
-                }
-                if let Some(body) = alternate_bodies.iter_mut().find(|body| {
+                } else if let Some(body) = alternate_bodies.iter_mut().find(|body| {
                     resolved_body_matches(
                         body.symbol_id,
                         body.hi_pos,
@@ -936,50 +987,82 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     )
                 }) {
                     if append_snapshot_bounded(&mut body.worker_snapshots, snap) {
-                        self.snapshot_appends_total += 1;
+                        increment_snapshot_appends = true;
+                        ResolveOutcome::SnapshotAppended
+                    } else {
+                        let actual = body.worker_snapshots.len().saturating_add(1);
+                        snapshot_overflow = Some(CohortOverflowEvidence {
+                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                            actual,
+                            position: key.pos,
+                        });
+                        ResolveOutcome::SnapshotOverflow {
+                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                            actual,
+                        }
                     }
-                    return ResolveOutcome::SnapshotAppended;
-                }
-                // Memory cap: refuse further snapshots beyond cap.
-                // Pathological grammars with > 8 packings per Symbol
-                // fall through to per-cursor for the overflow workers.
-                //
-                // 2026-05-25: experimental bump to 64 caused chain_1000
-                // memory explosion to 4.5 GB RSS at 28 s wall-time
-                // (vs ~5 MB baseline). The cap is a hard memory bound
-                // that must be paired with the lazy CohortFrame
-                // representation (Stage L6 of
-                // `docs/design/plans/cohort-lazy-materialization.md`)
-                // before it can be safely raised. Reverted to 4.
-                //
-                // Phase F.13 Stage L6 (2026-05-25): cap raised from 4
-                // to 16 (4× of original). Empirically the cap=256
-                // experiment caused chain_10000 to grow past 22 GB
-                // RSS at 2:54 (close to baseline 24 GB OOM ceiling).
-                // The L3+L4 per-cursor savings (~50× via lazy form +
-                // Arc-shared cycle defense) don't fully amortize a
-                // ~4096× cap-product increase (256²) — concrete
-                // revives still happen for ObsDivergent steps and
-                // pay the materialize cost. cap=16 (16²=256 cap
-                // product, 16× original) should fit in ~6× pre-L3
-                // baseline = ~150 MB at chain_1000.
-                if alternate_bodies.len() < MAX_RESOLVED_BODIES_PER_KEY {
-                    alternate_bodies.push(ResolvedBody {
-                        symbol_id,
-                        hi_pos,
-                        pos_at_dispatch,
-                        worker_snapshots: vec![snap],
-                        snapshots_drained: 0,
-                    });
-                    *resolved_hit_worker_spawned = false;
-                    self.resolved_total += 1;
-                    ResolveOutcome::FirstResolve
                 } else {
-                    ResolveOutcome::NoOp
+                    // Memory cap: refuse further bodies beyond cap. The cap is
+                    // a hard memory bound, but overflow is unresolved evidence:
+                    // it must be reported by the walker, not hidden behind a
+                    // successful cache hit.
+                    //
+                    // 2026-05-25: experimental bump to 64 caused chain_1000
+                    // memory explosion to 4.5 GB RSS at 28 s wall-time
+                    // (vs ~5 MB baseline). The cap is a hard memory bound
+                    // that must be paired with the lazy CohortFrame
+                    // representation (Stage L6 of
+                    // `docs/design/plans/cohort-lazy-materialization.md`)
+                    // before it can be safely raised. Reverted to 4.
+                    //
+                    // Phase F.13 Stage L6 (2026-05-25): cap raised from 4
+                    // to 16 (4x of original). Empirically the cap=256
+                    // experiment caused chain_10000 to grow past 22 GB
+                    // RSS at 2:54 (close to baseline 24 GB OOM ceiling).
+                    // The L3+L4 per-cursor savings (~50x via lazy form +
+                    // Arc-shared cycle defense) don't fully amortize a
+                    // ~4096x cap-product increase (256^2) -- concrete
+                    // revives still happen for ObsDivergent steps and
+                    // pay the materialize cost. cap=16 (16^2=256 cap
+                    // product, 16x original) should fit in ~6x pre-L3
+                    // baseline = ~150 MB at chain_1000.
+                    if alternate_bodies.len() < MAX_RESOLVED_BODIES_PER_KEY {
+                        alternate_bodies.push(ResolvedBody {
+                            symbol_id,
+                            hi_pos,
+                            pos_at_dispatch,
+                            worker_snapshots: vec![snap],
+                            snapshots_drained: 0,
+                        });
+                        *resolved_hit_worker_spawned = false;
+                        increment_resolved_total = true;
+                        ResolveOutcome::FirstResolve
+                    } else {
+                        let budget = 1usize.saturating_add(MAX_RESOLVED_BODIES_PER_KEY);
+                        let actual = budget.saturating_add(1);
+                        body_overflow =
+                            Some(CohortOverflowEvidence { budget, actual, position: key.pos });
+                        ResolveOutcome::ResolvedBodyOverflow { budget, actual }
+                    }
                 }
             },
             DispatchCacheEntry::Failed => ResolveOutcome::NoOp,
+        };
+        if increment_resolved_total {
+            self.resolved_total += 1;
         }
+        if increment_snapshot_appends {
+            self.snapshot_appends_total += 1;
+        }
+        if let Some(evidence) = snapshot_overflow {
+            self.snapshot_overflows_total += 1;
+            self.record_unresolved_overflow(evidence);
+        }
+        if let Some(evidence) = body_overflow {
+            self.resolved_body_overflows_total += 1;
+            self.record_unresolved_overflow(evidence);
+        }
+        outcome
     }
 
     /// Phase F.13 H12 Stage 1.5 — end-of-step drain.
@@ -2068,6 +2151,8 @@ pub enum ResolveOutcome {
     NoOp,
     FirstResolve,
     SnapshotAppended,
+    SnapshotOverflow { budget: usize, actual: usize },
+    ResolvedBodyOverflow { budget: usize, actual: usize },
 }
 
 #[cfg(test)]
@@ -2248,6 +2333,79 @@ mod tests {
             RegisterOutcome::ResolvedHit { spawn_worker, .. } => assert!(spawn_worker),
             _ => panic!("expected ResolvedHit after new body"),
         }
+    }
+
+    #[test]
+    fn snapshot_cap_records_unresolved_evidence() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+
+        assert_eq!(
+            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        for _ in 1..MAX_WORKER_SNAPSHOTS_PER_KEY {
+            assert_eq!(
+                cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+                ResolveOutcome::SnapshotAppended,
+            );
+        }
+
+        let overflow = cache.resolve(key.clone(), 42, 4, 3, worker_snapshot());
+        assert_eq!(
+            overflow,
+            ResolveOutcome::SnapshotOverflow {
+                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                actual: MAX_WORKER_SNAPSHOTS_PER_KEY + 1,
+            },
+        );
+        assert_eq!(cache.snapshot_overflows_total, 1);
+        assert_eq!(
+            cache.unresolved_overflow_evidence(),
+            Some(CohortOverflowEvidence {
+                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                actual: MAX_WORKER_SNAPSHOTS_PER_KEY + 1,
+                position: key.pos,
+            }),
+        );
+    }
+
+    #[test]
+    fn resolved_body_cap_records_unresolved_evidence() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+
+        assert_eq!(
+            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        for i in 0..MAX_RESOLVED_BODIES_PER_KEY {
+            assert_eq!(
+                cache.resolve(key.clone(), 100 + i as SppfId, 5 + i, 3, worker_snapshot()),
+                ResolveOutcome::FirstResolve,
+            );
+        }
+
+        let budget = 1 + MAX_RESOLVED_BODIES_PER_KEY;
+        let overflow = cache.resolve(key.clone(), 999, 99, 3, worker_snapshot());
+        assert_eq!(overflow, ResolveOutcome::ResolvedBodyOverflow { budget, actual: budget + 1 },);
+        assert_eq!(cache.resolved_body_overflows_total, 1);
+        assert_eq!(
+            cache.unresolved_overflow_evidence(),
+            Some(CohortOverflowEvidence {
+                budget,
+                actual: budget + 1,
+                position: key.pos,
+            }),
+        );
     }
 
     #[test]

@@ -966,6 +966,55 @@ Theorem orphan_revival_budget_exceeded_preserves_unresolved_evidence :
     actual_orphans.
 Proof. reflexivity. Qed.
 
+Inductive cohort_cache_cap_result : Type :=
+  | CohortCacheWithinCap
+  | CohortCacheBudgetExceeded (budget actual : nat).
+
+Definition bounded_cohort_cache_cap
+    (budget attempted : nat) : cohort_cache_cap_result :=
+  if budget <? attempted
+  then CohortCacheBudgetExceeded budget attempted
+  else CohortCacheWithinCap.
+
+Definition cohort_cache_cap_accepts
+    (_r : cohort_cache_cap_result) : bool :=
+  false.
+
+Definition cohort_cache_unresolved_evidence
+    (attempted : nat)
+    (r : cohort_cache_cap_result) : nat :=
+  match r with
+  | CohortCacheBudgetExceeded _ _ => attempted
+  | CohortCacheWithinCap => 0
+  end.
+
+Theorem cohort_cache_overflow_reports_budget :
+  forall budget attempted,
+    budget < attempted ->
+    bounded_cohort_cache_cap budget attempted =
+      CohortCacheBudgetExceeded budget attempted.
+Proof.
+  intros budget attempted Hlt.
+  unfold bounded_cohort_cache_cap.
+  assert (Hltb : (budget <? attempted) = true).
+  { apply Nat.ltb_lt. exact Hlt. }
+  rewrite Hltb.
+  reflexivity.
+Qed.
+
+Theorem cohort_cache_overflow_is_not_acceptance :
+  forall budget attempted,
+    cohort_cache_cap_accepts
+      (CohortCacheBudgetExceeded budget attempted) = false.
+Proof. reflexivity. Qed.
+
+Theorem cohort_cache_overflow_preserves_unresolved_evidence :
+  forall budget attempted,
+    cohort_cache_unresolved_evidence attempted
+      (CohortCacheBudgetExceeded budget attempted) =
+    attempted.
+Proof. reflexivity. Qed.
+
 Inductive token_class : Type :=
   | OpenDelimiter
   | CloseDelimiter
