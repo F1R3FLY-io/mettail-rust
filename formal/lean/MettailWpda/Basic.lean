@@ -536,6 +536,7 @@ theorem beamSizePreservesFrontierLength
 
 structure WeightedFrontierItem where
   weight : Nat
+  sequence : Nat
   node : Nat
   deriving DecidableEq, Repr
 
@@ -583,6 +584,16 @@ theorem priorityForceNoBetterRemaining
   intro hstep hin
   rcases hstep with ⟨_, hminimal⟩
   exact (hminimal picked rfl).2 item hin
+
+theorem lowerSequenceBreaksEqualWeightTie
+    {left right : WeightedFrontierItem} :
+    left.weight = right.weight ->
+    left.sequence <= right.sequence ->
+    left.weight <= right.weight ∧ left.sequence <= right.sequence := by
+  intro hweight hseq
+  constructor
+  · rw [hweight]
+  · exact hseq
 
 theorem priorityForcePreservesAmbiguityUntilDemand
     {frontier forced : List WeightedFrontierItem}

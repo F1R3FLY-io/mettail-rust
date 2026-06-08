@@ -798,6 +798,7 @@ Qed.
 
 Record weighted_frontier_item : Type := {
   wfi_weight : nat;
+  wfi_sequence : nat;
   wfi_node : nat
 }.
 
@@ -863,6 +864,19 @@ Proof.
   unfold frontier_minimal in Hmin.
   destruct Hmin as [_ Hle].
   now apply Hle.
+Qed.
+
+Theorem lower_sequence_breaks_equal_weight_tie :
+  forall left right,
+    wfi_weight left = wfi_weight right ->
+    wfi_sequence left <= wfi_sequence right ->
+    wfi_weight left <= wfi_weight right /\
+    wfi_sequence left <= wfi_sequence right.
+Proof.
+  intros left right Hweight Hseq.
+  split.
+  - rewrite Hweight. lia.
+  - exact Hseq.
 Qed.
 
 Theorem priority_force_preserves_ambiguity_until_demand :

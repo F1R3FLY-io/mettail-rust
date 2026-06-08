@@ -2653,6 +2653,80 @@ where
     }
 }
 
+fn semiring_priority_cmp<W: SemiringRef>(a: &W, b: &W) -> std::cmp::Ordering {
+    let combined = a.plus_ref(b);
+    let a_wins = &combined == a;
+    let b_wins = &combined == b;
+    match (a_wins, b_wins) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        (false, false) => std::cmp::Ordering::Equal,
+    }
+}
+
+struct LazyContinuationWork<W: SemiringRef> {
+    cursor: BranchCursor<W>,
+    action: WpdaStepAction<W>,
+    sequence: usize,
+}
+
+impl<W: SemiringRef> PartialEq for LazyContinuationWork<W> {
+    fn eq(&self, other: &Self) -> bool {
+        self.sequence == other.sequence
+    }
+}
+
+impl<W: SemiringRef> Eq for LazyContinuationWork<W> {}
+
+impl<W: SemiringRef> PartialOrd for LazyContinuationWork<W> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<W: SemiringRef> Ord for LazyContinuationWork<W> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match semiring_priority_cmp(&self.cursor.weight, &other.cursor.weight) {
+            // BinaryHeap is max-first; reverse the semiring order so the
+            // cheapest live continuation is forced first.
+            std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
+            std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
+            std::cmp::Ordering::Equal => other.sequence.cmp(&self.sequence),
+        }
+    }
+}
+
+struct LazyContinuationQueue<W: SemiringRef> {
+    heap: std::collections::BinaryHeap<LazyContinuationWork<W>>,
+    next_sequence: usize,
+}
+
+impl<W: SemiringRef> LazyContinuationQueue<W> {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            heap: std::collections::BinaryHeap::with_capacity(capacity),
+            next_sequence: 0,
+        }
+    }
+
+    fn push(&mut self, cursor: BranchCursor<W>, action: WpdaStepAction<W>) {
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.heap
+            .push(LazyContinuationWork { cursor, action, sequence });
+    }
+
+    fn pop(&mut self) -> Option<(BranchCursor<W>, WpdaStepAction<W>)> {
+        self.heap.pop().map(|work| (work.cursor, work.action))
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.heap.len()
+    }
+}
+
 /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect whether a
 /// `WpdaStepAction::Fork` was emitted by `recovery_dispatch::emit_recovery_fork`
 /// (vs. a regular ambiguity Fork from binder / lex-alt / multi-rule etc.).
@@ -9867,33 +9941,21 @@ where
         // loop NO LONGER calls engine.step (one call per frontier shell
         // instead of one per arc — main Substage 4 win).
         //
-        // Phase F.13 chain_10000 Exp 15 Substage 5 (2026-05-27): the
-        // per-cursor for-loop now operates over a `VecDeque<(BranchCursor,
-        // WpdaStepAction)>` queue. Each iteration dequeues one
-        // (cursor, action) pair (matching `Continuation::ApplyAction`
-        // semantics from `prattail/src/cps_walker.rs`); the loop body may
-        // implicitly enqueue successor work via `new_cursors` which is
-        // re-ingested at the next step_fanout call. This is the explicit
-        // trampoline form of what the implicit for-loop did — the
-        // structural change makes the CPS continuation queue load-bearing
-        // (vs. opportunistic), opening Substage 6+ extensions to drive
-        // arbitrary cursor work through a single queue rather than nested
-        // recursion via apply_action_to_cursor's helpers.
-        //
-        // Behavior identical to the prior for-loop: dequeue order is
-        // insertion order (VecDeque::pop_front + push_back FIFO);
-        // every cursor in `drained` processes exactly once with its
-        // cached action; successor frames are accumulated in `new_cursors`
-        // (NOT re-enqueued in the same step — they ingest at the next
-        // step_fanout call per the step-boundary protocol).
-        let mut continuation_queue: std::collections::VecDeque<(
-            BranchCursor<W>,
-            WpdaStepAction<W>,
-        )> = std::collections::VecDeque::with_capacity(drained.len());
+        // Phase F.13 chain_10000 Lazy redesign L2 (2026-06-07):
+        // force concrete cursor/action thunks through a stable
+        // weight-priority frontier. This changes only the forcing
+        // order: every queued alternative is retained, equal-priority
+        // alternatives remain FIFO, and successor frames still re-ingest
+        // at the next step_fanout boundary. The queue therefore implements
+        // demand-driven traversal over the weighted DAG without acting as
+        // a beam or heuristic disambiguator.
+        let mut continuation_queue: LazyContinuationQueue<W> =
+            LazyContinuationQueue::with_capacity(drained.len());
         for entry in drained {
-            continuation_queue.push_back(entry);
+            let (cursor, action) = entry;
+            continuation_queue.push(cursor, action);
         }
-        while let Some((cursor, action)) = continuation_queue.pop_front() {
+        while let Some((cursor, action)) = continuation_queue.pop() {
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
             // observe the projected `Continuation::ApplyAction` record
             // size for this action, plus the per-Fork child-count that
@@ -16362,6 +16424,43 @@ mod tests {
     fn empty_tokens() -> crate::wpda_runtime::SliceTokenSource<'static> {
         static EMPTY: [TokenKind; 0] = [];
         crate::wpda_runtime::SliceTokenSource::new(&EMPTY)
+    }
+
+    fn queue_cursor(pos: usize, weight: LexicographicWeight) -> BranchCursor<LexicographicWeight> {
+        BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            pos,
+            weight,
+            WpdaState::Ready { min_bp: 0 },
+        )
+    }
+
+    #[test]
+    fn lazy_continuation_queue_forces_cheapest_weight_first() {
+        let mut queue = LazyContinuationQueue::with_capacity(3);
+        queue.push(queue_cursor(10, lex(5.0, 0, 0)), WpdaStepAction::Idle);
+        queue.push(queue_cursor(20, lex(1.0, 0, 0)), WpdaStepAction::Idle);
+        queue.push(queue_cursor(30, lex(3.0, 0, 0)), WpdaStepAction::Idle);
+
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.pop().expect("first").0.pos, 20);
+        assert_eq!(queue.pop().expect("second").0.pos, 30);
+        assert_eq!(queue.pop().expect("third").0.pos, 10);
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn lazy_continuation_queue_preserves_fifo_for_weight_ties() {
+        let mut queue = LazyContinuationQueue::with_capacity(3);
+        let tied = lex(1.0, 0, 0);
+        queue.push(queue_cursor(10, tied), WpdaStepAction::Idle);
+        queue.push(queue_cursor(20, tied), WpdaStepAction::Idle);
+        queue.push(queue_cursor(30, tied), WpdaStepAction::Idle);
+
+        assert_eq!(queue.pop().expect("first").0.pos, 10);
+        assert_eq!(queue.pop().expect("second").0.pos, 20);
+        assert_eq!(queue.pop().expect("third").0.pos, 30);
+        assert!(queue.pop().is_none());
     }
 
     #[test]
