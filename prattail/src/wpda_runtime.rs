@@ -1675,59 +1675,24 @@ impl WpdaTokenSource for MultiTokenSource {
 pub struct LatticeTokenSource {
     /// The underlying DAG.
     pub dag: crate::lexer_types::LexDag,
-    /// Cached per-node primary kind (= `edges[0].kind`) for O(1)
-    /// `peek_kind`. Indexed by node id.
-    primary_kinds: Vec<TokenKind>,
-    /// Cached per-node primary text. Indexed by node id. Empty string
-    /// for the EOF sentinel (no edges).
-    primary_texts: Vec<String>,
-    /// Cached per-node secondary `LexAlternative` slice (= `edges[1..]`
-    /// converted to `LexAlternative` records). The walker's lex-fork
-    /// emitter at PrefixDispatch consults this via `peek_alternatives`.
-    secondary_alts: Vec<Vec<crate::lexer_types::LexAlternative>>,
+    /// Lazily materialized secondary `LexAlternative` slices. The DAG
+    /// already owns all lexical evidence; this cache exists only because
+    /// the `WpdaTokenSource` trait returns a borrowed slice of the
+    /// legacy `LexAlternative` shape for non-primary alternatives.
+    secondary_alts: Vec<std::sync::OnceLock<Vec<crate::lexer_types::LexAlternative>>>,
 }
 
 impl LatticeTokenSource {
-    /// Construct from a [`crate::lexer_types::LexDag`]. Pre-computes the
-    /// per-node primary-kind/text caches for O(1) accessors.
+    /// Construct from a [`crate::lexer_types::LexDag`].
+    ///
+    /// Primary token observations read directly from the DAG. Secondary
+    /// alternatives are converted on first demand per node, so constructing
+    /// a lattice source does not eagerly duplicate every ambiguous edge.
     pub fn new(dag: crate::lexer_types::LexDag) -> Self {
-        let n = dag.nodes.len();
-        let mut primary_kinds = Vec::with_capacity(n);
-        let mut primary_texts = Vec::with_capacity(n);
-        let mut secondary_alts: Vec<Vec<crate::lexer_types::LexAlternative>> =
-            Vec::with_capacity(n);
-        for node in &dag.nodes {
-            match node.edges.first() {
-                Some(primary) => {
-                    primary_kinds.push(primary.kind.clone());
-                    primary_texts.push(primary.text.clone());
-                },
-                None => {
-                    // EOF sentinel: emit Eof so callers can detect end.
-                    primary_kinds.push(TokenKind::Eof);
-                    primary_texts.push(String::new());
-                },
-            }
-            // Secondaries: edges[1..] converted to LexAlternative.
-            let secs: Vec<crate::lexer_types::LexAlternative> = node
-                .edges
-                .iter()
-                .skip(1)
-                .map(|e| crate::lexer_types::LexAlternative {
-                    kind: e.kind.clone(),
-                    text: e.text.clone(),
-                    end_byte: e.end_byte,
-                    weight: e.weight,
-                })
-                .collect();
-            secondary_alts.push(secs);
-        }
-        LatticeTokenSource {
-            dag,
-            primary_kinds,
-            primary_texts,
-            secondary_alts,
-        }
+        let secondary_alts = (0..dag.nodes.len())
+            .map(|_| std::sync::OnceLock::new())
+            .collect();
+        LatticeTokenSource { dag, secondary_alts }
     }
 
     /// Returns the target node of edge `alt_idx` (0 = primary; 1+ =
@@ -1741,15 +1706,60 @@ impl LatticeTokenSource {
             .get(alt_idx)
             .map(|e| e.target_node)
     }
+
+    fn secondary_alts_for(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        let Some(cell) = self.secondary_alts.get(pos) else {
+            return &[];
+        };
+        cell.get_or_init(|| {
+            self.dag
+                .nodes
+                .get(pos)
+                .map(|node| {
+                    node.edges
+                        .iter()
+                        .skip(1)
+                        .map(|e| crate::lexer_types::LexAlternative {
+                            kind: e.kind.clone(),
+                            text: e.text.clone(),
+                            end_byte: e.end_byte,
+                            weight: e.weight,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .as_slice()
+    }
+
+    #[cfg(test)]
+    fn materialized_secondary_alt_nodes(&self) -> usize {
+        self.secondary_alts
+            .iter()
+            .filter(|alts| alts.get().is_some())
+            .count()
+    }
 }
 
 impl WpdaTokenSource for LatticeTokenSource {
     fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
-        self.primary_kinds.get(pos).cloned()
+        let node = self.dag.nodes.get(pos)?;
+        Some(
+            node.edges
+                .first()
+                .map(|edge| edge.kind.clone())
+                .unwrap_or(TokenKind::Eof),
+        )
     }
 
     fn peek_text(&self, pos: usize) -> Option<&str> {
-        self.primary_texts.get(pos).map(|s| s.as_str())
+        let node = self.dag.nodes.get(pos)?;
+        Some(
+            node.edges
+                .first()
+                .map(|edge| edge.text.as_str())
+                .unwrap_or(""),
+        )
     }
 
     fn len(&self) -> usize {
@@ -1757,10 +1767,7 @@ impl WpdaTokenSource for LatticeTokenSource {
     }
 
     fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
-        self.secondary_alts
-            .get(pos)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.secondary_alts_for(pos)
     }
 
     fn is_ambiguous_at(&self, pos: usize) -> bool {
@@ -3349,6 +3356,27 @@ mod tests {
         let src = LatticeTokenSource::new(make_minus3_dag());
         // Primary edge from node 0 consumes "-3".
         assert_eq!(src.peek_text(0), Some("-3"));
+    }
+
+    #[test]
+    fn lattice_source_materializes_secondary_alts_on_demand() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        assert_eq!(src.materialized_secondary_alt_nodes(), 0);
+
+        assert!(matches!(src.peek_kind(0), Some(TokenKind::Integer)));
+        assert_eq!(src.peek_text(0), Some("-3"));
+        assert_eq!(
+            src.materialized_secondary_alt_nodes(),
+            0,
+            "primary observations must not force secondary alternatives"
+        );
+
+        {
+            let alts = src.peek_alternatives(0);
+            assert_eq!(alts.len(), 1);
+            assert!(matches!(alts[0].kind, TokenKind::Fixed(ref s) if s == "-"));
+        }
+        assert_eq!(src.materialized_secondary_alt_nodes(), 1);
     }
 
     #[test]

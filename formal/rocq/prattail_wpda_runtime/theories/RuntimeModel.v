@@ -892,3 +892,71 @@ Proof.
   destruct Hlazy as [_ Hmember].
   now apply Hmember.
 Qed.
+
+Record lex_dag_node_model : Type := {
+  ldn_primary : option nat;
+  ldn_secondaries : list nat
+}.
+
+Definition eager_secondary_observation
+    (nodes : list lex_dag_node_model)
+    (pos : nat) : list nat :=
+  match nth_error nodes pos with
+  | Some node => ldn_secondaries node
+  | None => []
+  end.
+
+Definition valid_secondary_cache
+    (nodes : list lex_dag_node_model)
+    (cache : list (option (list nat))) : Prop :=
+  forall pos alts,
+    nth_error cache pos = Some (Some alts) ->
+    alts = eager_secondary_observation nodes pos.
+
+Definition lazy_secondary_observation
+    (nodes : list lex_dag_node_model)
+    (cache : list (option (list nat)))
+    (pos : nat) : list nat :=
+  match nth_error cache pos with
+  | Some (Some alts) => alts
+  | _ => eager_secondary_observation nodes pos
+  end.
+
+Theorem lazy_secondary_observation_matches_eager :
+  forall nodes cache pos,
+    valid_secondary_cache nodes cache ->
+    lazy_secondary_observation nodes cache pos =
+    eager_secondary_observation nodes pos.
+Proof.
+  intros nodes cache pos Hvalid.
+  unfold lazy_secondary_observation.
+  destruct (nth_error cache pos) as [[alts|]|] eqn:Hcache.
+  - now apply Hvalid with (pos := pos).
+  - reflexivity.
+  - reflexivity.
+Qed.
+
+Definition primary_observation
+    (nodes : list lex_dag_node_model)
+    (pos eof_kind : nat) : option nat :=
+  match nth_error nodes pos with
+  | Some node =>
+      Some
+        (match ldn_primary node with
+         | Some kind => kind
+         | None => eof_kind
+         end)
+  | None => None
+  end.
+
+Definition lazy_primary_observation
+    (nodes : list lex_dag_node_model)
+    (_cache : list (option (list nat)))
+    (pos eof_kind : nat) : option nat :=
+  primary_observation nodes pos eof_kind.
+
+Theorem lazy_primary_observation_ignores_secondary_cache :
+  forall nodes cache_a cache_b pos eof_kind,
+    lazy_primary_observation nodes cache_a pos eof_kind =
+    lazy_primary_observation nodes cache_b pos eof_kind.
+Proof. reflexivity. Qed.

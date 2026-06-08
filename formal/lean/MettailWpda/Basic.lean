@@ -604,6 +604,75 @@ theorem priorityForcePreservesAmbiguityUntilDemand
   intro hstep hin
   exact hstep.1.2 item hin
 
+structure LexDagNodeModel where
+  primary : Option Nat
+  secondaries : List Nat
+  deriving DecidableEq, Repr
+
+def listGet? {α : Type} : List α -> Nat -> Option α
+  | [], _ => none
+  | x :: _, 0 => some x
+  | _ :: xs, n + 1 => listGet? xs n
+
+def eagerSecondaryObservation
+    (nodes : List LexDagNodeModel)
+    (pos : Nat) : List Nat :=
+  match listGet? nodes pos with
+  | some node => LexDagNodeModel.secondaries node
+  | none => []
+
+def validSecondaryCache
+    (nodes : List LexDagNodeModel)
+    (cache : List (Option (List Nat))) : Prop :=
+  ∀ pos alts,
+    listGet? cache pos = some (some alts) ->
+    alts = eagerSecondaryObservation nodes pos
+
+def lazySecondaryObservation
+    (nodes : List LexDagNodeModel)
+    (cache : List (Option (List Nat)))
+    (pos : Nat) : List Nat :=
+  match listGet? cache pos with
+  | some (some alts) => alts
+  | _ => eagerSecondaryObservation nodes pos
+
+theorem lazySecondaryObservationMatchesEager
+    {nodes : List LexDagNodeModel}
+    {cache : List (Option (List Nat))}
+    {pos : Nat} :
+    validSecondaryCache nodes cache ->
+    lazySecondaryObservation nodes cache pos =
+      eagerSecondaryObservation nodes pos := by
+  intro hvalid
+  unfold lazySecondaryObservation
+  cases hcache : listGet? cache pos with
+  | none => rfl
+  | some cached =>
+      cases cached with
+      | none => rfl
+      | some alts => exact hvalid pos alts hcache
+
+def primaryObservation
+    (nodes : List LexDagNodeModel)
+    (pos eofKind : Nat) : Option Nat :=
+  match listGet? nodes pos with
+  | some node => some ((LexDagNodeModel.primary node).getD eofKind)
+  | none => none
+
+def lazyPrimaryObservation
+    (nodes : List LexDagNodeModel)
+    (_cache : List (Option (List Nat)))
+    (pos eofKind : Nat) : Option Nat :=
+  primaryObservation nodes pos eofKind
+
+theorem lazyPrimaryObservationIgnoresSecondaryCache
+    (nodes : List LexDagNodeModel)
+    (cacheA cacheB : List (Option (List Nat)))
+    (pos eofKind : Nat) :
+    lazyPrimaryObservation nodes cacheA pos eofKind =
+      lazyPrimaryObservation nodes cacheB pos eofKind := by
+  rfl
+
 def normalizeRecoveryBeamWidth : Option Int -> Option Int
   | none => none
   | some width =>
