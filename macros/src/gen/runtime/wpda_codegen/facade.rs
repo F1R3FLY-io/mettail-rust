@@ -260,7 +260,7 @@ pub(crate) fn emit_parse_fns(
                 walker.set_recovery_config(recovery_config);
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
-                        WpdaResolveResult::Accepted { weights, roots, .. } => {
+                        WpdaResolveResult::Accepted { roots, .. } => {
                             // C7b (Phase 3.1.6, 2026-05-15): realize all
                             // SPPF roots; packing-fanout produces the
                             // ambiguity-preserving Vec<Cat>. The cap is a
@@ -271,11 +271,16 @@ pub(crate) fn emit_parse_fns(
                             let completion_position = walker.position();
                             *pos = completion_position;
                             let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                            let mut typed_weights:
+                                Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
+                                Vec::new();
                             let mut overflowed_realization = false;
                             for &root in &roots {
                                 let probe_limit =
                                     REALIZE_CAP.saturating_sub(typed_terms.len()).saturating_add(1);
-                                for term in walker.realize_root_to_terms(root, Some(probe_limit)) {
+                                for (term, weight) in
+                                    walker.realize_root_to_terms_with_weights(root, Some(probe_limit))
+                                {
                                     if typed_terms.len() >= REALIZE_CAP {
                                         overflowed_realization = true;
                                         break;
@@ -285,6 +290,7 @@ pub(crate) fn emit_parse_fns(
                                     let typed = std::sync::Arc::try_unwrap(arc)
                                         .unwrap_or_else(|arc| (*arc).clone());
                                     typed_terms.push(typed);
+                                    typed_weights.push(weight);
                                 }
                                 if overflowed_realization {
                                     break;
@@ -300,9 +306,7 @@ pub(crate) fn emit_parse_fns(
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
                             }
-                            // C10: `weights` is already Vec<LexicographicWeight>
-                            // post-revert.
-                            Ok((typed_terms, weights))
+                            Ok((typed_terms, typed_weights))
                         }
                         // Cluster H (2026-05-29): valid-prefix parse with
                         // trailing tokens. Realize ALL prefix derivations
@@ -310,16 +314,21 @@ pub(crate) fn emit_parse_fns(
                         // prefix boundary so the caller's trailing check
                         // (`pos < eof_node`) surfaces `TrailingTokens`.
                         WpdaResolveResult::AcceptedWithTrailing {
-                            weights, roots, position, ..
+                            roots, position, ..
                         } => {
                             *pos = position;
                             const REALIZE_CAP: usize = 64;
                             let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                            let mut typed_weights:
+                                Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
+                                Vec::new();
                             let mut overflowed_realization = false;
                             for &root in &roots {
                                 let probe_limit =
                                     REALIZE_CAP.saturating_sub(typed_terms.len()).saturating_add(1);
-                                for term in walker.realize_root_to_terms(root, Some(probe_limit)) {
+                                for (term, weight) in
+                                    walker.realize_root_to_terms_with_weights(root, Some(probe_limit))
+                                {
                                     if typed_terms.len() >= REALIZE_CAP {
                                         overflowed_realization = true;
                                         break;
@@ -329,6 +338,7 @@ pub(crate) fn emit_parse_fns(
                                     let typed = std::sync::Arc::try_unwrap(arc)
                                         .unwrap_or_else(|arc| (*arc).clone());
                                     typed_terms.push(typed);
+                                    typed_weights.push(weight);
                                 }
                                 if overflowed_realization {
                                     break;
@@ -344,7 +354,7 @@ pub(crate) fn emit_parse_fns(
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
                             }
-                            Ok((typed_terms, weights))
+                            Ok((typed_terms, typed_weights))
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {

@@ -635,11 +635,17 @@ impl WpdaState {
 pub enum WpdaResolveResult<W: SemiringRef> {
     /// M7c (2026-05-13): one or more Accepted configurations at EOI.
     ///
-    /// `weights` and `terms` are parallel vectors of length ≥ 1; index
-    /// `i` is the i-th derivation's weight and term. Length 1 = single
-    /// unambiguous parse; length N > 1 = N preserved derivations (the
-    /// `Ambiguous(Vec<Term>)` end-state of the user's mandate
-    /// "ambiguity preserved to EOI unless ruled out by evidence").
+    /// `weights` and `roots` are parallel vectors of length ≥ 1; index
+    /// `i` is the i-th accepting root's cursor weight and SPPF root.
+    /// Each root may realize to multiple derivation terms through
+    /// `WpdaWalker::realize_root_to_terms_with_weights`; generated
+    /// `parse_all` facades use that lazy realization path to preserve the
+    /// full `Ambiguous(Vec<Term>)` end-state without forcing the whole
+    /// forest at resolution time.
+    ///
+    /// `terms` is a legacy representative cache for direct walker callers
+    /// that still expect a term in the resolve result. It is not the
+    /// authoritative ambiguity surface; `roots` is.
     ///
     /// **Replaces** the pre-M7c single-result `Accepted{weight, term}`
     /// + `AcceptedAmbiguous{weight, term, equivalence_class_size}` pair
@@ -649,7 +655,7 @@ pub enum WpdaResolveResult<W: SemiringRef> {
         weights: Vec<W>,
         terms: Vec<Arc<dyn std::any::Any + Send + Sync>>,
         /// Option C / C6 (2026-05-15): each accepting cursor's SPPF root
-        /// id. Parallel to `weights` and `terms` (same length). Used by
+        /// id. Parallel to `weights` (same length). Used by
         /// the SPPF realization path (`sppf_realize::realize_all`) in
         /// C7+ once the facade switches over. Through C6-C8 the SPPF
         /// path coexists with `terms`; C9 removes `terms` entirely.
@@ -678,12 +684,12 @@ pub enum WpdaResolveResult<W: SemiringRef> {
     /// `ParseError::TrailingTokens` (carrying the partial AST in
     /// recovering mode) rather than a misleading `UnexpectedToken`.
     ///
-    /// `weights`/`terms`/`roots` are parallel (length ≥ 1), mirroring
-    /// `Accepted`; `position` is the prefix boundary (the first
-    /// unconsumed token index). Disambiguation is preserved: if multiple
-    /// prefix-accepting cursors tie at the same furthest position, ALL
-    /// are carried (the `Ambiguous` end-state still applies to the
-    /// prefix).
+    /// `weights`/`roots` are parallel (length ≥ 1), mirroring
+    /// `Accepted`; `terms` is a legacy representative cache. `position`
+    /// is the prefix boundary (the first unconsumed token index).
+    /// Disambiguation is preserved: if multiple prefix-accepting cursors
+    /// tie at the same furthest position, ALL are carried (the
+    /// `Ambiguous` end-state still applies to the prefix).
     AcceptedWithTrailing {
         weights: Vec<W>,
         terms: Vec<Arc<dyn std::any::Any + Send + Sync>>,

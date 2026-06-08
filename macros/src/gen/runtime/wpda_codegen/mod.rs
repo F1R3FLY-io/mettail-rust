@@ -566,6 +566,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_all_facade_returns_weight_per_realized_term() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(
+            ts.matches("realize_root_to_terms_with_weights").count() >= 2,
+            "parse_all must use weighted realization for accepted and trailing roots",
+        );
+        assert!(
+            ts.contains("typed_weights . push (weight)"),
+            "parse_all must append one weight for each realized term",
+        );
+        assert!(
+            ts.contains("Ok ((typed_terms , typed_weights))"),
+            "parse_all must return the term-parallel realized weights",
+        );
+        assert!(
+            !ts.contains("Ok ((typed_terms , weights))"),
+            "parse_all must not return root/cursor weights when roots realize to multiple terms",
+        );
+    }
+
+    #[test]
     fn unwinding_category_entry_does_not_guess_first_gss_predecessor() {
         let lang = synthetic_language();
         let ts = generate_wpda_engine_module(&lang).to_string();

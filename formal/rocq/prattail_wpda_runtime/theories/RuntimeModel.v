@@ -1161,6 +1161,65 @@ Theorem realization_cap_overflow_preserves_unresolved_evidence :
     actual_terms.
 Proof. reflexivity. Qed.
 
+Definition realized_terms_for_roots (roots : list nat) : list nat :=
+  flat_map (fun count => repeat 0 count) roots.
+
+Definition realized_weights_for_roots (roots : list nat) : list nat :=
+  flat_map (fun count => repeat 1 count) roots.
+
+Inductive weighted_facade_result : Type :=
+  | WeightedFacadeAccepted (terms weights : list nat)
+  | WeightedFacadeBudgetExceeded (budget actual : nat).
+
+Definition bounded_weighted_facade_realization
+    (budget : nat)
+    (roots : list nat) : weighted_facade_result :=
+  let terms := realized_terms_for_roots roots in
+  if budget <? length terms
+  then WeightedFacadeBudgetExceeded budget (S budget)
+  else WeightedFacadeAccepted terms (realized_weights_for_roots roots).
+
+Lemma realized_terms_weights_for_roots_parallel :
+  forall roots,
+    length (realized_terms_for_roots roots) =
+    length (realized_weights_for_roots roots).
+Proof.
+  induction roots as [|count rest IH].
+  - reflexivity.
+  - simpl.
+    rewrite !length_app.
+    rewrite !repeat_length.
+    lia.
+Qed.
+
+Theorem weighted_facade_accepted_terms_weights_parallel :
+  forall budget roots terms weights,
+    bounded_weighted_facade_realization budget roots =
+      WeightedFacadeAccepted terms weights ->
+    length terms = length weights.
+Proof.
+  intros budget roots terms weights Haccepted.
+  unfold bounded_weighted_facade_realization in Haccepted.
+  destruct (budget <? length (realized_terms_for_roots roots)) eqn:Hcap.
+  - discriminate Haccepted.
+  - inversion Haccepted; subst.
+    apply realized_terms_weights_for_roots_parallel.
+Qed.
+
+Theorem weighted_facade_probe_reports_structured_overflow :
+  forall budget roots,
+    budget < length (realized_terms_for_roots roots) ->
+    bounded_weighted_facade_realization budget roots =
+      WeightedFacadeBudgetExceeded budget (S budget).
+Proof.
+  intros budget roots Hlt.
+  unfold bounded_weighted_facade_realization.
+  assert (Hltb : (budget <? length (realized_terms_for_roots roots)) = true).
+  { apply Nat.ltb_lt. exact Hlt. }
+  rewrite Hltb.
+  reflexivity.
+Qed.
+
 Definition span_anchored_coercion_jobs
     (direct : bool)
     (coercions : list nat) : list (option nat) :=
