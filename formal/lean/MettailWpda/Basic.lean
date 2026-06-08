@@ -39,6 +39,7 @@ structure ConfigKey where
   node : Nat
   pos : Nat
   incomingEdge : Option Nat
+  incomingEdgeStack : Nat
   collectionDepth : Nat
   origin : Option EquivKey
   sppfTop : Option Nat
@@ -56,6 +57,23 @@ def withLexStamp (base : ConfigKey) (stamp : Nat) : ConfigKey :=
 
 def lexForkChildConfig (base : ConfigKey) (stamp nextPos : Nat) : ConfigKey :=
   { withLexStamp base stamp with pos := nextPos }
+
+def withIncomingEdgeStack (base : ConfigKey) (stack : Nat) : ConfigKey :=
+  { base with incomingEdgeStack := stack }
+
+theorem withIncomingEdgeStackSetsStack
+    (base : ConfigKey)
+    (stack : Nat) :
+    (withIncomingEdgeStack base stack).incomingEdgeStack = stack := by
+  rfl
+
+theorem differentIncomingEdgeStacks_preventMerge
+    {c1 c2 : ConfigKey} :
+    c1.incomingEdgeStack ≠ c2.incomingEdgeStack ->
+    c1 ≠ c2 := by
+  intro hdiff heq
+  apply hdiff
+  rw [heq]
 
 inductive LexAltOperatorAction where
   | postfix
@@ -133,6 +151,8 @@ inductive EdgeKind where
   | generic
   | crossCatProjection
       (source : Nat) (bp : Nat) (wrapCat : Nat) (wrapRule : Nat)
+  | crossCatLhs (source : Nat)
+  | crossCatLhsReentry (source : Nat)
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
@@ -214,6 +234,89 @@ theorem dispatchEdgeEq_preservesWrap
   intro h
   simp [edgeKindOfDispatch] at h
   simpa using h.2.2
+
+theorem crossCatLhsEdgeEq_preservesSource
+    {s1 s2 : Nat} :
+    EdgeKind.crossCatLhs s1 = EdgeKind.crossCatLhs s2 ->
+    s1 = s2 := by
+  intro h
+  cases h
+  rfl
+
+theorem crossCatLhsReentryEdgeEq_preservesSource
+    {s1 s2 : Nat} :
+    EdgeKind.crossCatLhsReentry s1 = EdgeKind.crossCatLhsReentry s2 ->
+    s1 = s2 := by
+  intro h
+  cases h
+  rfl
+
+def lhsReentryAfterPop : EdgeKind -> Option EdgeKind
+  | .crossCatLhs source => some (.crossCatLhsReentry source)
+  | _ => none
+
+theorem crossCatLhsPopReentersOnce
+    (source : Nat) :
+    lhsReentryAfterPop (.crossCatLhs source) =
+      some (.crossCatLhsReentry source) := by
+  rfl
+
+theorem crossCatLhsReentryIsOneShot
+    (source : Nat) :
+    lhsReentryAfterPop (.crossCatLhsReentry source) = none := by
+  rfl
+
+def crossCatLhsInfixEvidence (edge : EdgeKind) (topCat : Nat) : Option Nat :=
+  match edge with
+  | .crossCatLhs source
+  | .crossCatLhsReentry source =>
+      if source = topCat then some source else none
+  | _ => none
+
+def categoryChangingInfix (sourceCat resultCat : Nat) : Bool :=
+  decide (sourceCat ≠ resultCat)
+
+def categoryChangingInfixAllowed
+    (edge : EdgeKind)
+    (topCat sourceCat resultCat : Nat) : Bool :=
+  if categoryChangingInfix sourceCat resultCat then
+    match crossCatLhsInfixEvidence edge topCat with
+    | some witnessedSource => decide (witnessedSource = sourceCat)
+    | none => false
+  else
+    true
+
+theorem sameCategoryInfixNeedsNoLhsEvidence
+    (edge : EdgeKind)
+    (topCat sourceCat : Nat) :
+    categoryChangingInfixAllowed edge topCat sourceCat sourceCat = true := by
+  simp [categoryChangingInfixAllowed, categoryChangingInfix]
+
+theorem categoryChangingInfixRequiresLhsEvidence
+    {edge : EdgeKind}
+    {topCat sourceCat resultCat : Nat} :
+    categoryChangingInfix sourceCat resultCat = true ->
+    categoryChangingInfixAllowed edge topCat sourceCat resultCat = true ->
+    crossCatLhsInfixEvidence edge topCat = some sourceCat := by
+  intro hchanging hallowed
+  unfold categoryChangingInfixAllowed at hallowed
+  rw [hchanging] at hallowed
+  cases hev : crossCatLhsInfixEvidence edge topCat with
+  | none =>
+      rw [hev] at hallowed
+      cases hallowed
+  | some witnessedSource =>
+      rw [hev] at hallowed
+      have hwitness : witnessedSource = sourceCat := of_decide_eq_true hallowed
+      exact congrArg some hwitness
+
+theorem genericEdgeRejectsCategoryChangingInfix
+    {topCat sourceCat resultCat : Nat} :
+    categoryChangingInfix sourceCat resultCat = true ->
+    categoryChangingInfixAllowed
+      .generic topCat sourceCat resultCat = false := by
+  intro hchanging
+  simp [categoryChangingInfixAllowed, hchanging, crossCatLhsInfixEvidence]
 
 theorem dispatchKeysWithSameSourceBp_shareOrigin
     (base : ConfigKey)
@@ -430,6 +533,65 @@ theorem beamSizePreservesFrontierLength
     cursorBoundFrontierLen (.beamSize budget) actualFrontierLen =
       actualFrontierLen := by
   rfl
+
+structure WeightedFrontierItem where
+  weight : Nat
+  node : Nat
+  deriving DecidableEq, Repr
+
+def frontierMinimal
+    (picked : WeightedFrontierItem)
+    (frontier : List WeightedFrontierItem) : Prop :=
+  picked ∈ frontier ∧
+    ∀ item, item ∈ frontier -> picked.weight <= item.weight
+
+def lazyForceStep
+    (frontier forced : List WeightedFrontierItem) : Prop :=
+  forced.length <= 1 ∧
+    ∀ item, item ∈ forced -> item ∈ frontier
+
+def priorityForceStep
+    (frontier forced : List WeightedFrontierItem) : Prop :=
+  lazyForceStep frontier forced ∧
+    ∀ picked, forced = [picked] -> frontierMinimal picked frontier
+
+theorem singletonForceIsLazy
+    {frontier : List WeightedFrontierItem}
+    {picked : WeightedFrontierItem} :
+    picked ∈ frontier ->
+    lazyForceStep frontier [picked] := by
+  intro hin
+  constructor
+  · simp
+  · intro item hitem
+    have hitem_eq : item = picked := by
+      simpa using hitem
+    rw [hitem_eq]
+    exact hin
+
+theorem emptyForceIsLazy
+    (frontier : List WeightedFrontierItem) :
+    lazyForceStep frontier [] := by
+  simp [lazyForceStep]
+
+theorem priorityForceNoBetterRemaining
+    {frontier : List WeightedFrontierItem}
+    {picked item : WeightedFrontierItem} :
+    priorityForceStep frontier [picked] ->
+    item ∈ frontier ->
+    picked.weight <= item.weight := by
+  intro hstep hin
+  rcases hstep with ⟨_, hminimal⟩
+  exact (hminimal picked rfl).2 item hin
+
+theorem priorityForcePreservesAmbiguityUntilDemand
+    {frontier forced : List WeightedFrontierItem}
+    {item : WeightedFrontierItem} :
+    priorityForceStep frontier forced ->
+    item ∈ forced ->
+    item ∈ frontier := by
+  intro hstep hin
+  exact hstep.1.2 item hin
 
 def normalizeRecoveryBeamWidth : Option Int -> Option Int
   | none => none
