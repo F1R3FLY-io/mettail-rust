@@ -199,6 +199,10 @@ pub struct CohortShell<W: SemiringRef> {
 /// the per-cursor clone was ~3.2 KB (heaptrack); a `CohortMemberState`
 /// is ~72 B (depending on `W` size).
 pub struct CohortMemberState<W: SemiringRef> {
+    /// Stable identity assigned by `DispatchCohortCache` when the
+    /// continuation pauses. Cross-wrap drains use this to make their
+    /// take-once guard per concrete member rather than per dispatch key.
+    pub member_id: u64,
     /// Cumulative weight at the dispatch site (= `parent.weight ×
     /// branch.weight` at register time; matches today's
     /// `CohortMember.weight_at_dispatch`).
@@ -594,6 +598,7 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
     /// updates it per worker_snapshot during multi-packing fanout.
     pub fn from_branch_cursor(parent: &BranchCursor<W>, weight_at_dispatch: W) -> Self {
         Self {
+            member_id: 0,
             weight_at_dispatch,
             snapshot_idx: 0,
             pending_packing_weight: parent.pending_packing_weight.clone(),
@@ -603,6 +608,16 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
             cohort_revive_depth: parent.cohort_revive_depth,
             lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
         }
+    }
+
+    pub fn from_branch_cursor_with_member_id(
+        parent: &BranchCursor<W>,
+        weight_at_dispatch: W,
+        member_id: u64,
+    ) -> Self {
+        let mut state = Self::from_branch_cursor(parent, weight_at_dispatch);
+        state.member_id = member_id;
+        state
     }
 }
 

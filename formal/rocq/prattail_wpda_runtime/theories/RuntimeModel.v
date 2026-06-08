@@ -358,32 +358,289 @@ Definition lex_fork_only_secondary_survived
   andb branches_nonempty (negb primary_survived).
 
 Definition lex_fork_fall_through
-    (branches_empty primary_only_survived primary_has_dispatch_rule
-      only_secondary_survived : bool) : bool :=
-  orb branches_empty
-    (orb primary_only_survived
-      (andb only_secondary_survived primary_has_dispatch_rule)).
+    (branches_empty primary_only_survived : bool) : bool :=
+  orb branches_empty primary_only_survived.
 
 Theorem lex_fork_only_secondary_when_nonempty_without_primary :
   lex_fork_only_secondary_survived true false = true.
 Proof. reflexivity. Qed.
 
-Theorem lex_fork_falls_through_when_only_secondary_and_primary_has_dispatch :
-  lex_fork_fall_through false false true true = true.
+Theorem lex_fork_does_not_fall_through_for_only_secondary :
+  lex_fork_fall_through false false = false.
 Proof. reflexivity. Qed.
 
-Theorem lex_fork_does_not_fall_through_for_secondary_without_primary_dispatch :
-  lex_fork_fall_through false false false true = false.
-Proof. reflexivity. Qed.
+Inductive prefix_rule_kind : Type :=
+  | PrefixAtomic
+  | PrefixBinder
+  | PrefixCrossCatProjection.
 
-Theorem lex_fork_fall_through_only_secondary_matches_primary_dispatch :
-  forall primary_has_dispatch_rule,
-    lex_fork_fall_through false false primary_has_dispatch_rule true =
-    primary_has_dispatch_rule.
+Record prefix_rule_info : Type := {
+  pri_rule : nat;
+  pri_kind : prefix_rule_kind
+}.
+
+Inductive prefix_branch : Type :=
+  | PrefixBranch (info : prefix_rule_info).
+
+Definition emit_prefix_branches
+    (infos : list prefix_rule_info) : list prefix_branch :=
+  map PrefixBranch infos.
+
+Theorem emit_prefix_branches_preserves_members :
+  forall infos info,
+    In info infos ->
+    In (PrefixBranch info) (emit_prefix_branches infos).
 Proof.
-  intros [].
+  intros infos info Hin.
+  unfold emit_prefix_branches.
+  now apply in_map.
+Qed.
+
+Theorem emit_prefix_branches_preserves_length :
+  forall infos,
+    length (emit_prefix_branches infos) = length infos.
+Proof.
+  intros infos.
+  unfold emit_prefix_branches.
+  apply length_map.
+Qed.
+
+Theorem emit_prefix_branches_preserves_two_same_trigger_rules :
+  forall first second,
+    emit_prefix_branches [first; second] =
+    [PrefixBranch first; PrefixBranch second].
+Proof. reflexivity. Qed.
+
+Record projection_delegate_key : Type := {
+  pdk_rule : nat;
+  pdk_source : nat
+}.
+
+Lemma projection_delegate_key_eq_dec :
+  forall x y : projection_delegate_key, {x = y} + {x <> y}.
+Proof.
+  decide equality; apply Nat.eq_dec.
+Defined.
+
+Definition insert_projection_delegate
+    (d : projection_delegate_key)
+    (ds : list projection_delegate_key) : list projection_delegate_key :=
+  if in_dec projection_delegate_key_eq_dec d ds then ds else d :: ds.
+
+Fixpoint dedup_projection_delegates
+    (ds : list projection_delegate_key) : list projection_delegate_key :=
+  match ds with
+  | [] => []
+  | d :: rest => insert_projection_delegate d (dedup_projection_delegates rest)
+  end.
+
+Inductive projection_branch : Type :=
+  | ProjectionDelegateBranch (key : projection_delegate_key).
+
+Definition emit_projection_delegate_branches
+    (ds : list projection_delegate_key) : list projection_branch :=
+  map ProjectionDelegateBranch (dedup_projection_delegates ds).
+
+Theorem emit_projection_delegate_branches_dedups_duplicate :
+  forall d,
+    emit_projection_delegate_branches [d; d] =
+    [ProjectionDelegateBranch d].
+Proof.
+  intros d.
+  unfold emit_projection_delegate_branches.
+  simpl.
+  unfold insert_projection_delegate.
+  destruct (in_dec projection_delegate_key_eq_dec d []) as [Hin_empty | _].
+  - inversion Hin_empty.
+  - simpl.
+    destruct (projection_delegate_key_eq_dec d d) as [_ | Hneq].
+    + reflexivity.
+    + contradiction.
+Qed.
+
+Record transparent_projection : Type := {
+  tp_source_cat : nat;
+  tp_target_cat : nat;
+  tp_wrap_cat : nat;
+  tp_wrap_rule : nat
+}.
+
+Definition transparent_projection_matches
+    (source_cat target_cat : nat)
+    (projection : transparent_projection) : bool :=
+  (tp_source_cat projection =? source_cat) &&
+    (tp_target_cat projection =? target_cat).
+
+Definition guard_projection_evidence
+    (projections : list transparent_projection)
+    (source_cat target_cat : nat) : bool :=
+  existsb (transparent_projection_matches source_cat target_cat) projections.
+
+Inductive guarded_literal_rewrite : Type :=
+  | GuardNoRewrite (cat : nat)
+  | GuardProjected (projection : transparent_projection).
+
+Definition guarded_literal_rewrite_category
+    (rewrite : guarded_literal_rewrite) : nat :=
+  match rewrite with
+  | GuardNoRewrite cat => cat
+  | GuardProjected projection => tp_target_cat projection
+  end.
+
+Definition guarded_literal_accepts_top
+    (projections : list transparent_projection)
+    (required_top_cat : option nat)
+    (top_cat : nat) : bool :=
+  match required_top_cat with
+  | None => true
+  | Some required =>
+      (top_cat =? required) ||
+        guard_projection_evidence projections top_cat required
+  end.
+
+Definition guarded_literal_stack_rewrites
+    (projections : list transparent_projection)
+    (required_top_cat : option nat)
+    (top_cat : nat) : list guarded_literal_rewrite :=
+  match required_top_cat with
+  | None => [GuardNoRewrite top_cat]
+  | Some required =>
+      if top_cat =? required
+      then [GuardNoRewrite top_cat]
+      else
+        map GuardProjected
+          (filter (transparent_projection_matches top_cat required) projections)
+  end.
+
+Theorem guarded_literal_accepts_direct_category :
+  forall projections required,
+    guarded_literal_accepts_top
+      projections (Some required) required = true.
+Proof.
+  intros projections required.
+  unfold guarded_literal_accepts_top.
+  now rewrite Nat.eqb_refl.
+Qed.
+
+Theorem guarded_literal_mismatch_requires_projection_evidence :
+  forall projections top_cat required,
+    top_cat <> required ->
+    guarded_literal_accepts_top
+      projections (Some required) top_cat = true ->
+    guard_projection_evidence projections top_cat required = true.
+Proof.
+  intros projections top_cat required Hneq Haccept.
+  unfold guarded_literal_accepts_top in Haccept.
+  assert (Heq : (top_cat =? required) = false).
+  { apply Nat.eqb_neq. exact Hneq. }
+  rewrite Heq in Haccept.
+  simpl in Haccept.
+  exact Haccept.
+Qed.
+
+Theorem guarded_literal_rejects_mismatch_without_projection_evidence :
+  forall projections top_cat required,
+    top_cat <> required ->
+    guard_projection_evidence projections top_cat required = false ->
+    guarded_literal_accepts_top
+      projections (Some required) top_cat = false.
+Proof.
+  intros projections top_cat required Hneq Hno_evidence.
+  unfold guarded_literal_accepts_top.
+  assert (Heq : (top_cat =? required) = false).
+  { apply Nat.eqb_neq. exact Hneq. }
+  now rewrite Heq, Hno_evidence.
+Qed.
+
+Theorem guarded_literal_accepts_projection_evidence :
+  forall projections top_cat required,
+    guard_projection_evidence projections top_cat required = true ->
+    guarded_literal_accepts_top
+      projections (Some required) top_cat = true.
+Proof.
+  intros projections top_cat required Hevidence.
+  unfold guarded_literal_accepts_top.
+  destruct (top_cat =? required); simpl.
   - reflexivity.
-  - reflexivity.
+  - exact Hevidence.
+Qed.
+
+Theorem guarded_literal_rewrite_categories_are_required :
+  forall projections top_cat required rewrite,
+    In rewrite
+      (guarded_literal_stack_rewrites projections (Some required) top_cat) ->
+    guarded_literal_rewrite_category rewrite = required.
+Proof.
+  intros projections top_cat required rewrite Hin.
+  unfold guarded_literal_stack_rewrites in Hin.
+  destruct (top_cat =? required) eqn:Heq.
+  - apply Nat.eqb_eq in Heq.
+    simpl in Hin.
+    destruct Hin as [Hin | Hin].
+    + subst rewrite. simpl. exact Heq.
+    + contradiction.
+  - apply in_map_iff in Hin as [projection [Hrewrite Hin_filter]].
+    subst rewrite.
+    apply filter_In in Hin_filter as [_ Hmatches].
+    unfold transparent_projection_matches in Hmatches.
+    apply andb_prop in Hmatches as [_ Htarget].
+    simpl.
+    now apply Nat.eqb_eq.
+Qed.
+
+Theorem guarded_literal_enumerates_every_projection :
+  forall projections top_cat required projection,
+    top_cat <> required ->
+    In projection projections ->
+    transparent_projection_matches top_cat required projection = true ->
+    In (GuardProjected projection)
+      (guarded_literal_stack_rewrites projections (Some required) top_cat).
+Proof.
+  intros projections top_cat required projection Hneq Hin Hmatches.
+  unfold guarded_literal_stack_rewrites.
+  assert (Heq : (top_cat =? required) = false).
+  { apply Nat.eqb_neq. exact Hneq. }
+  rewrite Heq.
+  apply in_map.
+  apply filter_In.
+  split; assumption.
+Qed.
+
+Theorem guarded_literal_projected_rewrite_has_evidence :
+  forall projections top_cat required projection,
+    top_cat <> required ->
+    In (GuardProjected projection)
+      (guarded_literal_stack_rewrites projections (Some required) top_cat) ->
+    In projection projections /\
+      transparent_projection_matches top_cat required projection = true.
+Proof.
+  intros projections top_cat required projection Hneq Hin.
+  unfold guarded_literal_stack_rewrites in Hin.
+  assert (Heq : (top_cat =? required) = false).
+  { apply Nat.eqb_neq. exact Hneq. }
+  rewrite Heq in Hin.
+  apply in_map_iff in Hin as [projection' [Hprojected Hin_filter]].
+  inversion Hprojected.
+  subst projection'.
+  now apply filter_In in Hin_filter.
+Qed.
+
+Theorem guarded_literal_projected_rewrite_implies_acceptance :
+  forall projections top_cat required projection,
+    top_cat <> required ->
+    In (GuardProjected projection)
+      (guarded_literal_stack_rewrites projections (Some required) top_cat) ->
+    guarded_literal_accepts_top
+      projections (Some required) top_cat = true.
+Proof.
+  intros projections top_cat required projection Hneq Hin.
+  apply guarded_literal_projected_rewrite_has_evidence in Hin as [Hin_projection Hmatches].
+  - apply guarded_literal_accepts_projection_evidence.
+    unfold guard_projection_evidence.
+    apply existsb_exists.
+    exists projection.
+    split; assumption.
+  - exact Hneq.
 Qed.
 
 Definition config_with_incoming_edge_stack
@@ -440,11 +697,11 @@ Proof.
 Qed.
 
 Theorem lex_fork_falls_through_when_no_branches :
-  lex_fork_fall_through true false false false = true.
+  lex_fork_fall_through true false = true.
 Proof. reflexivity. Qed.
 
 Theorem lex_fork_falls_through_when_only_primary_survived :
-  lex_fork_fall_through false true false false = true.
+  lex_fork_fall_through false true = true.
 Proof. reflexivity. Qed.
 
 Definition observable (c : cursor) : config_key := cur_config c.

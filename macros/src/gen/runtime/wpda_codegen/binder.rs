@@ -1204,33 +1204,50 @@ pub(crate) fn emit_binder_rule_body(
                 let pos = (idx + 1) as u8;
                 let next_pos = pos + 1;
                 let arm = match position {
-                    BinderPosition::Literal(text) => quote! {
-                        (#result_src_idx, #rule_idx, #pos) => {
-                            // Stage 3.20 / L12 Commit F (2026-05-06):
-                            // Cluster 1 compatibility closure #5. Single-branch
-                            // GuardedConsumeAndReplace Fork — peek_text
-                            // == #text guard runs inside the walker,
-                            // failure produces no child (cursor dies via
-                            // step_fanout's empty-children pathway).
-                            return WpdaStepAction::Fork {
-                                branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: StackSymbolV2::rule_at(
-                                        #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                    ),
-                                    weight: lex_one(),
-                                    new_state: WpdaState::BinderRule {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        body_src_idx: *_body_src_idx,
-                                        outer_bp: *outer_bp,
-                                    },
-                                    action_kind:
-                                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
-                                            expected_text: #text.to_string(),
+                    BinderPosition::Literal(text) => {
+                        let required_top_cat = if idx > 0 {
+                            match &shape.positions[idx - 1] {
+                                BinderPosition::ParamParse { cat, .. } => {
+                                    lookup_src_idx(cat, categories)
+                                },
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let required_top_cat_tokens = match required_top_cat {
+                            Some(cat) => quote! { Some(#cat) },
+                            None => quote! { None },
+                        };
+                        quote! {
+                            (#result_src_idx, #rule_idx, #pos) => {
+                                // Stage 3.20 / L12 Commit F (2026-05-06):
+                                // Cluster 1 compatibility closure #5. Single-branch
+                                // GuardedConsumeAndReplace Fork — peek_text
+                                // == #text guard runs inside the walker,
+                                // failure produces no child (cursor dies via
+                                // step_fanout's empty-children pathway).
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::BinderRule {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *_body_src_idx,
+                                            outer_bp: *outer_bp,
                                         },
-                                }],
-                                consume_trigger: false,
-                            };
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
+                                                expected_text: #text.to_string(),
+                                                required_top_cat: #required_top_cat_tokens,
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
                         }
                     },
                     BinderPosition::BinderIdent => quote! {
@@ -2216,6 +2233,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                         action_kind:
                                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
                                                                 expected_text: #txt.to_string(),
+                                                                required_top_cat: None,
                                                             },
                                                     },
                                                 ],
@@ -2517,6 +2535,7 @@ pub(crate) fn emit_optional_group_body(
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
                                                 expected_text: #text.to_string(),
+                                                required_top_cat: None,
                                             },
                                     }],
                                     consume_trigger: false,

@@ -1,58 +1,59 @@
-//! M6c.2 (2026-05-14) — per-grammar `lex_alt_rule_for(cat_src_idx, kind)`
+//! M6c.2 (2026-05-14) — per-grammar lex-alt rule lookup
 //! codegen helper.
 //!
-//! Generates a function that maps a `(category, TokenKind)` pair to the
-//! `rule_idx` of a prefix-site token-consuming rule in that category that
-//! consumes the kind. Returns `None` if no such rule exists.
+//! Generates functions that map a `(category, TokenKind)` pair to every
+//! prefix- or infix-site token-consuming rule in that category that consumes
+//! the kind. Empty result means no such rule exists.
 //!
 //! The lex-Fork emission path (M6c.3) uses this lookup to bind each lex
-//! alternative to a concrete grammar rule before forking. A `None` result
-//! means the alt's kind cannot produce an AST term in the requesting cat,
-//! so the branch is dropped (rule-out by evidence, per the "never
-//! disambiguate early" mandate — the parser doesn't pick; it rules out
-//! impossibilities).
+//! alternative to concrete grammar rules before forking. An empty result means
+//! the alt's kind cannot produce an AST term in the requesting cat, so the
+//! branch is dropped (rule-out by evidence, per the "never disambiguate early"
+//! mandate — the parser doesn't pick; it rules out impossibilities).
 //!
 //! The classification reuses `prefix.rs`'s `AtomicShape` so the table is
 //! always in sync with the prefix-dispatch arms that produce the same
 //! rule's AST.
 
-use mettail_ast::grammar::GrammarRule;
+use mettail_ast::grammar::{GrammarRule, SyntaxExpr};
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use super::binder::{binder_initial_body_cat, classify_binder};
 use super::infix::build_bp_table;
-use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
+use super::prefix::{classify_atomic, first_set_of_category, AtomicShape, LiteralFamily};
 
-/// Emit the `lex_alt_rule_for` free function for a grammar.
+/// Emit the lex-alt lookup free functions for a grammar.
 ///
 /// The emitted signature is:
 ///
 /// ```ignore
-/// fn lex_alt_rule_for(
+/// fn lex_alt_rules_for_prefix(
 ///     cat_src_idx: u16,
 ///     kind: &mettail_prattail::automata::TokenKind,
-/// ) -> Option<u16>
+/// ) -> Vec<mettail_prattail::wpda_runtime::LexAltRuleInfo>
 /// ```
 ///
-/// Body is a `match` over `(cat_src_idx, kind)` populated by walking
+/// Body is a sequence of local matches over `(cat_src_idx, kind)` populated by walking
 /// `per_cat`: for each (cat, rule_idx, rule) tuple, classify the rule via
-/// `classify_atomic`; emit one or more arms mapping a `TokenKind` pattern
-/// to `Some(rule_idx)`.
+/// `classify_atomic`; emit one or more pushes mapping a `TokenKind` pattern
+/// to `LexAltRuleInfo`.
 ///
 /// Multiple rules in the same cat with overlapping kind coverage CAN occur
 /// (e.g., Calculator's Int has both `NumLit` consuming `Integer` AND a
-/// `LiteralPatterned` covering `IntegerLit("Int")`). The match emits BOTH
-/// arms; the first one matched wins. Order is by rule_idx ascending —
-/// deterministic and stable.
+/// `LiteralPatterned` covering `IntegerLit("Int")`; Calculator's Float has
+/// several `float(...)` binders). Every matching rule is returned in rule_idx
+/// order so the lex fork preserves ambiguity instead of selecting the first
+/// declaration too early.
 pub fn emit_lex_alt_rule_for_fn(
     _language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
     categories: &[String],
 ) -> TokenStream {
     // M6c.6.4.b (2026-05-14): split into two per-site tables —
-    // `lex_alt_rule_for_prefix` for PrefixDispatch site (Atomic +
-    // PrefixOp arms) and `lex_alt_rules_for_infix` for InfixLoop site
+    // `lex_alt_rules_for_prefix` for PrefixDispatch site (Atomic +
+    // literal-leading binder arms) and `lex_alt_rules_for_infix` for InfixLoop site
     // (PostfixOp + InfixOp + MixfixFirstTrigger arms). Same-token-kind
     // ambiguity (e.g., `Fixed("-")` for both unary `Neg` and binary `SubInt`)
     // is resolved by site:
@@ -63,45 +64,66 @@ pub fn emit_lex_alt_rule_for_fn(
     // `categories` is threaded for codegen-time category name →
     // src_idx lookup (used by PrefixOp's `body_src_idx` resolution
     // and later by InfixOp's `result_src_idx` etc.).
-    let mut prefix_arms: Vec<TokenStream> = Vec::new();
+    let mut prefix_pushes: Vec<TokenStream> = Vec::new();
     for (cat_src_idx, rules) in per_cat.iter().enumerate() {
         let cat_src_idx_u16 = cat_src_idx as u16;
         for (rule_idx, rule) in rules.iter().enumerate() {
             let rule_idx_u16 = rule_idx as u16;
             let shape = classify_atomic(rule, _language);
-            emit_arms_for_shape(
+            emit_prefix_pushes_for_shape(
                 &shape,
                 cat_src_idx_u16,
                 rule_idx_u16,
                 categories,
-                &mut prefix_arms,
+                &mut prefix_pushes,
             );
+            if matches!(shape, AtomicShape::NonAtomic) {
+                emit_binder_prefix_pushes_for_rule(
+                    rule,
+                    cat_src_idx_u16,
+                    rule_idx_u16,
+                    categories,
+                    &mut prefix_pushes,
+                );
+            }
+            if let AtomicShape::CrossCatProjection { source_cat_name, .. } = &shape {
+                emit_cross_cat_projection_prefix_pushes(
+                    _language,
+                    source_cat_name,
+                    cat_src_idx_u16,
+                    rule_idx_u16,
+                    categories,
+                    &mut prefix_pushes,
+                );
+            }
         }
     }
     let prefix_primary_dispatch_arms = emit_prefix_primary_dispatch_arms(_language, per_cat);
     let infix_arms = emit_infix_lex_alt_rule_arms(_language, per_cat, categories);
     quote! {
         /// M6c.6.4.b (2026-05-14): map `(cat_src_idx, kind)` at
-        /// `LexForkSite::PrefixDispatch` to a `LexAltRuleInfo` carrying
-        /// the rule index AND a `LexAltRuleKind` discriminator. The
-        /// lex-Fork at PrefixDispatch consults this fn; `_infix`
-        /// sibling handles InfixLoop. `None` means the alt's kind has
-        /// no consuming rule in the requesting cat at this site —
-        /// rule-out by evidence per "never disambiguate early".
+        /// `LexForkSite::PrefixDispatch` to every `LexAltRuleInfo`
+        /// carrying the rule index AND a `LexAltRuleKind`
+        /// discriminator. The lex-Fork at PrefixDispatch consults
+        /// this fn; `_infix` sibling handles InfixLoop. An empty Vec
+        /// means the alt's kind has no consuming rule in the
+        /// requesting cat at this site — rule-out by evidence per
+        /// "never disambiguate early".
         ///
         /// Possible `kind` variants:
         /// - `Atomic`: atomic-literal rule (e.g., `NumLit`).
-        /// - `PrefixOp { body_src_idx }`: same-cat unary prefix
-        ///   rule (e.g., `Neg . a:Int |- "-" a : Int`).
+        /// - `PrefixOp { body_src_idx }`: literal-leading binder
+        ///   trigger (e.g., unary `Neg` or `FloatBin`'s `"float"`).
+        /// - `CrossCatProjection { source_src_idx }`: transparent
+        ///   wrapper whose source category can consume this token.
         #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
-        fn lex_alt_rule_for_prefix(
+        fn lex_alt_rules_for_prefix(
             cat_src_idx: u16,
             kind: &mettail_prattail::automata::TokenKind,
-        ) -> Option<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
-            match (cat_src_idx, kind) {
-                #( #prefix_arms )*
-                _ => None,
-            }
+        ) -> Vec<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
+            let mut out = Vec::new();
+            #( #prefix_pushes )*
+            out
         }
 
         /// Returns true when normal PrefixDispatch has a primary-token arm
@@ -176,75 +198,83 @@ fn emit_prefix_primary_dispatch_arms(
         .collect()
 }
 
-/// M6c.6.4.b: Emit `(cat, kind) => Some(LexAltRuleInfo { rule_idx, kind: ... })`
-/// arms for a given atomic shape, routed to `prefix_arms` or `infix_arms`
-/// based on the shape's dispatch site.
+/// M6c.6.4.b: Emit local match snippets that push
+/// `LexAltRuleInfo { rule_idx, kind: ... }` for a given atomic shape.
 ///
-/// Returns one or more match arms via the accumulator references.
+/// Returns one or more match snippets via the accumulator references.
 /// Non-atomic or non-literal shapes contribute zero arms.
 ///
 /// `categories` is used for codegen-time category name → src_idx
 /// lookup (e.g., PrefixOp's `body_src_idx`).
-fn emit_arms_for_shape(
+fn emit_prefix_pushes_for_shape(
     shape: &AtomicShape,
     cat_src_idx: u16,
     rule_idx: u16,
     categories: &[String],
-    prefix_arms: &mut Vec<TokenStream>,
+    prefix_pushes: &mut Vec<TokenStream>,
 ) {
-    // `push_simple_atomic` emits an Atomic-kind arm to prefix_arms. The
+    // `push_simple_atomic` emits an Atomic-kind branch to prefix_pushes. The
     // generated LexAlt action captures token text and routes it through the
     // rule's return marker, which is the right shape for literals and Vars.
-    let push_simple_atomic = |k: TokenStream, arms: &mut Vec<TokenStream>| {
-        arms.push(quote! {
-            (#cat_src_idx, #k) => Some(
-                mettail_prattail::wpda_runtime::LexAltRuleInfo {
-                    rule_idx: #rule_idx,
-                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
-                }
-            ),
+    let push_simple_atomic = |k: TokenStream, pushes: &mut Vec<TokenStream>| {
+        pushes.push(quote! {
+            match (cat_src_idx, kind) {
+                (#cat_src_idx, #k) => out.push(
+                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                        rule_idx: #rule_idx,
+                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
+                    }
+                ),
+                _ => {},
+            }
         });
     };
-    // `push_payload_eq_atomic` emits an Atomic-kind arm with a string-payload
+    // `push_payload_eq_atomic` emits an Atomic-kind branch with a string-payload
     // equality guard (e.g., `Custom(__cat) if __cat == "BigInt"`).
-    let push_payload_eq_atomic = |k: TokenStream, expected: &str, arms: &mut Vec<TokenStream>| {
-        arms.push(quote! {
-            (#cat_src_idx, #k) if __cat == #expected => Some(
-                mettail_prattail::wpda_runtime::LexAltRuleInfo {
-                    rule_idx: #rule_idx,
-                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
-                }
-            ),
+    let push_payload_eq_atomic = |k: TokenStream, expected: &str, pushes: &mut Vec<TokenStream>| {
+        pushes.push(quote! {
+            match (cat_src_idx, kind) {
+                (#cat_src_idx, #k) if __cat == #expected => out.push(
+                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                        rule_idx: #rule_idx,
+                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
+                    }
+                ),
+                _ => {},
+            }
         });
     };
     match shape {
         AtomicShape::LiteralInteger => {
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::Integer },
-                prefix_arms,
+                prefix_pushes,
             );
         },
         AtomicShape::LiteralBoolean => {
-            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::True }, prefix_arms);
+            push_simple_atomic(
+                quote! { mettail_prattail::automata::TokenKind::True },
+                prefix_pushes,
+            );
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::False },
-                prefix_arms,
+                prefix_pushes,
             );
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::BooleanLit },
-                prefix_arms,
+                prefix_pushes,
             );
         },
         AtomicShape::LiteralString => {
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::StringLit },
-                prefix_arms,
+                prefix_pushes,
             );
         },
         AtomicShape::LiteralFloat => {
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::Float },
-                prefix_arms,
+                prefix_pushes,
             );
         },
         AtomicShape::LiteralPatterned { cat_name, family, .. } => {
@@ -274,67 +304,67 @@ fn emit_arms_for_shape(
                     // family) AND `IntegerLit(cat_name)` (legacy).
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Integer },
-                        prefix_arms,
+                        prefix_pushes,
                     );
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
                         cat_name_lit,
-                        prefix_arms,
+                        prefix_pushes,
                     );
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::IntegerLit(__cat) },
                         cat_name_lit,
-                        prefix_arms,
+                        prefix_pushes,
                     );
                 },
                 LiteralFamily::Rational => {
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
                         cat_name_lit,
-                        prefix_arms,
+                        prefix_pushes,
                     );
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::RationalLit(__cat) },
                         cat_name_lit,
-                        prefix_arms,
+                        prefix_pushes,
                     );
                 },
                 LiteralFamily::FixedPoint => {
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
                         cat_name_lit,
-                        prefix_arms,
+                        prefix_pushes,
                     );
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::FixedPointLit(__cat) },
                         cat_name_lit,
-                        prefix_arms,
+                        prefix_pushes,
                     );
                 },
                 LiteralFamily::Float => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Float },
-                        prefix_arms,
+                        prefix_pushes,
                     );
                 },
                 LiteralFamily::Boolean => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::True },
-                        prefix_arms,
+                        prefix_pushes,
                     );
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::False },
-                        prefix_arms,
+                        prefix_pushes,
                     );
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::BooleanLit },
-                        prefix_arms,
+                        prefix_pushes,
                     );
                 },
                 LiteralFamily::String => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::StringLit },
-                        prefix_arms,
+                        prefix_pushes,
                     );
                 },
             }
@@ -349,7 +379,7 @@ fn emit_arms_for_shape(
             // semantic action construct the Var node.
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::Ident },
-                prefix_arms,
+                prefix_pushes,
             );
         },
 
@@ -370,31 +400,103 @@ fn emit_arms_for_shape(
                 .map(|i| i as u16)
                 .unwrap_or(cat_src_idx);
             let trigger_lit = trigger.as_str();
-            prefix_arms.push(quote! {
-                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
-                    if __t == #trigger_lit => Some(
-                        mettail_prattail::wpda_runtime::LexAltRuleInfo {
-                            rule_idx: #rule_idx,
-                            kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
-                                body_src_idx: #body_src_idx,
-                            },
-                        }
-                    ),
+            prefix_pushes.push(quote! {
+                match (cat_src_idx, kind) {
+                    (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                        if __t == #trigger_lit => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #rule_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
+                                    body_src_idx: #body_src_idx,
+                                },
+                            }
+                        ),
+                    _ => {},
+                }
             });
         },
         // The remaining shapes don't directly consume a single TokenKind
-        // via the lex-Fork code path. TerminalKeyword's `Fixed(text)` is
+        // via this AtomicShape path. TerminalKeyword's `Fixed(text)` is
         // never a lex-DAG ambiguity producer (terminals are exact byte
         // matches, never multi-alt); CrossCatProjection/PrefixUnary
         // depend on cross-cat dispatch which the walker handles
-        // separately; NonAtomic doesn't apply.
+        // separately. NonAtomic literal-leading binders are emitted below
+        // through `emit_binder_prefix_pushes_for_rule`.
         AtomicShape::TerminalKeyword { .. }
         | AtomicShape::CrossCatProjection { .. }
         | AtomicShape::CrossCatPrefixUnary { .. }
-        | AtomicShape::NonAtomic => {
-            // InfixLoop-site lex-alt arms are generated from the binding-power
-            // table, not from AtomicShape.
-        },
+        | AtomicShape::NonAtomic => {},
+    }
+}
+
+fn emit_binder_prefix_pushes_for_rule(
+    rule: &GrammarRule,
+    result_src_idx: u16,
+    rule_idx: u16,
+    categories: &[String],
+    prefix_pushes: &mut Vec<TokenStream>,
+) {
+    let Some(shape) = classify_binder(rule) else {
+        return;
+    };
+    let Some(SyntaxExpr::Literal(trigger)) = rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
+    else {
+        return;
+    };
+    // `(`-triggered binders are handled by the paren-prefix fork, matching
+    // `emit_binder_prefix_arms`; do not synthesize an extra lex-alt path here.
+    if trigger == "(" {
+        return;
+    }
+    let body_src_idx = binder_initial_body_cat(&shape)
+        .and_then(|name| categories.iter().position(|c| c == name).map(|i| i as u16))
+        .unwrap_or(result_src_idx);
+    let trigger_lit = trigger.as_str();
+    prefix_pushes.push(quote! {
+        match (cat_src_idx, kind) {
+            (#result_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                if __t == #trigger_lit => out.push(
+                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                        rule_idx: #rule_idx,
+                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
+                            body_src_idx: #body_src_idx,
+                        },
+                    }
+                ),
+            _ => {},
+        }
+    });
+}
+
+fn emit_cross_cat_projection_prefix_pushes(
+    language: &LanguageDef,
+    source_cat_name: &str,
+    result_src_idx: u16,
+    rule_idx: u16,
+    categories: &[String],
+    prefix_pushes: &mut Vec<TokenStream>,
+) {
+    let source_src_idx = categories
+        .iter()
+        .position(|c| c == source_cat_name)
+        .map(|i| i as u16)
+        .unwrap_or(result_src_idx);
+    for first in first_set_of_category(source_cat_name, language) {
+        let pattern = first.pattern;
+        let guard = first.extra_guard.unwrap_or_else(|| quote! { true });
+        prefix_pushes.push(quote! {
+            match Some(kind.clone()) {
+                #pattern if cat_src_idx == #result_src_idx && (#guard) => out.push(
+                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                        rule_idx: #rule_idx,
+                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatProjection {
+                            source_src_idx: #source_src_idx,
+                        },
+                    }
+                ),
+                _ => {},
+            }
+        });
     }
 }
 

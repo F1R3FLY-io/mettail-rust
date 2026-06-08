@@ -1231,7 +1231,7 @@ fn atomic_arm_descriptors(
         // atomic-arm descriptor — same-cat unary prefix rules are
         // handled by the standard prefix-trigger arm (BinderRule
         // entry), NOT by atomic-literal dispatch. The lex-Fork at
-        // PrefixDispatch separately consults `lex_alt_rule_for_prefix`
+        // PrefixDispatch separately consults `lex_alt_rules_for_prefix`
         // to bind `Fixed(trigger)` as a Fork branch for the same rule
         // when multi-LENGTH lex ambiguity is present.
         AtomicShape::PrefixOperator { .. } => return Vec::new(),
@@ -1511,7 +1511,7 @@ fn emit_atomic_arms(category_src_idx: u16, rule_idx: u16, shape: &AtomicShape) -
         // atomic-arm descriptor — same-cat unary prefix rules are
         // handled by the standard prefix-trigger arm (BinderRule
         // entry), NOT by atomic-literal dispatch. The lex-Fork at
-        // PrefixDispatch separately consults `lex_alt_rule_for_prefix`
+        // PrefixDispatch separately consults `lex_alt_rules_for_prefix`
         // to bind `Fixed(trigger)` as a Fork branch for the same rule
         // when multi-LENGTH lex ambiguity is present.
         AtomicShape::PrefixOperator { .. } => return Vec::new(),

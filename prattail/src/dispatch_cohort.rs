@@ -43,6 +43,9 @@ use crate::automata::semiring::SemiringRef;
 use crate::sppf::SppfId;
 use crate::wpda_runtime::WpdaState;
 
+const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 16;
+const MAX_RESOLVED_BODIES_PER_KEY: usize = 16;
+
 /// Sig-B Blocker-2 (2026-05-31): is the `SIGB_CROSSWRAP` trace gate on?
 /// Read from the environment exactly once (first call) and memoized. Off
 /// by default — when unset, the cross-wrap drain path emits NO trace and
@@ -201,6 +204,32 @@ impl<W: SemiringRef> std::fmt::Debug for WorkerSnapshot<W> {
     }
 }
 
+#[derive(Clone)]
+pub struct ResolvedHitBody<W: SemiringRef> {
+    pub symbol_id: SppfId,
+    pub hi_pos: usize,
+    pub pos_at_dispatch: usize,
+    pub worker_snapshots: Vec<WorkerSnapshot<W>>,
+}
+
+#[derive(Clone)]
+pub struct CohortDrainJob<W: SemiringRef> {
+    pub symbol_id: SppfId,
+    pub hi_pos: usize,
+    pub pos_at_dispatch: usize,
+    pub snapshots: Vec<WorkerSnapshot<W>>,
+    pub members: Vec<CohortMember<W>>,
+}
+
+#[derive(Clone)]
+pub struct ResolvedBody<W: SemiringRef> {
+    symbol_id: SppfId,
+    hi_pos: usize,
+    pos_at_dispatch: usize,
+    worker_snapshots: Vec<WorkerSnapshot<W>>,
+    snapshots_drained: usize,
+}
+
 /// State of a dispatch-cache entry.
 pub enum DispatchCacheEntry<W: SemiringRef> {
     /// First cursor's sub-parse is in flight. Subsequent cohort members
@@ -267,6 +296,18 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// `[snapshots_drained..]` are NEW since last drain — revive
         /// every paused member against each new snapshot.
         snapshots_drained: usize,
+        /// Same dispatch key can legitimately produce multiple source
+        /// bodies with distinct spans, e.g. `FVar("float")` at `[p,p+1]`
+        /// and `FloatBin(...)` at `[p,q]`. Store those alternatives instead
+        /// of appending their snapshots to the first body.
+        alternate_bodies: Vec<ResolvedBody<W>>,
+        /// A resolved cache hit may arrive before all longer source bodies
+        /// for this dispatch key have been discovered. The first hit after
+        /// each newly discovered body gets one uncached source worker so
+        /// reuse does not make the cache extension-incomplete. Later hits
+        /// only revive known bodies/park members until another body is added,
+        /// keeping fallback exploration bounded by MAX_RESOLVED_BODIES_PER_KEY.
+        resolved_hit_worker_spawned: bool,
         /// Phase F.13 H12 Stage 1.5.3 (2026-05-21): the root worker's
         /// pre-dispatch weight, preserved through the InFlight→Resolved
         /// transition. Used by `read_worker_pre()` for cohort revive
@@ -319,12 +360,16 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 pending_members,
                 full_pending_members,
                 snapshots_drained,
+                alternate_bodies,
+                resolved_hit_worker_spawned,
                 ..
             } => f
                 .debug_struct("Resolved")
                 .field("symbol_id", symbol_id)
                 .field("hi_pos", hi_pos)
                 .field("worker_snapshots_len", &worker_snapshots.len())
+                .field("alternate_bodies_len", &alternate_bodies.len())
+                .field("resolved_hit_worker_spawned", resolved_hit_worker_spawned)
                 .field("pending_members_len", &pending_members.len())
                 .field("full_pending_members_len", &full_pending_members.len())
                 .field("snapshots_drained", snapshots_drained)
@@ -337,6 +382,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
 /// A cohort member is a cursor that reached a `DispatchKey` while it
 /// was `InFlight`.
 pub struct CohortMember<W: SemiringRef> {
+    pub member_id: u64,
     pub return_frame: crate::wpda_walker::BranchCursor<W>,
     pub weight_at_dispatch: W,
 }
@@ -344,6 +390,7 @@ pub struct CohortMember<W: SemiringRef> {
 impl<W: SemiringRef> Clone for CohortMember<W> {
     fn clone(&self) -> Self {
         CohortMember {
+            member_id: self.member_id,
             return_frame: self.return_frame.clone(),
             weight_at_dispatch: self.weight_at_dispatch.clone(),
         }
@@ -384,6 +431,7 @@ fn materialize_pending_members<W: SemiringRef>(
             .as_ref()
             .expect("cohort invariant: compact pending_members require a cohort_shell");
         materialized.extend(pending_members.iter().map(|state| CohortMember {
+            member_id: state.member_id,
             return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
             weight_at_dispatch: state.weight_at_dispatch.clone(),
         }));
@@ -403,6 +451,7 @@ fn materialize_owned_pending_members<W: SemiringRef>(
         let shell =
             cohort_shell.expect("cohort invariant: compact pending_members require a cohort_shell");
         materialized.extend(pending_members.into_iter().map(|state| CohortMember {
+            member_id: state.member_id,
             return_frame: crate::cohort_lazy::materialize_branch_cursor(&shell, &state),
             weight_at_dispatch: state.weight_at_dispatch,
         }));
@@ -429,13 +478,121 @@ fn pause_pending_member<W>(
         .as_ref()
         .expect("cohort_shell was initialized before pending member insertion");
     if shell.can_represent_branch_cursor(&member.return_frame, key) {
-        pending_members.push(crate::cohort_lazy::CohortMemberState::from_branch_cursor(
-            &member.return_frame,
-            member.weight_at_dispatch.clone(),
-        ));
+        pending_members.push(
+            crate::cohort_lazy::CohortMemberState::from_branch_cursor_with_member_id(
+                &member.return_frame,
+                member.weight_at_dispatch.clone(),
+                member.member_id,
+            ),
+        );
     } else {
         full_pending_members.push(member);
     }
+}
+
+fn append_snapshot_bounded<W: SemiringRef>(
+    worker_snapshots: &mut Vec<WorkerSnapshot<W>>,
+    snap: WorkerSnapshot<W>,
+) -> bool {
+    if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
+        worker_snapshots.push(snap);
+        true
+    } else {
+        false
+    }
+}
+
+fn resolved_body_matches(
+    symbol_id: SppfId,
+    hi_pos: usize,
+    pos_at_dispatch: usize,
+    body_symbol_id: SppfId,
+    body_hi_pos: usize,
+    body_pos_at_dispatch: usize,
+) -> bool {
+    symbol_id == body_symbol_id && hi_pos == body_hi_pos && pos_at_dispatch == body_pos_at_dispatch
+}
+
+fn resolved_hit_bodies<W: SemiringRef>(
+    symbol_id: SppfId,
+    hi_pos: usize,
+    pos_at_dispatch: usize,
+    worker_snapshots: &[WorkerSnapshot<W>],
+    alternate_bodies: &[ResolvedBody<W>],
+) -> Vec<ResolvedHitBody<W>> {
+    let mut bodies = Vec::with_capacity(1 + alternate_bodies.len());
+    bodies.push(ResolvedHitBody {
+        symbol_id,
+        hi_pos,
+        pos_at_dispatch,
+        worker_snapshots: worker_snapshots.to_vec(),
+    });
+    bodies.extend(alternate_bodies.iter().map(|body| ResolvedHitBody {
+        symbol_id: body.symbol_id,
+        hi_pos: body.hi_pos,
+        pos_at_dispatch: body.pos_at_dispatch,
+        worker_snapshots: body.worker_snapshots.clone(),
+    }));
+    bodies
+}
+
+fn live_resolved_bodies_from_entry<W: SemiringRef>(
+    entry: &DispatchCacheEntry<W>,
+) -> Vec<ResolvedHitBody<W>> {
+    let DispatchCacheEntry::Resolved {
+        symbol_id,
+        hi_pos,
+        pos_at_dispatch,
+        worker_snapshots,
+        alternate_bodies,
+        ..
+    } = entry
+    else {
+        return Vec::new();
+    };
+    let mut bodies = Vec::with_capacity(1 + alternate_bodies.len());
+    let live: Vec<WorkerSnapshot<W>> = worker_snapshots
+        .iter()
+        .filter(|s| !s.worker_inner_state.is_terminal())
+        .cloned()
+        .collect();
+    if !live.is_empty() {
+        bodies.push(ResolvedHitBody {
+            symbol_id: *symbol_id,
+            hi_pos: *hi_pos,
+            pos_at_dispatch: *pos_at_dispatch,
+            worker_snapshots: live,
+        });
+    }
+    for body in alternate_bodies {
+        let live: Vec<WorkerSnapshot<W>> = body
+            .worker_snapshots
+            .iter()
+            .filter(|s| !s.worker_inner_state.is_terminal())
+            .cloned()
+            .collect();
+        if !live.is_empty() {
+            bodies.push(ResolvedHitBody {
+                symbol_id: body.symbol_id,
+                hi_pos: body.hi_pos,
+                pos_at_dispatch: body.pos_at_dispatch,
+                worker_snapshots: live,
+            });
+        }
+    }
+    bodies
+}
+
+fn resolved_entry_max_hi_pos<W: SemiringRef>(entry: &DispatchCacheEntry<W>) -> Option<usize> {
+    let DispatchCacheEntry::Resolved { hi_pos, alternate_bodies, .. } = entry else {
+        return None;
+    };
+    Some(
+        alternate_bodies
+            .iter()
+            .map(|body| body.hi_pos)
+            .fold(*hi_pos, usize::max),
+    )
 }
 
 /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): one own-wrap-gated
@@ -513,6 +670,7 @@ impl<W: SemiringRef> std::fmt::Debug for CrossWrapSpliceJob<W> {
 /// Walker-global cohort cache.
 pub struct DispatchCohortCache<W: SemiringRef> {
     pub entries: rustc_hash::FxHashMap<DispatchKey, DispatchCacheEntry<W>>,
+    next_member_id: u64,
     pub registrations_total: u64,
     pub inflight_collisions_total: u64,
     /// Phase F.13 H12 Stage 1.5.3R-d (2026-05-21): count of cohort
@@ -546,15 +704,17 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     pub failed_orphan_members_total: u64,
     /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): take-once
     /// idempotence set for `take_pending_for_drain_crosswrap`. Keyed by
-    /// `(K_sib, R.symbol_id)` — the sibling key whose member was
-    /// cross-wrap-spliced, paired with the resolved symbol that supplied
-    /// the body. A repeated drain pass over the SAME `(K_sib, symbol)` is
-    /// suppressed so a member is cross-revived AT MOST once per
-    /// resolved-body symbol (R3: prevents the re-injection loop). The
-    /// member's own-wrap entry is left intact, so this set — not entry
-    /// removal — is the sole idempotence guard for the cross-wrap path.
+    /// `(K_sib, R.symbol_id, member_id)` — the sibling key whose member
+    /// was cross-wrap-spliced, paired with the resolved symbol that
+    /// supplied the body, and the concrete paused continuation that was
+    /// revived. A repeated drain pass over the SAME triple is suppressed
+    /// so a member is cross-revived AT MOST once per resolved-body
+    /// symbol (R3: prevents the re-injection loop), while later members
+    /// under the same dispatch key still receive evidence. The member's
+    /// own-wrap entry is left intact, so this set — not entry removal —
+    /// is the sole idempotence guard for the cross-wrap path.
     /// Cleared at the parse boundary by `clear`.
-    pub crosswrap_drained: rustc_hash::FxHashSet<(DispatchKey, SppfId)>,
+    pub crosswrap_drained: rustc_hash::FxHashSet<(DispatchKey, SppfId, u64)>,
     /// Sig-B Blocker-2 (2026-05-31): cumulative count of cross-wrap
     /// body-splice jobs emitted (one per member × snapshot). Observability
     /// for experiment #9 — a non-zero count on a failing cross-cat test is
@@ -567,6 +727,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     pub fn new() -> Self {
         DispatchCohortCache {
             entries: rustc_hash::FxHashMap::default(),
+            next_member_id: 0,
             registrations_total: 0,
             inflight_collisions_total: 0,
             resolved_hits_total: 0,
@@ -587,6 +748,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     #[inline(always)]
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.next_member_id = 0;
         self.registrations_total = 0;
         self.inflight_collisions_total = 0;
         self.resolved_hits_total = 0;
@@ -612,7 +774,17 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     #[inline(always)]
     pub fn clear_entries_preserving_diagnostics(&mut self) {
         self.entries.clear();
+        self.next_member_id = 0;
         self.crosswrap_drained.clear();
+    }
+
+    #[inline]
+    pub fn allocate_member_id(&mut self) -> u64 {
+        self.next_member_id = self
+            .next_member_id
+            .checked_add(1)
+            .expect("cohort member id space exhausted within one parse");
+        self.next_member_id
     }
 
     /// Phase F.13 H12 Stage 1.5 — register a cross-cat-projection
@@ -651,14 +823,22 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 hi_pos,
                 pos_at_dispatch,
                 worker_snapshots,
+                alternate_bodies,
+                resolved_hit_worker_spawned,
                 ..
             }) => {
                 self.resolved_hits_total += 1;
+                let spawn_worker = !*resolved_hit_worker_spawned;
+                *resolved_hit_worker_spawned = true;
                 RegisterOutcome::ResolvedHit {
-                    symbol_id: *symbol_id,
-                    hi_pos: *hi_pos,
-                    pos_at_dispatch: *pos_at_dispatch,
-                    worker_snapshots: worker_snapshots.clone(),
+                    bodies: resolved_hit_bodies(
+                        *symbol_id,
+                        *hi_pos,
+                        *pos_at_dispatch,
+                        worker_snapshots,
+                        alternate_bodies,
+                    ),
+                    spawn_worker,
                 }
             },
             Some(DispatchCacheEntry::Failed) => {
@@ -712,6 +892,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     pos_at_dispatch,
                     worker_snapshots: snapshots,
                     snapshots_drained: 0,
+                    alternate_bodies: Vec::new(),
+                    resolved_hit_worker_spawned: false,
                     worker_pre_dispatch_weight: preserved_pre,
                     cohort_shell: preserved_shell,
                     pending_members: preserved_members,
@@ -721,7 +903,43 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 self.resolved_total += 1;
                 ResolveOutcome::FirstResolve
             },
-            DispatchCacheEntry::Resolved { worker_snapshots, .. } => {
+            DispatchCacheEntry::Resolved {
+                symbol_id: first_symbol_id,
+                hi_pos: first_hi_pos,
+                pos_at_dispatch: first_pos_at_dispatch,
+                worker_snapshots,
+                alternate_bodies,
+                resolved_hit_worker_spawned,
+                ..
+            } => {
+                if resolved_body_matches(
+                    *first_symbol_id,
+                    *first_hi_pos,
+                    *first_pos_at_dispatch,
+                    symbol_id,
+                    hi_pos,
+                    pos_at_dispatch,
+                ) {
+                    if append_snapshot_bounded(worker_snapshots, snap) {
+                        self.snapshot_appends_total += 1;
+                    }
+                    return ResolveOutcome::SnapshotAppended;
+                }
+                if let Some(body) = alternate_bodies.iter_mut().find(|body| {
+                    resolved_body_matches(
+                        body.symbol_id,
+                        body.hi_pos,
+                        body.pos_at_dispatch,
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch,
+                    )
+                }) {
+                    if append_snapshot_bounded(&mut body.worker_snapshots, snap) {
+                        self.snapshot_appends_total += 1;
+                    }
+                    return ResolveOutcome::SnapshotAppended;
+                }
                 // Memory cap: refuse further snapshots beyond cap.
                 // Pathological grammars with > 8 packings per Symbol
                 // fall through to per-cursor for the overflow workers.
@@ -745,12 +963,20 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // pay the materialize cost. cap=16 (16²=256 cap
                 // product, 16× original) should fit in ~6× pre-L3
                 // baseline = ~150 MB at chain_1000.
-                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 16;
-                if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
-                    worker_snapshots.push(snap);
-                    self.snapshot_appends_total += 1;
+                if alternate_bodies.len() < MAX_RESOLVED_BODIES_PER_KEY {
+                    alternate_bodies.push(ResolvedBody {
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch,
+                        worker_snapshots: vec![snap],
+                        snapshots_drained: 0,
+                    });
+                    *resolved_hit_worker_spawned = false;
+                    self.resolved_total += 1;
+                    ResolveOutcome::FirstResolve
+                } else {
+                    ResolveOutcome::NoOp
                 }
-                ResolveOutcome::SnapshotAppended
             },
             DispatchCacheEntry::Failed => ResolveOutcome::NoOp,
         }
@@ -790,7 +1016,16 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         &mut self,
         key: &DispatchKey,
     ) -> Option<(SppfId, usize, usize, Vec<WorkerSnapshot<W>>, Vec<CohortMember<W>>)> {
-        let entry = self.entries.get_mut(key)?;
+        self.take_pending_for_drain_all(key)
+            .into_iter()
+            .next()
+            .map(|job| (job.symbol_id, job.hi_pos, job.pos_at_dispatch, job.snapshots, job.members))
+    }
+
+    pub fn take_pending_for_drain_all(&mut self, key: &DispatchKey) -> Vec<CohortDrainJob<W>> {
+        let Some(entry) = self.entries.get_mut(key) else {
+            return Vec::new();
+        };
         match entry {
             DispatchCacheEntry::Resolved {
                 symbol_id,
@@ -798,6 +1033,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 pos_at_dispatch,
                 worker_snapshots,
                 snapshots_drained,
+                alternate_bodies,
+                resolved_hit_worker_spawned: _,
                 worker_pre_dispatch_weight: _,
                 cohort_shell,
                 pending_members,
@@ -821,22 +1058,49 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // (the ObsInvariant fast path skips materialization
                 // for shell-uniform steps).
                 if !has_pending_members(pending_members, full_pending_members) {
-                    return None;
+                    return Vec::new();
                 }
-                if *snapshots_drained >= worker_snapshots.len() {
-                    return None;
+                let mut pending_jobs: Vec<(SppfId, usize, usize, Vec<WorkerSnapshot<W>>)> =
+                    Vec::new();
+                if *snapshots_drained < worker_snapshots.len() {
+                    let new_snaps: Vec<WorkerSnapshot<W>> =
+                        worker_snapshots[*snapshots_drained..].to_vec();
+                    *snapshots_drained = worker_snapshots.len();
+                    pending_jobs.push((*symbol_id, *hi_pos, *pos_at_dispatch, new_snaps));
                 }
-                let new_snaps: Vec<WorkerSnapshot<W>> =
-                    worker_snapshots[*snapshots_drained..].to_vec();
-                *snapshots_drained = worker_snapshots.len();
+                for body in alternate_bodies.iter_mut() {
+                    if body.snapshots_drained < body.worker_snapshots.len() {
+                        let new_snaps: Vec<WorkerSnapshot<W>> =
+                            body.worker_snapshots[body.snapshots_drained..].to_vec();
+                        body.snapshots_drained = body.worker_snapshots.len();
+                        pending_jobs.push((
+                            body.symbol_id,
+                            body.hi_pos,
+                            body.pos_at_dispatch,
+                            new_snaps,
+                        ));
+                    }
+                }
+                if pending_jobs.is_empty() {
+                    return Vec::new();
+                }
                 let materialized = materialize_pending_members(
                     cohort_shell,
                     pending_members,
                     full_pending_members,
                 );
-                Some((*symbol_id, *hi_pos, *pos_at_dispatch, new_snaps, materialized))
+                pending_jobs
+                    .into_iter()
+                    .map(|(symbol_id, hi_pos, pos_at_dispatch, snapshots)| CohortDrainJob {
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch,
+                        snapshots,
+                        members: materialized.clone(),
+                    })
+                    .collect()
             },
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -878,218 +1142,207 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// `DispatchKey` (R5). One job per `(member × non-terminal R snapshot)`.
     ///
     /// **Take-once idempotence (§3a / R3).** `crosswrap_drained` records
-    /// `(K_sib, R.symbol_id)`; a repeated drain pass over the same pair is
-    /// suppressed so a member is cross-revived at most once per resolved
-    /// body symbol — no entry removal, no re-injection loop.
+    /// `(K_sib, R.symbol_id, member_id)`; a repeated drain pass over the same
+    /// concrete member/body pair is suppressed so a member is cross-revived at
+    /// most once per resolved body symbol — no entry removal, no re-injection
+    /// loop.
     #[allow(clippy::type_complexity)]
     pub fn take_pending_for_drain_crosswrap(
         &mut self,
         resolved_key: &DispatchKey,
     ) -> Vec<CrossWrapSpliceJob<W>> {
-        // ── Read `R` (the resolved sibling). Require Resolved; clone the
-        //    fields the jobs need so the subsequent sibling scan can borrow
+        // ── Read `R` (the resolved sibling). Require Resolved; clone every
+        //    resolved body so the subsequent sibling scan can borrow
         //    `self.entries` immutably without aliasing.
-        let (r_symbol_id, r_hi_pos, r_pos_at_dispatch, r_snaps): (
-            SppfId,
-            usize,
-            usize,
-            Vec<WorkerSnapshot<W>>,
-        ) = match self.entries.get(resolved_key) {
-            Some(DispatchCacheEntry::Resolved {
-                symbol_id,
-                hi_pos,
-                pos_at_dispatch,
-                worker_snapshots,
-                ..
-            }) => {
-                // Filter terminal snapshots: a worker that ended in
-                // Error/Accept terminal would not produce a revivable
-                // cursor (mirrors the same-wrap drain's terminal filter at
-                // the walker site). Empty snapshot set ⇒ nothing to splice.
-                let live: Vec<WorkerSnapshot<W>> = worker_snapshots
-                    .iter()
-                    .filter(|s| !s.worker_inner_state.is_terminal())
-                    .cloned()
-                    .collect();
-                if live.is_empty() {
-                    return Vec::new();
-                }
-                (*symbol_id, *hi_pos, *pos_at_dispatch, live)
-            },
-            _ => return Vec::new(),
+        let Some(resolved_entry) = self.entries.get(resolved_key) else {
+            return Vec::new();
         };
-        let r_equiv = resolved_key.equiv();
-
-        // ── Scan siblings (immutable borrow). Collect, per eligible
-        //    `K_sib`, its materialized members. `crosswrap_drained` is
-        //    consulted to skip already-spliced `(K_sib, R.symbol_id)` pairs
-        //    so we do not materialize members we would only discard.
-        let mut eligible: Vec<(DispatchKey, Vec<CohortMember<W>>)> = Vec::new();
-        for (k_sib, entry) in self.entries.iter() {
-            // Clause 1 + 2 + 3: equiv match, distinct wrap, dispatch-site
-            // identity (`K_sib.pos == R.pos_at_dispatch`).
-            if k_sib == resolved_key {
-                continue;
-            }
-            if k_sib.equiv() != r_equiv {
-                continue;
-            }
-            if k_sib.pos != r_pos_at_dispatch {
-                continue;
-            }
-            // Take-once: skip if this `(K_sib, R.symbol_id)` already spliced.
-            if self
-                .crosswrap_drained
-                .contains(&(k_sib.clone(), r_symbol_id))
-            {
-                continue;
-            }
-            // Clause 4 + member materialization. Eligible iff own wrap is
-            // InFlight (with members) OR Resolved with a STRICTLY shorter
-            // span (with members). `R.hi_pos` is the full-body span; an own
-            // resolution at `>= R.hi_pos` means the member already has (or
-            // can get) its own body — not a cross-wrap orphan.
-            let members: Vec<CohortMember<W>> = match entry {
-                DispatchCacheEntry::InFlight {
-                    cohort_shell,
-                    pending_members,
-                    full_pending_members,
-                    ..
-                } if has_pending_members(pending_members, full_pending_members) => {
-                    materialize_pending_members(cohort_shell, pending_members, full_pending_members)
-                },
-                DispatchCacheEntry::Resolved {
-                    hi_pos: sib_hi,
-                    cohort_shell,
-                    pending_members,
-                    full_pending_members,
-                    ..
-                } if *sib_hi < r_hi_pos
-                    && has_pending_members(pending_members, full_pending_members) =>
-                {
-                    materialize_pending_members(cohort_shell, pending_members, full_pending_members)
-                },
-                // Clause-4 FAIL (or empty members). This is the EXCLUDED
-                // branch — most importantly the PARENS-INNER steal: a
-                // sibling that passed clauses 1-3 but is self-`Resolved` at
-                // `hi_pos >= R.hi_pos` (it already has its own body). M2.0
-                // GATE evidence: trace it so we can confirm parens2's inner
-                // member is self-Resolved at EQUAL hi_pos (the discriminator).
-                other => {
-                    if sigb_crosswrap_trace() {
-                        let (st, sib_hi_dbg, mem_dbg) = match other {
-                            DispatchCacheEntry::InFlight {
-                                pending_members,
-                                full_pending_members,
-                                ..
-                            } => (
-                                "InFlight(empty)",
-                                usize::MAX,
-                                pending_member_count(pending_members, full_pending_members),
-                            ),
-                            DispatchCacheEntry::Resolved {
-                                hi_pos: sh,
-                                pending_members,
-                                full_pending_members,
-                                ..
-                            } => (
-                                "Resolved(>=hi)",
-                                *sh,
-                                pending_member_count(pending_members, full_pending_members),
-                            ),
-                            DispatchCacheEntry::Failed => ("Failed", usize::MAX, 0),
-                        };
-                        eprintln!(
-                            "[SIGB_CROSSWRAP] EXCLUDED K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
-                             state={} sib_hi={} members={} | clause4-fail vs R.hi_pos={} \
-                             (parens-inner-steal guard)",
-                            k_sib.pos,
-                            k_sib.source_src_idx,
-                            k_sib.inner_cur_bp,
-                            k_sib.wrap_cat,
-                            k_sib.wrap_rule,
-                            st,
-                            sib_hi_dbg,
-                            mem_dbg,
-                            r_hi_pos,
-                        );
-                    }
-                    continue;
-                },
-            };
-            // M2.0 trace-checkpoint (§4): log the eligible (K_sib, R) pair's
-            // predicate fields under the SIGB_CROSSWRAP env gate. Confirms
-            // the discriminator empirically (floats/chain: K_sib InFlight /
-            // shorter; parens2 inner: excluded because self-Resolved at
-            // EQUAL hi_pos).
-            if sigb_crosswrap_trace() {
-                let sib_state = match entry {
-                    DispatchCacheEntry::InFlight { .. } => "InFlight",
-                    DispatchCacheEntry::Resolved { hi_pos: sh, .. } => {
-                        if *sh < r_hi_pos {
-                            "Resolved(shorter)"
-                        } else {
-                            "Resolved(>=)"
-                        }
-                    },
-                    DispatchCacheEntry::Failed => "Failed",
-                };
-                eprintln!(
-                    "[SIGB_CROSSWRAP] ELIGIBLE K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
-                     state={} members={} | R=resolved_key{{wrap:({},{})}} \
-                     R.symbol_id={} R.hi_pos={} R.pos_at_dispatch={} equiv=({},{})",
-                    k_sib.pos,
-                    k_sib.source_src_idx,
-                    k_sib.inner_cur_bp,
-                    k_sib.wrap_cat,
-                    k_sib.wrap_rule,
-                    sib_state,
-                    members.len(),
-                    resolved_key.wrap_cat,
-                    resolved_key.wrap_rule,
-                    r_symbol_id,
-                    r_hi_pos,
-                    r_pos_at_dispatch,
-                    r_equiv.source_src_idx,
-                    r_equiv.inner_cur_bp,
-                );
-            }
-            eligible.push((k_sib.clone(), members));
-        }
-        if eligible.is_empty() {
+        let resolved_bodies = live_resolved_bodies_from_entry(resolved_entry);
+        if resolved_bodies.is_empty() {
             return Vec::new();
         }
+        let r_equiv = resolved_key.equiv();
+        let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::new();
 
-        // ── Build jobs (immutable borrow dropped). One job per
-        //    (eligible K_sib × member × non-terminal R snapshot). Mark each
-        //    `(K_sib, R.symbol_id)` drained so repeat passes are idempotent.
-        let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::with_capacity(
-            eligible.iter().map(|(_, m)| m.len()).sum::<usize>() * r_snaps.len(),
-        );
-        for (k_sib, members) in eligible {
-            self.crosswrap_drained.insert((k_sib.clone(), r_symbol_id));
-            for member in members {
-                for snap in &r_snaps {
-                    jobs.push(CrossWrapSpliceJob {
-                        member: member.clone(),
-                        symbol_id: r_symbol_id,
-                        hi_pos: r_hi_pos,
-                        pos_at_dispatch: r_pos_at_dispatch,
-                        // equiv() match ⇒ source_src_idx + inner_cur_bp are
-                        // identical between K_sib and resolved_key; read from
-                        // resolved_key (the resolution's authoritative key).
-                        source_src_idx: resolved_key.source_src_idx,
-                        inner_cur_bp: resolved_key.inner_cur_bp,
-                        // The RESOLVED wrap (§3b): the spliced member carries
-                        // the wrap of the body that completed it.
-                        wrap_cat: resolved_key.wrap_cat,
-                        wrap_rule: resolved_key.wrap_rule,
-                        snap: snap.clone(),
-                        // Forward drain: NEVER interposes a coercion (the
-                        // body category already matches at the same dispatch
-                        // pos). Byte-identical to pre-Blocker-3.
-                        coercion: None,
-                    });
+        for body in resolved_bodies {
+            let r_symbol_id = body.symbol_id;
+            let r_hi_pos = body.hi_pos;
+            let r_pos_at_dispatch = body.pos_at_dispatch;
+            let r_snaps = body.worker_snapshots;
+
+            // ── Scan siblings (immutable borrow). Collect, per eligible
+            //    `K_sib`, its materialized members. `crosswrap_drained` is
+            //    consulted after materialization to skip already-spliced
+            //    `(K_sib, R.symbol_id, member_id)` triples.
+            let mut eligible: Vec<(DispatchKey, Vec<CohortMember<W>>)> = Vec::new();
+            for (k_sib, entry) in self.entries.iter() {
+                // Clause 1 + 2 + 3: equiv match, distinct wrap, dispatch-site
+                // identity (`K_sib.pos == R.pos_at_dispatch`).
+                if k_sib == resolved_key {
+                    continue;
+                }
+                if k_sib.equiv() != r_equiv {
+                    continue;
+                }
+                if k_sib.pos != r_pos_at_dispatch {
+                    continue;
+                }
+                // Clause 4 + member materialization. Eligible iff own wrap is
+                // InFlight (with members) OR Resolved with a STRICTLY shorter
+                // span (with members). `R.hi_pos` is the full-body span; an own
+                // resolution at `>= R.hi_pos` means the member already has (or
+                // can get) its own body — not a cross-wrap orphan.
+                let members: Vec<CohortMember<W>> = match entry {
+                    DispatchCacheEntry::InFlight {
+                        cohort_shell,
+                        pending_members,
+                        full_pending_members,
+                        ..
+                    } if has_pending_members(pending_members, full_pending_members) => {
+                        materialize_pending_members(
+                            cohort_shell,
+                            pending_members,
+                            full_pending_members,
+                        )
+                    },
+                    DispatchCacheEntry::Resolved {
+                        cohort_shell,
+                        pending_members,
+                        full_pending_members,
+                        ..
+                    } if resolved_entry_max_hi_pos(entry).unwrap_or(usize::MAX) < r_hi_pos
+                        && has_pending_members(pending_members, full_pending_members) =>
+                    {
+                        materialize_pending_members(
+                            cohort_shell,
+                            pending_members,
+                            full_pending_members,
+                        )
+                    },
+                    other => {
+                        if sigb_crosswrap_trace() {
+                            let (st, sib_hi_dbg, mem_dbg) = match other {
+                                DispatchCacheEntry::InFlight {
+                                    pending_members,
+                                    full_pending_members,
+                                    ..
+                                } => (
+                                    "InFlight(empty)",
+                                    usize::MAX,
+                                    pending_member_count(pending_members, full_pending_members),
+                                ),
+                                DispatchCacheEntry::Resolved {
+                                    pending_members,
+                                    full_pending_members,
+                                    ..
+                                } => (
+                                    "Resolved(>=hi)",
+                                    resolved_entry_max_hi_pos(other).unwrap_or(usize::MAX),
+                                    pending_member_count(pending_members, full_pending_members),
+                                ),
+                                DispatchCacheEntry::Failed => ("Failed", usize::MAX, 0),
+                            };
+                            eprintln!(
+                                "[SIGB_CROSSWRAP] EXCLUDED K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
+                                 state={} sib_hi={} members={} | clause4-fail vs R.hi_pos={} \
+                                 (parens-inner-steal guard)",
+                                k_sib.pos,
+                                k_sib.source_src_idx,
+                                k_sib.inner_cur_bp,
+                                k_sib.wrap_cat,
+                                k_sib.wrap_rule,
+                                st,
+                                sib_hi_dbg,
+                                mem_dbg,
+                                r_hi_pos,
+                            );
+                        }
+                        continue;
+                    },
+                };
+                let members: Vec<CohortMember<W>> = members
+                    .into_iter()
+                    .filter(|member| {
+                        !self.crosswrap_drained.contains(&(
+                            k_sib.clone(),
+                            r_symbol_id,
+                            member.member_id,
+                        ))
+                    })
+                    .collect();
+                if members.is_empty() {
+                    continue;
+                }
+                if sigb_crosswrap_trace() {
+                    let sib_state = match entry {
+                        DispatchCacheEntry::InFlight { .. } => "InFlight",
+                        DispatchCacheEntry::Resolved { .. } => {
+                            if resolved_entry_max_hi_pos(entry).unwrap_or(usize::MAX) < r_hi_pos {
+                                "Resolved(shorter)"
+                            } else {
+                                "Resolved(>=)"
+                            }
+                        },
+                        DispatchCacheEntry::Failed => "Failed",
+                    };
+                    eprintln!(
+                        "[SIGB_CROSSWRAP] ELIGIBLE K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
+                         state={} members={} | R=resolved_key{{wrap:({},{})}} \
+                         R.symbol_id={} R.hi_pos={} R.pos_at_dispatch={} equiv=({},{})",
+                        k_sib.pos,
+                        k_sib.source_src_idx,
+                        k_sib.inner_cur_bp,
+                        k_sib.wrap_cat,
+                        k_sib.wrap_rule,
+                        sib_state,
+                        members.len(),
+                        resolved_key.wrap_cat,
+                        resolved_key.wrap_rule,
+                        r_symbol_id,
+                        r_hi_pos,
+                        r_pos_at_dispatch,
+                        r_equiv.source_src_idx,
+                        r_equiv.inner_cur_bp,
+                    );
+                }
+                eligible.push((k_sib.clone(), members));
+            }
+
+            // ── Build jobs (immutable borrow dropped). One job per
+            //    (eligible K_sib × member × non-terminal R snapshot). Mark each
+            //    `(K_sib, R.symbol_id, member_id)` drained so repeat passes are
+            //    idempotent without blocking later members under the same key.
+            for (k_sib, members) in eligible {
+                for member in members {
+                    if !self.crosswrap_drained.insert((
+                        k_sib.clone(),
+                        r_symbol_id,
+                        member.member_id,
+                    )) {
+                        continue;
+                    }
+                    for snap in &r_snaps {
+                        jobs.push(CrossWrapSpliceJob {
+                            member: member.clone(),
+                            symbol_id: r_symbol_id,
+                            hi_pos: r_hi_pos,
+                            pos_at_dispatch: r_pos_at_dispatch,
+                            // equiv() match ⇒ source_src_idx + inner_cur_bp are
+                            // identical between K_sib and resolved_key; read from
+                            // resolved_key (the resolution's authoritative key).
+                            source_src_idx: resolved_key.source_src_idx,
+                            inner_cur_bp: resolved_key.inner_cur_bp,
+                            // The RESOLVED wrap (§3b): the spliced member carries
+                            // the wrap of the body that completed it.
+                            wrap_cat: resolved_key.wrap_cat,
+                            wrap_rule: resolved_key.wrap_rule,
+                            snap: snap.clone(),
+                            // Forward drain: NEVER interposes a coercion (the
+                            // body category already matches at the same dispatch
+                            // pos). Byte-identical to pre-Blocker-3.
+                            coercion: None,
+                        });
+                    }
                 }
             }
         }
@@ -1124,8 +1377,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///      via a coercion, the job carries `coercion = Some((cat, rule))` so
     ///      the walker interposes it before the cast fires (§2.4c); when
     ///      `body_cat == tgt_cat`, `coercion = None` (direct splice).
-    ///   5. take-once: `(K_sib, R.symbol_id) ∉ crosswrap_drained` (the SAME
-    ///      monotone set the forward drain + §3d backstop share — §3 termination).
+    ///   5. take-once: `(K_sib, R.symbol_id, member_id) ∉ crosswrap_drained`
+    ///      (the SAME monotone set the forward drain + §3d backstop share —
+    ///      §3 termination).
     ///
     /// Span anchor (3) + category compat (4) are FAR more selective than
     /// M5.1's equiv-only pairing — they cut the 16251-cursor over-fire while
@@ -1156,42 +1410,29 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
         let mut bodies: Vec<ResolvedBody<W>> = Vec::new();
         for (r_key, r_entry) in self.entries.iter() {
-            let (symbol_id, worker_snapshots) = match r_entry {
-                DispatchCacheEntry::Resolved { symbol_id, worker_snapshots, .. } => {
-                    (*symbol_id, worker_snapshots)
-                },
-                _ => continue,
-            };
-            // Live (non-terminal) snapshots only — a terminal worker yields no
-            // revivable cursor (mirrors the forward drain's filter).
-            let live: Vec<WorkerSnapshot<W>> = worker_snapshots
-                .iter()
-                .filter(|s| !s.worker_inner_state.is_terminal())
-                .cloned()
-                .collect();
-            if live.is_empty() {
-                continue;
+            for body in live_resolved_bodies_from_entry(r_entry) {
+                // SPPF span [lo, hi] of R.symbol_id — THE span anchor read.
+                let (span_lo, span_hi) =
+                    match (sppf.span_lo(body.symbol_id), sppf.span_hi(body.symbol_id)) {
+                        (Some(lo), Some(hi)) => (lo, hi),
+                        _ => continue,
+                    };
+                // body_cat = R.symbol_id's category_src_idx (non_terminal_tag).
+                let body_cat = match sppf.node(body.symbol_id) {
+                    Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                        *non_terminal_tag as u16
+                    },
+                    _ => continue,
+                };
+                bodies.push(ResolvedBody {
+                    symbol_id: body.symbol_id,
+                    span_lo: span_lo as usize,
+                    span_hi: span_hi as usize,
+                    body_cat,
+                    equiv: r_key.equiv(),
+                    snaps: body.worker_snapshots,
+                });
             }
-            // SPPF span [lo, hi] of R.symbol_id — THE span anchor read.
-            let (span_lo, span_hi) = match (sppf.span_lo(symbol_id), sppf.span_hi(symbol_id)) {
-                (Some(lo), Some(hi)) => (lo, hi),
-                _ => continue,
-            };
-            // body_cat = R.symbol_id's category_src_idx (non_terminal_tag).
-            let body_cat = match sppf.node(symbol_id) {
-                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
-                    *non_terminal_tag as u16
-                },
-                _ => continue,
-            };
-            bodies.push(ResolvedBody {
-                symbol_id,
-                span_lo: span_lo as usize,
-                span_hi: span_hi as usize,
-                body_cat,
-                equiv: r_key.equiv(),
-                snaps: live,
-            });
         }
         if bodies.is_empty() {
             return Vec::new();
@@ -1227,7 +1468,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     None,
                 ),
                 DispatchCacheEntry::Resolved {
-                    hi_pos: sib_hi,
                     cohort_shell,
                     pending_members,
                     full_pending_members,
@@ -1238,7 +1478,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         pending_members,
                         full_pending_members,
                     ),
-                    Some(*sib_hi),
+                    resolved_entry_max_hi_pos(entry),
                 ),
                 _ => continue,
             };
@@ -1273,11 +1513,22 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         None => continue, // cat-incompatible → reject
                     }
                 };
-                // Clause 5: take-once (shared monotone set).
-                if self
-                    .crosswrap_drained
-                    .contains(&(k_sib.clone(), body.symbol_id))
-                {
+                // Clause 5: take-once (shared monotone set), per concrete
+                // member. A previous span/forward drain for one continuation
+                // must not block later continuations parked under the same
+                // DispatchKey.
+                let undrained_members: Vec<CohortMember<W>> = members
+                    .iter()
+                    .filter(|member| {
+                        !self.crosswrap_drained.contains(&(
+                            k_sib.clone(),
+                            body.symbol_id,
+                            member.member_id,
+                        ))
+                    })
+                    .cloned()
+                    .collect();
+                if undrained_members.is_empty() {
                     continue;
                 }
                 if sigb_crosswrap_trace() {
@@ -1294,7 +1545,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         k_sib.inner_cur_bp,
                         k_sib.wrap_cat,
                         k_sib.wrap_rule,
-                        members.len(),
+                        undrained_members.len(),
                         tgt_cat,
                         coercion,
                     );
@@ -1303,7 +1554,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     k_sib: k_sib.clone(),
                     body_idx,
                     coercion,
-                    members: members.clone(),
+                    members: undrained_members,
                 });
             }
         }
@@ -1312,13 +1563,19 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
 
         // ── Pass 3: build jobs (one per pairing × member × R snapshot). Mark
-        //    each `(K_sib, R.symbol_id)` drained (take-once, idempotent).
+        //    each `(K_sib, R.symbol_id, member_id)` drained (take-once,
+        //    idempotent).
         let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::new();
         for p in pairings {
             let body = &bodies[p.body_idx];
-            self.crosswrap_drained
-                .insert((p.k_sib.clone(), body.symbol_id));
             for member in &p.members {
+                if !self.crosswrap_drained.insert((
+                    p.k_sib.clone(),
+                    body.symbol_id,
+                    member.member_id,
+                )) {
+                    continue;
+                }
                 for snap in &body.snaps {
                     jobs.push(CrossWrapSpliceJob {
                         member: member.clone(),
@@ -1514,7 +1771,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// `pending_cohort.len() >= MAX_PENDING_COHORT_PER_KEY`. The
     /// caller falls through to per-cursor sub-parse (no correctness
     /// loss; just no sharing for the overflow members).
-    pub fn pause_cohort_member(&mut self, key: DispatchKey, member: CohortMember<W>) -> bool
+    pub fn pause_cohort_member(&mut self, key: DispatchKey, mut member: CohortMember<W>) -> bool
     where
         W: crate::automata::semiring::LexProvenance,
     {
@@ -1524,6 +1781,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // baseline 24 GB OOM). The L3+L4 per-cursor savings amortize
         // partly but not enough to fully offset the cap-product blowup.
         const MAX_PENDING_COHORT_PER_KEY: usize = 16;
+        if member.member_id == 0 {
+            member.member_id = self.allocate_member_id();
+        }
         match self.entries.get_mut(&key) {
             Some(DispatchCacheEntry::InFlight {
                 cohort_shell,
@@ -1599,9 +1859,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///    parens-inner self-resolution (equal hi) is still excluded.
     ///
     /// **Idempotence.** Shares `crosswrap_drained` keyed `(K_pause,
-    /// R'.symbol_id)` with the drain, so a member is cross-revived at most
-    /// once per resolved-body symbol regardless of which path fires first.
-    /// `R'` is NOT removed (only ADDS the body `M` needs).
+    /// R'.symbol_id, M.member_id)` with the drain, so this concrete member is
+    /// cross-revived at most once per resolved-body symbol regardless of which
+    /// path fires first. `R'` is NOT removed (only ADDS the body `M` needs).
     #[allow(clippy::type_complexity)]
     pub fn crosswrap_backstop_for_pausing_member(
         &mut self,
@@ -1613,7 +1873,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // `Resolved`-pause case (own span must be strictly shorter than R'
         // to be eligible; InFlight is always eligible).
         let pause_own_hi: Option<usize> = match self.entries.get(k_pause) {
-            Some(DispatchCacheEntry::Resolved { hi_pos, .. }) => Some(*hi_pos),
+            Some(entry @ DispatchCacheEntry::Resolved { .. }) => resolved_entry_max_hi_pos(entry),
             // InFlight / absent / Failed: treat as "own wrap not resolved"
             // (eligible by clause 4's InFlight disjunct). Failed members
             // would not have been paused here, so this is conservative.
@@ -1631,44 +1891,32 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             if k_sib.equiv() != pause_equiv {
                 continue;
             }
-            if let DispatchCacheEntry::Resolved {
-                symbol_id,
-                hi_pos,
-                pos_at_dispatch,
-                worker_snapshots,
-                ..
-            } = entry
-            {
-                // Clause 3: dispatch-site identity.
-                if *pos_at_dispatch != k_pause.pos {
-                    continue;
-                }
-                // Clause 4 (Resolved-pause refinement): if K_pause itself
-                // already resolved, require its own span strictly shorter
-                // than R' (excludes equal-hi self-resolution = the parens
-                // inner steal). InFlight K_pause: always eligible.
-                if let Some(own_hi) = pause_own_hi {
-                    if own_hi >= *hi_pos {
+            if matches!(entry, DispatchCacheEntry::Resolved { .. }) {
+                for body in live_resolved_bodies_from_entry(entry) {
+                    // Clause 3: dispatch-site identity.
+                    if body.pos_at_dispatch != k_pause.pos {
                         continue;
                     }
-                }
-                // Idempotence: skip if (K_pause, R'.symbol_id) already done.
-                if self
-                    .crosswrap_drained
-                    .contains(&(k_pause.clone(), *symbol_id))
-                {
-                    continue;
-                }
-                let live: Vec<WorkerSnapshot<W>> = worker_snapshots
-                    .iter()
-                    .filter(|s| !s.worker_inner_state.is_terminal())
-                    .cloned()
-                    .collect();
-                if live.is_empty() {
-                    continue;
-                }
-                if sigb_crosswrap_trace() {
-                    eprintln!(
+                    // Clause 4 (Resolved-pause refinement): if K_pause itself
+                    // already resolved, require its own span strictly shorter
+                    // than R' (excludes equal-hi self-resolution = the parens
+                    // inner steal). InFlight K_pause: always eligible.
+                    if let Some(own_hi) = pause_own_hi {
+                        if own_hi >= body.hi_pos {
+                            continue;
+                        }
+                    }
+                    // Idempotence: skip if this concrete member already saw
+                    // R'.symbol_id. Other members under K_pause remain eligible.
+                    if self.crosswrap_drained.contains(&(
+                        k_pause.clone(),
+                        body.symbol_id,
+                        member.member_id,
+                    )) {
+                        continue;
+                    }
+                    if sigb_crosswrap_trace() {
+                        eprintln!(
                         "[SIGB_CROSSWRAP] BACKSTOP-PAUSE K_pause={{pos:{},src:{},bp:{},wrap:({},{})}} \
                          <= R'=K_sib{{wrap:({},{})}} R'.symbol_id={} R'.hi_pos={} \
                          R'.pos_at_dispatch={} equiv=({},{})",
@@ -1679,21 +1927,22 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         k_pause.wrap_rule,
                         k_sib.wrap_cat,
                         k_sib.wrap_rule,
-                        symbol_id,
-                        hi_pos,
-                        pos_at_dispatch,
+                        body.symbol_id,
+                        body.hi_pos,
+                        body.pos_at_dispatch,
                         pause_equiv.source_src_idx,
                         pause_equiv.inner_cur_bp,
                     );
+                    }
+                    sources.push((
+                        body.symbol_id,
+                        body.hi_pos,
+                        body.pos_at_dispatch,
+                        k_sib.wrap_cat,
+                        k_sib.wrap_rule,
+                        body.worker_snapshots,
+                    ));
                 }
-                sources.push((
-                    *symbol_id,
-                    *hi_pos,
-                    *pos_at_dispatch,
-                    k_sib.wrap_cat,
-                    k_sib.wrap_rule,
-                    live,
-                ));
             }
         }
         if sources.is_empty() {
@@ -1706,7 +1955,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 .sum::<usize>(),
         );
         for (symbol_id, hi_pos, pos_at_dispatch, sib_wrap_cat, sib_wrap_rule, snaps) in sources {
-            self.crosswrap_drained.insert((k_pause.clone(), symbol_id));
+            if !self
+                .crosswrap_drained
+                .insert((k_pause.clone(), symbol_id, member.member_id))
+            {
+                continue;
+            }
             for snap in snaps {
                 jobs.push(CrossWrapSpliceJob {
                     member: member.clone(),
@@ -1783,7 +2037,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // Sig-B Blocker-2 (2026-05-31): cross-wrap body-splice accounting.
         writeln!(
             f,
-            "  crosswrap_splices={}  crosswrap_drained_pairs={}",
+            "  crosswrap_splices={}  crosswrap_drained_triples={}",
             self.crosswrap_splices_total,
             self.crosswrap_drained.len(),
         )?;
@@ -1802,10 +2056,8 @@ pub enum RegisterOutcome<W: SemiringRef> {
     WorkerInserted,
     InflightCollision,
     ResolvedHit {
-        symbol_id: SppfId,
-        hi_pos: usize,
-        pos_at_dispatch: usize,
-        worker_snapshots: Vec<WorkerSnapshot<W>>,
+        bodies: Vec<ResolvedHitBody<W>>,
+        spawn_worker: bool,
     },
     FailedHit,
 }
@@ -1843,6 +2095,7 @@ mod tests {
         return_frame: crate::wpda_walker::BranchCursor<LexicographicWeight>,
     ) -> CohortMember<LexicographicWeight> {
         CohortMember {
+            member_id: 0,
             return_frame,
             weight_at_dispatch: lex_one(),
         }
@@ -1922,6 +2175,110 @@ mod tests {
         assert!(drained
             .iter()
             .any(|member| !member.return_frame.binder_scope_marks.is_empty()));
+    }
+
+    #[test]
+    fn resolved_drain_preserves_distinct_bodies_for_one_dispatch_key() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert!(cache.pause_cohort_member(key.clone(), cohort_member(branch_cursor())));
+
+        assert_eq!(
+            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        assert_eq!(
+            cache.resolve(key.clone(), 43, 8, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+
+        let jobs = cache.take_pending_for_drain_all(&key);
+        let mut bodies: Vec<(SppfId, usize)> =
+            jobs.iter().map(|job| (job.symbol_id, job.hi_pos)).collect();
+        bodies.sort_unstable();
+
+        assert_eq!(bodies, vec![(42, 4), (43, 8)]);
+        assert_eq!(jobs.len(), 2);
+        assert!(jobs.iter().all(|job| job.members.len() == 1));
+    }
+
+    #[test]
+    fn resolved_hit_returns_every_body_for_one_dispatch_key() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+
+        assert_eq!(
+            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        assert_eq!(
+            cache.resolve(key.clone(), 43, 8, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+
+        match cache.register(key.clone(), lex_one()) {
+            RegisterOutcome::ResolvedHit { bodies, spawn_worker } => {
+                assert!(spawn_worker);
+                let mut spans: Vec<(SppfId, usize)> = bodies
+                    .iter()
+                    .map(|body| (body.symbol_id, body.hi_pos))
+                    .collect();
+                spans.sort_unstable();
+                assert_eq!(spans, vec![(42, 4), (43, 8)]);
+            },
+            _ => panic!("expected ResolvedHit with both bodies"),
+        }
+        match cache.register(key.clone(), lex_one()) {
+            RegisterOutcome::ResolvedHit { spawn_worker, .. } => assert!(!spawn_worker),
+            _ => panic!("expected second ResolvedHit"),
+        }
+        assert_eq!(
+            cache.resolve(key.clone(), 44, 12, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        match cache.register(key, lex_one()) {
+            RegisterOutcome::ResolvedHit { spawn_worker, .. } => assert!(spawn_worker),
+            _ => panic!("expected ResolvedHit after new body"),
+        }
+    }
+
+    #[test]
+    fn crosswrap_drain_is_idempotent_per_member_not_per_dispatch_key() {
+        let resolved_key = DispatchKey::new(3, 7, 0, 2, 16);
+        let pause_key = DispatchKey::new(3, 7, 0, 3, 17);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(resolved_key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert!(matches!(
+            cache.register(pause_key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert_eq!(
+            cache.resolve(resolved_key.clone(), 42, 9, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+
+        assert!(cache.pause_cohort_member(pause_key.clone(), cohort_member(branch_cursor())));
+        let first_jobs = cache.take_pending_for_drain_crosswrap(&resolved_key);
+        assert_eq!(first_jobs.len(), 1);
+        let first_member_id = first_jobs[0].member.member_id;
+        assert_ne!(first_member_id, 0);
+
+        assert!(cache.pause_cohort_member(pause_key, cohort_member(branch_cursor())));
+        let second_jobs = cache.take_pending_for_drain_crosswrap(&resolved_key);
+        assert_eq!(second_jobs.len(), 1);
+        assert_ne!(second_jobs[0].member.member_id, 0);
+        assert_ne!(second_jobs[0].member.member_id, first_member_id);
     }
 
     #[test]

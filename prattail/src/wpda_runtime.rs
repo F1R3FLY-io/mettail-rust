@@ -1005,19 +1005,21 @@ pub trait WpdaTokenSource {
 ///
 /// The lex-Fork (`emit_lex_fork_at_prefix_dispatch` /
 /// `emit_lex_fork_at_infix_loop`) consults the per-grammar
-/// `lex_alt_rule_for_prefix` / `lex_alt_rules_for_infix` functions
+/// `lex_alt_rules_for_prefix` / `lex_alt_rules_for_infix` functions
 /// against each alternative kind in the lex DAG at the current
-/// position. A `None` result drops the alt branch (rule-out by
+/// position. An empty result drops the alt branch (rule-out by
 /// evidence — no rule in this cat consumes this kind at this site).
-/// Prefix dispatch returns at most one rule, while infix dispatch
-/// may return multiple same-token operator candidates. Each
-/// `LexAltRuleInfo { rule_idx, kind }` emits a Fork branch whose
-/// shape is determined by `kind`:
+/// Prefix and infix dispatch may both return multiple same-token
+/// candidates. Each `LexAltRuleInfo { rule_idx, kind }` emits a Fork
+/// branch whose shape is determined by `kind`:
 ///
 /// - `Atomic`: atomic-literal consumption via `LexAlt` + `with_kind_return`
 ///   + `Unwinding` (M6c.3).
-/// - `PrefixOp { body_src_idx }`: unary prefix via `LexAltPrefixOp` +
-///   plain `rule_at(slot=1)` + `BinderRule { body_src_idx, outer_bp }`.
+/// - `PrefixOp { body_src_idx }`: literal-leading binder trigger via
+///   `LexAltPrefixOp` + plain `rule_at(slot=1)` +
+///   `BinderRule { body_src_idx, outer_bp }`.
+/// - `CrossCatProjection { source_src_idx }`: transparent wrapper via
+///   `rule_at(slot=0).with_kind_return()` + `CrossCatDelegate`.
 /// - `PostfixOp { l_bp, result_src_idx }`: unary postfix via
 ///   `LexAltPostfixOp` + `rule_at(slot=0).with_kind_return()` + `Unwinding`,
 ///   gated by `l_bp >= cur_bp`.
@@ -1046,9 +1048,14 @@ pub struct LexAltRuleInfo {
 pub enum LexAltRuleKind {
     /// Atomic-literal rule (e.g., `NumLit`, `BoolLit`). M6c.3 path.
     Atomic,
-    /// Same-cat unary prefix rule (e.g., `Neg . a:Int |- "-" a : Int`).
-    /// `body_src_idx` = operand cat index (= cat_src_idx for same-cat).
+    /// Literal-leading binder trigger (e.g., unary `Neg` or
+    /// `FloatBin . a:Proc, w:Int |- "float" "(" a "," w ")" : Float`).
+    /// `body_src_idx` is the initial parsed parameter/body category.
     PrefixOp { body_src_idx: u16 },
+    /// Transparent cross-category projection (e.g.,
+    /// `ProcFloat . a:Float |- a : Proc`) whose source category can consume
+    /// the matched token kind.
+    CrossCatProjection { source_src_idx: u16 },
     /// Unary postfix rule (e.g., `Fact . a:Int |- a "!" : Int`).
     /// `l_bp` = left binding power (operand priority gate).
     /// `result_src_idx` carried for cross-cat-postfix completeness.

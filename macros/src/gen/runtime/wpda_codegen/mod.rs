@@ -558,7 +558,15 @@ mod tests {
         assert!(ts.contains("TokenKind :: Ident"));
         assert!(ts.contains("LexAltRuleKind :: Atomic"));
         assert!(ts.contains("prefix_primary_has_dispatch_rule"));
-        assert!(ts.contains("__only_secondary_survived"));
+        assert!(ts.contains("__primary_survived"));
+        assert!(
+            !ts.contains("__only_secondary_survived"),
+            "secondary-only lex alternatives must fork instead of falling through to primary dispatch",
+        );
+        assert!(
+            !ts.contains("__primary_has_fallthrough_rule"),
+            "primary-token dispatch availability is not evidence for a secondary-only branch",
+        );
     }
 
     /// Walker emits `parse_<Cat>_via_wpda_recovering` (recovering variant).

@@ -152,13 +152,13 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
         // M6c.3 (2026-05-14): lex-Fork emits ALL alternatives — primary
         // (branch[0]) + each secondary that has a literal rule in the
         // requesting cat. Each branch is bound to its categorical
-        // literal rule via `lex_alt_rule_for(state_cat, kind)`; the
+        // literal rule(s) via `lex_alt_rules_for_prefix(state_cat, kind)`; the
         // walker's LexAlt apply arm uses the rule's Return marker
         // symbol to flow the token through FireAction and produce an
         // AST term.
         //
         // Mandate compliance: pure rule-out by evidence. A branch is
-        // dropped iff `lex_alt_rule_for` returns None (no rule in the
+        // dropped iff `lex_alt_rules_for_prefix` returns an empty Vec (no rule in the
         // requesting cat for that kind). No weight-based pre-filter.
         //
         // Primary cursor preserved: pre-M6c the Fork emitted only
@@ -181,7 +181,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 __DwW,
             >> = Vec::with_capacity(alts.len() + 1);
             // M6c.8.5 (2026-05-14): track whether the primary alt
-            // survived the `lex_alt_rule_for` evidence filter. The
+            // survived the `lex_alt_rules_for_prefix` evidence filter. The
             // fall-through optimization (skip Fork when only the
             // primary survives → defer to standard PrefixDispatch
             // arms) is ONLY safe when the survivor IS the primary —
@@ -192,6 +192,15 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // disambiguate early". In that case we MUST Fork (even
             // for a single branch).
             let mut __primary_survived: bool = false;
+            // Cross-category projection does not consume a lexical edge at
+            // this site. It delegates to the source category, whose own
+            // PrefixDispatch/lex-fork will consume the primary or secondary
+            // edge by evidence. Emitting one projection branch per matching
+            // lex alternative duplicates the same delegate and encodes a
+            // false early alt choice in the branch weight, inflating the
+            // frontier without adding evidence.
+            let mut __crosscat_projection_seen: std::collections::BTreeSet<(u16, u16)> =
+                std::collections::BTreeSet::new();
 
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
             // M6c.6.4.d (2026-05-14): activated PrefixOp branch — same-cat
@@ -199,9 +208,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // with `LexAltPrefixOp` action_kind, mirroring the standard
             // `Fixed(trigger) → ConsumeAndPush(BinderRule)` arm shape.
             if let Some(primary_kind) = tokens.peek_kind(*pos) {
-                if let Some(info) =
-                    lex_alt_rule_for_prefix(primary_src, &primary_kind)
-                {
+                for info in lex_alt_rules_for_prefix(primary_src, &primary_kind) {
                     match info.kind {
                         mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic => {
                             let primary_text = tokens.peek_text(*pos).unwrap_or("").to_string();
@@ -259,6 +266,30 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             });
                             __primary_survived = true;
                         }
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatProjection {
+                            source_src_idx,
+                        } => {
+                            if __crosscat_projection_seen.insert((info.rule_idx, source_src_idx)) {
+                                let sym = StackSymbolV2::rule_at(
+                                    primary_src, info.rule_idx, 0u8, Some(*cur_bp),
+                                ).with_kind_return();
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: sym,
+                                    weight: lex_w(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
+                                        primary_src,
+                                        info.rule_idx,
+                                    ),
+                                    new_state: WpdaState::CrossCatDelegate {
+                                        source_src_idx,
+                                        inner_cur_bp: 0,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                });
+                            }
+                            __primary_survived = true;
+                        }
                         // Other variants are InfixLoop-site only;
                         // shouldn't appear here.
                         _ => {}
@@ -269,7 +300,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // Branches[1..] — SECONDARIES (lex_alt_idx = 1..).
             for (sec_idx, alt) in alts.iter().enumerate() {
                 let alt_idx = (sec_idx + 1) as u16;
-                if let Some(info) = lex_alt_rule_for_prefix(primary_src, &alt.kind) {
+                for info in lex_alt_rules_for_prefix(primary_src, &alt.kind) {
                     match info.kind {
                         mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic => {
                             let alt_next_pos = tokens
@@ -324,6 +355,29 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     },
                             });
                         }
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatProjection {
+                            source_src_idx,
+                        } => {
+                            if __crosscat_projection_seen.insert((info.rule_idx, source_src_idx)) {
+                                let sym = StackSymbolV2::rule_at(
+                                    primary_src, info.rule_idx, 0u8, Some(*cur_bp),
+                                ).with_kind_return();
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: sym,
+                                    weight: lex_w(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
+                                        primary_src,
+                                        info.rule_idx,
+                                    ),
+                                    new_state: WpdaState::CrossCatDelegate {
+                                        source_src_idx,
+                                        inner_cur_bp: 0,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                });
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -336,17 +390,9 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // the primary survived (standard PrefixDispatch dispatches
             // on `peek_kind = primary` — byte-identical to non-
             // ambiguous lex, optimization preserved).
-            let mut __primary_has_fallthrough_rule: bool = false;
-            if let Some(primary_kind) = tokens.peek_kind(*pos) {
-                __primary_has_fallthrough_rule =
-                    prefix_primary_has_dispatch_rule(primary_src, &primary_kind);
-            }
-            let __only_secondary_survived =
-                !__branches.is_empty() && !__primary_survived;
             let __fall_through =
                 __branches.is_empty()
-                    || (__branches.len() == 1 && __primary_survived)
-                    || (__only_secondary_survived && __primary_has_fallthrough_rule);
+                    || (__branches.len() == 1 && __primary_survived);
             if !__fall_through {
                 return WpdaStepAction::Fork {
                     branches: __branches,

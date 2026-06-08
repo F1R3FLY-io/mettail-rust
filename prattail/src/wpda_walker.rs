@@ -1338,7 +1338,10 @@ pub enum ForkActionKind {
     /// `feedback_use_wpds_disambiguation_not_heuristics.md`. Behavioral
     /// improvement over legacy: in mid-fanout populations, only the
     /// guard-failing cursor dies; correct sibling cursors continue.
-    GuardedConsumeAndReplace { expected_text: String },
+    GuardedConsumeAndReplace {
+        expected_text: String,
+        required_top_cat: Option<u16>,
+    },
 
     /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 guarded-ident
     /// closure. Mirrors `WpdaStepAction::ConsumeIdentAndReplace` but
@@ -8294,7 +8297,7 @@ where
 
                         ForkActionKind::LexAltPrefixOp {
                             alt_idx,
-                            trigger: _,
+                            trigger,
                             rule_idx,
                             body_src_idx: _,
                             next_pos,
@@ -8415,18 +8418,15 @@ where
                             // to Path B (Fact via primary `-3` literal),
                             // never surfacing the `Neg(Fact(NumLit(3))) →
                             // -6` derivation.
-                            if let Some(kind) = tokens.peek_kind(child.pos) {
-                                let text = tokens.peek_text(child.pos).unwrap_or("");
-                                let trigger_pos = child.pos;
-                                self.emit_push_trigger_terminal(
-                                    &mut child,
-                                    kind,
-                                    text,
-                                    trigger_pos,
-                                    sym.category_src_idx,
-                                    sym.rule_index_in_category,
-                                );
-                            }
+                            let trigger_pos = child.pos;
+                            self.emit_push_trigger_terminal(
+                                &mut child,
+                                TokenKind::Fixed(trigger.clone()),
+                                trigger.as_str(),
+                                trigger_pos,
+                                sym.category_src_idx,
+                                sym.rule_index_in_category,
+                            );
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_push_auto(
@@ -8612,7 +8612,10 @@ where
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         },
 
-                        ForkActionKind::GuardedConsumeAndReplace { expected_text } => {
+                        ForkActionKind::GuardedConsumeAndReplace {
+                            expected_text,
+                            required_top_cat,
+                        } => {
                             // Stage 3.20 / L12 Commit F (2026-05-06):
                             // Cluster 1/6 guard closure. Single-branch
                             // Fork with `peek_text == expected_text` guard.
@@ -8624,32 +8627,87 @@ where
                             if peek != expected_text.as_str() {
                                 continue;
                             }
-                            let mut child = BranchCursor::fork_child(
-                                cursor,
-                                pos_after,
-                                cursor.weight.times_ref(&branch.weight),
-                                // Phase C.3 (2026-05-17): pass branch.weight
-                                // for `pending_packing_weight` accumulation
-                                // (parent.pending ⊗ branch.weight).
-                                branch.weight.clone(),
-                                branch.new_state.clone(),
-                                child_source_priority,
-                            );
-                            let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top_auto(
-                                &mut child,
-                                branch.symbol,
-                                pos_now,
-                                branch.weight.clone(),
-                            );
-                            child.pos = Self::child_next_pos(tokens, child.pos);
-                            children.push(child);
-                            // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(
-                                self,
-                                crate::walker_stats::fork_kind_index::OTHER
-                            );
-                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                            let stack_rewrites: Vec<Option<crate::sppf::SppfId>> =
+                                if let Some(required_top_cat) = required_top_cat {
+                                    let Some(top_sid) =
+                                        self.sppf_stack_arena.top(cursor.sppf_stack_id)
+                                    else {
+                                        continue;
+                                    };
+                                    let top_cat = match self.sppf.node(top_sid) {
+                                        Some(crate::sppf::SppfNode::Symbol {
+                                            non_terminal_tag,
+                                            ..
+                                        }) => *non_terminal_tag as u16,
+                                        _ => continue,
+                                    };
+                                    if top_cat == required_top_cat {
+                                        vec![None]
+                                    } else {
+                                        // A ParamParse may leave an explicit transparent
+                                        // projection pending at this delimiter. Materialize every
+                                        // single-hop coercion into the required category instead of
+                                        // rejecting the branch or choosing one projection.
+                                        let coercions: Vec<(u16, u16)> = self
+                                            .engine
+                                            .single_hop_coercion(top_cat, required_top_cat)
+                                            .to_vec();
+                                        if coercions.is_empty() {
+                                            continue;
+                                        }
+                                        let mut rewrites = Vec::with_capacity(coercions.len());
+                                        for (coercion_cat, coercion_rule) in coercions {
+                                            if let Some(wrapped) = self.intern_coercion_over_body(
+                                                top_sid,
+                                                coercion_cat,
+                                                coercion_rule,
+                                            ) {
+                                                rewrites.push(Some(wrapped));
+                                            }
+                                        }
+                                        if rewrites.is_empty() {
+                                            continue;
+                                        }
+                                        rewrites
+                                    }
+                                } else {
+                                    vec![None]
+                                };
+                            for stack_rewrite in stack_rewrites {
+                                let mut child = BranchCursor::fork_child(
+                                    cursor,
+                                    pos_after,
+                                    cursor.weight.times_ref(&branch.weight),
+                                    // Phase C.3 (2026-05-17): pass branch.weight
+                                    // for `pending_packing_weight` accumulation
+                                    // (parent.pending ⊗ branch.weight).
+                                    branch.weight.clone(),
+                                    branch.new_state.clone(),
+                                    child_source_priority,
+                                );
+                                if let Some(wrapped) = stack_rewrite {
+                                    child.sppf_stack_id =
+                                        self.sppf_stack_arena.intern_pop(child.sppf_stack_id);
+                                    child.sppf_stack_id = self
+                                        .sppf_stack_arena
+                                        .intern_push(child.sppf_stack_id, wrapped);
+                                }
+                                let pos_now = child.pos;
+                                let _ = self.cursor_gss_replace_top_auto(
+                                    &mut child,
+                                    branch.symbol,
+                                    pos_now,
+                                    branch.weight.clone(),
+                                );
+                                child.pos = Self::child_next_pos(tokens, child.pos);
+                                children.push(child);
+                                // L0 (2026-05-27): lazy-thunk created counter.
+                                crate::stats_thunk_created!(
+                                    self,
+                                    crate::walker_stats::fork_kind_index::OTHER
+                                );
+                                child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                            }
                         },
 
                         ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
@@ -10073,9 +10131,14 @@ where
         if !self.pending_cohort_drain_keys.is_empty() {
             let drain_keys = std::mem::take(&mut self.pending_cohort_drain_keys);
             for key in drain_keys {
-                if let Some((symbol_id, hi_pos, pos_at_dispatch, snapshots, members)) =
-                    self.dispatch_cohort_cache.take_pending_for_drain(&key)
-                {
+                for drain_job in self.dispatch_cohort_cache.take_pending_for_drain_all(&key) {
+                    let crate::dispatch_cohort::CohortDrainJob {
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch,
+                        snapshots,
+                        members,
+                    } = drain_job;
                     // Phase F.13 Stage L3.5 (2026-05-25): DispatchResolved
                     // broadcast — for each live snapshot, build ONE cohort
                     // frame whose N members are the (snap-fixed) revives
@@ -14420,7 +14483,9 @@ where
                     // (MAX_PENDING_COHORT_PER_KEY), pause_cohort_member
                     // returns false; fall through to per-cursor sub-parse
                     // so the cursor is not lost.
+                    let member_id = self.dispatch_cohort_cache.allocate_member_id();
                     let member = crate::dispatch_cohort::CohortMember {
+                        member_id,
                         return_frame: self.parent_frame_with_fork_metadata(
                             parent,
                             lex_fork_stamp,
@@ -14477,14 +14542,13 @@ where
                     // sub-parse per-cursor, so no soundness loss.)
                     drop(backstop_jobs);
                 },
-                RegisterOutcome::ResolvedHit {
-                    symbol_id,
-                    hi_pos,
-                    pos_at_dispatch,
-                    worker_snapshots,
-                } => {
+                RegisterOutcome::ResolvedHit { bodies, spawn_worker } => {
                     // Stage 1.5 (2026-05-21): synthesize one revived
-                    // cursor per worker snapshot available NOW.
+                    // cursor per resolved body worker snapshot available NOW.
+                    // A single dispatch key can hold multiple body spans
+                    // (e.g. a short identifier-like source body and a longer
+                    // binder body). Preserve every body; downstream evidence
+                    // rejects bodies whose continuation cannot consume.
                     //
                     // Stage 1.5.2 (2026-05-21): ALSO pause a synthetic
                     // cohort member so cross-step snapshots arriving
@@ -14496,40 +14560,49 @@ where
                     // never receive snap_B's revival in the multi-
                     // packing cross-step case (the `-3!` failure).
                     let synthetic_weight_at_dispatch = parent.weight.times_ref(&branch.weight);
-                    let mut revived_cursors = Vec::with_capacity(worker_snapshots.len());
-                    for snap in &worker_snapshots {
-                        if snap.worker_inner_state.is_terminal() {
-                            continue;
+                    let mut revived_cursors = Vec::with_capacity(
+                        bodies.iter().map(|body| body.worker_snapshots.len()).sum(),
+                    );
+                    for body in &bodies {
+                        for snap in &body.worker_snapshots {
+                            if snap.worker_inner_state.is_terminal() {
+                                continue;
+                            }
+                            let synthetic_member_id =
+                                self.dispatch_cohort_cache.allocate_member_id();
+                            let synthetic_member = crate::dispatch_cohort::CohortMember {
+                                member_id: synthetic_member_id,
+                                return_frame: self.parent_frame_with_fork_metadata(
+                                    parent,
+                                    lex_fork_stamp,
+                                    trigger_terminal.as_ref(),
+                                    branch.symbol.category_src_idx,
+                                    branch.symbol.rule_index_in_category,
+                                ),
+                                weight_at_dispatch: synthetic_weight_at_dispatch.clone(),
+                            };
+                            let revived = self.revive_cohort_member_with_snapshot(
+                                synthetic_member,
+                                body.symbol_id,
+                                body.pos_at_dispatch,
+                                body.hi_pos,
+                                s,
+                                b,
+                                wrap_cat,
+                                wrap_rule,
+                                snap,
+                            );
+                            revived_cursors.push(revived);
                         }
-                        let synthetic_member = crate::dispatch_cohort::CohortMember {
-                            return_frame: self.parent_frame_with_fork_metadata(
-                                parent,
-                                lex_fork_stamp,
-                                trigger_terminal.as_ref(),
-                                branch.symbol.category_src_idx,
-                                branch.symbol.rule_index_in_category,
-                            ),
-                            weight_at_dispatch: synthetic_weight_at_dispatch.clone(),
-                        };
-                        let revived = self.revive_cohort_member_with_snapshot(
-                            synthetic_member,
-                            symbol_id,
-                            pos_at_dispatch,
-                            hi_pos,
-                            s,
-                            b,
-                            wrap_cat,
-                            wrap_rule,
-                            snap,
-                        );
-                        revived_cursors.push(revived);
                     }
                     // Park a synthetic member onto the entry's
                     // pending_cohort for future cross-step snapshots.
                     // pause_cohort_member handles Resolved entries
                     // (dispatch_cohort.rs:412-432) and honors
                     // MAX_PENDING_COHORT_PER_KEY cap.
+                    let future_member_id = self.dispatch_cohort_cache.allocate_member_id();
                     let future_member = crate::dispatch_cohort::CohortMember {
+                        member_id: future_member_id,
                         return_frame: self.parent_frame_with_fork_metadata(
                             parent,
                             lex_fork_stamp,
@@ -14539,9 +14612,33 @@ where
                         ),
                         weight_at_dispatch: synthetic_weight_at_dispatch,
                     };
-                    let _ = self
+                    let future_pause_overflow = !self
                         .dispatch_cohort_cache
                         .pause_cohort_member(key, future_member);
+                    if spawn_worker || future_pause_overflow {
+                        // The cohort cache is deliberately bounded. If the
+                        // future-member pause overflows that bound, preserve
+                        // correctness by running this branch as an uncached
+                        // worker as well; otherwise later resolved bodies for
+                        // this dispatch key would be silently unavailable to
+                        // this continuation. The first resolved hit for a
+                        // key also receives exactly one uncached worker so a
+                        // short resolved body cannot make the dispatch cache
+                        // extension-incomplete for longer source alternatives.
+                        revived_cursors.push(self.allocate_uncached_push_child(
+                            parent,
+                            branch,
+                            pos_after,
+                            child_recovery_depth,
+                            child_visited_recovery,
+                            child_visited_dispatch,
+                            child_visited_proj_descriptors,
+                            trigger_terminal,
+                            push_edge_kind,
+                            lex_fork_stamp,
+                            child_source_priority,
+                        ));
+                    }
                     return revived_cursors;
                 },
                 RegisterOutcome::FailedHit => {
@@ -14552,6 +14649,35 @@ where
             }
         }
         // Worker / non-CrossCatDelegate path: allocate normally.
+        vec![self.allocate_uncached_push_child(
+            parent,
+            branch,
+            pos_after,
+            child_recovery_depth,
+            child_visited_recovery,
+            child_visited_dispatch,
+            child_visited_proj_descriptors,
+            trigger_terminal,
+            push_edge_kind,
+            lex_fork_stamp,
+            child_source_priority,
+        )]
+    }
+
+    fn allocate_uncached_push_child(
+        &mut self,
+        parent: &BranchCursor<W>,
+        branch: ForkBranch<W>,
+        pos_after: usize,
+        child_recovery_depth: u8,
+        child_visited_recovery: im::OrdSet<PackedDispatchConfig>,
+        child_visited_dispatch: im::OrdSet<PackedDispatchConfig>,
+        child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey>,
+        trigger_terminal: Option<ForkTriggerTerminal>,
+        push_edge_kind: Option<crate::gss::EdgeKind>,
+        lex_fork_stamp: Option<LexForkStamp>,
+        child_source_priority: u32,
+    ) -> BranchCursor<W> {
         let mut symbol = branch.symbol;
         // M4 (2026-05-30, re-landed): capture the WRAPPING rule's
         // (cat, rule) discriminator from the pushed symbol so the
@@ -14617,7 +14743,7 @@ where
         } else {
             let _ = self.cursor_gss_push_auto(&mut child, symbol, pos_after, branch.weight);
         }
-        vec![child]
+        child
     }
 
     fn parent_frame_with_fork_metadata(
@@ -16557,7 +16683,7 @@ mod tests {
             .register(dispatch_key.clone(), lex(0.0, 0, 0));
         w.dispatch_cohort_cache
             .crosswrap_drained
-            .insert((dispatch_key.clone(), 1));
+            .insert((dispatch_key.clone(), 1, 1));
         w.pending_cohort_drain_keys.insert(dispatch_key);
 
         let recovery_key = crate::recovery_cohort::RecoveryDispatchKey::new(
@@ -17601,6 +17727,7 @@ mod tests {
             assert!(walker.dispatch_cohort_cache.pause_cohort_member(
                 key,
                 crate::dispatch_cohort::CohortMember {
+                    member_id: 0,
                     return_frame,
                     weight_at_dispatch: LexicographicWeight::one(),
                 },
@@ -18915,6 +19042,7 @@ mod tests {
                     new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::GuardedConsumeAndReplace {
                         expected_text: "=".to_string(),
+                        required_top_cat: None,
                     },
                 }],
                 consume_trigger: false,
@@ -18957,6 +19085,7 @@ mod tests {
                     new_state: WpdaState::Unwinding,
                     action_kind: ForkActionKind::GuardedConsumeAndReplace {
                         expected_text: "=".to_string(),
+                        required_top_cat: None,
                     },
                 }],
                 consume_trigger: false,
@@ -19075,6 +19204,7 @@ mod tests {
             new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             action_kind: ForkActionKind::GuardedConsumeAndReplace {
                 expected_text: "=".to_string(),
+                required_top_cat: None,
             },
         };
         assert!(
