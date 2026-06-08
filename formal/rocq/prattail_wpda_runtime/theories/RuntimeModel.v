@@ -2144,6 +2144,23 @@ Proof.
   split; [exact Hin | reflexivity].
 Qed.
 
+Theorem parser_preserves_ambiguous_alternatives :
+  forall left right,
+    epam_semantic_key left <> epam_semantic_key right ->
+    exact_semantic_key_represented left (exact_key_pair_dedup left right) /\
+    exact_semantic_key_represented right (exact_key_pair_dedup left right).
+Proof.
+  intros left right Hdistinct.
+  pose proof
+    (exact_key_assembly_preserves_distinct_pair_without_evidence
+       left right Hdistinct) as Hpreserves.
+  split.
+  - apply Hpreserves.
+    simpl; auto.
+  - apply Hpreserves.
+    simpl; auto.
+Qed.
+
 Definition hash_only_pair_dedup
     (hash : semantic_key -> nat)
     (left right : exact_parse_alternative_model)
