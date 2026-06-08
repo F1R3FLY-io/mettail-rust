@@ -385,30 +385,26 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// existing token-slice path.
                 pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
-                    let tokens = lex(input)?;
                     let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
                         expected: Cow::Owned(msg),
-                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                        range: Range::from_byte_offsets(input, input.len(), input.len()),
                         hint: None,
                     })?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
+                        let input_end_range =
+                            Range::from_byte_offsets(input, input.len(), input.len());
                         let dag_range = |position: usize| -> Range {
                             if let Some(node) = source.dag.nodes.get(position) {
-                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
-                                    range.start.byte_offset <= node.byte_start
-                                        && node.byte_start <= range.end.byte_offset
-                                }) {
-                                    return *range;
-                                }
-                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
-                                    range.start.byte_offset >= node.byte_start
-                                }) {
-                                    return *range;
-                                }
+                                let end_byte = node
+                                    .edges
+                                    .first()
+                                    .map(|edge| edge.end_byte)
+                                    .unwrap_or(node.byte_start);
+                                return Range::from_byte_offsets(input, node.byte_start, end_byte);
                             }
-                            tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                            input_end_range
                         };
                         let dag_found = |position: usize| -> String {
                             source
@@ -433,7 +429,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             }
                             Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
-                                range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                range: input_end_range,
                                 hint: None,
                             }),
                             Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
@@ -462,6 +458,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             }
                         };
                     }
+                    let tokens = lex(input)?;
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =
                         tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
                     let texts: Vec<&str> = tokens
@@ -556,7 +553,6 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// variant accepts either source.
                 pub fn parse_via_wpda_all(input: &str) -> Result<Vec<#cat>, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
-                    let tokens = lex(input)?;
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().
                     // Post-M6c.7.1 (lex_dag soft-fail), `lex_dag(input)?`
@@ -565,27 +561,24 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     // is safe; we no longer need the `.ok()` band-aid.
                     let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
                         expected: Cow::Owned(msg),
-                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                        range: Range::from_byte_offsets(input, input.len(), input.len()),
                         hint: None,
                     })?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
+                        let input_end_range =
+                            Range::from_byte_offsets(input, input.len(), input.len());
                         let dag_range = |position: usize| -> Range {
                             if let Some(node) = source.dag.nodes.get(position) {
-                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
-                                    range.start.byte_offset <= node.byte_start
-                                        && node.byte_start <= range.end.byte_offset
-                                }) {
-                                    return *range;
-                                }
-                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
-                                    range.start.byte_offset >= node.byte_start
-                                }) {
-                                    return *range;
-                                }
+                                let end_byte = node
+                                    .edges
+                                    .first()
+                                    .map(|edge| edge.end_byte)
+                                    .unwrap_or(node.byte_start);
+                                return Range::from_byte_offsets(input, node.byte_start, end_byte);
                             }
-                            tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                            input_end_range
                         };
                         let dag_found = |position: usize| -> String {
                             source
@@ -620,7 +613,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 if terms.is_empty() {
                                     return Err(ParseError::UnexpectedEof {
                                         expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
-                                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                        range: input_end_range,
                                         hint: None,
                                     });
                                 }
@@ -628,7 +621,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             }
                             Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
-                                range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                range: input_end_range,
                                 hint: None,
                             }),
                             Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
@@ -657,6 +650,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             }
                         };
                     }
+                    let tokens = lex(input)?;
                     // Slice path: no DAG ambiguity, byte-identical to
                     // pre-M6c.4 behavior.
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =

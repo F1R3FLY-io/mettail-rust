@@ -673,6 +673,17 @@ theorem lazyPrimaryObservationIgnoresSecondaryCache
       lazyPrimaryObservation nodes cacheB pos eofKind := by
   rfl
 
+def flatLexDemandForDagFacade (dagHasAmbiguity : Bool) : Nat :=
+  if dagHasAmbiguity then 0 else 1
+
+theorem ambiguousDagFacadeDoesNotDemandFlatLex :
+    flatLexDemandForDagFacade true = 0 := by
+  rfl
+
+theorem nonAmbiguousDagFacadeFallsBackToFlatLex :
+    flatLexDemandForDagFacade false = 1 := by
+  rfl
+
 def normalizeRecoveryBeamWidth : Option Int -> Option Int
   | none => none
   | some width =>

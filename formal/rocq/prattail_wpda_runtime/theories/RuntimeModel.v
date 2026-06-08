@@ -960,3 +960,14 @@ Theorem lazy_primary_observation_ignores_secondary_cache :
     lazy_primary_observation nodes cache_a pos eof_kind =
     lazy_primary_observation nodes cache_b pos eof_kind.
 Proof. reflexivity. Qed.
+
+Definition flat_lex_demand_for_dag_facade (dag_has_ambiguity : bool) : nat :=
+  if dag_has_ambiguity then 0 else 1.
+
+Theorem ambiguous_dag_facade_does_not_demand_flat_lex :
+  flat_lex_demand_for_dag_facade true = 0.
+Proof. reflexivity. Qed.
+
+Theorem nonambiguous_dag_facade_falls_back_to_flat_lex :
+  flat_lex_demand_for_dag_facade false = 1.
+Proof. reflexivity. Qed.

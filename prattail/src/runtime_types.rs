@@ -105,6 +105,19 @@ impl Range {
         let end = byte_to_position(input, char_to_byte(input, end_chars));
         Range { start, end, file_id: None }
     }
+
+    /// Construct a `Range` from absolute UTF-8 byte offsets, computing line
+    /// and column positions by walking `input`.
+    ///
+    /// Offsets past the input length are clamped to `input.len()`. The helper
+    /// does not slice at the provided offsets, so callers may pass parser or
+    /// lexer boundary offsets without separately proving they are char
+    /// boundaries.
+    pub fn from_byte_offsets(input: &str, start_byte: usize, end_byte: usize) -> Self {
+        let start = byte_to_position(input, start_byte.min(input.len()));
+        let end = byte_to_position(input, end_byte.min(input.len()));
+        Range { start, end, file_id: None }
+    }
 }
 
 /// Convert an absolute character offset to a UTF-8 byte offset within `input`.
@@ -1671,6 +1684,18 @@ mod tests {
         assert_eq!(r.end.byte_offset, input.len());
         assert_eq!(r.start.line, 0);
         assert_eq!(r.start.column, 3);
+    }
+
+    #[test]
+    fn range_from_byte_offsets_clamps_to_end() {
+        let input = "abc";
+        let r = Range::from_byte_offsets(input, 1, 1_000_000);
+        assert_eq!(r.start.byte_offset, 1);
+        assert_eq!(r.end.byte_offset, input.len());
+        assert_eq!(r.start.line, 0);
+        assert_eq!(r.start.column, 1);
+        assert_eq!(r.end.line, 0);
+        assert_eq!(r.end.column, 3);
     }
 
     #[test]
