@@ -1,5 +1,5 @@
 use mettail_languages::calculator::{self as calc};
-use mettail_runtime::Language;
+use mettail_runtime::{Language, Term};
 
 /// Parse input, run Ascent, return the single normal form's display. Panics if expected is not among normal form displays.
 fn calc_normal_form(input: &str, expected_display: &str) {
@@ -792,6 +792,55 @@ fn test_factorial_ambiguous_language_parse_preserves_both_alternatives() {
         "expected prefix-negative branch Neg(Fact(NumLit(3))); got {:?}",
         alts
     );
+}
+
+#[test]
+fn test_factorial_ambiguous_language_seeds_all_alternatives_for_ascent() {
+    use calc::CalculatorTermInner;
+
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = calc::CalculatorLanguage::parse("-3!").expect("-3! should parse as language term");
+    let alt_count = match &term.0 {
+        CalculatorTermInner::Ambiguous(alts) => alts.len(),
+        other => panic!("expected Ambiguous language term for -3!, got {:?}", other),
+    };
+    assert!(
+        alt_count >= 2,
+        "expected at least the atomic-negative and prefix-negative alternatives"
+    );
+
+    let seeds = term.rewrite_seed_ids();
+    assert!(
+        seeds.len() <= alt_count,
+        "rewrite seeds should be a semantic quotient of parse alternatives; seeds={:?}, alt_count={}",
+        seeds,
+        alt_count
+    );
+    assert!(
+        seeds.len() >= 2,
+        "expected seeds to preserve at least the atomic-negative and prefix-negative alternatives; got {:?}",
+        seeds
+    );
+
+    let unique_seed_ids: std::collections::HashSet<u64> =
+        seeds.iter().map(|(seed_id, _)| *seed_id).collect();
+    assert_eq!(
+        unique_seed_ids.len(),
+        seeds.len(),
+        "ambiguous alternatives should not collapse to the same rewrite seed id: {:?}",
+        seeds
+    );
+
+    let results = lang.run_ascent(&term).expect("run_ascent should succeed");
+    let result_ids: std::collections::HashSet<u64> =
+        results.all_terms.iter().map(|info| info.term_id).collect();
+    for (seed_id, display) in seeds {
+        assert!(
+            result_ids.contains(&seed_id),
+            "Ascent result graph did not contain seed {seed_id} for alternative {display:?}"
+        );
+    }
 }
 
 #[test]

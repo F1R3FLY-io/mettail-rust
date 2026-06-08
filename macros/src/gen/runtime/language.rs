@@ -348,6 +348,18 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             }
         })
         .collect();
+    let extraction_semantic_hash_dispatch_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let variant = format_ident!("{}", t.name);
+            quote! {
+                #inner_enum_name::#variant(inner) => {
+                    inner.semantic_hash(&mut state);
+                }
+            }
+        })
+        .collect();
 
     // Generate per-variant substitute_env arms for Ambiguous handling
     let ambiguous_substitute_arms: Vec<TokenStream> = language
@@ -673,6 +685,32 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                 hasher.into_key()
             }
 
+            /// Exact semantic observation key used by result-graph extraction.
+            /// Unlike `semantic_fingerprint`, this mirrors
+            /// `multi_cat_union_extract`: hash the category term itself without
+            /// the generated inner-enum category discriminant, so transparent
+            /// cross-category quotienting and `rewrite_seed_ids` agree.
+            fn extraction_semantic_fingerprint(&self) -> Vec<u8> {
+                use std::hash::Hasher as _;
+                let mut state = __MettailSemanticKeyHasher::default();
+                match self {
+                    #(#extraction_semantic_hash_dispatch_arms),*,
+                    #inner_enum_name::Ambiguous(alts) => {
+                        state.write_u8(255u8);
+                        let mut sub: Vec<Vec<u8>> = alts
+                            .iter()
+                            .map(|a| a.extraction_semantic_fingerprint())
+                            .collect();
+                        sub.sort_unstable();
+                        for key in sub {
+                            state.write_usize(key.len());
+                            state.write(&key);
+                        }
+                    }
+                }
+                state.into_key()
+            }
+
             /// Collapse a vec of alternatives into a single term.
             /// Invariants: flattens nested Ambiguous, panics on empty, unwraps singletons,
             /// and deduplicates only by observational equivalence.
@@ -897,25 +935,36 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             /// Phase F.12.A (2026-05-20): expose every single-category
             /// alternative the parser preserved so that downstream
             /// graph-traversal callers (simulation runner, REPL exec) can
-            /// seed multi-source BFS from each alt's `term_id` instead of
-            /// from the `Ambiguous` wrapper's hash (which is structurally
-            /// absent from `AscentResults.all_terms` — only single-category
-            /// variants are pushed there by `run_ascent_typed`).
+            /// seed multi-source BFS from each exact semantic alternative's
+            /// `term_id` instead of from the `Ambiguous` wrapper's hash (which
+            /// is structurally absent from `AscentResults.all_terms` — only
+            /// single-category variants are pushed there by `run_ascent_typed`).
             ///
             /// Hash recipe MUST match `language_struct.rs` TermInfo
             /// construction: DefaultHasher applied to the inner enum
-            /// variant `Inner::Cat(t)` (which is exactly what
-            /// `all_alts()` returns by reference — no rewrapping needed).
+            /// variant `Inner::Cat(t)` (which is exactly what `all_alts()`
+            /// returns by reference — no rewrapping needed).
+            ///
+            /// This also mirrors `multi_cat_union_extract`'s exact semantic-key
+            /// dedup. Transparent duplicates are represented once in
+            /// `AscentResults.all_terms`, so the seed list must dedup the same
+            /// way instead of emitting dangling seed ids for raw parser alts
+            /// that were intentionally quotient-merged.
             fn rewrite_seed_ids(&self) -> Vec<(u64, std::string::String)> {
                 use std::collections::hash_map::DefaultHasher;
+                use std::collections::HashSet;
                 use std::hash::{Hash, Hasher};
+                let mut seen_keys: HashSet<Vec<u8>> = HashSet::new();
                 self.0
                     .all_alts()
                     .into_iter()
-                    .map(|alt| {
+                    .filter_map(|alt| {
+                        if !seen_keys.insert(alt.extraction_semantic_fingerprint()) {
+                            return None;
+                        }
                         let mut h = DefaultHasher::new();
                         alt.hash(&mut h);
-                        (h.finish(), format!("{}", alt))
+                        Some((h.finish(), format!("{}", alt)))
                     })
                     .collect()
             }

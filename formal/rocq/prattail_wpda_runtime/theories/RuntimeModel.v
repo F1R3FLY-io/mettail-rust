@@ -2161,6 +2161,70 @@ Proof.
     simpl; auto.
 Qed.
 
+Inductive generated_term_model : Type :=
+  | GeneratedSingle (alt : exact_parse_alternative_model)
+  | GeneratedAmbiguous (alts : list exact_parse_alternative_model).
+
+Definition generated_all_alts
+    (term : generated_term_model)
+    : list exact_parse_alternative_model :=
+  match term with
+  | GeneratedSingle alt => [alt]
+  | GeneratedAmbiguous alts => alts
+  end.
+
+Fixpoint semantic_key_in
+    (key : semantic_key)
+    (alts : list exact_parse_alternative_model)
+    : bool :=
+  match alts with
+  | [] => false
+  | alt :: rest =>
+      if semantic_key_eq_dec key (epam_semantic_key alt)
+      then true
+      else semantic_key_in key rest
+  end.
+
+Fixpoint exact_key_dedup_list
+    (alts : list exact_parse_alternative_model)
+    : list exact_parse_alternative_model :=
+  match alts with
+  | [] => []
+  | alt :: rest =>
+      let deduped_rest := exact_key_dedup_list rest in
+      if semantic_key_in (epam_semantic_key alt) deduped_rest
+      then deduped_rest
+      else alt :: deduped_rest
+  end.
+
+Definition generated_seed_keys
+    (term : generated_term_model)
+    : list semantic_key :=
+  map epam_semantic_key
+    (exact_key_dedup_list (generated_all_alts term)).
+
+Theorem generated_all_alts_preserves_ambiguous_members :
+  forall alts alt,
+    In alt alts ->
+    In alt (generated_all_alts (GeneratedAmbiguous alts)).
+Proof. auto. Qed.
+
+Theorem generated_language_seeds_all_ambiguous_alternatives :
+  forall left right,
+    epam_semantic_key left <> epam_semantic_key right ->
+    generated_seed_keys (GeneratedAmbiguous [left; right]) =
+      [epam_semantic_key left; epam_semantic_key right].
+Proof.
+  intros left right Hdistinct.
+  unfold generated_seed_keys, generated_all_alts.
+  simpl.
+  destruct (semantic_key_eq_dec
+              (epam_semantic_key left)
+              (epam_semantic_key right)) as [Heq | _].
+  - contradiction.
+  - reflexivity.
+Qed.
+
 Definition hash_only_pair_dedup
     (hash : semantic_key -> nat)
     (left right : exact_parse_alternative_model)
