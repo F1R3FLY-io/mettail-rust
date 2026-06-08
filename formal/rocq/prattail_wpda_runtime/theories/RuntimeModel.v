@@ -676,6 +676,79 @@ Proof.
   now rewrite Heq.
 Qed.
 
+Inductive predecessor_kind : Type :=
+  | PredCategoryEntry
+  | PredGroupingMarker
+  | PredOther
+  | PredRoot.
+
+Inductive category_entry_post_pop_state : Type :=
+  | PostPopInfixLoop
+  | PostPopUnwinding
+  | PostPopGroupingClosePreserving.
+
+Definition category_entry_grouping_request
+    (close_paren inner_matches : bool) : category_entry_post_pop_state :=
+  if close_paren && inner_matches
+  then PostPopGroupingClosePreserving
+  else PostPopUnwinding.
+
+Definition resolve_category_entry_post_pop
+    (exact_pred : predecessor_kind)
+    (requested : category_entry_post_pop_state)
+    : category_entry_post_pop_state :=
+  match exact_pred with
+  | PredCategoryEntry => PostPopInfixLoop
+  | PredRoot => PostPopInfixLoop
+  | PredGroupingMarker =>
+      match requested with
+      | PostPopGroupingClosePreserving => PostPopGroupingClosePreserving
+      | _ => PostPopUnwinding
+      end
+  | PredOther => PostPopUnwinding
+  end.
+
+Definition resolve_category_entry_post_pop_with_ignored_first
+    (_first_pred exact_pred : predecessor_kind)
+    (requested : category_entry_post_pop_state)
+    : category_entry_post_pop_state :=
+  resolve_category_entry_post_pop exact_pred requested.
+
+Theorem exact_grouping_predecessor_preserves_grouping_request :
+  resolve_category_entry_post_pop
+    PredGroupingMarker
+    (category_entry_grouping_request true true) =
+  PostPopGroupingClosePreserving.
+Proof. reflexivity. Qed.
+
+Theorem non_grouping_predecessor_rejects_grouping_request :
+  forall exact_pred requested,
+    exact_pred <> PredGroupingMarker ->
+    resolve_category_entry_post_pop exact_pred requested <>
+    PostPopGroupingClosePreserving.
+Proof.
+  intros exact_pred requested Hnot_grouping Heq.
+  destruct exact_pred; simpl in Heq; try discriminate.
+  contradiction.
+Qed.
+
+Theorem category_entry_post_pop_ignores_first_gss_predecessor :
+  forall first_left first_right exact_pred requested,
+    resolve_category_entry_post_pop_with_ignored_first
+      first_left exact_pred requested =
+    resolve_category_entry_post_pop_with_ignored_first
+      first_right exact_pred requested.
+Proof. reflexivity. Qed.
+
+Theorem first_predecessor_cannot_suppress_exact_grouping :
+  forall first_pred,
+    resolve_category_entry_post_pop_with_ignored_first
+      first_pred
+      PredGroupingMarker
+      (category_entry_grouping_request true true) =
+    PostPopGroupingClosePreserving.
+Proof. reflexivity. Qed.
+
 Record parse_alt_key : Type := {
   pak_surface : nat;
   pak_semantic : nat

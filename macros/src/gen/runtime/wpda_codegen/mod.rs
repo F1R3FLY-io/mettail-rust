@@ -566,6 +566,20 @@ mod tests {
     }
 
     #[test]
+    fn unwinding_category_entry_does_not_guess_first_gss_predecessor() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(
+            !ts.contains("edges_from (id) . first"),
+            "generated Unwinding-CategoryEntry must not pick the first GSS predecessor",
+        );
+        assert!(
+            ts.contains("GroupingClosePreservingInner"),
+            "grouping-close preservation request should still be emitted",
+        );
+    }
+
+    #[test]
     fn walker_routes_identifier_lex_alternatives_to_var_rules() {
         let lang = var_only_language();
         let ts = generate_wpda_engine_module(&lang).to_string();

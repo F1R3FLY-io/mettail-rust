@@ -16562,6 +16562,74 @@ mod tests {
     }
 
     #[test]
+    fn category_entry_pop_uses_cursor_predecessor_not_first_gss_edge() {
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(vec![]), 0);
+        let cat_pred = walker.gss.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(10),
+        });
+        let grouping_pred = walker.gss.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::grouping_marker(11, 3),
+        });
+        let popped_symbol = StackSymbolV2::category_entry(7);
+        let shared_top = walker
+            .gss
+            .get_or_create_node(WpdaGssNode { pos: 1, symbol: popped_symbol });
+
+        let first_edge = walker.gss.add_edge_kind(
+            shared_top,
+            cat_pred,
+            LexicographicWeight::one(),
+            crate::gss::EdgeKind::Generic,
+        );
+        let grouping_edge = walker.gss.add_edge_kind(
+            shared_top,
+            grouping_pred,
+            LexicographicWeight::one(),
+            crate::gss::EdgeKind::Generic,
+        );
+        assert_eq!(walker.gss.edge_target(first_edge), Some(cat_pred));
+        assert_eq!(
+            walker
+                .gss
+                .edges_from(shared_top)
+                .first()
+                .map(|edge| edge.target),
+            Some(cat_pred),
+            "test setup requires the non-grouping predecessor to be first",
+        );
+
+        let mut cursor = BranchCursor::seed_from_live(
+            shared_top,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::Unwinding,
+        );
+        cursor.incoming_edge_stack_id = walker
+            .incoming_edge_stack_arena
+            .intern_push(crate::edge_stack_arena::EDGE_STACK_ID_ROOT, grouping_edge);
+
+        let (pred_id, popped_edge_kind) = walker.cursor_gss_pop_via_edge(&mut cursor);
+        assert_eq!(pred_id, grouping_pred);
+        walker.apply_pop_body_to_cursor(
+            &mut cursor,
+            pred_id,
+            popped_edge_kind.as_ref(),
+            Some(popped_symbol),
+            &LexicographicWeight::one(),
+            WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: u16::MAX },
+            &empty_tokens(),
+        );
+
+        assert_eq!(
+            cursor.inner_state,
+            WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: 7 },
+            "exact cursor predecessor must preserve grouping context even when another GSS edge is first",
+        );
+    }
+
+    #[test]
     fn advance_cursor_pos_supports_multi_step_source_advancement() {
         static KINDS: [TokenKind; 3] = [TokenKind::Ident, TokenKind::Ident, TokenKind::Ident];
         let tokens = crate::wpda_runtime::SliceTokenSource::new(&KINDS);

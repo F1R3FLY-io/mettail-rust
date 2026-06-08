@@ -481,106 +481,42 @@ pub(crate) fn emit_engine_impl_full(
                                     }
                                 }
                                 mettail_prattail::wpda_runtime::SymbolKind::CategoryEntry => {
-                                    // Plan C Fix 1.3 (led_test cluster, 2026-05-11):
-                                    // CE-over-CE detection for cross-cat
-                                    // anonymous-delegation return path.
-                                    //
                                     // Plan A (paren+postfix redesign, 2026-05-11):
-                                    // CE-over-GroupingMarker detection for
-                                    // cross-cat-LHS inside parens, with lookahead
-                                    // gating to fire only when needed (the F1
-                                    // Cluster A initial design fired too eagerly,
-                                    // reverted).
+                                    // compute only the local lookahead fact for
+                                    // cross-cat-LHS inside parens. The walker
+                                    // resolves the final post-pop state from
+                                    // the cursor's exact predecessor edge; the
+                                    // generated engine must not inspect the
+                                    // shared GSS node and guess with
+                                    // `edges_from(...).first()`, because a
+                                    // Tomita/GSS node may have multiple
+                                    // predecessor contexts.
                                     let inner_cat = node.symbol.category_src_idx;
-                                    let pred_kind = _gss
-                                        .lookup_id(node)
-                                        .and_then(|id| _gss.edges_from(id).first().map(|e| e.target))
-                                        .and_then(|pid| _gss.node(pid))
-                                        .map(|pn| pn.symbol.kind);
-                                    let new_state = match pred_kind {
-                                        Some(mettail_prattail::wpda_runtime::SymbolKind::CategoryEntry) => {
-                                            // Plan C 1.3: returning from inner-cat
-                                            // sub-parse to outer cat. Re-enter
-                                            // InfixLoop so the outer cat's infix
-                                            // operators can match. cur_bp: 0
-                                            // because predecessor-is-CE implies
-                                            // no infix recursion was active at
-                                            // the outer level.
-                                            WpdaState::InfixLoop { cur_bp: 0 }
-                                        }
-                                        Some(mettail_prattail::wpda_runtime::SymbolKind::GroupingMarker)
-                                            if tokens.peek_text(_pos) == Some(")") => {
-                                            // Plan A: cross-cat-LHS sub-parse
-                                            // inside parens is about to close.
-                                            // Check if the token AFTER `)` is
-                                            // recognized by the inner cat. If
-                                            // so, preserve the inner-cat dispatch
-                                            // context across `)` by transitioning
-                                            // to GroupingClosePreservingInner.
-                                            // Otherwise (outer cat handles post-`)`
-                                            // or no post-`)` operator), fall
-                                            // through to default Unwinding so
-                                            // the existing Unwinding-GroupingMarker
-                                            // arm consumes `)` cleanly.
-                                            let next_tok = tokens.peek_text(_pos + 1).unwrap_or("");
-                                            let inner_matches: bool = #category_recognizes_token_dispatch;
-                                            if inner_matches {
-                                                // D8 fix (2026-05-13): emit sentinel
-                                                // `u16::MAX`. The walker resolves the
-                                                // ACTUAL inner-expression RESULT cat
-                                                // by reading `cursor.builder
-                                                // .top_term_type_name()` and calling
-                                                // `self.engine.cat_of_type_name(...)`.
-                                                // Using the popped CE's cat here is
-                                                // wrong for cross-cat infix patterns
-                                                // (e.g.,
-                                                // `LtFloat: Float "<" Float : Bool` —
-                                                // operand=Float, result=Bool). The
-                                                // engine has no builder access at
-                                                // `step()` time; the walker does the
-                                                // late-bind. Note: `inner_cat` is
-                                                // still used above by
-                                                // `category_recognizes_token_dispatch`
-                                                // for the post-`)` lookahead gate.
-                                                let _ = inner_cat;
-                                                WpdaState::GroupingClosePreservingInner {
-                                                    inner_cat_src_idx: u16::MAX,
-                                                }
-                                            } else {
-                                                WpdaState::Unwinding
+                                    let new_state = if tokens.peek_text(_pos) == Some(")") {
+                                        // Plan A: if the token AFTER `)` is
+                                        // recognized by the inner cat, request
+                                        // inner-cat preservation. This is only
+                                        // a request: after the pop, the walker
+                                        // checks the cursor's concrete
+                                        // predecessor. Non-grouping predecessors
+                                        // override this to their own exact
+                                        // transition.
+                                        let next_tok = tokens.peek_text(_pos + 1).unwrap_or("");
+                                        let inner_matches: bool = #category_recognizes_token_dispatch;
+                                        if inner_matches {
+                                            // D8 fix (2026-05-13): emit sentinel
+                                            // `u16::MAX`. The walker resolves the
+                                            // ACTUAL inner-expression RESULT cat
+                                            // from cursor evidence.
+                                            let _ = inner_cat;
+                                            WpdaState::GroupingClosePreservingInner {
+                                                inner_cat_src_idx: u16::MAX,
                                             }
+                                        } else {
+                                            WpdaState::Unwinding
                                         }
-                                        None => {
-                                            // Phase E Fix B (2026-05-16): root-level
-                                            // CategoryEntry pop. Re-enter InfixLoop
-                                            // (cur_bp: 0) so post-atomic postfix /
-                                            // infix operators get a chance to
-                                            // dispatch before the parse terminates.
-                                            //
-                                            // Without this, cross-cat-delegate
-                                            // atomics that reach a root-level CE
-                                            // (i.e., `pred_kind = None`) fall through
-                                            // to `Unwinding → Accept` while trailing
-                                            // postfix operators remain unconsumed,
-                                            // producing a SHORT parse. Belt-and-
-                                            // suspenders with the walker-side
-                                            // Phase E Fix A premature-Accepted
-                                            // filter (wpda_walker.rs::resolve_at_end_of_input):
-                                            // Fix B prevents the premature Accept
-                                            // from happening; Fix A catches any
-                                            // residual ones via rule-out by evidence.
-                                            //
-                                            // Grammar-general: applies to any
-                                            // root-level CE pop regardless of
-                                            // category, operator config, or grammar
-                                            // shape. Honors mandate — if both
-                                            // lex-Fork branches survive and produce
-                                            // distinct ASTs, the multiset merge
-                                            // yields Ambiguous(..) and the evaluator
-                                            // picks based on evidence.
-                                            WpdaState::InfixLoop { cur_bp: 0 }
-                                        }
-                                        _ => WpdaState::Unwinding,
+                                    } else {
+                                        WpdaState::Unwinding
                                     };
                                     // Phase 5 fix: when no special transition
                                     // applies, pop CategoryEntry but stay in
