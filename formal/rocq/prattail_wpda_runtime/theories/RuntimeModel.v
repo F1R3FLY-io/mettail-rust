@@ -167,6 +167,9 @@ Record dispatch_key : Type := {
   dk_wrap_rule : nat
 }.
 
+Lemma dispatch_key_eq_dec : forall x y : dispatch_key, {x = y} + {x <> y}.
+Proof. decide equality; apply Nat.eq_dec. Defined.
+
 Definition equiv_of_dispatch (d : dispatch_key) : equiv_key :=
   {| ek_source := dk_source d; ek_bp := dk_bp d |}.
 

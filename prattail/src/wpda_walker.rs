@@ -9466,13 +9466,13 @@ where
         let injected = orphans.len();
         // Preallocate for the cursors we are about to push.
         self.branch_cursors.reserve(injected);
-        for (shell, state) in orphans {
+        for member in orphans {
             // Reconstruct the orphan's pre-Fork cursor. `inner_state` =
-            // shell.inner_state (the dispatch state that emits the Fork);
-            // `pos` = shell.pos (the dispatch position). Re-driving it
-            // re-emits the Fork → the CrossCatDelegate branch re-registers
-            // at the (now-removed) key as a fresh WorkerInserted worker.
-            let cursor = crate::cohort_lazy::materialize_branch_cursor(&shell, &state);
+            // the dispatch state that emits the Fork; `pos` = the
+            // dispatch position. Re-driving it re-emits the Fork → the
+            // CrossCatDelegate branch re-registers at the (now-removed)
+            // key as a fresh WorkerInserted worker.
+            let cursor = member.return_frame;
             self.branch_cursors
                 .push(crate::cohort_lazy::Frame::Concrete(cursor));
         }
@@ -10480,16 +10480,23 @@ where
                 crate::dispatch_cohort::DispatchCacheEntry::InFlight {
                     worker_snapshots,
                     pending_members,
+                    full_pending_members,
                     deferred_continuations,
                     ..
                 }
                 | crate::dispatch_cohort::DispatchCacheEntry::Resolved {
                     worker_snapshots,
                     pending_members,
+                    full_pending_members,
                     deferred_continuations,
                     ..
                 } => {
-                    pending_sum = pending_sum.saturating_add(pending_members.len() as u64);
+                    pending_sum = pending_sum.saturating_add(
+                        pending_members
+                            .len()
+                            .saturating_add(full_pending_members.len())
+                            as u64,
+                    );
                     snap_sum = snap_sum.saturating_add(worker_snapshots.len() as u64);
                     cont_sum = cont_sum.saturating_add(deferred_continuations.len() as u64);
                 },

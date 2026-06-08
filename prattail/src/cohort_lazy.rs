@@ -548,6 +548,35 @@ impl<W: SemiringRef + LexProvenance> CohortShell<W> {
             _phantom_weight: std::marker::PhantomData,
         }
     }
+
+    /// True when `parent` can be represented by this shell plus a
+    /// [`CohortMemberState`].
+    ///
+    /// The lazy member state stores only the documented per-member axes. If
+    /// any shell-owned field differs, compacting the member would overwrite
+    /// evidence with the first member's shell. Such members must remain full
+    /// `CohortMember`s in the dispatch cache.
+    pub fn can_represent_branch_cursor(
+        &self,
+        parent: &BranchCursor<W>,
+        dispatch_key: &DispatchKey,
+    ) -> bool {
+        self.node == parent.node
+            && self.collection_depth == parent.collection_stack_depth
+            && self.cohort_origin == parent.cohort_origin
+            && *self.binder_scope_marks == parent.binder_scope_marks
+            && *self.optional_scope_marks == parent.optional_scope_marks
+            && *self.sppf_collection_arena == *parent.sppf_collection_arena
+            && self.visited_dispatch == parent.visited_dispatch
+            && self.visited_recovery == parent.visited_recovery
+            && self.visited_proj_descriptors == parent.visited_proj_descriptors
+            && self.recovery_depth == parent.recovery_depth
+            && std::sync::Arc::ptr_eq(&self.recovery_deltas, &parent.recovery_deltas)
+            && self.inner_state == parent.inner_state
+            && self.pos == parent.pos
+            && self.dispatch_key == *dispatch_key
+            && self.sppf_stack_baseline_id == parent.sppf_stack_id
+    }
 }
 
 impl<W: SemiringRef + Clone> CohortMemberState<W> {
@@ -1091,6 +1120,37 @@ mod tests {
         let materialized = materialize_branch_cursor(&shell, &member);
 
         assert_eq!(materialized.incoming_edge_stack_id, crate::edge_stack_arena::StackId(2));
+    }
+
+    #[test]
+    fn cohort_shell_represents_distinct_member_local_axes() {
+        let dispatch_key = crate::dispatch_cohort::DispatchKey::new(3, 7, 0, 2, 16);
+        let shell_cursor = cursor_with_edge_stack(crate::edge_stack_arena::StackId(1));
+        let shell = CohortShell::from_branch_cursor(&shell_cursor, dispatch_key.clone());
+        let mut member_cursor = shell_cursor.clone();
+        member_cursor.incoming_edge_stack_id = crate::edge_stack_arena::StackId(2);
+        member_cursor.source_priority = 99;
+        member_cursor.lex_fork_path = std::sync::Arc::new(vec![crate::wpda_walker::LexForkStamp {
+            pos: 1,
+            alt_idx: 2,
+            src_idx: 3,
+            rule_idx: 4,
+        }]);
+
+        assert!(shell.can_represent_branch_cursor(&member_cursor, &dispatch_key));
+    }
+
+    #[test]
+    fn cohort_shell_rejects_shell_owned_scope_mismatch() {
+        let dispatch_key = crate::dispatch_cohort::DispatchKey::new(3, 7, 0, 2, 16);
+        let shell_cursor = cursor_with_edge_stack(crate::edge_stack_arena::StackId(1));
+        let shell = CohortShell::from_branch_cursor(&shell_cursor, dispatch_key.clone());
+        let mut member_cursor = shell_cursor.clone();
+        member_cursor
+            .binder_scope_marks
+            .push((1, vec!["x".to_string()]));
+
+        assert!(!shell.can_represent_branch_cursor(&member_cursor, &dispatch_key));
     }
 
     #[test]

@@ -220,29 +220,35 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// share the same worker_pre_dispatch_weight.
         worker_pre_dispatch_weight: W,
         /// Phase F.13 Stage L2c (2026-05-25): shared `~_obs`-invariant
-        /// shell across all cohort members at this dispatch key.
+        /// shell for compact members at this dispatch key.
         /// Constructed at first pause_cohort_member call from the
-        /// pausing member's return_frame; subsequent pauses share via
-        /// Arc::clone (O(1)). Sole representation since L2c removed
-        /// the legacy `pending_cohort: Vec<CohortMember>` field that
-        /// L2a/L2b had alongside (the mirror-write doubled memory and
-        /// caused chain_1000 to explode to 9 GB in L2b).
+        /// pausing member's return_frame; subsequent shell-compatible
+        /// pauses share via Arc::clone (O(1)). Shell-incompatible
+        /// pauses stay in `full_pending_members` instead of being
+        /// forced through this representative shell.
         cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
         /// Phase F.13 Stage L2c (2026-05-25): per-member divergence
-        /// state. Sole representation; `take_pending_for_drain`
-        /// materializes a `CohortMember<W>` per state via
+        /// state for members whose shell-owned evidence matches
+        /// `cohort_shell`. `take_pending_for_drain` materializes a
+        /// `CohortMember<W>` per state via
         /// `crate::cohort_lazy::materialize_branch_cursor` at drain
         /// time.
         pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+        /// Members that reached the same dispatch key but are not
+        /// representable by `cohort_shell` plus `CohortMemberState`.
+        /// They remain full cursors so ambiguity/evidence is preserved
+        /// without sharing the first member's shell.
+        full_pending_members: Vec<CohortMember<W>>,
         /// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a
         /// (2026-05-26): realize-time cohort fanout. Eligible cohort
         /// pauses push a `CohortContinuation` here AND (S1.b dual-write)
         /// also build a `CohortMemberState` above. S1.d makes this
-        /// the sole representation for eligible sites — `pending_members`
-        /// keeps the path for ineligible cohort sites. Drained at EOI
-        /// by `install_cohort_continuations` (S1.c) and interned as
-        /// outer-rule packings via `sppf.intern_packing`. Hard-capped
-        /// at `MAX_DEFERRED_PER_KEY = 64` (S1.e raises to 256).
+        /// the sole continuation representation for eligible sites —
+        /// `pending_members` / `full_pending_members` keep the path for
+        /// ineligible cohort sites. Drained at EOI by
+        /// `install_cohort_continuations` (S1.c) and interned as
+        /// outer-rule packings via `sppf.intern_packing`. Hard-capped at
+        /// `MAX_DEFERRED_PER_KEY = 64` (S1.e raises to 256).
         deferred_continuations: Vec<crate::cohort_continuation::CohortContinuation<W>>,
     },
     /// Sub-parse complete. Subsequent cursors that hit this key
@@ -270,9 +276,13 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// Transferred from InFlight when the entry transitions.
         cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
         /// Phase F.13 Stage L2c (2026-05-25): per-member divergence
-        /// state. Sole representation. PERSISTENT across drains for
-        /// multi-packing fanout.
+        /// state for shell-compatible members. PERSISTENT across drains
+        /// for multi-packing fanout.
         pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+        /// Full cursor members whose shell-owned evidence differs from
+        /// `cohort_shell`. PERSISTENT across drains for multi-packing
+        /// fanout.
+        full_pending_members: Vec<CohortMember<W>>,
         /// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a
         /// (2026-05-26): deferred continuations transferred verbatim
         /// from `InFlight` at resolve time. PERSISTENT across drains
@@ -292,11 +302,13 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 worker_pre_dispatch_weight: _,
                 cohort_shell: _,
                 pending_members,
+                full_pending_members,
                 deferred_continuations,
             } => f
                 .debug_struct("InFlight")
                 .field("cohort_size", cohort_size)
                 .field("pending_members_len", &pending_members.len())
+                .field("full_pending_members_len", &full_pending_members.len())
                 .field("worker_snapshots_len", &worker_snapshots.len())
                 .field("deferred_continuations_len", &deferred_continuations.len())
                 .finish(),
@@ -305,6 +317,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 hi_pos,
                 worker_snapshots,
                 pending_members,
+                full_pending_members,
                 snapshots_drained,
                 ..
             } => f
@@ -313,6 +326,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 .field("hi_pos", hi_pos)
                 .field("worker_snapshots_len", &worker_snapshots.len())
                 .field("pending_members_len", &pending_members.len())
+                .field("full_pending_members_len", &full_pending_members.len())
                 .field("snapshots_drained", snapshots_drained)
                 .finish(),
             DispatchCacheEntry::Failed => f.write_str("Failed"),
@@ -339,6 +353,88 @@ impl<W: SemiringRef> Clone for CohortMember<W> {
 impl<W: SemiringRef> std::fmt::Debug for CohortMember<W> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CohortMember").finish()
+    }
+}
+
+#[inline]
+fn pending_member_count<W: SemiringRef>(
+    pending_members: &[crate::cohort_lazy::CohortMemberState<W>],
+    full_pending_members: &[CohortMember<W>],
+) -> usize {
+    pending_members.len() + full_pending_members.len()
+}
+
+#[inline]
+fn has_pending_members<W: SemiringRef>(
+    pending_members: &[crate::cohort_lazy::CohortMemberState<W>],
+    full_pending_members: &[CohortMember<W>],
+) -> bool {
+    !pending_members.is_empty() || !full_pending_members.is_empty()
+}
+
+fn materialize_pending_members<W: SemiringRef>(
+    cohort_shell: &Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+    pending_members: &[crate::cohort_lazy::CohortMemberState<W>],
+    full_pending_members: &[CohortMember<W>],
+) -> Vec<CohortMember<W>> {
+    let mut materialized =
+        Vec::with_capacity(pending_member_count(pending_members, full_pending_members));
+    if !pending_members.is_empty() {
+        let shell = cohort_shell
+            .as_ref()
+            .expect("cohort invariant: compact pending_members require a cohort_shell");
+        materialized.extend(pending_members.iter().map(|state| CohortMember {
+            return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
+            weight_at_dispatch: state.weight_at_dispatch.clone(),
+        }));
+    }
+    materialized.extend(full_pending_members.iter().cloned());
+    materialized
+}
+
+fn materialize_owned_pending_members<W: SemiringRef>(
+    cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+    pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+    mut full_pending_members: Vec<CohortMember<W>>,
+) -> Vec<CohortMember<W>> {
+    let mut materialized =
+        Vec::with_capacity(pending_member_count(&pending_members, &full_pending_members));
+    if !pending_members.is_empty() {
+        let shell =
+            cohort_shell.expect("cohort invariant: compact pending_members require a cohort_shell");
+        materialized.extend(pending_members.into_iter().map(|state| CohortMember {
+            return_frame: crate::cohort_lazy::materialize_branch_cursor(&shell, &state),
+            weight_at_dispatch: state.weight_at_dispatch,
+        }));
+    }
+    materialized.append(&mut full_pending_members);
+    materialized
+}
+
+fn pause_pending_member<W>(
+    key: &DispatchKey,
+    cohort_shell: &mut Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+    pending_members: &mut Vec<crate::cohort_lazy::CohortMemberState<W>>,
+    full_pending_members: &mut Vec<CohortMember<W>>,
+    member: CohortMember<W>,
+) where
+    W: SemiringRef + crate::automata::semiring::LexProvenance,
+{
+    if cohort_shell.is_none() {
+        *cohort_shell = Some(std::sync::Arc::new(
+            crate::cohort_lazy::CohortShell::from_branch_cursor(&member.return_frame, key.clone()),
+        ));
+    }
+    let shell = cohort_shell
+        .as_ref()
+        .expect("cohort_shell was initialized before pending member insertion");
+    if shell.can_represent_branch_cursor(&member.return_frame, key) {
+        pending_members.push(crate::cohort_lazy::CohortMemberState::from_branch_cursor(
+            &member.return_frame,
+            member.weight_at_dispatch.clone(),
+        ));
+    } else {
+        full_pending_members.push(member);
     }
 }
 
@@ -538,6 +634,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         worker_pre_dispatch_weight: worker_pre_weight,
                         cohort_shell: None,
                         pending_members: Vec::new(),
+                        full_pending_members: Vec::new(),
                         // Phase F.13 chain_10000 Exp 9 S1.a (2026-05-26).
                         deferred_continuations: Vec::new(),
                     },
@@ -595,6 +692,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_pre_dispatch_weight,
                 cohort_shell,
                 pending_members,
+                full_pending_members,
                 deferred_continuations,
                 ..
             } => {
@@ -603,6 +701,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 let preserved_pre = worker_pre_dispatch_weight.clone();
                 let preserved_shell = cohort_shell.take();
                 let preserved_members = std::mem::take(pending_members);
+                let preserved_full_members = std::mem::take(full_pending_members);
                 // Phase F.13 chain_10000 Exp 9 S1.a (2026-05-26):
                 // transfer deferred continuations through the
                 // InFlight → Resolved transition verbatim.
@@ -616,6 +715,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     worker_pre_dispatch_weight: preserved_pre,
                     cohort_shell: preserved_shell,
                     pending_members: preserved_members,
+                    full_pending_members: preserved_full_members,
                     deferred_continuations: preserved_continuations,
                 };
                 self.resolved_total += 1;
@@ -701,6 +801,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_pre_dispatch_weight: _,
                 cohort_shell,
                 pending_members,
+                full_pending_members,
                 deferred_continuations: _,
             } => {
                 // Phase F.13 Stage L2c (2026-05-25): drain reads from
@@ -719,7 +820,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // Memory benefit from full lazy stepping lands at L3
                 // (the ObsInvariant fast path skips materialization
                 // for shell-uniform steps).
-                if pending_members.is_empty() {
+                if !has_pending_members(pending_members, full_pending_members) {
                     return None;
                 }
                 if *snapshots_drained >= worker_snapshots.len() {
@@ -728,16 +829,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 let new_snaps: Vec<WorkerSnapshot<W>> =
                     worker_snapshots[*snapshots_drained..].to_vec();
                 *snapshots_drained = worker_snapshots.len();
-                let shell = cohort_shell.as_ref().expect(
-                    "L2c invariant: cohort_shell is Some whenever pending_members is non-empty",
+                let materialized = materialize_pending_members(
+                    cohort_shell,
+                    pending_members,
+                    full_pending_members,
                 );
-                let materialized: Vec<CohortMember<W>> = pending_members
-                    .iter()
-                    .map(|state| CohortMember {
-                        return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
-                        weight_at_dispatch: state.weight_at_dispatch.clone(),
-                    })
-                    .collect();
                 Some((*symbol_id, *hi_pos, *pos_at_dispatch, new_snaps, materialized))
             },
             _ => None,
@@ -853,22 +949,25 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             // span (with members). `R.hi_pos` is the full-body span; an own
             // resolution at `>= R.hi_pos` means the member already has (or
             // can get) its own body — not a cross-wrap orphan.
-            let (shell_opt, states): (
-                &Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
-                &Vec<crate::cohort_lazy::CohortMemberState<W>>,
-            ) = match entry {
-                DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. }
-                    if !pending_members.is_empty() =>
-                {
-                    (cohort_shell, pending_members)
+            let members: Vec<CohortMember<W>> = match entry {
+                DispatchCacheEntry::InFlight {
+                    cohort_shell,
+                    pending_members,
+                    full_pending_members,
+                    ..
+                } if has_pending_members(pending_members, full_pending_members) => {
+                    materialize_pending_members(cohort_shell, pending_members, full_pending_members)
                 },
                 DispatchCacheEntry::Resolved {
                     hi_pos: sib_hi,
                     cohort_shell,
                     pending_members,
+                    full_pending_members,
                     ..
-                } if *sib_hi < r_hi_pos && !pending_members.is_empty() => {
-                    (cohort_shell, pending_members)
+                } if *sib_hi < r_hi_pos
+                    && has_pending_members(pending_members, full_pending_members) =>
+                {
+                    materialize_pending_members(cohort_shell, pending_members, full_pending_members)
                 },
                 // Clause-4 FAIL (or empty members). This is the EXCLUDED
                 // branch — most importantly the PARENS-INNER steal: a
@@ -879,12 +978,25 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 other => {
                     if sigb_crosswrap_trace() {
                         let (st, sib_hi_dbg, mem_dbg) = match other {
-                            DispatchCacheEntry::InFlight { pending_members, .. } => {
-                                ("InFlight(empty)", usize::MAX, pending_members.len())
-                            },
+                            DispatchCacheEntry::InFlight {
+                                pending_members,
+                                full_pending_members,
+                                ..
+                            } => (
+                                "InFlight(empty)",
+                                usize::MAX,
+                                pending_member_count(pending_members, full_pending_members),
+                            ),
                             DispatchCacheEntry::Resolved {
-                                hi_pos: sh, pending_members, ..
-                            } => ("Resolved(>=hi)", *sh, pending_members.len()),
+                                hi_pos: sh,
+                                pending_members,
+                                full_pending_members,
+                                ..
+                            } => (
+                                "Resolved(>=hi)",
+                                *sh,
+                                pending_member_count(pending_members, full_pending_members),
+                            ),
                             DispatchCacheEntry::Failed => ("Failed", usize::MAX, 0),
                         };
                         eprintln!(
@@ -905,20 +1017,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     continue;
                 },
             };
-            let shell = match shell_opt {
-                Some(s) => s,
-                // Invariant: a non-empty pending_members implies Some(shell)
-                // (pause_cohort_member always sets the shell first). Skip
-                // defensively if somehow absent.
-                None => continue,
-            };
-            let members: Vec<CohortMember<W>> = states
-                .iter()
-                .map(|state| CohortMember {
-                    return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
-                    weight_at_dispatch: state.weight_at_dispatch.clone(),
-                })
-                .collect();
             // M2.0 trace-checkpoint (§4): log the eligible (K_sib, R) pair's
             // predicate fields under the SIGB_CROSSWRAP env gate. Confirms
             // the discriminator empirically (floats/chain: K_sib InFlight /
@@ -1114,27 +1212,35 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             // — a self-resolution at `>= some body's hi` is its own body, not
             // a cross-wrap orphan (the parens-inner-steal guard, mirrored from
             // the forward clause-4; here applied per-body below).
-            let (shell_opt, states, sib_hi_opt): (
-                &Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
-                &Vec<crate::cohort_lazy::CohortMemberState<W>>,
-                Option<usize>,
-            ) = match entry {
-                DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. }
-                    if !pending_members.is_empty() =>
-                {
-                    (cohort_shell, pending_members, None)
-                },
+            let (members, sib_hi_opt): (Vec<CohortMember<W>>, Option<usize>) = match entry {
+                DispatchCacheEntry::InFlight {
+                    cohort_shell,
+                    pending_members,
+                    full_pending_members,
+                    ..
+                } if has_pending_members(pending_members, full_pending_members) => (
+                    materialize_pending_members(
+                        cohort_shell,
+                        pending_members,
+                        full_pending_members,
+                    ),
+                    None,
+                ),
                 DispatchCacheEntry::Resolved {
                     hi_pos: sib_hi,
                     cohort_shell,
                     pending_members,
+                    full_pending_members,
                     ..
-                } if !pending_members.is_empty() => (cohort_shell, pending_members, Some(*sib_hi)),
+                } if has_pending_members(pending_members, full_pending_members) => (
+                    materialize_pending_members(
+                        cohort_shell,
+                        pending_members,
+                        full_pending_members,
+                    ),
+                    Some(*sib_hi),
+                ),
                 _ => continue,
-            };
-            let shell = match shell_opt {
-                Some(s) => s,
-                None => continue,
             };
             let k_equiv = k_sib.equiv();
             let tgt_cat = k_sib.source_src_idx;
@@ -1174,15 +1280,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 {
                     continue;
                 }
-                // Eligible. Materialize the member cursors (lazily from the
-                // shell + states), one per pending member.
-                let members: Vec<CohortMember<W>> = states
-                    .iter()
-                    .map(|state| CohortMember {
-                        return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
-                        weight_at_dispatch: state.weight_at_dispatch.clone(),
-                    })
-                    .collect();
                 if sigb_crosswrap_trace() {
                     eprintln!(
                         "[SIGB_SPAN] PAIR R{{sym={},span=[{},{}],body_cat={}}} | \
@@ -1206,7 +1303,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     k_sib: k_sib.clone(),
                     body_idx,
                     coercion,
-                    members,
+                    members: members.clone(),
                 });
             }
         }
@@ -1256,9 +1353,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
 
     /// Cohort-revive-rework M1 (2026-05-29): drain every paused cohort
     /// member still orphaned on an `InFlight` entry, returning one
-    /// `(Arc<CohortShell>, CohortMemberState)` pair per member so the
-    /// walker can re-materialize each as an independent worker via
-    /// `cohort_lazy::materialize_branch_cursor`.
+    /// full `CohortMember` per member so the walker can re-drive each
+    /// as an independent worker.
     ///
     /// **Take-semantics + entry removal (idempotent).** An `InFlight`
     /// entry whose owning worker reached `Resolved` would have been
@@ -1283,60 +1379,53 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///
     /// Returns an empty `Vec` when there is nothing to revive (the
     /// common case — most parses leave no orphans).
-    #[allow(clippy::type_complexity)]
-    pub fn drain_orphaned_inflight_members(
-        &mut self,
-    ) -> Vec<(
-        std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
-        crate::cohort_lazy::CohortMemberState<W>,
-    )> {
+    pub fn drain_orphaned_inflight_members(&mut self) -> Vec<CohortMember<W>> {
         // First pass: identify InFlight keys that carry revivable
-        // orphans (Some(shell) + non-empty pending_members). We collect
-        // keys then remove, because `FxHashMap` cannot be mutated while
-        // its `values()` iterator is borrowed.
+        // orphans. We collect keys then remove, because `FxHashMap`
+        // cannot be mutated while its `values()` iterator is borrowed.
         let orphan_keys: Vec<DispatchKey> = self
             .entries
             .iter()
             .filter_map(|(k, entry)| match entry {
                 DispatchCacheEntry::InFlight {
-                    cohort_shell: Some(_), pending_members, ..
-                } if !pending_members.is_empty() => Some(k.clone()),
+                    pending_members, full_pending_members, ..
+                } if has_pending_members(pending_members, full_pending_members) => Some(k.clone()),
                 _ => None,
             })
             .collect();
         if orphan_keys.is_empty() {
             return Vec::new();
         }
-        // Upper bound on output size: sum of pending_members lengths.
+        // Upper bound on output size: sum of pending member lengths.
         // Re-read each entry to size the Vec exactly (members are capped
         // at MAX_PENDING_COHORT_PER_KEY = 16, keys are few at EOI).
         let total: usize = orphan_keys
             .iter()
             .filter_map(|k| match self.entries.get(k) {
-                Some(DispatchCacheEntry::InFlight { pending_members, .. }) => {
-                    Some(pending_members.len())
-                },
+                Some(DispatchCacheEntry::InFlight {
+                    pending_members,
+                    full_pending_members,
+                    ..
+                }) => Some(pending_member_count(pending_members, full_pending_members)),
                 _ => None,
             })
             .sum();
-        let mut out: Vec<(
-            std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
-            crate::cohort_lazy::CohortMemberState<W>,
-        )> = Vec::with_capacity(total);
+        let mut out: Vec<CohortMember<W>> = Vec::with_capacity(total);
         for key in orphan_keys {
             // `remove` drops the stale InFlight entry so re-registration
             // of a re-injected orphan returns `WorkerInserted`.
-            if let Some(DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. }) =
-                self.entries.remove(&key)
+            if let Some(DispatchCacheEntry::InFlight {
+                cohort_shell,
+                pending_members,
+                full_pending_members,
+                ..
+            }) = self.entries.remove(&key)
             {
-                let shell = cohort_shell.expect(
-                    "drain_orphaned_inflight_members: cohort_shell is Some by the \
-                     orphan_keys filter (pause_cohort_member always sets it before \
-                     pushing a member)",
-                );
-                for state in pending_members {
-                    out.push((std::sync::Arc::clone(&shell), state));
-                }
+                out.extend(materialize_owned_pending_members(
+                    cohort_shell,
+                    pending_members,
+                    full_pending_members,
+                ));
             }
         }
         out
@@ -1367,14 +1456,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         let mut inflight_orphans: u64 = 0;
         let failed_orphans: u64 = 0;
         for entry in self.entries.values() {
-            if let DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. } = entry {
-                // Only members with a materializable shell are revivable.
-                // (pause_cohort_member always sets the shell before
-                // pushing a member, so a non-empty pending_members
-                // implies Some(shell); the guard is belt-and-suspenders.)
-                if cohort_shell.is_some() {
-                    inflight_orphans += pending_members.len() as u64;
-                }
+            if let DispatchCacheEntry::InFlight {
+                pending_members, full_pending_members, ..
+            } = entry
+            {
+                inflight_orphans +=
+                    pending_member_count(pending_members, full_pending_members) as u64;
             }
             // DispatchCacheEntry::Failed is a unit variant at M0/M1 —
             // it discards pending_members on the InFlight→Failed
@@ -1420,55 +1507,43 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // partly but not enough to fully offset the cap-product blowup.
         const MAX_PENDING_COHORT_PER_KEY: usize = 16;
         match self.entries.get_mut(&key) {
-            Some(DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. })
-                if pending_members.len() < MAX_PENDING_COHORT_PER_KEY =>
+            Some(DispatchCacheEntry::InFlight {
+                cohort_shell,
+                pending_members,
+                full_pending_members,
+                ..
+            }) if pending_member_count(pending_members, full_pending_members)
+                < MAX_PENDING_COHORT_PER_KEY =>
             {
-                // Phase F.13 Stage L2c (2026-05-25): sole representation
-                // is the lazy form (`cohort_shell` + `pending_members`).
-                // The legacy `pending_cohort: Vec<CohortMember>` field
-                // was removed in this commit. `pause_cohort_member`
-                // still takes a `CohortMember<W>` for API compatibility
-                // (the walker's three call sites at
-                // wpda_walker.rs:9499/9540/9562 construct one), but
-                // immediately extracts the shell + state and discards
-                // the full BranchCursor clone. Net memory benefit:
-                // members no longer hold full `return_frame` clones in
-                // the cache (~3.2 KB per member → ~64 B per state).
-                if cohort_shell.is_none() {
-                    *cohort_shell = Some(std::sync::Arc::new(
-                        crate::cohort_lazy::CohortShell::from_branch_cursor(
-                            &member.return_frame,
-                            key.clone(),
-                        ),
-                    ));
-                }
-                pending_members.push(crate::cohort_lazy::CohortMemberState::from_branch_cursor(
-                    &member.return_frame,
-                    member.weight_at_dispatch.clone(),
-                ));
-                // The `member: CohortMember<W>` parameter is consumed
-                // and dropped here — the full BranchCursor inside is
-                // released (only the small shell + state captures
-                // survive).
-                drop(member);
+                // Phase F.13 Stage L2c (2026-05-25): shell-compatible
+                // members use the lazy form (`cohort_shell` +
+                // `pending_members`). Shell-incompatible members keep the
+                // full cursor in `full_pending_members` so evidence is not
+                // overwritten by the representative shell.
+                pause_pending_member(
+                    &key,
+                    cohort_shell,
+                    pending_members,
+                    full_pending_members,
+                    member,
+                );
                 true
             },
-            Some(DispatchCacheEntry::Resolved { cohort_shell, pending_members, .. })
-                if pending_members.len() < MAX_PENDING_COHORT_PER_KEY =>
+            Some(DispatchCacheEntry::Resolved {
+                cohort_shell,
+                pending_members,
+                full_pending_members,
+                ..
+            }) if pending_member_count(pending_members, full_pending_members)
+                < MAX_PENDING_COHORT_PER_KEY =>
             {
-                if cohort_shell.is_none() {
-                    *cohort_shell = Some(std::sync::Arc::new(
-                        crate::cohort_lazy::CohortShell::from_branch_cursor(
-                            &member.return_frame,
-                            key.clone(),
-                        ),
-                    ));
-                }
-                pending_members.push(crate::cohort_lazy::CohortMemberState::from_branch_cursor(
-                    &member.return_frame,
-                    member.weight_at_dispatch.clone(),
-                ));
-                drop(member);
+                pause_pending_member(
+                    &key,
+                    cohort_shell,
+                    pending_members,
+                    full_pending_members,
+                    member,
+                );
                 true
             },
             _ => false,
@@ -1728,7 +1803,42 @@ pub enum ResolveOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automata::lex_weight::LexicographicWeight;
+    use crate::automata::semiring::Semiring;
     use crate::automata::semiring::TropicalWeight;
+    use crate::wpda_runtime::WpdaState;
+
+    fn lex_one() -> LexicographicWeight {
+        <LexicographicWeight as Semiring>::one()
+    }
+
+    fn branch_cursor() -> crate::wpda_walker::BranchCursor<LexicographicWeight> {
+        crate::wpda_walker::BranchCursor::seed_from_live(
+            7,
+            3,
+            lex_one(),
+            WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
+        )
+    }
+
+    fn cohort_member(
+        return_frame: crate::wpda_walker::BranchCursor<LexicographicWeight>,
+    ) -> CohortMember<LexicographicWeight> {
+        CohortMember {
+            return_frame,
+            weight_at_dispatch: lex_one(),
+        }
+    }
+
+    fn worker_snapshot() -> WorkerSnapshot<LexicographicWeight> {
+        WorkerSnapshot {
+            worker_inner_state: WpdaState::Ready { min_bp: 0 },
+            worker_last_action_output_cat: None,
+            worker_pending_packing_weight: lex_one(),
+            worker_weight: lex_one(),
+            worker_pre_dispatch_weight: lex_one(),
+        }
+    }
 
     #[test]
     fn dispatch_key_preserves_positions_above_u32() {
@@ -1751,5 +1861,48 @@ mod tests {
         assert_eq!(cache.entries.len(), 2);
         assert!(cache.entries.contains_key(&low));
         assert!(cache.entries.contains_key(&high));
+    }
+
+    #[test]
+    fn resolved_drain_preserves_shell_incompatible_pending_member() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+
+        let first = branch_cursor();
+        let mut second = first.clone();
+        assert!(cache.pause_cohort_member(key.clone(), cohort_member(first)));
+
+        second.binder_scope_marks.push((1, vec!["x".to_string()]));
+        assert!(cache.pause_cohort_member(key.clone(), cohort_member(second)));
+
+        match cache.entries.get(&key) {
+            Some(DispatchCacheEntry::InFlight {
+                pending_members, full_pending_members, ..
+            }) => {
+                assert_eq!(pending_members.len(), 1);
+                assert_eq!(full_pending_members.len(), 1);
+            },
+            other => panic!("expected InFlight cache entry, got {other:?}"),
+        }
+
+        assert_eq!(
+            cache.resolve(key.clone(), 42, 9, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        let (_, _, _, _, drained) = cache
+            .take_pending_for_drain(&key)
+            .expect("resolved entry with a new snapshot should drain");
+
+        assert_eq!(drained.len(), 2);
+        assert!(drained
+            .iter()
+            .any(|member| member.return_frame.binder_scope_marks.is_empty()));
+        assert!(drained
+            .iter()
+            .any(|member| !member.return_frame.binder_scope_marks.is_empty()));
     }
 }

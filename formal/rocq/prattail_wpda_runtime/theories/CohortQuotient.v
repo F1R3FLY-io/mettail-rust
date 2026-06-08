@@ -106,6 +106,93 @@ Proof.
   exact Heq.
 Qed.
 
+Record cohort_shell_evidence_model : Type := {
+  csem_node : nat;
+  csem_collection_depth : nat;
+  csem_origin : option dispatch_key;
+  csem_recovery_depth : nat;
+  csem_sppf_baseline : option nat
+}.
+
+Lemma cohort_shell_evidence_eq_dec :
+  forall x y : cohort_shell_evidence_model, {x = y} + {x <> y}.
+Proof.
+  decide equality;
+    try apply Nat.eq_dec;
+    try apply dispatch_key_eq_dec;
+    try (decide equality; apply dispatch_key_eq_dec);
+    try (decide equality; apply Nat.eq_dec).
+Defined.
+
+Record pending_member_model : Type := {
+  pmm_shell_evidence : cohort_shell_evidence_model;
+  pmm_incoming_edge_stack : nat;
+  pmm_lex_stamp : option nat;
+  pmm_weight : nat
+}.
+
+Inductive pending_member_storage : Type :=
+  | CompactPendingMember
+  | FullPendingMember.
+
+Definition choose_pending_member_storage
+    (shell : cohort_shell_evidence_model)
+    (member : pending_member_model) : pending_member_storage :=
+  if cohort_shell_evidence_eq_dec shell (pmm_shell_evidence member)
+  then CompactPendingMember
+  else FullPendingMember.
+
+Definition materialize_stored_pending_member
+    (shell : cohort_shell_evidence_model)
+    (member : pending_member_model) : pending_member_model :=
+  match choose_pending_member_storage shell member with
+  | CompactPendingMember =>
+      {| pmm_shell_evidence := shell;
+         pmm_incoming_edge_stack := pmm_incoming_edge_stack member;
+         pmm_lex_stamp := pmm_lex_stamp member;
+         pmm_weight := pmm_weight member |}
+  | FullPendingMember => member
+  end.
+
+Theorem compact_pending_member_requires_shell_evidence :
+  forall shell member,
+    choose_pending_member_storage shell member = CompactPendingMember ->
+    shell = pmm_shell_evidence member.
+Proof.
+  intros shell member Hcompact.
+  unfold choose_pending_member_storage in Hcompact.
+  destruct (cohort_shell_evidence_eq_dec shell (pmm_shell_evidence member))
+    as [Heq | Hneq].
+  - exact Heq.
+  - discriminate Hcompact.
+Qed.
+
+Theorem full_pending_member_preserves_incompatible_evidence :
+  forall shell member,
+    shell <> pmm_shell_evidence member ->
+    materialize_stored_pending_member shell member = member.
+Proof.
+  intros shell member Hneq.
+  unfold materialize_stored_pending_member, choose_pending_member_storage.
+  destruct (cohort_shell_evidence_eq_dec shell (pmm_shell_evidence member))
+    as [Heq | _].
+  - contradiction.
+  - reflexivity.
+Qed.
+
+Theorem stored_pending_member_preserves_shell_evidence :
+  forall shell member,
+    pmm_shell_evidence (materialize_stored_pending_member shell member) =
+      pmm_shell_evidence member.
+Proof.
+  intros shell member.
+  unfold materialize_stored_pending_member, choose_pending_member_storage.
+  destruct (cohort_shell_evidence_eq_dec shell (pmm_shell_evidence member))
+    as [Heq | _].
+  - exact Heq.
+  - reflexivity.
+Qed.
+
 Theorem cohort_quotient_step_sound :
   forall (step : cursor -> list cursor) c1 c2,
     config_deterministic step ->
