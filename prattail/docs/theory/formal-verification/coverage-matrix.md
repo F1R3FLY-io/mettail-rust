@@ -20,7 +20,7 @@ updates it. It exists so we never (a) ship a Rust change without a non-vacuous p
 | # | Invariant | Rocq theorem(s) | Rust site(s) | Test(s) | Status |
 |---|-----------|-----------------|--------------|---------|--------|
 | 1 | No dropped alternatives; dedup only by exact tagged key (never 64-bit hash) | `RuntimeModel.v::exact_key_pair_dedup_preserves_distinct_keys`; `hash_only_pair_dedup_can_drop_distinct_keys` (negative) | `language.rs::from_alternatives` (semantic_fingerprint dedup → `Ambiguous`) | `-3!` family; gen_*_op | **proven** (parser-assembly); **GAP** at eval NF-walk (still 64-bit `visited` → Phase 3a) |
-| 2 | Ambiguity end-to-end until evidence rejection | `RuntimeModel.v::parser_preserves_ambiguous_alternatives`, `semantic_rejection_preserves_unrejected_siblings` | `from_alternatives`, `substitute_env` (Ambiguous arms) | `-3!`, ambiguity_exposure_* | **proven** (parse); Phase EC lifts to a closure meta-property `EvidenceComplete.v` (TODO) |
+| 2 | Ambiguity end-to-end until evidence rejection | `RuntimeModel.v::parser_preserves_ambiguous_alternatives`, `semantic_rejection_preserves_unrejected_siblings`; `EvidenceComplete.v` (closure meta-property) | `from_alternatives`, `substitute_env` (Ambiguous arms) | `-3!`, ambiguity_exposure_* | **proven** (parse) + **proven** closure meta-property (`EvidenceComplete.v`, `31bb90bc`: weights order never prune; removal only by evidence) |
 | 3 | Zero `Admitted`/`Axiom`; every change ships a non-vacuous proof | corpus-wide gate | — | `make -C formal check-capped` | **proven** (gate holds; 3 files use stdlib `classic`, all outside touched targets) |
 | 4 | Baseline-relative empirical gates | — | — | baseline-cf03e571.md | **proven** (baseline captured: 4350/0 lib + 217 known-red) |
 | 5 | Commit at stable points; prove root (flip) before naming a fix | — | — | git history | process invariant |
@@ -51,7 +51,7 @@ updates it. It exists so we never (a) ship a Rust change without a non-vacuous p
 
 | Phase | New `.v` | Key theorems | Status |
 |-------|----------|--------------|--------|
-| EC | `EvidenceComplete.v` | evidence_only_removal; weight_is_order_only (Permutation); residual_ambiguity_surfaced; evidence_complete_no_valid_alternative_dropped; weight_drop_can_lose_valid_alternative (fence) | TODO |
+| EC | `EvidenceComplete.v` (prattail_wpda_runtime, zero-admission, `31bb90bc`) | **proven**: `no_valid_alternative_dropped`, `evidence_only_removal` (removal = observational-equiv merge), `weight_is_order_only` (kept key-set invariant under reweighting), `assemble_keys_nodup` (residual ambiguity surfaced), `weight_drop_can_lose_valid_alternative` (negative fence). `from_alternatives` (language.rs:722) verified already evidence-complete (semantic_fingerprint-only dedup; weight-free). The FV fence subsumes the planned lint guard (no SGLR prefer/avoid in MeTTaIL) |
 | 4A | `CD07_NfaFallbackNonLoss.v` | fanout_complete; fanout_sound; lexmin_orders_not_prunes | TODO |
 | 5A | (extend `RuntimeModel.v`) | cast_edge_source_roundtrip; eoi_ordering_is_permutation | TODO |
 | 5C | (extend `RuntimeModel.v`) | budget_overflow_is_surfaced; under_budget_preserves_all; lazy_member_counted_once | TODO |
