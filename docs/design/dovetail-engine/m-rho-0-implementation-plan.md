@@ -167,6 +167,18 @@ only building the bridge crates (or `--workspace`) does.
   `MettaGsltPresentation.v` (lane-decomposition sound+complete) +
   `MettaOslfLawsConformance.v` (the 4 laws over the modelled `is_funded`), both
   `Print Assumptions`-clean; `rocq-rho-bridge` green.
-- **Next:** M-RHO.0.3 (`generate_rho_vm`: calculator `LanguageDef` → Rholang source
-  + `RhoLoweringTotalOrRejects.v`), then .0.4 (differential oracle vs Ascent), then
-  .0.5 (real `RhoRuntime` run).
+- **M-RHO.0.3 — SHIPPED** (`9478e791`): `mettail-rho-codegen::lower_language_def`
+  (operand-type-gated; supported scalar ops → Rholang `contract`s; all else recorded
+  rejected) + 3/3 tests incl. `Compiler::source_to_adt` parse round-trip;
+  `RhoLoweringTotalOrRejects.v` (total/sound/disjoint/count, zero-admission).
+- **M-RHO.0.4 — SHIPPED** (`168859e3` + `7629c828`): `OracleQuotientEquivalence.v`
+  (the oracle is a sound exact equivalence) + the literal two-backend differential
+  `rho_vs_ascent.rs` — lowered calculator on a real RhoRuntime ≡ `run_ascent` (5/5).
+- **M-RHO.0.5 — SHIPPED** (`bfe56c4b`): `run_and_read_ints` builds an in-memory
+  RhoRuntime and runs the lowered contracts to correct results (6/6). `RUST_MIN_STACK`
+  proved unnecessary for these shallow reductions (the speculative global config edit
+  was reverted).
+- **★ M-RHO.0 COMPLETE end-to-end** (tip `7629c828`): LanguageDef → lowered Rholang →
+  runs on f1r3node → differentially equals Ascent. Full ungated integration; 7
+  zero-admission `rocq-rho-bridge` proofs. **Next: M-RHO.1** (rhocalc native fast
+  path, `Comm`→RSpace COMM) + the parser-FV track alongside.
