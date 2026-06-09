@@ -1,6 +1,7 @@
 -Q theories PrattailWpdaRuntime
 
 theories/RuntimeModel.v
+theories/EvidenceComplete.v
 theories/RecoveryBound.v
 theories/RecoverySignature.v
 theories/FiniteHarness.v
