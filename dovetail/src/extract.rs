@@ -20,16 +20,18 @@
 //! and MON holds on that axis.
 //!
 //! ## Cycles
-//! This increment is ACYCLIC-scoped. A recursion guard makes cyclic e-graphs
-//! SAFE (no infinite loop / no panic) but possibly INCOMPLETE (back-edges are
-//! cut; [`Extractor::had_cycle_cut`] reports it). Full cyclic closure via
-//! rigail's `solve_scc_weights_newton` is a later increment.
+//! Cyclic INSIDE weights / the 1-best are EXACT (Newton-SCC closed, via
+//! [`Extractor::with_heuristic`] / `wta::compute_inside_closed`). Exhaustive
+//! k-best ENUMERATION across back-edges remains CUT by a recursion guard:
+//! cyclic e-graphs are SAFE (no infinite loop / no panic), but k≥2
+//! cycle-unrolled derivations are not enumerated and [`Extractor::had_cycle_cut`]
+//! reports it. Full cyclic k-best enumeration is a later increment.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::rc::Rc;
 
-use rigail::Semiring;
+use rigail::{Semiring, StarSemiring};
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::key::{write_framed, ContentKey, SemanticHash};
@@ -160,12 +162,17 @@ where
         }
     }
 
-    /// Enable the admissible A*/KA* heuristic: memoize the bottom-up 1-best
-    /// inside weights and use them ONLY as a sound reachability skip (a class
-    /// whose inside is `0̄` has no non-`0̄` derivation). This reorders/short-cuts
-    /// exploration; it never changes the result set or order.
-    pub fn with_heuristic(mut self) -> Self {
-        self.inside = Some(Self::compute_inside(self.egraph, &self.weigh));
+    /// Enable the admissible A*/KA* heuristic: memoize the EXACT (Newton-SCC
+    /// closed, cyclic-correct) bottom-up 1-best inside weights and use them ONLY
+    /// as a sound reachability skip (a class whose inside is `0̄` has no non-`0̄`
+    /// derivation). This reorders/short-cuts exploration; it never changes the
+    /// result set or order. Requires `W: StarSemiring` (for the cyclic closure);
+    /// the production weights `TropicalWeight`/`LexicographicWeight` qualify.
+    pub fn with_heuristic(mut self) -> Self
+    where
+        W: StarSemiring,
+    {
+        self.inside = Some(crate::wta::compute_inside_closed(self.egraph, &self.weigh));
         self.use_heuristic = true;
         self
     }
@@ -352,35 +359,6 @@ where
         Some(Rc::new(Derivation { op, class: q, children, weight: w, key }))
     }
 
-    /// Bottom-up inside weights (the admissible heuristic source); fixpoint,
-    /// exact for acyclic e-graphs. Mirrors `wta::EGraphDfta::inside_weights`.
-    fn compute_inside(egraph: &EGraph<L>, weigh: &F) -> HashMap<EClassId, W> {
-        let classes: Vec<EClassId> = egraph.classes().collect();
-        let mut inside: HashMap<EClassId, W> = classes.iter().map(|&q| (q, W::zero())).collect();
-        let max_iters = classes.len().saturating_add(1);
-        for _ in 0..max_iters {
-            let mut changed = false;
-            for &q in &classes {
-                let mut acc = W::zero();
-                for node in egraph.nodes(q) {
-                    let mut prod = weigh(node);
-                    for &c in &node.children {
-                        let cw = inside.get(&egraph.find(c)).copied().unwrap_or_else(W::zero);
-                        prod = prod.times(&cw);
-                    }
-                    acc = acc.plus(&prod);
-                }
-                if acc != inside[&q] {
-                    inside.insert(q, acc);
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        inside
-    }
 }
 
 #[cfg(test)]
@@ -588,5 +566,42 @@ mod tests {
         let ds: Vec<_> = ex.derivations(eg.find(base)).collect(); // must terminate
         assert!(ds.iter().any(|d| d.op == "base"), "acyclic base derivation present");
         assert!(ex.had_cycle_cut(), "the g(P) back-edge was cut");
+    }
+
+    #[test]
+    fn t10_cyclic_1best_equals_newton_inside() {
+        // P = a(5) | f(P). The extractor's 1-best (acyclic; the back-edge is cut)
+        // equals the Newton-closed inside weight (Increment 6).
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let f = eg.add(ENode::new("f".into(), vec![a]));
+        eg.merge(a, f);
+        eg.rebuild();
+        let p = eg.find(a);
+        let inside = crate::wta::compute_inside_closed(&eg, &weigh);
+        let mut ex = Extractor::new(&eg, weigh).with_heuristic();
+        let d0 = ex.kth(p, 0).expect("a 1-best exists");
+        assert_eq!(prim(d0.weight), 5.0);
+        assert_eq!(d0.weight, inside[&p], "extractor 1-best == Newton-closed inside");
+    }
+
+    #[test]
+    fn t11_cyclic_heuristic_invariance() {
+        let build = || {
+            let mut eg = EGraph::<String>::new();
+            let a = eg.add(ENode::leaf("a".into()));
+            let f = eg.add(ENode::new("f".into(), vec![a]));
+            eg.merge(a, f);
+            eg.rebuild();
+            let p = eg.find(a);
+            (eg, p)
+        };
+        let (eg1, p1) = build();
+        let mut plain = Extractor::new(&eg1, weigh);
+        let av: Vec<_> = plain.derivations(p1).map(|d| (prim(d.weight), d.key.clone())).collect();
+        let (eg2, p2) = build();
+        let mut heur = Extractor::new(&eg2, weigh).with_heuristic();
+        let bv: Vec<_> = heur.derivations(p2).map(|d| (prim(d.weight), d.key.clone())).collect();
+        assert_eq!(av, bv, "cyclic heuristic invariance (closed inside doesn't change results)");
     }
 }
