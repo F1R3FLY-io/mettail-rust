@@ -61,12 +61,18 @@ updates it. It exists so we never (a) ship a Rust change without a non-vacuous p
 | 3 | `LazyEvalEnum.v` + `DemandTransform.v` | demand_eval_equals_eager_in_the_limit; demand_only_computes_reachable; enum_take_k_is_eager_quotient_prefix; fixpoint_bound_reported_not_pruned | TODO |
 | 4B | `CD06_SuffixFactor.v` | factor_eq_matching_rule; factor_sound/complete; factor_language_eq | TODO (measure-first; may stay diagnostic-only) |
 
-## E. Engine (Dovetail) obligations — `formal/rocq/rho_target/` (new) + reuse
+## E. Engine (Dovetail) obligations — `formal/rocq/dovetail/` (new) + reuse
+
+**dovetail RUST core SHIPPED + test-verified (31/31), committed** — Increments 1 (rigail
+extraction), 2 (key), 3 (e-graph), 4 (WTA view), 5 (exact no-miss extractor), 7 (rules-as-data
+saturation), 8 (tuplespace seam). FV status below; Increment 6 + the new proofs are the
+remaining M-E.0 obligations.
 
 | Obligation | Source | Status |
 |------------|--------|--------|
-| WTA best-derivation = N-best extraction soundness | reuse `WpdsCorrectness.v`/`SemiringLaws.v` + Newton-SCC | TODO (dovetail-core) |
-| Exact-`semantic_hash` runtime e-graph dedup no-loss | (invariant 1, generalized over payload) | TODO (dovetail-core) |
+| Exact runtime e-graph dedup no-loss (Inc 3) | **COVERED** by `EGraphBudgetDedup.v` (the dovetail e-graph is a faithful port of the same algorithm) + invariant 1 | **proven** (reuse; add a traceability note) |
+| WTA best-derivation = EXACT no-miss extraction (Inc 5) | NEW `NBestExtraction.v` (acyclic hypergraph model); reuse `SemiringLaws.v` monotonicity | **regression-only** (9 Rust no-miss tests T1–T9 green: ambiguous-no-miss, cartesian-no-miss, 0̄-excluded, cycle-safety); zero-admission Rocq proof PENDING (research-grade — cannot be a stub per Invariant 3) |
+| Cyclic e-class weight closure (Inc 6) | reuse `rigail::solve_scc_weights_newton` (Newton-SCC) | TODO — extractor currently CUTS cycles (sound but incomplete; `had_cycle_cut()` surfaces it) |
 | spec→Rholang-VM operational correspondence (up-to-weak-bisim) | new, schematic-over-codegen; reuse `CATranslation`/`Bisimulation`/`CASimulationBicat` | TODO (M-RHO.1) |
 | OslfResourceLogic conformance (4 laws) | reuse `GSLTOSLFCapstone.v` + 2nd instance `CAUntypedLambda.v` | TODO (M-RHO.0) |
 | Ambiguity-set preservation | new (least mature); differential non-confluent parity + `WeakBarbedEquiv` backstop | TODO (M-RHO.1/.3) |
