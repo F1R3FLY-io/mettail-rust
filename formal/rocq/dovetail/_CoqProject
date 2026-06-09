@@ -13,3 +13,4 @@
 -Q theories Dovetail
 
 theories/NBestExtraction.v
+theories/EnumerationCompleteness.v
