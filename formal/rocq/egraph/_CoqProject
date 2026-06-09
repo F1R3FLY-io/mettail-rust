@@ -6,6 +6,7 @@
 #                           congruence propagation correct
 #   2. EGraphSaturation   — saturation monotonicity, bounded termination,
 #                           saturation soundness
+#   3. EGraphBudgetDedup  — exact key dedup and explicit budget overflow
 #
 # Dependency order:
 #   EGraphCongruence.v    — (standalone)
@@ -16,3 +17,4 @@
 # Source files (no dependencies between them)
 theories/EGraphCongruence.v
 theories/EGraphSaturation.v
+theories/EGraphBudgetDedup.v

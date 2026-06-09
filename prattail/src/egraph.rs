@@ -41,7 +41,7 @@
 //!
 //! All operations are compile-time only (during `language!` macro expansion).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::confluence::{ConfluenceAnalysis, CriticalPair, JoinabilityResult, RewriteRule, Term};
@@ -259,6 +259,19 @@ impl EGraph {
         id
     }
 
+    /// Add a hashconsed e-node during saturation without exceeding the
+    /// configured node budget.
+    fn try_add_with_budget(&mut self, enode: ENode) -> Option<EClassId> {
+        let canonical = enode.canonicalize(&self.union_find);
+        if let Some(&id) = self.memo.get(&canonical) {
+            return Some(self.find(id));
+        }
+        if self.node_count >= self.config.max_nodes {
+            return None;
+        }
+        Some(self.add(canonical))
+    }
+
     /// Recursively add a `confluence::Term` to the e-graph (bottom-up).
     pub fn add_term(&mut self, term: &Term) -> EClassId {
         match term {
@@ -386,6 +399,63 @@ impl EGraph {
                 }
             }
         }
+        self.rebuild_exact_indices();
+    }
+
+    /// Rebuild memo and parent indexes from exact canonical e-nodes.
+    ///
+    /// `rebuild()` may merge classes whose nodes canonicalize to the same
+    /// e-node. The memo table already quotients those duplicates, but the
+    /// class-local node vectors and parent lists must be kept in the same
+    /// exact quotient to avoid replaying duplicate matches.
+    fn rebuild_exact_indices(&mut self) {
+        let uf_snapshot = self.union_find.clone();
+        for class in self.classes.values_mut() {
+            let mut seen = HashSet::new();
+            let mut canonical_nodes = Vec::with_capacity(class.nodes.len());
+            for enode in class.nodes.drain(..) {
+                let canonical = enode.canonicalize(&uf_snapshot);
+                if seen.insert(canonical.clone()) {
+                    canonical_nodes.push(canonical);
+                }
+            }
+            class.nodes = canonical_nodes;
+            class.parents.clear();
+        }
+
+        let mut memo = HashMap::new();
+        let mut parent_edges = Vec::new();
+        let mut live_nodes = 0usize;
+        for (&class_id, class) in &self.classes {
+            let class_id = self.find(class_id);
+            for enode in &class.nodes {
+                match memo.insert(enode.clone(), class_id) {
+                    Some(existing) => {
+                        debug_assert_eq!(
+                            self.find(existing),
+                            class_id,
+                            "canonical e-node remained in two distinct classes after rebuild"
+                        );
+                    },
+                    None => live_nodes += 1,
+                }
+                for &child in &enode.children {
+                    parent_edges.push((self.find(child), enode.clone(), class_id));
+                }
+            }
+        }
+
+        let mut seen_parent_edges = HashSet::new();
+        for (child, enode, parent) in parent_edges {
+            if seen_parent_edges.insert((child, enode.clone(), parent)) {
+                if let Some(child_class) = self.classes.get_mut(&child) {
+                    child_class.parents.push((enode, parent));
+                }
+            }
+        }
+
+        self.memo = memo;
+        self.node_count = live_nodes;
     }
 
     /// Extract the smallest term (by AST size) from an e-class.
@@ -476,6 +546,12 @@ pub struct SaturationResult {
     pub total_merges: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ApplyMatchesResult {
+    merges: usize,
+    node_limit_reached: bool,
+}
+
 impl EGraph {
     /// Search for all matches of a pattern in the e-graph.
     ///
@@ -558,46 +634,57 @@ impl EGraph {
         }
     }
 
-    /// Instantiate a pattern RHS with a substitution, adding nodes to the e-graph.
-    fn instantiate_pattern(&mut self, pattern: &Pattern, subst: &Subst) -> EClassId {
+    /// Budget-aware RHS instantiation used by saturation.
+    fn try_instantiate_pattern(&mut self, pattern: &Pattern, subst: &Subst) -> Option<EClassId> {
         match pattern {
-            Pattern::Var(name) => {
-                match subst.get(name) {
-                    Some(&id) => id,
-                    None => {
-                        // Free variable: add as a variable e-node
-                        let enode = ENode::leaf(format!("__var_{}", name));
-                        self.add(enode)
-                    },
-                }
+            Pattern::Var(name) => match subst.get(name) {
+                Some(&id) => Some(id),
+                None => {
+                    let enode = ENode::leaf(format!("__var_{}", name));
+                    self.try_add_with_budget(enode)
+                },
             },
             Pattern::App { symbol, args } => {
-                let children: Vec<EClassId> = args
-                    .iter()
-                    .map(|a| self.instantiate_pattern(a, subst))
-                    .collect();
+                let mut children = Vec::with_capacity(args.len());
+                for arg in args {
+                    children.push(self.try_instantiate_pattern(arg, subst)?);
+                }
                 let enode = ENode::with_children(symbol.as_str(), children);
-                self.add(enode)
+                self.try_add_with_budget(enode)
             },
         }
+    }
+
+    fn apply_matches_bounded(
+        &mut self,
+        rhs: &Pattern,
+        matches: &[(EClassId, Subst)],
+    ) -> ApplyMatchesResult {
+        let mut result = ApplyMatchesResult::default();
+        for (root_id, subst) in matches {
+            let rhs_id = match self.try_instantiate_pattern(rhs, subst) {
+                Some(id) => id,
+                None => {
+                    result.node_limit_reached = true;
+                    break;
+                },
+            };
+            if self.find(*root_id) != self.find(rhs_id) {
+                self.merge(*root_id, rhs_id);
+                result.merges += 1;
+            }
+        }
+        if result.merges > 0 {
+            self.rebuild();
+        }
+        result
     }
 
     /// Apply matched substitutions for a rule's RHS, merging with the match root.
     ///
     /// Returns the number of new merges applied.
     fn apply_matches(&mut self, rhs: &Pattern, matches: &[(EClassId, Subst)]) -> usize {
-        let mut merges = 0;
-        for (root_id, subst) in matches {
-            let rhs_id = self.instantiate_pattern(rhs, subst);
-            if self.find(*root_id) != self.find(rhs_id) {
-                self.merge(*root_id, rhs_id);
-                merges += 1;
-            }
-        }
-        if merges > 0 {
-            self.rebuild();
-        }
-        merges
+        self.apply_matches_bounded(rhs, matches).merges
     }
 
     /// Run equality saturation: apply all rules until fixpoint or limits.
@@ -622,8 +709,24 @@ impl EGraph {
             for rule in rules {
                 let matches = self.search_pattern(&rule.lhs);
                 iter_matches += matches.len();
-                let merges = self.apply_matches(&rule.rhs, &matches);
-                iter_merges += merges;
+                let apply_result = self.apply_matches_bounded(&rule.rhs, &matches);
+                iter_merges += apply_result.merges;
+                if apply_result.node_limit_reached {
+                    stats.push(SaturationStats {
+                        matches_found: iter_matches,
+                        merges_applied: iter_merges,
+                        eclass_count: self.class_count(),
+                        enode_count: self.node_count(),
+                    });
+                    total_merges += iter_merges;
+                    return SaturationResult {
+                        converged: false,
+                        node_limit_reached: true,
+                        iterations: iteration + 1,
+                        stats,
+                        total_merges,
+                    };
+                }
             }
 
             stats.push(SaturationStats {
@@ -1232,6 +1335,37 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_exact_indices_share_only_exact_canonical_enodes() {
+        let mut eg = EGraph::new();
+        let a = eg.add(ENode::leaf("a"));
+        let b = eg.add(ENode::leaf("b"));
+        let fa = eg.add(ENode::with_children("f", vec![a]));
+        let fb = eg.add(ENode::with_children("f", vec![b]));
+        let ga = eg.add(ENode::with_children("g", vec![a]));
+        let gb = eg.add(ENode::with_children("g", vec![b]));
+
+        assert_eq!(eg.node_count(), 6);
+        eg.merge(a, b);
+        eg.rebuild();
+
+        assert!(eg.equiv(fa, fb));
+        assert!(eg.equiv(ga, gb));
+        assert!(!eg.equiv(fa, ga));
+        assert_eq!(eg.node_count(), 4);
+
+        let f_matches = eg.search_pattern(&Pattern::App {
+            symbol: "f".to_string(),
+            args: vec![Pattern::Var("x".to_string())],
+        });
+        let g_matches = eg.search_pattern(&Pattern::App {
+            symbol: "g".to_string(),
+            args: vec![Pattern::Var("x".to_string())],
+        });
+        assert_eq!(f_matches.len(), 1);
+        assert_eq!(g_matches.len(), 1);
+    }
+
+    #[test]
     fn rebuild_deep_congruence() {
         let mut eg = EGraph::new();
         let a = eg.add(ENode::leaf("a"));
@@ -1552,6 +1686,38 @@ mod tests {
         let result = eg.saturate(&[rule]);
         // Should either converge or hit node limit
         assert!(result.converged || result.node_limit_reached);
+    }
+
+    #[test]
+    fn saturate_node_limit_stops_during_rhs_instantiation_without_overshoot() {
+        let config = EGraphConfig { max_nodes: 4, max_iterations: 10 };
+        let mut eg = EGraph::with_config(config.clone());
+        let a = eg.add(ENode::leaf("a"));
+        eg.add(ENode::with_children("f", vec![a]));
+
+        let rule = ERewriteRule {
+            lhs: Pattern::App {
+                symbol: "f".to_string(),
+                args: vec![Pattern::Var("x".to_string())],
+            },
+            rhs: Pattern::App {
+                symbol: "h".to_string(),
+                args: vec![Pattern::App {
+                    symbol: "g".to_string(),
+                    args: vec![Pattern::App {
+                        symbol: "k".to_string(),
+                        args: vec![Pattern::Var("x".to_string())],
+                    }],
+                }],
+            },
+            label: None,
+        };
+
+        let result = eg.saturate(&[rule]);
+        assert!(!result.converged);
+        assert!(result.node_limit_reached);
+        assert!(eg.node_count() <= config.max_nodes);
+        assert_eq!(result.total_merges, 0);
     }
 
     #[test]

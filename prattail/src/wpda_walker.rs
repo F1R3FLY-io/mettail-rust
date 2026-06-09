@@ -18250,12 +18250,14 @@ mod tests {
         }
     }
 
-    fn cohort_worker_snapshot() -> crate::dispatch_cohort::WorkerSnapshot<LexicographicWeight> {
+    fn cohort_worker_snapshot_with_rule(
+        rule_idx: u16,
+    ) -> crate::dispatch_cohort::WorkerSnapshot<LexicographicWeight> {
         crate::dispatch_cohort::WorkerSnapshot {
             worker_inner_state: WpdaState::Ready { min_bp: 0 },
             worker_last_action_output_cat: None,
             worker_pending_packing_weight: LexicographicWeight::one(),
-            worker_weight: LexicographicWeight::one(),
+            worker_weight: lex(0.0, 0, rule_idx),
             worker_pre_dispatch_weight: LexicographicWeight::one(),
         }
     }
@@ -18431,27 +18433,37 @@ mod tests {
             crate::dispatch_cohort::RegisterOutcome::WorkerInserted
         ));
         assert_eq!(
-            walker
-                .dispatch_cohort_cache
-                .resolve(key.clone(), 42, 1, 1, cohort_worker_snapshot(),),
+            walker.dispatch_cohort_cache.resolve(
+                key.clone(),
+                42,
+                1,
+                1,
+                cohort_worker_snapshot_with_rule(0),
+            ),
             crate::dispatch_cohort::ResolveOutcome::FirstResolve,
         );
-        for _ in 1..crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY {
+        for i in 1..crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY {
             assert_eq!(
                 walker.dispatch_cohort_cache.resolve(
                     key.clone(),
                     42,
                     1,
                     1,
-                    cohort_worker_snapshot(),
+                    cohort_worker_snapshot_with_rule(i as u16),
                 ),
                 crate::dispatch_cohort::ResolveOutcome::SnapshotAppended,
             );
         }
         assert!(matches!(
-            walker
-                .dispatch_cohort_cache
-                .resolve(key, 42, 1, 1, cohort_worker_snapshot(),),
+            walker.dispatch_cohort_cache.resolve(
+                key,
+                42,
+                1,
+                1,
+                cohort_worker_snapshot_with_rule(
+                    crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY as u16,
+                ),
+            ),
             crate::dispatch_cohort::ResolveOutcome::SnapshotOverflow { .. }
         ));
 
