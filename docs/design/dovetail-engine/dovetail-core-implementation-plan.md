@@ -2,9 +2,27 @@
 
 > Engine-primary foundation. `dovetail` = the standalone, substrate-agnostic, extractable
 > core of the off-Ascent GSLT reduction engine (generic-`W` WTA over a runtime e-graph =
-> DFTA, with N-best/set-valued cube-pruning extraction). Designed by a Plan agent against
+> DFTA, with N-best/set-valued demand-driven best-first enumeration extraction). Designed by a Plan agent against
 > the live codebase (2026-06-09). Tracked: pgmcp `dovetail-core-standalone-wta-egraph-crate`
 > (#279) under epic `dovetail-gslt-reduction-engine-f1r3node-target` (#278); session task #15.
+
+## Governing invariant — extraction completeness (NO missed results)
+
+**Any** enumeration/optimization technique (best-first, k-best, cube-pruning, beam, …) is
+admissible **iff it provably misses no result.** This is the single gate; the name is
+irrelevant. Concretely:
+- **Demand only DEFERS** computation — the stream is *resumable to exhaustion*; pulling
+  further always yields the next result and can surface every alternative. A "k" is just
+  how far the caller has pulled, never a cutoff that discards the rest.
+- **The ONLY removal** of an alternative is by **evidence** (rewrite-to-`⊥`, guard/type
+  refutation, exact-key observational-equality dedup) — never by weight, beam, or heuristic.
+- **Weight ORDERS** the stream; it never PRUNES.
+- **Default, provably-complete mechanism:** an *unbounded* best-first priority queue
+  (exhaustive-on-demand). A faster technique may replace it **only** with a no-miss proof
+  *plus* a differential check that its output set equals the exhaustive enumeration's.
+
+(The lossy *beam* form of cube-pruning is therefore out — it misses results. An exhaustive
+best-first enumeration, or any k-best/cube variant proven to miss nothing, is in.)
 
 ## 0. Executive summary
 
@@ -55,7 +73,7 @@ dovetail/           src/lib.rs                             # crate root + featur
                     src/key.rs                             # ContentKey (exact byte key) + SemanticHash trait
                     src/egraph/{mod,union_find,congruence}.rs  # runtime payload-generic exact-keyed e-graph
                     src/wta/{mod,dfta}.rs                  # generic-W WTA wired to e-classes (DFTA view)
-                    src/extract/{mod,nbest,closure}.rs     # N-best/set-valued cube-pruning (research-grade core)
+                    src/extract/{mod,nbest,closure}.rs     # N-best/set-valued demand-driven best-first enumeration (research-grade core)
                     src/rules/{mod,driver}.rs              # rules-as-data + saturation driver
                     src/space/{mod,inmem}.rs               # tuplespace-shaped trait (C,P,A,K)+Match seam
 formal/rocq/dovetail/theories/{ExactKeyDedup,NBestExtraction}.v   # new rocq-dovetail target
@@ -86,7 +104,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 2. **crate skeleton + `key.rs`** (`ContentKey`, `SemanticHash`). Tests: key determinism; distinct byte-streams → distinct keys. *(safe, independent of #1)*
 3. **runtime payload-generic exact-keyed e-graph** (`add`/`merge`/`rebuild` + carried `try_add_with_budget`/`rebuild_exact_indices`/`node_limit_reached` from b56e1e5). Tests: port prattail congruence/budget tests; a 64-bit-collision-but-distinct-`ContentKey` pair stays 2 classes (Rust refutation of `hash_only_pair_dedup_can_drop_distinct_keys`).
 4. **generic-`W` WTA wired to e-classes** (`WtaTransition<W>`, `EGraphDfta`). Tests: tiny e-graph, assert transitions+weights.
-5. **N-best/set-valued cube-pruning extractor (acyclic)** — Huang–Chiang lazy k-best over the hypergraph by composed weight; set semantics. Tests: two equal-weight distinct alts BOTH appear; zero-weight alt dropped; k-truncation = k smallest by `(W,key)`.
+5. **N-best/set-valued demand-driven best-first enumeration extractor (acyclic)** — Huang–Chiang lazy k-best over the hypergraph by composed weight; set semantics. Tests: two equal-weight distinct alts BOTH appear; zero-weight alt dropped; k-truncation = k smallest by `(W,key)`.
 6. **cyclic e-class weight closure** — SCC → `PackingFactored` → `solve_scc_weights_newton`. Tests: self-referential class under idempotent semiring terminates.
    — **M-E.0 "inert" milestone = increments 1–6** (skeleton + WTA on runtime e-graph + N-best, engine gated off, no f1r3node binding, zero new mandatory deps).
 7. **rules-as-data + reduction driver** (`Sexpr`/`Rule`/`Program` + `saturate`).

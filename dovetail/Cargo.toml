@@ -1,0 +1,18 @@
+[package]
+name = "dovetail"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Substrate-agnostic GSLT reduction engine core: a generic-W weighted tree automaton over a runtime e-graph (DFTA) with N-best/set-valued cube-pruning extraction. Weights order, never prune; exact content keying."
+
+# Dovetail is deliberately substrate-agnostic so it can be extracted as its own
+# published crate later: NO dependency on the parser (mettail-prattail), the
+# proc-macros (mettail-macros), the AST crates, f1r3node-rust, tokio, or RSpace.
+
+[features]
+default = []
+# `engine` will gate any future f1r3node binding (none yet — M-E.0 is inert).
+engine = []
+
+[dependencies]
