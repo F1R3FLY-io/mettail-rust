@@ -11,14 +11,14 @@
 //! drops out only if its weight is the semiring zero (`0̄`).
 //!
 //! This increment handles ACYCLIC e-graphs via fixpoint iteration. Cyclic
-//! e-class weight closure (via dovetail-semiring's Newton-SCC solver) is a later
+//! e-class weight closure (via rigail's Newton-SCC solver) is a later
 //! increment; the iteration cap bounds cyclic inputs to a partial estimate
 //! rather than looping.
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use dovetail_semiring::Semiring;
+use rigail::Semiring;
 
 use crate::egraph::{EClassId, EGraph, ENode};
 
@@ -90,7 +90,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dovetail_semiring::TropicalWeight;
+    use rigail::TropicalWeight;
 
     fn weigh_calc(n: &ENode<String>) -> TropicalWeight {
         match n.op.as_str() {

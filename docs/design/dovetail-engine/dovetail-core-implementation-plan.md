@@ -47,17 +47,17 @@ WTA in `prattail/src/tree_automaton.rs`, and the e-graph core in `prattail/src/e
 ## 1. Dependency-reuse decision: **move-down + invert, as a 3-layer split** (hybrid a+c)
 
 Create **two** crates:
-1. **`dovetail-semiring`** — the pure-algebra subset of `semiring.rs` with zero prattail
+1. **`rigail`** — the pure-algebra subset of `semiring.rs` with zero prattail
    coupling: the trait hierarchy (`Semiring`, `SemiringRef`, `StarSemiring`, `StarSemiringRef`,
    `DetectableZero`, `IdempotentSemiring`, `CompleteSemiring`), the `*Weight` types,
    `matrix_star_ref`, `solve_scc_weights_newton`, and a **relocated, decoupled** `PackingFactored<W>`.
 2. **`dovetail`** — WTA + runtime e-graph + N-best extractor + rules-as-data + tuplespace trait;
-   depends on `dovetail-semiring`.
+   depends on `rigail`.
 
-`prattail` then depends on `dovetail-semiring` and **re-exports** the moved items from
-`prattail::automata::semiring` (`pub use dovetail_semiring::*;`) so its 30+ `use
+`prattail` then depends on `rigail` and **re-exports** the moved items from
+`prattail::automata::semiring` (`pub use rigail::*;`) so its 30+ `use
 crate::automata::semiring::...` call sites compile unchanged. `sppf.rs` does
-`pub use dovetail_semiring::PackingFactored;`.
+`pub use rigail::PackingFactored;`.
 
 **Rejected:** pure-(a) wholesale move into dovetail-core (fails substrate-agnosticism via the
 sppf coupling); (b) duplicate/fork (6503-line file under active FV — `SemiringLaws.v` — would
@@ -75,7 +75,7 @@ later optional refactor (Increment 9, deferred).
 ## 2. Crate layout + public API
 
 ```
-dovetail-semiring/  src/{lib,traits,weights,closure}.rs   # extracted algebra + decoupled PackingFactored
+rigail/  src/{lib,traits,weights,closure}.rs   # extracted algebra + decoupled PackingFactored
 dovetail/           src/lib.rs                             # crate root + feature gates (engine OFF default)
                     src/key.rs                             # ContentKey (exact byte key) + SemanticHash trait
                     src/egraph/{mod,union_find,congruence}.rs  # runtime payload-generic exact-keyed e-graph
@@ -107,7 +107,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 
 ## 3. Increments (each: adds / tested / gate = `cargo check --workspace` green + prattail 4350/0 + op-suite ≤217 + relevant `rocq-*` zero-admission)
 
-1. **`dovetail-semiring` extraction** (only prattail-touching step; land + verify ALONE). Move algebra + decoupled `PackingFactored`; prattail `semiring.rs`/`sppf.rs` → `pub use` facades. Gate: prattail 4350/0; op-suite ≤217; SemiringLaws green.
+1. **`rigail` extraction** (only prattail-touching step; land + verify ALONE). Move algebra + decoupled `PackingFactored`; prattail `semiring.rs`/`sppf.rs` → `pub use` facades. Gate: prattail 4350/0; op-suite ≤217; SemiringLaws green.
 2. **crate skeleton + `key.rs`** (`ContentKey`, `SemanticHash`). Tests: key determinism; distinct byte-streams → distinct keys. *(safe, independent of #1)*
 3. **runtime payload-generic exact-keyed e-graph** (`add`/`merge`/`rebuild` + carried `try_add_with_budget`/`rebuild_exact_indices`/`node_limit_reached` from b56e1e5). Tests: port prattail congruence/budget tests; a 64-bit-collision-but-distinct-`ContentKey` pair stays 2 classes (Rust refutation of `hash_only_pair_dedup_can_drop_distinct_keys`).
 4. **generic-`W` WTA wired to e-classes** (`WtaTransition<W>`, `EGraphDfta`). Tests: tiny e-graph, assert transitions+weights.
@@ -130,7 +130,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 - **Out of scope here:** any f1r3node/RSpace binding; the Reified-RSpace concrete impl; flipping any evaluator off Ascent (M-RHO.4 / task #20); the prattail-egraph→dovetail convergence (Inc 9).
 
 ## 6. Critical files
-Create: `dovetail-semiring/src/{lib,traits,weights,closure}.rs`; `dovetail/src/{lib,key}.rs`,
+Create: `rigail/src/{lib,traits,weights,closure}.rs`; `dovetail/src/{lib,key}.rs`,
 `dovetail/src/egraph/*`, `dovetail/src/wta/*`, `dovetail/src/extract/*` (esp. `nbest.rs` — the
 research core), `dovetail/src/{rules,space}/*`; `formal/rocq/dovetail/{_CoqProject,theories/*}`.
 Modify (small): workspace `Cargo.toml` members; `prattail/Cargo.toml` dep; `prattail/src/automata/semiring.rs`

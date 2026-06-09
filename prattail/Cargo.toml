@@ -89,9 +89,9 @@ rustc-hash = "2"
 signal-hook = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
 # The weight algebra (semirings, weight types, Newton-SCC, PackingFactored,
-# LexicographicWeight) lives in dovetail-semiring; this crate re-exports it via
+# LexicographicWeight) lives in rigail; this crate re-exports it via
 # the automata::{semiring,lex_weight} facades.
-dovetail-semiring = { path = "../dovetail-semiring" }
+rigail = { path = "../rigail" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -17,7 +17,7 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition              | Rust Code                            | Location
  *   -----------------------------|--------------------------------------|--------------------------
- *   Semiring (class)             | trait Semiring                       | dovetail-semiring/src/lib.rs (was automata/semiring.rs)
+ *   Semiring (class)             | trait Semiring                       | rigail/src/lib.rs (was automata/semiring.rs)
  *   prov_plus                    | ProvenanceWeight::plus               | provenance.rs:180
  *   prov_times                   | ProvenanceWeight::times              | provenance.rs:193
  *   prov_zero                    | ProvenanceWeight::zero               | provenance.rs:149
@@ -52,7 +52,7 @@ Import ListNotations.
 (* ===================================================================== *)
 
 (* A semiring (K, +, *, 0, 1) with the standard axioms.
-   Mirrors the Rust trait Semiring in dovetail-semiring/src/lib.rs (was automata/semiring.rs). *)
+   Mirrors the Rust trait Semiring in rigail/src/lib.rs (was automata/semiring.rs). *)
 
 Class Semiring (K : Type) := {
   sr_eq : K -> K -> Prop;
