@@ -61,6 +61,9 @@ query = { path = "query" }
 # pins nightly-2026-02-09; mettail-rust floats `nightly` + cranelift dev backend.
 models = { path = "../f1r3node-rust/models" }
 rholang = { path = "../f1r3node-rust/rholang" }
+rspace_plus_plus = { path = "../f1r3node-rust/rspace++" }
+crypto = { path = "../f1r3node-rust/crypto" }
+tokio = { version = "1", features = ["full"] }
 
 [profile.dev]
 codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)

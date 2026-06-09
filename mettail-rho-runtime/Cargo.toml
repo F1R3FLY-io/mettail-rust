@@ -6,16 +6,23 @@ authors.workspace = true
 license.workspace = true
 description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's RhoRuntime/DebruijnInterpreter + native handlers; exposes the RhoBackend seam + the differential oracle vs Ascent. Depends ONE-WAY on f1r3node-rust."
 
-# Binds the mettail-rho-codegen output to a process-wide RhoRuntime /
-# DebruijnInterpreter + native handlers, and hosts the differential oracle
-# (rho-backend normal forms vs Ascent normal forms, weight-erased + eqrel-quotiented,
-# keyed by dovetail's exact ContentKey). Threading/scheduling are OWNED BY f1r3node
-# (eval_par/RSpace, tokio); MeTTaIL emits `Par`, never forks. Depends ONE-WAY on
-# f1r3node-rust (proven one-way in formal/rocq/rho_bridge/theories/BridgeInertness.v).
-# Fully integrated (no feature gating). The RhoBackend seam + oracle land in
-# M-RHO.0.4 (rholang/dovetail deps), the real RhoRuntime run in M-RHO.0.5
-# (rspace_plus_plus + casper + tokio).
+# Binds the mettail-rho-codegen output to a real in-memory f1r3node-rust RhoRuntime
+# (InMemoryStoreManager → RSpace → create_rho_runtime), evaluates the lowered
+# Rholang, and reads results back for the differential oracle. Threading/scheduling
+# are OWNED BY f1r3node (eval_par/RSpace, tokio). Depends ONE-WAY on f1r3node-rust
+# (proven one-way in formal/rocq/rho_bridge/theories/BridgeInertness.v). Fully
+# integrated (no feature gating).
 
 [dependencies]
-# (none yet — the RhoBackend seam + oracle land in M-RHO.0.4, the real RhoRuntime
-# run in M-RHO.0.5)
+models = { workspace = true }
+rholang = { workspace = true }
+rspace_plus_plus = { workspace = true }
+crypto = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+# The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
+# the RhoRuntime run / differential oracle.
+mettail-rho-codegen = { path = "../mettail-rho-codegen" }
+mettail-ast = { path = "../ast" }
+syn = { workspace = true }
