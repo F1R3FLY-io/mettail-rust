@@ -71,7 +71,8 @@ remaining M-E.0 obligations.
 | Obligation | Source | Status |
 |------------|--------|--------|
 | Exact runtime e-graph dedup no-loss (Inc 3) | **COVERED** by `EGraphBudgetDedup.v` (the dovetail e-graph is a faithful port of the same algorithm) + invariant 1 | **proven** (reuse; add a traceability note) |
-| WTA best-derivation = EXACT no-miss extraction (Inc 5) | NEW `NBestExtraction.v` (acyclic hypergraph model); reuse `SemiringLaws.v` monotonicity | **regression-only** (9 Rust no-miss tests T1–T9 green: ambiguous-no-miss, cartesian-no-miss, 0̄-excluded, cycle-safety); zero-admission Rocq proof PENDING (research-grade — cannot be a stub per Invariant 3) |
+| WTA no-miss extraction — SELECTION layer (Inc 5) | `NBestExtraction.v` (rocq-dovetail, zero-admission, committed `98a2d0d`) | **proven**: only-`0̄`-removal, no-miss (`select_complete`), equal-weight-both-survive, resumability (`select_prefix_monotone`), exhaustive-on-demand |
+| WTA no-miss extraction — ORDERING + RECURSION completeness (Inc 5) | best-first sortedness (Huang–Chiang Alg.3) + candidate-set = all-derivations | **regression-only** (9 Rust tests T1–T9: ambiguous/cartesian-no-miss, 0̄-excluded, cycle-safety); zero-admission Rocq PENDING (research-grade) |
 | Cyclic e-class weight closure (Inc 6) | reuse `rigail::solve_scc_weights_newton` (Newton-SCC) | TODO — extractor currently CUTS cycles (sound but incomplete; `had_cycle_cut()` surfaces it) |
 | spec→Rholang-VM operational correspondence (up-to-weak-bisim) | new, schematic-over-codegen; reuse `CATranslation`/`Bisimulation`/`CASimulationBicat` | TODO (M-RHO.1) |
 | OslfResourceLogic conformance (4 laws) | reuse `GSLTOSLFCapstone.v` + 2nd instance `CAUntypedLambda.v` | TODO (M-RHO.0) |
