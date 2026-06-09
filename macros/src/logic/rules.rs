@@ -176,18 +176,30 @@ pub fn generate_rule_clause_with_category(
     // We still extend from it for backward compatibility.
     //
     // BCG05: Normalize-on-insert deduplication.
-    // Wrap the RHS normalize call with a hash-based dedup guard. Before
-    // constructing and normalizing the RHS, hash the LHS match variable. If
-    // the hash was already seen in this Ascent fixpoint, skip the entire rule
-    // firing — the normalized RHS for this input was already produced. This
-    // avoids redundant normalize() calls when the same LHS term participates
-    // in multiple equation-equivalent groups.
+    // Wrap the RHS normalize call with a hash-based dedup guard. The key must
+    // cover the source fields that determine the emitted head tuple. Direct
+    // equation rules emit `(s, normalize(rhs(s)))`, so `s` is enough. Rewrite
+    // rules match via `eq_cat(s_orig, s)` but emit `(s_orig, normalize(rhs(s)))`,
+    // so the original source term must also be part of the key. Otherwise two
+    // distinct source/evidence tuples that share the same equation
+    // representative would be collapsed before the rewrite relation can carry
+    // them forward.
     let rhs_binding = quote! { let #rhs_var = (#rhs_expr).normalize() };
+    let bcg05_key_fields = if use_equation_matching {
+        quote! {
+            #source_var.hash(&mut __bcg05_h);
+            #lhs_var.hash(&mut __bcg05_h);
+        }
+    } else {
+        quote! {
+            #lhs_var.hash(&mut __bcg05_h);
+        }
+    };
     let bcg05_guard = quote! {
         if {
             use std::hash::{Hash, Hasher};
             let mut __bcg05_h = std::hash::DefaultHasher::new();
-            #lhs_var.hash(&mut __bcg05_h);
+            #bcg05_key_fields
             let __bcg05_hash = __bcg05_h.finish();
             thread_local! {
                 static __BCG05_RULE: std::cell::RefCell<(u64, std::collections::HashSet<u64>)> =
@@ -3395,5 +3407,40 @@ mod tests {
         let (_, count) = generate_ground_rewrite_seeds(&language);
         // Congruence rule has a premise → skipped. Only the ground rule is detected.
         assert_eq!(count, 1, "expected 1 ground rewrite, got {}", count);
+    }
+
+    #[test]
+    fn bcg05_equation_matching_rewrite_hashes_source_and_match_terms() {
+        use mettail_ast::language::LanguageDef;
+        use syn::parse2;
+
+        let input = quote! {
+            name: TestBcg05RewriteKey,
+            types { Proc Name },
+            terms {
+                PDrop . Proc ::= Name ;
+                PNil . Proc ::= "nil" ;
+                NQuote . Name ::= Proc ;
+            },
+            equations {},
+            rewrites {
+                Exec . |- (PDrop (NQuote P)) ~> P ;
+            },
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let rules = generate_base_rewrites(&language, None);
+        assert_eq!(rules.len(), 1, "expected one generated rewrite rule");
+
+        let code = rules[0].to_string();
+        assert!(
+            code.contains("s_orig . hash"),
+            "equation-matching rewrite BCG05 key must include emitted source term: {}",
+            code
+        );
+        assert!(
+            code.contains("s . hash"),
+            "equation-matching rewrite BCG05 key must include matched representative: {}",
+            code
+        );
     }
 }

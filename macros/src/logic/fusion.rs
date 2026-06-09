@@ -711,12 +711,16 @@ fn generate_fused_rule(
         let lhs_clauses_ts = &lhs_clauses.clauses;
         let eq_checks = &lhs_clauses.equational_checks;
 
-        // BCG05 dedup guard for the fused rule
+        // BCG05 dedup guard for the fused rule. The emitted head is
+        // `rw_rewrite_rel(__fused_sub, normalize(rhs(__fused_sub)))`, so the
+        // key is the subterm, not the parent wrapper. Hashing only the parent
+        // would collapse distinct matching fields inside the same constructor
+        // when they produce different rewrite tuples.
         let bcg05_guard = quote! {
             if {
                 use std::hash::{Hash, Hasher};
                 let mut __bcg05_h = std::hash::DefaultHasher::new();
-                #parent_var.hash(&mut __bcg05_h);
+                #lhs_var.hash(&mut __bcg05_h);
                 let __bcg05_hash = __bcg05_h.finish();
                 thread_local! {
                     static __BCG05_FUSED: std::cell::RefCell<(u64, std::collections::HashSet<u64>)> =
@@ -1220,6 +1224,16 @@ mod tests {
         assert!(
             fused_str.contains("bcg05_epoch"),
             "fused rule should reference bcg05_epoch: {}",
+            fused_str
+        );
+        assert!(
+            fused_str.contains("__fused_sub . hash"),
+            "fused rule should hash emitted rewrite source subterm: {}",
+            fused_str
+        );
+        assert!(
+            !fused_str.contains("__fused_parent . hash"),
+            "fused rule must not key BCG05 only by parent wrapper: {}",
             fused_str
         );
     }
