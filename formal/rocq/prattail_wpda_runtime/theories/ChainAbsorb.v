@@ -118,3 +118,57 @@ Proof.
   intros sp [_ Hlt].
   lia.
 Qed.
+
+Record interval_key : Type := {
+  ik_category : nat;
+  ik_rule : nat
+}.
+
+Record keyed_span : Type := {
+  ks_key : interval_key;
+  ks_span : span
+}.
+
+Definition keyed_cross_cat_allowed
+    (intervals : list keyed_span)
+    (key : interval_key)
+    (pos : nat) : Prop :=
+  forall entry,
+    In entry intervals ->
+    ks_key entry = key ->
+    ~ strictly_inside (ks_span entry) pos.
+
+Lemma keyed_absorbed_interval_suppresses_matching_strict_interior :
+  forall key sp pos,
+    strictly_inside sp pos ->
+    ~ keyed_cross_cat_allowed
+        [{| ks_key := key; ks_span := sp |}]
+        key
+        pos.
+Proof.
+  intros key sp pos Hinside Hallowed.
+  specialize
+    (Hallowed {| ks_key := key; ks_span := sp |}).
+  assert (Hin :
+    In {| ks_key := key; ks_span := sp |}
+      [{| ks_key := key; ks_span := sp |}])
+    by (left; reflexivity).
+  specialize (Hallowed Hin eq_refl).
+  contradiction.
+Qed.
+
+Lemma keyed_absorbed_interval_allows_unrelated_key :
+  forall stored query sp pos,
+    stored <> query ->
+    keyed_cross_cat_allowed
+      [{| ks_key := stored; ks_span := sp |}]
+      query
+      pos.
+Proof.
+  intros stored query sp pos Hneq entry Hin Hkey Hinside.
+  destruct Hin as [Heq | []].
+  subst entry.
+  simpl in Hkey.
+  apply Hneq.
+  exact Hkey.
+Qed.

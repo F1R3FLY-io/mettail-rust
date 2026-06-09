@@ -13896,18 +13896,18 @@ where
     /// Per design in
     /// `prattail/docs/design/plans/phase-f13-exp13-earley-outboard.md`.
     /// Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): true iff `pos`
-    /// falls strictly inside any Earley-absorbed chain interval
-    /// `[start, end)` recorded by H3. Used at the cross-cat cohort
-    /// register site to suppress redundant per-position dispatches whose
-    /// chain interior is already parsed by a single Earley absorption.
+    /// falls strictly inside an Earley-absorbed chain interval `[start, end)`
+    /// recorded by H3 for the same `(cat, rule)` key. Used at the cross-cat
+    /// cohort register site to suppress redundant per-position dispatches
+    /// whose exact chain interior is already parsed by a single absorption.
     ///
-    /// O(total intervals) scan; intervals are few per parse (one per
-    /// distinct chain region per (cat, rule)), so this is cheap. The
+    /// O(intervals for key) scan; intervals are few per parse (one per
+    /// distinct chain region per `(cat, rule)`), so this is cheap. The
     /// `pos > start` (strict) lower bound keeps the chain HEAD position
-    /// (where H3 itself fires) dispatchable; only INTERIOR positions are
-    /// suppressed.
-    fn pos_in_absorbed_chain_interval(&self, pos: usize) -> bool {
-        for intervals in self.chain_absorbed_intervals.values() {
+    /// (where H3 itself fires) dispatchable; only INTERIOR positions for
+    /// the same key are suppressed.
+    fn pos_in_absorbed_chain_interval(&self, key: (u16, u16), pos: usize) -> bool {
+        if let Some(intervals) = self.chain_absorbed_intervals.get(&key) {
             for &(start, end) in intervals {
                 if pos > start && pos < end {
                     return true;
@@ -14535,7 +14535,7 @@ where
             // dispatch; the canonical parse is the Earley-absorbed chain.
             // Non-chain workloads never populate chain_absorbed_intervals,
             // so this is a no-op outside chain regions.
-            if self.pos_in_absorbed_chain_interval(pos_after) {
+            if self.pos_in_absorbed_chain_interval((wrap_cat, wrap_rule), pos_after) {
                 return Vec::new();
             }
             let key =
@@ -16921,6 +16921,27 @@ mod tests {
         assert_token_dependent_cache_entries_seeded(&w);
         w.invalidate_token_dependent_caches_after_token_source_change();
         assert_token_dependent_caches_invalidated_preserving_diagnostics(&w);
+    }
+
+    #[test]
+    fn absorbed_chain_interval_suppression_is_key_scoped_and_strict() {
+        let mut w: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+
+        w.chain_absorbed_intervals.insert((2, 7), vec![(10, 20)]);
+
+        assert!(!w.pos_in_absorbed_chain_interval((2, 7), 10));
+        assert!(w.pos_in_absorbed_chain_interval((2, 7), 11));
+        assert!(w.pos_in_absorbed_chain_interval((2, 7), 19));
+        assert!(!w.pos_in_absorbed_chain_interval((2, 7), 20));
+        assert!(
+            !w.pos_in_absorbed_chain_interval((2, 8), 11),
+            "a neighboring rule at the same position must keep its alternative",
+        );
+        assert!(
+            !w.pos_in_absorbed_chain_interval((3, 7), 11),
+            "a neighboring category at the same position must keep its alternative",
+        );
     }
 
     #[test]
