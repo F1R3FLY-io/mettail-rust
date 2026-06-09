@@ -44,6 +44,7 @@ From Stdlib Require Import Bool.
 From Stdlib Require Import Arith.
 From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
+From Stdlib Require Import Permutation.
 
 Import ListNotations.
 
@@ -138,6 +139,184 @@ Section NBestExtraction.
     exists (length (select l)).
     rewrite firstn_all.
     apply select_complete; assumption.
+  Qed.
+
+  (* ===================================================================== *)
+  (*  Best-first ORDERING of the selected output                           *)
+  (*                                                                       *)
+  (*  The non-0̄ candidates, projected to (cost, key) pairs, are emitted in *)
+  (*  non-decreasing (cost, then key) order — the best-first guarantee. We  *)
+  (*  prove the projected output is sorted AND a permutation of the kept    *)
+  (*  candidates (so the no-prune membership above carries to the ordered   *)
+  (*  output). Modeled over `nat * nat` (0̄ excluded), so the order is a     *)
+  (*  clean total order (transitivity by `lia`).                           *)
+  (* ===================================================================== *)
+
+  (* The non-0̄ candidates as (cost, key) pairs. *)
+  Definition keyed (l : list Cand) : list (nat * nat) :=
+    flat_map
+      (fun c => match fst c with Some w => [(w, snd c)] | None => [] end)
+      l.
+
+  Lemma in_keyed : forall w k l,
+    In (w, k) (keyed l) <-> In (Some w, k) l.
+  Proof.
+    intros w k l. unfold keyed. rewrite in_flat_map. split.
+    - intros [c [Hc Hin]]. destruct c as [ow ck]. simpl in Hin.
+      destruct ow as [w' |].
+      + destruct Hin as [H | H].
+        * inversion H. subst. exact Hc.
+        * contradiction.
+      + contradiction.
+    - intros H. exists (Some w, k). split.
+      + exact H.
+      + simpl. left. reflexivity.
+  Qed.
+
+  (* Total best-first order on (cost, key): lower cost first, then lower key. *)
+  Definition cleb (a b : nat * nat) : bool :=
+    let (w1, k1) := a in
+    let (w2, k2) := b in
+    (w1 <? w2) || ((w1 =? w2) && (k1 <=? k2)).
+
+  Lemma cleb_total : forall a b, cleb a b = true \/ cleb b a = true.
+  Proof.
+    intros [w1 k1] [w2 k2]. unfold cleb.
+    destruct (Nat.lt_trichotomy w1 w2) as [H | [H | H]].
+    - left. apply orb_true_iff. left. apply Nat.ltb_lt. exact H.
+    - subst. destruct (Nat.le_ge_cases k1 k2) as [Hk | Hk].
+      + left. apply orb_true_iff. right. apply andb_true_iff. split.
+        * apply Nat.eqb_eq. reflexivity.
+        * apply Nat.leb_le. exact Hk.
+      + right. apply orb_true_iff. right. apply andb_true_iff. split.
+        * apply Nat.eqb_eq. reflexivity.
+        * apply Nat.leb_le. exact Hk.
+    - right. apply orb_true_iff. left. apply Nat.ltb_lt. exact H.
+  Qed.
+
+  Lemma cleb_trans : forall a b c,
+    cleb a b = true -> cleb b c = true -> cleb a c = true.
+  Proof.
+    intros [w1 k1] [w2 k2] [w3 k3]. unfold cleb.
+    intros Hab Hbc.
+    apply orb_true_iff in Hab. apply orb_true_iff in Hbc. apply orb_true_iff.
+    destruct Hab as [Hab | Hab].
+    - apply Nat.ltb_lt in Hab.
+      destruct Hbc as [Hbc | Hbc].
+      + apply Nat.ltb_lt in Hbc. left. apply Nat.ltb_lt. lia.
+      + apply andb_true_iff in Hbc. destruct Hbc as [Hbc _].
+        apply Nat.eqb_eq in Hbc. left. apply Nat.ltb_lt. lia.
+    - apply andb_true_iff in Hab. destruct Hab as [Hab1 Hab2].
+      apply Nat.eqb_eq in Hab1. apply Nat.leb_le in Hab2.
+      destruct Hbc as [Hbc | Hbc].
+      + apply Nat.ltb_lt in Hbc. left. apply Nat.ltb_lt. lia.
+      + apply andb_true_iff in Hbc. destruct Hbc as [Hbc1 Hbc2].
+        apply Nat.eqb_eq in Hbc1. apply Nat.leb_le in Hbc2.
+        right. apply andb_true_iff. split.
+        * apply Nat.eqb_eq. lia.
+        * apply Nat.leb_le. lia.
+  Qed.
+
+  Fixpoint insert (x : nat * nat) (l : list (nat * nat)) : list (nat * nat) :=
+    match l with
+    | [] => [x]
+    | h :: t => if cleb x h then x :: l else h :: insert x t
+    end.
+
+  Fixpoint isort (l : list (nat * nat)) : list (nat * nat) :=
+    match l with
+    | [] => []
+    | h :: t => insert h (isort t)
+    end.
+
+  Lemma insert_perm : forall x l, Permutation (x :: l) (insert x l).
+  Proof.
+    intros x l. induction l as [| h t IH]; simpl.
+    - apply Permutation_refl.
+    - destruct (cleb x h).
+      + apply Permutation_refl.
+      + eapply Permutation_trans.
+        * apply perm_swap.
+        * apply perm_skip. exact IH.
+  Qed.
+
+  Lemma isort_perm : forall l, Permutation l (isort l).
+  Proof.
+    induction l as [| h t IH]; simpl.
+    - apply Permutation_refl.
+    - eapply Permutation_trans.
+      + apply perm_skip. exact IH.
+      + apply insert_perm.
+  Qed.
+
+  Lemma insert_in : forall x y l, In y (insert x l) -> y = x \/ In y l.
+  Proof.
+    intros x y l. induction l as [| h t IH]; simpl.
+    - intros [H | H]. left. symmetry. exact H. contradiction.
+    - destruct (cleb x h).
+      + simpl. intros [H | [H | H]].
+        * left. symmetry. exact H.
+        * right. left. exact H.
+        * right. right. exact H.
+      + simpl. intros [H | H].
+        * right. left. exact H.
+        * apply IH in H. destruct H as [H | H].
+          left. exact H. right. right. exact H.
+  Qed.
+
+  (* `sorted l`: the head is `cleb`-below every tail element, and the tail is
+     sorted (the strong form, equivalent to fully-sorted for a total order). *)
+  Fixpoint sorted (l : list (nat * nat)) : Prop :=
+    match l with
+    | [] => True
+    | h :: t => (forall x, In x t -> cleb h x = true) /\ sorted t
+    end.
+
+  Lemma insert_sorted : forall x l, sorted l -> sorted (insert x l).
+  Proof.
+    intros x l. induction l as [| h t IH]; intros Hs; simpl.
+    - split. intros y Hy. inversion Hy. exact I.
+    - destruct (cleb x h) eqn:Exh.
+      + simpl. split.
+        * intros y Hy. destruct Hy as [Hy | Hy].
+          -- subst y. exact Exh.
+          -- destruct Hs as [Hhd _]. apply (cleb_trans x h y Exh (Hhd y Hy)).
+        * exact Hs.
+      + simpl. destruct Hs as [Hhd Hst]. split.
+        * intros y Hy. apply insert_in in Hy. destruct Hy as [Hy | Hy].
+          -- subst y. destruct (cleb_total x h) as [Hc | Hc].
+             ++ rewrite Exh in Hc. discriminate.
+             ++ exact Hc.
+          -- apply Hhd. exact Hy.
+        * apply IH. exact Hst.
+  Qed.
+
+  Lemma isort_sorted : forall l, sorted (isort l).
+  Proof.
+    induction l as [| h t IH]; simpl.
+    - exact I.
+    - apply insert_sorted. exact IH.
+  Qed.
+
+  (* The best-first ordered output: the non-0̄ candidates, sorted by (cost,key). *)
+  Definition select_ordered (l : list Cand) : list (nat * nat) := isort (keyed l).
+
+  (* The output is sorted best-first. *)
+  Theorem select_ordered_sorted : forall l, sorted (select_ordered l).
+  Proof. intros l. apply isort_sorted. Qed.
+
+  (* The ordered output is a permutation of the kept candidates — so the
+     no-prune membership above carries over: ordering reorders, never drops. *)
+  Theorem select_ordered_perm : forall l, Permutation (keyed l) (select_ordered l).
+  Proof. intros l. apply isort_perm. Qed.
+
+  (* No-miss carried to the ordered output: every non-0̄ alternative appears. *)
+  Theorem select_ordered_complete : forall w k l,
+    In (Some w, k) l -> In (w, k) (select_ordered l).
+  Proof.
+    intros w k l H.
+    apply (Permutation_in (w, k) (select_ordered_perm l)).
+    apply in_keyed. exact H.
   Qed.
 
 End NBestExtraction.
