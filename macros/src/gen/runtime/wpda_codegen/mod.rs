@@ -555,6 +555,9 @@ mod tests {
         let lang = synthetic_language();
         let ts = generate_wpda_engine_module(&lang).to_string();
         assert!(ts.contains("parse_Expr_via_wpda_all_with_source"));
+        assert!(ts.contains("parse_Expr_via_wpda_all_with_source_and_bounding_mode"));
+        assert!(ts.contains("CursorBoundingMode :: Unbounded"));
+        assert!(ts.contains("walker . set_bounding_mode (bounding_mode)"));
         assert!(ts.contains("saturating_add"));
         assert!(ts.contains("RAW_REALIZE_CAP"));
         assert!(ts.contains("__mettail_wpda_semantic_key"));

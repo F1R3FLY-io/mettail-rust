@@ -48,6 +48,8 @@ pub(crate) fn emit_parse_fns(
         // every accepted term from the walker's `WpdaResolveResult::Accepted`
         // vec. `_all` is a `SliceTokenSource` wrapper for backward compat.
         let all_with_source_fn_name = format_ident!("parse_{}_via_wpda_all_with_source", cat_name);
+        let all_with_source_bounded_fn_name =
+            format_ident!("parse_{}_via_wpda_all_with_source_and_bounding_mode", cat_name);
         let all_fn_name = format_ident!("parse_{}_via_wpda_all", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
         fns.push(quote! {
@@ -243,6 +245,33 @@ pub(crate) fn emit_parse_fns(
                 ),
                 WpdaParseError,
             > {
+                #all_with_source_bounded_fn_name(
+                    source,
+                    pos,
+                    min_bp,
+                    mettail_prattail::wpda_runtime::CursorBoundingMode::Unbounded,
+                )
+            }
+
+            /// Source-generic all-results parser with explicit cursor-frontier
+            /// bounding. The default all-results facade calls this with
+            /// `CursorBoundingMode::Unbounded`; callers should pass an
+            /// explicit bounded mode only when they want a structured
+            /// `AmbiguityBudget` error instead of an unbounded ambiguity
+            /// surface.
+            #[allow(non_snake_case)]
+            pub fn #all_with_source_bounded_fn_name(
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                pos: &mut usize,
+                min_bp: u8,
+                bounding_mode: mettail_prattail::wpda_runtime::CursorBoundingMode,
+            ) -> Result<
+                (
+                    Vec<#cat_ident>,
+                    Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                ),
+                WpdaParseError,
+            > {
                 use mettail_prattail::wpda_runtime::WpdaResolveResult;
                 use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
@@ -331,6 +360,7 @@ pub(crate) fn emit_parse_fns(
                 let mut recovery_config = mettail_prattail::recovery::RecoveryConfig::default();
                 recovery_config.max_recovery_depth = 0;
                 walker.set_recovery_config(recovery_config);
+                walker.set_bounding_mode(bounding_mode);
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
                         WpdaResolveResult::Accepted { roots, .. } => {

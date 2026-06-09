@@ -1278,6 +1278,48 @@ fn calculator_cast_syntax_stays_within_lazy_frontier_budget() {
 }
 
 #[test]
+fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
+    use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
+
+    let input = "float(float(10, 64), 64)";
+    let dag = calc::lex_dag(input).expect("calculator lex DAG should accept nested float cast");
+    let source = LatticeTokenSource::new(dag);
+
+    let mut default_pos = 0usize;
+    let (terms, weights) = calc::parse_Float_via_wpda_all_with_source(&source, &mut default_pos, 0)
+        .expect("default parser must preserve ambiguity without an implicit budget cap");
+    assert_eq!(default_pos, source.eof_node());
+    assert_eq!(terms.len(), weights.len());
+    assert!(
+        !terms.is_empty(),
+        "default unbounded results should include at least one nested cast parse"
+    );
+
+    let mut bounded_pos = 0usize;
+    let err = calc::parse_Float_via_wpda_all_with_source_and_bounding_mode(
+        &source,
+        &mut bounded_pos,
+        0,
+        CursorBoundingMode::AmbiguityBudget(1),
+    )
+    .expect_err("explicit AmbiguityBudget must report overflow instead of pruning");
+    match err {
+        calc::WpdaParseError::AmbiguityBudget { budget, actual, position } => {
+            assert_eq!(budget, 1);
+            assert!(
+                actual > budget,
+                "overflow must report the observed frontier, got budget={budget}, actual={actual}"
+            );
+            assert!(
+                position <= source.eof_node(),
+                "overflow position {position} should be within the source DAG"
+            );
+        },
+        other => panic!("expected AmbiguityBudget, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_triple_nested_float() {
     calc_normal_form("float(float(float(10, 64), 64), 64)", "10.0");
 }
