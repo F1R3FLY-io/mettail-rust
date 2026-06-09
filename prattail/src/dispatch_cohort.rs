@@ -490,15 +490,41 @@ fn pause_pending_member<W>(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotInsertOutcome {
+    Appended,
+    Duplicate,
+    Overflow { actual: usize },
+}
+
+fn worker_snapshot_observationally_eq<W: SemiringRef>(
+    a: &WorkerSnapshot<W>,
+    b: &WorkerSnapshot<W>,
+) -> bool {
+    a.worker_inner_state == b.worker_inner_state
+        && a.worker_last_action_output_cat == b.worker_last_action_output_cat
+        && a.worker_pending_packing_weight == b.worker_pending_packing_weight
+        && a.worker_weight == b.worker_weight
+        && a.worker_pre_dispatch_weight == b.worker_pre_dispatch_weight
+}
+
 fn append_snapshot_bounded<W: SemiringRef>(
     worker_snapshots: &mut Vec<WorkerSnapshot<W>>,
     snap: WorkerSnapshot<W>,
-) -> bool {
+) -> SnapshotInsertOutcome {
+    if worker_snapshots
+        .iter()
+        .any(|existing| worker_snapshot_observationally_eq(existing, &snap))
+    {
+        return SnapshotInsertOutcome::Duplicate;
+    }
     if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
         worker_snapshots.push(snap);
-        true
+        SnapshotInsertOutcome::Appended
     } else {
-        false
+        SnapshotInsertOutcome::Overflow {
+            actual: worker_snapshots.len().saturating_add(1),
+        }
     }
 }
 
@@ -983,20 +1009,23 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     hi_pos,
                     pos_at_dispatch,
                 ) {
-                    if append_snapshot_bounded(worker_snapshots, snap) {
-                        increment_snapshot_appends = true;
-                        ResolveOutcome::SnapshotAppended
-                    } else {
-                        let actual = worker_snapshots.len().saturating_add(1);
-                        snapshot_overflow = Some(CohortOverflowEvidence {
-                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
-                            actual,
-                            position: key.pos,
-                        });
-                        ResolveOutcome::SnapshotOverflow {
-                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
-                            actual,
-                        }
+                    match append_snapshot_bounded(worker_snapshots, snap) {
+                        SnapshotInsertOutcome::Appended => {
+                            increment_snapshot_appends = true;
+                            ResolveOutcome::SnapshotAppended
+                        },
+                        SnapshotInsertOutcome::Duplicate => ResolveOutcome::SnapshotDuplicate,
+                        SnapshotInsertOutcome::Overflow { actual } => {
+                            snapshot_overflow = Some(CohortOverflowEvidence {
+                                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                                actual,
+                                position: key.pos,
+                            });
+                            ResolveOutcome::SnapshotOverflow {
+                                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                                actual,
+                            }
+                        },
                     }
                 } else if let Some(body) = alternate_bodies.iter_mut().find(|body| {
                     resolved_body_matches(
@@ -1008,20 +1037,23 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         pos_at_dispatch,
                     )
                 }) {
-                    if append_snapshot_bounded(&mut body.worker_snapshots, snap) {
-                        increment_snapshot_appends = true;
-                        ResolveOutcome::SnapshotAppended
-                    } else {
-                        let actual = body.worker_snapshots.len().saturating_add(1);
-                        snapshot_overflow = Some(CohortOverflowEvidence {
-                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
-                            actual,
-                            position: key.pos,
-                        });
-                        ResolveOutcome::SnapshotOverflow {
-                            budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
-                            actual,
-                        }
+                    match append_snapshot_bounded(&mut body.worker_snapshots, snap) {
+                        SnapshotInsertOutcome::Appended => {
+                            increment_snapshot_appends = true;
+                            ResolveOutcome::SnapshotAppended
+                        },
+                        SnapshotInsertOutcome::Duplicate => ResolveOutcome::SnapshotDuplicate,
+                        SnapshotInsertOutcome::Overflow { actual } => {
+                            snapshot_overflow = Some(CohortOverflowEvidence {
+                                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                                actual,
+                                position: key.pos,
+                            });
+                            ResolveOutcome::SnapshotOverflow {
+                                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
+                                actual,
+                            }
+                        },
                     }
                 } else {
                     // Memory cap: refuse further bodies beyond cap. The cap is
@@ -2185,6 +2217,7 @@ pub enum ResolveOutcome {
     NoOp,
     FirstResolve,
     SnapshotAppended,
+    SnapshotDuplicate,
     SnapshotOverflow { budget: usize, actual: usize },
     ResolvedBodyOverflow { budget: usize, actual: usize },
 }
@@ -2221,11 +2254,15 @@ mod tests {
     }
 
     fn worker_snapshot() -> WorkerSnapshot<LexicographicWeight> {
+        worker_snapshot_with_rule(0)
+    }
+
+    fn worker_snapshot_with_rule(rule_idx: u16) -> WorkerSnapshot<LexicographicWeight> {
         WorkerSnapshot {
             worker_inner_state: WpdaState::Ready { min_bp: 0 },
             worker_last_action_output_cat: None,
             worker_pending_packing_weight: lex_one(),
-            worker_weight: lex_one(),
+            worker_weight: LexicographicWeight::from_cost(0.0, 0, rule_idx),
             worker_pre_dispatch_weight: lex_one(),
         }
     }
@@ -2403,17 +2440,23 @@ mod tests {
         ));
 
         assert_eq!(
-            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot_with_rule(0)),
             ResolveOutcome::FirstResolve,
         );
-        for _ in 1..MAX_WORKER_SNAPSHOTS_PER_KEY {
+        for i in 1..MAX_WORKER_SNAPSHOTS_PER_KEY {
             assert_eq!(
-                cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+                cache.resolve(key.clone(), 42, 4, 3, worker_snapshot_with_rule(i as u16)),
                 ResolveOutcome::SnapshotAppended,
             );
         }
 
-        let overflow = cache.resolve(key.clone(), 42, 4, 3, worker_snapshot());
+        let overflow = cache.resolve(
+            key.clone(),
+            42,
+            4,
+            3,
+            worker_snapshot_with_rule(MAX_WORKER_SNAPSHOTS_PER_KEY as u16),
+        );
         assert_eq!(
             overflow,
             ResolveOutcome::SnapshotOverflow {
@@ -2430,6 +2473,37 @@ mod tests {
                 position: key.pos,
             }),
         );
+    }
+
+    #[test]
+    fn duplicate_snapshot_does_not_consume_snapshot_cap() {
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+
+        assert_eq!(
+            cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+            ResolveOutcome::FirstResolve,
+        );
+        for _ in 0..(MAX_WORKER_SNAPSHOTS_PER_KEY * 2) {
+            assert_eq!(
+                cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
+                ResolveOutcome::SnapshotDuplicate,
+            );
+        }
+
+        assert_eq!(cache.snapshot_overflows_total, 0);
+        assert_eq!(cache.unresolved_overflow_evidence(), None);
+        match cache.register(key, lex_one()) {
+            RegisterOutcome::ResolvedHit { bodies, .. } => {
+                assert_eq!(bodies.len(), 1);
+                assert_eq!(bodies[0].worker_snapshots.len(), 1);
+            },
+            _ => panic!("expected ResolvedHit"),
+        }
     }
 
     #[test]

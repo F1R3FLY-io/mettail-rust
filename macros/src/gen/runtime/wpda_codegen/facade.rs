@@ -246,9 +246,82 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::wpda_runtime::WpdaResolveResult;
                 use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                use std::collections::HashMap;
                 // Phase 3.1.7 (C10, 2026-05-15): walker W = LexicographicWeight.
                 // SPPF arena owns derivation ambiguity; W owns path cost.
                 type DW = LexicographicWeight;
+                #[derive(Default)]
+                struct __MettailWpdaSemanticKeyHasher {
+                    bytes: Vec<u8>,
+                }
+                impl __MettailWpdaSemanticKeyHasher {
+                    fn into_key(self) -> Vec<u8> {
+                        self.bytes
+                    }
+                    fn push_raw(&mut self, tag: u8, payload: &[u8]) {
+                        self.bytes.push(tag);
+                        self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+                        self.bytes.extend_from_slice(payload);
+                    }
+                    fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
+                        self.bytes.push(tag);
+                        self.bytes.extend_from_slice(payload);
+                    }
+                }
+                impl std::hash::Hasher for __MettailWpdaSemanticKeyHasher {
+                    fn finish(&self) -> u64 {
+                        let mut h = 0xcbf29ce484222325u64;
+                        for b in &self.bytes {
+                            h ^= *b as u64;
+                            h = h.wrapping_mul(0x100000001b3);
+                        }
+                        h
+                    }
+                    fn write(&mut self, bytes: &[u8]) {
+                        self.push_raw(0, bytes);
+                    }
+                    fn write_u8(&mut self, i: u8) {
+                        self.push_fixed(1, &[i]);
+                    }
+                    fn write_u16(&mut self, i: u16) {
+                        self.push_fixed(2, &i.to_le_bytes());
+                    }
+                    fn write_u32(&mut self, i: u32) {
+                        self.push_fixed(3, &i.to_le_bytes());
+                    }
+                    fn write_u64(&mut self, i: u64) {
+                        self.push_fixed(4, &i.to_le_bytes());
+                    }
+                    fn write_u128(&mut self, i: u128) {
+                        self.push_fixed(5, &i.to_le_bytes());
+                    }
+                    fn write_usize(&mut self, i: usize) {
+                        self.push_fixed(6, &(i as u128).to_le_bytes());
+                    }
+                    fn write_i8(&mut self, i: i8) {
+                        self.push_fixed(7, &i.to_le_bytes());
+                    }
+                    fn write_i16(&mut self, i: i16) {
+                        self.push_fixed(8, &i.to_le_bytes());
+                    }
+                    fn write_i32(&mut self, i: i32) {
+                        self.push_fixed(9, &i.to_le_bytes());
+                    }
+                    fn write_i64(&mut self, i: i64) {
+                        self.push_fixed(10, &i.to_le_bytes());
+                    }
+                    fn write_i128(&mut self, i: i128) {
+                        self.push_fixed(11, &i.to_le_bytes());
+                    }
+                    fn write_isize(&mut self, i: isize) {
+                        self.push_fixed(12, &(i as i128).to_le_bytes());
+                    }
+                }
+                fn __mettail_wpda_semantic_key(term: &#cat_ident) -> Vec<u8> {
+                    let mut hasher = __MettailWpdaSemanticKeyHasher::default();
+                    term.semantic_hash(&mut hasher);
+                    hasher.into_key()
+                }
                 const MAX_STEPS: usize = 1_000_000;
                 let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
@@ -263,38 +336,74 @@ pub(crate) fn emit_parse_fns(
                         WpdaResolveResult::Accepted { roots, .. } => {
                             // C7b (Phase 3.1.6, 2026-05-15): realize all
                             // SPPF roots; packing-fanout produces the
-                            // ambiguity-preserving Vec<Cat>. The cap is a
-                            // lazy probe guard: the 65th term is evidence
-                            // that the API cannot faithfully return all
-                            // alternatives within this budget.
+                            // ambiguity-preserving Vec<Cat>. The public cap
+                            // is applied to DISTINCT semantic alternatives:
+                            // raw duplicate derivations update the retained
+                            // representative's best weight rather than
+                            // consuming the ambiguity budget before language
+                            // construction can quotient them.
                             const REALIZE_CAP: usize = 64;
+                            const RAW_REALIZE_CAP: usize = 4096;
                             let completion_position = walker.position();
                             *pos = completion_position;
                             let mut typed_terms: Vec<#cat_ident> = Vec::new();
                             let mut typed_weights:
                                 Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
                                 Vec::new();
+                            let mut seen_terms: HashMap<Vec<u8>, usize> = HashMap::new();
                             let mut overflowed_realization = false;
+                            let mut raw_realization_exhausted_budget = false;
                             for &root in &roots {
-                                let probe_limit =
-                                    REALIZE_CAP.saturating_sub(typed_terms.len()).saturating_add(1);
-                                for (term, weight) in
-                                    walker.realize_root_to_terms_with_weights(root, Some(probe_limit))
-                                {
-                                    if typed_terms.len() >= REALIZE_CAP {
-                                        overflowed_realization = true;
+                                let mut raw_probe_limit = REALIZE_CAP.saturating_add(1);
+                                loop {
+                                    let realized = walker.realize_root_to_terms_with_weights(
+                                        root,
+                                        Some(raw_probe_limit),
+                                    );
+                                    let exhausted_root = realized.len() < raw_probe_limit;
+                                    for (term, weight) in realized {
+                                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                            .map_err(|_| WpdaParseError::EmptyResult)?;
+                                        let typed = std::sync::Arc::try_unwrap(arc)
+                                            .unwrap_or_else(|arc| (*arc).clone());
+                                        let semantic_key = __mettail_wpda_semantic_key(&typed);
+                                        if let Some(existing_idx) =
+                                            seen_terms.get(&semantic_key).copied()
+                                        {
+                                            if weight < typed_weights[existing_idx] {
+                                                typed_terms[existing_idx] = typed;
+                                                typed_weights[existing_idx] = weight;
+                                            }
+                                            continue;
+                                        }
+                                        if typed_terms.len() >= REALIZE_CAP {
+                                            overflowed_realization = true;
+                                            break;
+                                        }
+                                        seen_terms.insert(semantic_key, typed_terms.len());
+                                        typed_terms.push(typed);
+                                        typed_weights.push(weight);
+                                    }
+                                    if overflowed_realization || exhausted_root {
                                         break;
                                     }
-                                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                        .map_err(|_| WpdaParseError::EmptyResult)?;
-                                    let typed = std::sync::Arc::try_unwrap(arc)
-                                        .unwrap_or_else(|arc| (*arc).clone());
-                                    typed_terms.push(typed);
-                                    typed_weights.push(weight);
+                                    if raw_probe_limit >= RAW_REALIZE_CAP {
+                                        raw_realization_exhausted_budget = true;
+                                        break;
+                                    }
+                                    raw_probe_limit =
+                                        raw_probe_limit.saturating_mul(2).min(RAW_REALIZE_CAP);
                                 }
-                                if overflowed_realization {
+                                if overflowed_realization || raw_realization_exhausted_budget {
                                     break;
                                 }
+                            }
+                            if raw_realization_exhausted_budget {
+                                return Err(WpdaParseError::AmbiguityBudget {
+                                    budget: RAW_REALIZE_CAP,
+                                    actual: RAW_REALIZE_CAP + 1,
+                                    position: completion_position,
+                                });
                             }
                             if overflowed_realization {
                                 return Err(WpdaParseError::AmbiguityBudget {
@@ -306,6 +415,11 @@ pub(crate) fn emit_parse_fns(
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
                             }
+                            let mut paired: Vec<_> =
+                                typed_terms.into_iter().zip(typed_weights.into_iter()).collect();
+                            paired.sort_by(|(_, a), (_, b)| a.cmp(b));
+                            let (typed_terms, typed_weights): (Vec<_>, Vec<_>) =
+                                paired.into_iter().unzip();
                             Ok((typed_terms, typed_weights))
                         }
                         // Cluster H (2026-05-29): valid-prefix parse with
@@ -318,31 +432,65 @@ pub(crate) fn emit_parse_fns(
                         } => {
                             *pos = position;
                             const REALIZE_CAP: usize = 64;
+                            const RAW_REALIZE_CAP: usize = 4096;
                             let mut typed_terms: Vec<#cat_ident> = Vec::new();
                             let mut typed_weights:
                                 Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
                                 Vec::new();
+                            let mut seen_terms: HashMap<Vec<u8>, usize> = HashMap::new();
                             let mut overflowed_realization = false;
+                            let mut raw_realization_exhausted_budget = false;
                             for &root in &roots {
-                                let probe_limit =
-                                    REALIZE_CAP.saturating_sub(typed_terms.len()).saturating_add(1);
-                                for (term, weight) in
-                                    walker.realize_root_to_terms_with_weights(root, Some(probe_limit))
-                                {
-                                    if typed_terms.len() >= REALIZE_CAP {
-                                        overflowed_realization = true;
+                                let mut raw_probe_limit = REALIZE_CAP.saturating_add(1);
+                                loop {
+                                    let realized = walker.realize_root_to_terms_with_weights(
+                                        root,
+                                        Some(raw_probe_limit),
+                                    );
+                                    let exhausted_root = realized.len() < raw_probe_limit;
+                                    for (term, weight) in realized {
+                                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                            .map_err(|_| WpdaParseError::EmptyResult)?;
+                                        let typed = std::sync::Arc::try_unwrap(arc)
+                                            .unwrap_or_else(|arc| (*arc).clone());
+                                        let semantic_key = __mettail_wpda_semantic_key(&typed);
+                                        if let Some(existing_idx) =
+                                            seen_terms.get(&semantic_key).copied()
+                                        {
+                                            if weight < typed_weights[existing_idx] {
+                                                typed_terms[existing_idx] = typed;
+                                                typed_weights[existing_idx] = weight;
+                                            }
+                                            continue;
+                                        }
+                                        if typed_terms.len() >= REALIZE_CAP {
+                                            overflowed_realization = true;
+                                            break;
+                                        }
+                                        seen_terms.insert(semantic_key, typed_terms.len());
+                                        typed_terms.push(typed);
+                                        typed_weights.push(weight);
+                                    }
+                                    if overflowed_realization || exhausted_root {
                                         break;
                                     }
-                                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                        .map_err(|_| WpdaParseError::EmptyResult)?;
-                                    let typed = std::sync::Arc::try_unwrap(arc)
-                                        .unwrap_or_else(|arc| (*arc).clone());
-                                    typed_terms.push(typed);
-                                    typed_weights.push(weight);
+                                    if raw_probe_limit >= RAW_REALIZE_CAP {
+                                        raw_realization_exhausted_budget = true;
+                                        break;
+                                    }
+                                    raw_probe_limit =
+                                        raw_probe_limit.saturating_mul(2).min(RAW_REALIZE_CAP);
                                 }
-                                if overflowed_realization {
+                                if overflowed_realization || raw_realization_exhausted_budget {
                                     break;
                                 }
+                            }
+                            if raw_realization_exhausted_budget {
+                                return Err(WpdaParseError::AmbiguityBudget {
+                                    budget: RAW_REALIZE_CAP,
+                                    actual: RAW_REALIZE_CAP + 1,
+                                    position,
+                                });
                             }
                             if overflowed_realization {
                                 return Err(WpdaParseError::AmbiguityBudget {
@@ -354,6 +502,11 @@ pub(crate) fn emit_parse_fns(
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
                             }
+                            let mut paired: Vec<_> =
+                                typed_terms.into_iter().zip(typed_weights.into_iter()).collect();
+                            paired.sort_by(|(_, a), (_, b)| a.cmp(b));
+                            let (typed_terms, typed_weights): (Vec<_>, Vec<_>) =
+                                paired.into_iter().unzip();
                             Ok((typed_terms, typed_weights))
                         }
                         WpdaResolveResult::ParseError { message, position } => {

@@ -555,10 +555,13 @@ mod tests {
         let lang = synthetic_language();
         let ts = generate_wpda_engine_module(&lang).to_string();
         assert!(ts.contains("parse_Expr_via_wpda_all_with_source"));
-        assert!(ts.contains("saturating_sub"));
         assert!(ts.contains("saturating_add"));
+        assert!(ts.contains("RAW_REALIZE_CAP"));
+        assert!(ts.contains("__mettail_wpda_semantic_key"));
+        assert!(ts.contains("seen_terms"));
         assert!(ts.contains("WpdaParseError :: AmbiguityBudget"));
         assert!(ts.contains("actual : REALIZE_CAP + 1"));
+        assert!(ts.contains("actual : RAW_REALIZE_CAP + 1"));
         assert!(
             !ts.contains("realize_root_to_terms (root , Some (REALIZE_CAP))"),
             "parse_all must probe for overflow instead of silently truncating at the cap",

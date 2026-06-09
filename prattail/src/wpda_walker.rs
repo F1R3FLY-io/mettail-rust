@@ -15741,6 +15741,7 @@ where
                                     self.pending_cohort_drain_keys.insert(key);
                                 },
                                 crate::dispatch_cohort::ResolveOutcome::NoOp
+                                | crate::dispatch_cohort::ResolveOutcome::SnapshotDuplicate
                                 | crate::dispatch_cohort::ResolveOutcome::SnapshotOverflow {
                                     ..
                                 }

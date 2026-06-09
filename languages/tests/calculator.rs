@@ -1272,6 +1272,12 @@ fn test_nested_float_float_int() {
 }
 
 #[test]
+fn calculator_cast_syntax_stays_within_lazy_frontier_budget() {
+    calc_normal_form("float(float(10, 64), 64)", "10.0");
+    calc_normal_form("bigrat(1u32)", "1");
+}
+
+#[test]
 fn test_triple_nested_float() {
     calc_normal_form("float(float(float(10, 64), 64), 64)", "10.0");
 }

@@ -998,6 +998,33 @@ Proof.
   - reflexivity.
 Qed.
 
+Theorem calculator_cast_frontier_budget_sound :
+  (forall actual,
+      cursor_bound_check CursorUnbounded actual = None) /\
+  (forall budget actual,
+      actual <= budget ->
+      cursor_bound_check (CursorAmbiguityBudget budget) actual = None) /\
+  (forall budget actual,
+      budget < actual ->
+      cursor_bound_check (CursorAmbiguityBudget budget) actual =
+        Some (budget, actual)).
+Proof.
+  split.
+  - intro actual.
+    reflexivity.
+  - split.
+    + intros budget actual Hle.
+      unfold cursor_bound_check, cursor_bound_budget.
+      assert (Hgeb : (budget <? actual) = false).
+      { apply Nat.ltb_ge. exact Hle. }
+      now rewrite Hgeb.
+    + intros budget actual Hlt.
+      unfold cursor_bound_check, cursor_bound_budget.
+      assert (Hltb : (budget <? actual) = true).
+      { apply Nat.ltb_lt. exact Hlt. }
+      now rewrite Hltb.
+Qed.
+
 Inductive eoi_cursor_class : Type :=
   | EoiAccepting
   | EoiPrefix
@@ -1429,6 +1456,71 @@ Theorem cohort_cache_overflow_preserves_unresolved_evidence :
     attempted.
 Proof. reflexivity. Qed.
 
+Inductive snapshot_insert_result : Type :=
+  | SnapshotAppended
+  | SnapshotDuplicate
+  | SnapshotOverflow (budget actual : nat).
+
+Definition bounded_snapshot_insert
+    (budget : nat)
+    (seen_duplicate : bool)
+    (current_count : nat) : snapshot_insert_result :=
+  if seen_duplicate then SnapshotDuplicate
+  else if budget <? S current_count
+       then SnapshotOverflow budget (S current_count)
+       else SnapshotAppended.
+
+Definition snapshot_count_after_insert
+    (budget : nat)
+    (seen_duplicate : bool)
+    (current_count : nat) : nat :=
+  match bounded_snapshot_insert budget seen_duplicate current_count with
+  | SnapshotAppended => S current_count
+  | SnapshotDuplicate => current_count
+  | SnapshotOverflow _ _ => current_count
+  end.
+
+Theorem dispatch_snapshot_quotient_sound :
+  forall budget current_count,
+    bounded_snapshot_insert budget true current_count = SnapshotDuplicate /\
+    snapshot_count_after_insert budget true current_count = current_count /\
+    (current_count < budget ->
+       bounded_snapshot_insert budget false current_count = SnapshotAppended /\
+       snapshot_count_after_insert budget false current_count = S current_count) /\
+    (budget <= current_count ->
+       bounded_snapshot_insert budget false current_count =
+         SnapshotOverflow budget (S current_count)).
+Proof.
+  intros budget current_count.
+  split.
+  - reflexivity.
+  - split.
+    + reflexivity.
+    + split.
+      * intro Hlt.
+        split.
+        -- unfold bounded_snapshot_insert.
+           assert (Hgeb : (budget <? S current_count) = false).
+           { apply Nat.ltb_ge. lia. }
+           now rewrite Hgeb.
+        -- unfold snapshot_count_after_insert.
+           assert (Hinsert :
+             bounded_snapshot_insert budget false current_count =
+               SnapshotAppended).
+           {
+             unfold bounded_snapshot_insert.
+             assert (Hgeb : (budget <? S current_count) = false).
+             { apply Nat.ltb_ge. lia. }
+             now rewrite Hgeb.
+           }
+           now rewrite Hinsert.
+      * intro Hle.
+      unfold bounded_snapshot_insert.
+        assert (Hltb : (budget <? S current_count) = true).
+        { apply Nat.ltb_lt. lia. }
+        now rewrite Hltb.
+Qed.
+
 Inductive realization_cap_result : Type :=
   | RealizationWithinCap
   | RealizationBudgetExceeded (budget actual : nat).
@@ -1501,6 +1593,65 @@ Theorem realization_cap_overflow_preserves_unresolved_evidence :
       (RealizationBudgetExceeded budget actual_terms) =
     actual_terms.
 Proof. reflexivity. Qed.
+
+Inductive semantic_realization_result : Type :=
+  | SemanticRealizationWithin (distinct_count raw_count : nat)
+  | SemanticRealizationDistinctBudgetExceeded (budget actual : nat)
+  | SemanticRealizationRawBudgetExceeded (budget actual : nat).
+
+Definition bounded_semantic_realization_insert
+    (distinct_budget raw_budget : nat)
+    (seen_duplicate : bool)
+    (distinct_count raw_count : nat) : semantic_realization_result :=
+  if raw_budget <? S raw_count
+  then SemanticRealizationRawBudgetExceeded raw_budget (S raw_count)
+  else if seen_duplicate
+       then SemanticRealizationWithin distinct_count (S raw_count)
+       else if distinct_budget <? S distinct_count
+            then SemanticRealizationDistinctBudgetExceeded
+                   distinct_budget
+                   (S distinct_count)
+            else SemanticRealizationWithin
+                   (S distinct_count)
+                   (S raw_count).
+
+Theorem semantic_realization_budget_sound :
+  forall distinct_budget raw_budget distinct_count raw_count,
+    raw_count < raw_budget ->
+    bounded_semantic_realization_insert
+      distinct_budget raw_budget true distinct_count raw_count =
+      SemanticRealizationWithin distinct_count (S raw_count) /\
+    (distinct_count < distinct_budget ->
+       bounded_semantic_realization_insert
+         distinct_budget raw_budget false distinct_count raw_count =
+         SemanticRealizationWithin (S distinct_count) (S raw_count)) /\
+    (distinct_budget <= distinct_count ->
+       bounded_semantic_realization_insert
+         distinct_budget raw_budget false distinct_count raw_count =
+         SemanticRealizationDistinctBudgetExceeded
+           distinct_budget
+           (S distinct_count)).
+Proof.
+  intros distinct_budget raw_budget distinct_count raw_count Hraw.
+  assert (Hraw_ok : (raw_budget <? S raw_count) = false).
+  { apply Nat.ltb_ge. lia. }
+  repeat split.
+  - unfold bounded_semantic_realization_insert.
+    now rewrite Hraw_ok.
+  - intro Hdistinct.
+    unfold bounded_semantic_realization_insert.
+    rewrite Hraw_ok.
+    assert (Hdistinct_ok : (distinct_budget <? S distinct_count) = false).
+    { apply Nat.ltb_ge. lia. }
+    now rewrite Hdistinct_ok.
+  - intro Hdistinct.
+    unfold bounded_semantic_realization_insert.
+    rewrite Hraw_ok.
+    assert (Hdistinct_exceeded :
+      (distinct_budget <? S distinct_count) = true).
+    { apply Nat.ltb_lt. lia. }
+    now rewrite Hdistinct_exceeded.
+Qed.
 
 Definition realized_terms_for_roots (roots : list nat) : list nat :=
   flat_map (fun count => repeat 0 count) roots.
