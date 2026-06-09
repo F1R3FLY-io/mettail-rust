@@ -1025,16 +1025,11 @@ pub struct SccId(pub usize);
 /// **Why `SmallVec<[usize; 4]>`**: most production packings have ≤ 4
 /// in-SCC children (binary operators: 2; ternary/n-ary mixfix: 3-4).
 /// Inline storage avoids heap allocation in the common case.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct PackingFactored<W: SemiringRef> {
-    /// SCC-local index of the parent Symbol s_i.
-    pub target_i: usize,
-    /// `Packing.weight ⊗ Π_{c ∈ Packing.children, c ∉ SCC} memo[c].weight_sum`.
-    pub outside_product: W,
-    /// SCC-local indices of in-SCC children, in source order.
-    pub in_scc_children: Vec<usize>,
-}
+// `PackingFactored` was relocated to the `dovetail-semiring` crate (single
+// source of truth for the weight algebra). Re-exported here to preserve the
+// `crate::sppf::PackingFactored` path used by `factor_scc_packing` and the
+// walker's Newton-SCC extraction.
+pub use dovetail_semiring::PackingFactored;
 
 impl<W: SemiringRef> Sppf<W> {
     /// Phase C-bis (2026-05-17, per

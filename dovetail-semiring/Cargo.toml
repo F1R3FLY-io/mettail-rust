@@ -1,0 +1,14 @@
+[package]
+name = "dovetail-semiring"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Substrate-agnostic weight algebra (semirings, star-semirings, weight types, Newton SCC closure) extracted from PraTTaIL. Single source of truth; prattail re-exports it."
+
+# Lower crate: depends on nothing prattail-specific so it stays extractable.
+[dependencies]
+num-complex = { version = "0.4" }
+
+[dev-dependencies]
+proptest = "1"
