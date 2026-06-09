@@ -28,3 +28,4 @@
 
 pub mod egraph;
 pub mod key;
+pub mod space;
