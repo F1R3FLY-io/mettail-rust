@@ -2258,6 +2258,109 @@ Theorem nonlinear_node_positions_do_not_scan_numeric_token_windows :
       NonlinearNodePositions tokens root_lo root_hi cursor_pos = true.
 Proof. reflexivity. Qed.
 
+Definition runtime_logical_eoi
+    (space : token_position_space)
+    (source_len eof_pos cursor_pos : nat)
+    (peek_is_eof : bool) : bool :=
+  (cursor_pos =? eof_pos) ||
+    match space with
+    | LinearTokenPositions =>
+        (source_len <=? cursor_pos) ||
+          (((cursor_pos + 1) =? source_len) && peek_is_eof)
+    | NonlinearNodePositions => false
+    end.
+
+Theorem nonlinear_logical_eoi_is_exact_eof_node :
+  forall source_len eof_pos cursor_pos peek_is_eof,
+    runtime_logical_eoi
+      NonlinearNodePositions source_len eof_pos cursor_pos peek_is_eof =
+    (cursor_pos =? eof_pos).
+Proof.
+  intros source_len eof_pos cursor_pos peek_is_eof.
+  unfold runtime_logical_eoi.
+  destruct (cursor_pos =? eof_pos); reflexivity.
+Qed.
+
+Example nonlinear_orphan_after_eof_is_not_logical_eoi :
+  runtime_logical_eoi NonlinearNodePositions 3 1 2 true = false.
+Proof. reflexivity. Qed.
+
+Definition runtime_prefix_trailing_position
+    (space : token_position_space)
+    (source_len eof_pos cursor_pos : nat)
+    (peek_is_eof : bool) : bool :=
+  negb (runtime_logical_eoi space source_len eof_pos cursor_pos peek_is_eof) &&
+    match space with
+    | LinearTokenPositions => cursor_pos <? eof_pos
+    | NonlinearNodePositions =>
+        (cursor_pos <? source_len) && negb peek_is_eof
+    end.
+
+Theorem nonlinear_in_range_visible_token_is_trailing_prefix :
+  forall source_len eof_pos cursor_pos peek_is_eof,
+    cursor_pos < source_len ->
+    cursor_pos <> eof_pos ->
+    peek_is_eof = false ->
+    runtime_prefix_trailing_position
+      NonlinearNodePositions source_len eof_pos cursor_pos peek_is_eof = true.
+Proof.
+  intros source_len eof_pos cursor_pos peek_is_eof Hlt Hneq Hpeek.
+  unfold runtime_prefix_trailing_position, runtime_logical_eoi.
+  assert (Hneqb : (cursor_pos =? eof_pos) = false).
+  { now apply Nat.eqb_neq. }
+  assert (Hltb : (cursor_pos <? source_len) = true).
+  { now apply Nat.ltb_lt. }
+  rewrite Hneqb, Hltb, Hpeek.
+  reflexivity.
+Qed.
+
+Example nonlinear_empty_orphan_is_not_trailing_prefix :
+  runtime_prefix_trailing_position NonlinearNodePositions 3 1 2 true = false.
+Proof. reflexivity. Qed.
+
+Definition facade_complete_position
+    (space : token_position_space)
+    (source_len eof_pos cursor_pos : nat)
+    (peek_is_eof : bool) : bool :=
+  runtime_logical_eoi space source_len eof_pos cursor_pos peek_is_eof.
+
+Theorem nonlinear_facade_completion_requires_eof_equality :
+  forall source_len eof_pos cursor_pos peek_is_eof,
+    facade_complete_position
+      NonlinearNodePositions source_len eof_pos cursor_pos peek_is_eof = true ->
+    cursor_pos = eof_pos.
+Proof.
+  intros source_len eof_pos cursor_pos peek_is_eof Hcomplete.
+  unfold facade_complete_position, runtime_logical_eoi in Hcomplete.
+  destruct (cursor_pos =? eof_pos) eqn:Heq.
+  - now apply Nat.eqb_eq.
+  - discriminate Hcomplete.
+Qed.
+
+Definition position_order_key_model
+    (space : token_position_space)
+    (node_byte_starts : list nat)
+    (pos : nat) : option nat :=
+  match space with
+  | LinearTokenPositions => Some pos
+  | NonlinearNodePositions => nth_error node_byte_starts pos
+  end.
+
+Theorem nonlinear_position_order_key_uses_node_byte_start :
+  forall node_byte_starts pos byte_start,
+    nth_error node_byte_starts pos = Some byte_start ->
+    position_order_key_model
+      NonlinearNodePositions node_byte_starts pos = Some byte_start.
+Proof.
+  intros node_byte_starts pos byte_start Hnth.
+  unfold position_order_key_model.
+  exact Hnth.
+Qed.
+
+Example nonlinear_node_id_order_can_differ_from_source_order :
+  position_order_key_model NonlinearNodePositions [0; 2; 1] 2 = Some 1.
+Proof. reflexivity. Qed.
+
 Definition merge_weight (w1 w2 : nat) : nat := w1 + w2.
 
 Lemma merge_weight_zero_l :

@@ -980,6 +980,19 @@ pub trait WpdaTokenSource {
         true
     }
 
+    /// Source-order key for comparing accepted prefix boundaries.
+    ///
+    /// Linear token sources use the token index. DAG-backed lattice sources
+    /// override this with the node's byte position because node ids are
+    /// allocation order, not source order.
+    fn position_order_key(&self, pos: usize) -> Option<usize> {
+        if pos <= self.len() {
+            Some(pos)
+        } else {
+            None
+        }
+    }
+
     /// M6c.8.2 (2026-05-14): index of the canonical EOF position the
     /// walker must reach for a parse to be Accepted.
     ///
@@ -1815,6 +1828,10 @@ impl WpdaTokenSource for LatticeTokenSource {
 
     fn positions_are_linear_tokens(&self) -> bool {
         false
+    }
+
+    fn position_order_key(&self, pos: usize) -> Option<usize> {
+        self.dag.nodes.get(pos).map(|node| node.byte_start)
     }
 
     /// M6c.8.2 (2026-05-14): the canonical EOF sentinel index from the
@@ -3414,6 +3431,16 @@ mod tests {
         // Verify the byte_start of each target node.
         assert_eq!(src.dag.nodes[primary_target].byte_start, 2);
         assert_eq!(src.dag.nodes[secondary_target].byte_start, 1);
+    }
+
+    #[test]
+    fn lattice_source_position_order_key_uses_byte_start_not_node_id() {
+        let src = LatticeTokenSource::new(make_minus3_dag());
+        let primary_target = src.next_pos(0, 0).expect("primary edge must exist");
+        let secondary_target = src.next_pos(0, 1).expect("secondary edge must exist");
+
+        assert_eq!(src.position_order_key(primary_target), Some(2));
+        assert_eq!(src.position_order_key(secondary_target), Some(1));
     }
 
     #[test]

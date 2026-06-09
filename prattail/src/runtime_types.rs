@@ -1790,8 +1790,9 @@ mod tests {
         // Input "-3": DFA visits state 1 (accepts Minus) at byte 1, then
         // state 2 (accepts Integer) at byte 2. Expected DAG:
         //   node 0 (byte_start=0): edges = [Integer@end=2, Minus@end=1]
-        //   node 1 (byte_start=1, allocated for Minus's target): edges = [Integer@end=2]
-        //   node 2 (byte_start=2, EOF sentinel): edges = []
+        //   one target node at byte_start=1: edges = [Integer@end=2]
+        //   one target node at byte_start=2: EOF sentinel, edges = []
+        // The target node ids are allocation order, not byte order.
         let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
         let dag = lex_dag_core("-3", None, &cc, dfa_next, is_acc, accept_alts, to_kind)
             .expect("lex_dag should succeed");

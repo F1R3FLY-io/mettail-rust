@@ -738,8 +738,8 @@ pub(crate) fn emit_parse_fns(
                         // Cluster H (2026-05-29): valid-prefix parse with
                         // trailing tokens. Realize ALL prefix derivations
                         // (ambiguity-preserving) and set `*pos` to the
-                        // prefix boundary so the caller's trailing check
-                        // (`pos < eof_node`) surfaces `TrailingTokens`.
+                        // prefix boundary so the caller's source-aware
+                        // trailing check surfaces `TrailingTokens`.
                         WpdaResolveResult::AcceptedWithTrailing {
                             roots, position, ..
                         } => {

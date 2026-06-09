@@ -419,7 +419,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         return match #parse_via_wpda_with_source_fn(&source, &mut pos, 0) {
                             Ok((v, _weight)) => {
                                 let eof_node = source.eof_node();
-                                if pos < eof_node {
+                                if pos != eof_node {
                                     return Err(ParseError::TrailingTokens {
                                         found: dag_found(pos),
                                         range: dag_range(pos),
@@ -606,13 +606,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 // soft-fail may allocate orphan nodes
                                 // for secondary-alt dead-ends at
                                 // indices AFTER the EOF sentinel, so
-                                // `len() - 1` would point to an orphan
-                                // and the walker's correct EOF-Accept
-                                // (at the real EOF sentinel index)
-                                // would be misreported as
-                                // `TrailingTokens`.
+                                // `len() - 1` would point to an orphan.
+                                // Node ids are not a linear token order, so
+                                // the only complete lattice parse position is
+                                // equality with the canonical EOF sentinel.
                                 let eof_node = source.eof_node();
-                                if pos < eof_node {
+                                if pos != eof_node {
                                     return Err(ParseError::TrailingTokens {
                                         found: dag_found(pos),
                                         range: dag_range(pos),
@@ -803,7 +802,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         ) {
                             Ok((terms, weights)) => {
                                 let eof_node = source.eof_node();
-                                if pos < eof_node {
+                                if pos != eof_node {
                                     return Err(ParseError::TrailingTokens {
                                         found: dag_found(pos),
                                         range: dag_range(pos),

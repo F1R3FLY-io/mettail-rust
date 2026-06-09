@@ -4458,10 +4458,14 @@ where
     ) where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
-        let eof = tokens.eof_node();
+        let at_logical_eoi = self.is_logical_eoi(cursor.pos, tokens);
+        let prefix_trailing_pos = self.is_prefix_trailing_position(cursor.pos, tokens);
         snapshot.logical_count = snapshot.logical_count.saturating_add(1);
         snapshot.max_dead_pos = snapshot.max_dead_pos.max(cursor.pos);
-        if !matches!(cursor.inner_state, WpdaState::Accepted) || cursor.pos >= eof {
+        if !matches!(cursor.inner_state, WpdaState::Accepted)
+            || at_logical_eoi
+            || !prefix_trailing_pos
+        {
             snapshot.surviving_after_premature_filter =
                 snapshot.surviving_after_premature_filter.saturating_add(1);
         }
@@ -4469,13 +4473,13 @@ where
             return;
         }
         let root = self.cursor_sppf_root(&cursor);
-        if self.is_logical_eoi(cursor.pos, tokens) {
+        if at_logical_eoi {
             snapshot.accepting.push(EoiCursorCandidate {
                 weight: cursor.weight.clone(),
                 root,
                 cursor,
             });
-        } else if cursor.pos < eof {
+        } else if prefix_trailing_pos {
             snapshot
                 .prefix_trailing_candidates
                 .push((cursor.pos, cursor.weight.clone(), root));
@@ -4678,8 +4682,9 @@ where
         }
         // Phase E Fix A (2026-05-16): Premature-Accepted cursor filter.
         //
-        // A cursor in `WpdaState::Accepted` but with `cursor.pos < eof_node`
-        // is evidence-failed: it committed to a parse path (typically a
+        // A cursor in `WpdaState::Accepted` but parked at a source position
+        // that is a prefix/trailing boundary rather than logical EOI is
+        // evidence-failed: it committed to a parse path (typically a
         // lex-Fork max-munch branch, or a cross-cat delegate path that
         // popped CategoryEntry without re-entering InfixLoop) that
         // produced a SHORT parse without consuming all input. Per the
@@ -4729,11 +4734,10 @@ where
             // with unconsumed trailing tokens.
             //
             // `resolve_prefix_with_trailing` picks the FURTHEST-reaching
-            // prefix (max `pos` = longest accepted prefix) and carries ALL
-            // cursors tied at that furthest position so genuine prefix
-            // ambiguity is preserved.
+            // source position and carries ALL cursors tied there so genuine
+            // prefix ambiguity is preserved.
             if let Some(trailing) =
-                self.resolve_prefix_with_trailing(&snapshot.prefix_trailing_candidates)
+                self.resolve_prefix_with_trailing(&snapshot.prefix_trailing_candidates, tokens)
             {
                 return trailing;
             }
@@ -4772,7 +4776,7 @@ where
                 // arm is reached ONLY when zero cursors are at EOI, so no
                 // full parse competes with the prefix.
                 if let Some(trailing) =
-                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates)
+                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates, tokens)
                 {
                     return trailing;
                 }
@@ -4874,17 +4878,18 @@ where
     /// salvage path in `resolve_at_end_of_input`.
     ///
     /// `prefix_candidates` is `(pos, weight, sppf_root)` for every cursor
-    /// that was `is_accepting_config` but parked at `pos < eof_node`. This
-    /// is invoked ONLY when no full-EOI accepting cursor exists, so the
-    /// longest prefix is the best (and only) accepting derivation.
+    /// that was `is_accepting_config` but parked at a prefix/trailing
+    /// boundary. For linear token sources this means `pos < eof_node`; for
+    /// lattice token sources this means an in-range non-EOF DAG node. This is
+    /// invoked ONLY when no full-EOI accepting cursor exists, so the longest
+    /// prefix is the best (and only) accepting derivation.
     ///
     /// Disambiguation contract: we select the cursors that reached the
-    /// FURTHEST position (max `pos` = longest accepted prefix per
-    /// max-munch) and carry ALL of them — preserving genuine prefix-level
-    /// ambiguity exactly as the `Accepted` multi-arm does. The returned
-    /// `position` is the furthest prefix boundary (the first unconsumed
-    /// token index), which the facade installs into `*pos` so the
-    /// generated wrapper emits a structured `TrailingTokens` error.
+    /// FURTHEST source position according to `tokens.position_order_key`
+    /// and carry ALL of them — preserving genuine prefix-level ambiguity
+    /// exactly as the `Accepted` multi-arm does. The returned `position`
+    /// is the chosen prefix boundary, which the facade installs into `*pos`
+    /// so the generated wrapper emits a structured `TrailingTokens` error.
     ///
     /// Returns `None` (so the caller falls through to the generic
     /// "premature lex-Fork acceptance" `ParseError`) when no candidate
@@ -4893,22 +4898,33 @@ where
     fn resolve_prefix_with_trailing(
         &self,
         prefix_candidates: &[(usize, W, crate::sppf::SppfId)],
+        tokens: &dyn WpdaTokenSource,
     ) -> Option<WpdaResolveResult<W>>
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
         // Longest accepted prefix wins (max-munch over the prefix set).
-        let max_pos = prefix_candidates.iter().map(|(p, _, _)| *p).max()?;
+        // For lattice sources, compare byte positions rather than node ids.
+        let max_order_key = prefix_candidates
+            .iter()
+            .filter_map(|(p, _, _)| tokens.position_order_key(*p))
+            .max()?;
         let mut weights: Vec<W> = Vec::new();
         let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
         let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
-        for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| *p == max_pos) {
-            let _ = pos;
+        let mut selected_pos: Option<usize> = None;
+        for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| {
+            tokens
+                .position_order_key(*p)
+                .map(|key| key == max_order_key)
+                .unwrap_or(false)
+        }) {
             let root = *root;
             if root == crate::sppf::SPPF_ID_NONE {
                 continue;
             }
             if let Some(t) = self.realize_root_to_terms(root, Some(1)).into_iter().next() {
+                selected_pos.get_or_insert(*pos);
                 weights.push(weight.clone());
                 terms.push(t);
                 roots.push(root);
@@ -4919,7 +4935,8 @@ where
             // case; let the caller surface the generic failure.
             return None;
         }
-        Some(WpdaResolveResult::AcceptedWithTrailing { weights, terms, roots, position: max_pos })
+        let position = selected_pos?;
+        Some(WpdaResolveResult::AcceptedWithTrailing { weights, terms, roots, position })
     }
 
     /// Option C / C7 (2026-05-15): Realize the user AST from a Shared
@@ -6001,8 +6018,8 @@ where
     #[inline]
     fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdaTokenSource) -> bool {
         // M6c.8.4 (2026-05-14): cursor is at EOI iff `pos` equals the
-        // canonical EOF sentinel index OR is past the slice's flat
-        // length.
+        // canonical EOF sentinel index. Linear token sources additionally
+        // keep the legacy "past/trailing EOF token" fallback.
         //
         // For `SliceTokenSource` and `MultiTokenSource`, the default
         // `eof_node()` returns `len() - 1` and the trailing-Eof clause
@@ -6015,17 +6032,32 @@ where
         // necessarily `nodes.len() - 1`: orphan nodes (allocated by
         // M6c.7.1 soft-fail for secondary-alt dead-ends) may sit at
         // indices BEFORE OR AFTER the EOF sentinel. A cursor parked
-        // at an orphan node MUST NOT be considered EOI — the orphan
-        // is structurally a dead-end alt that should die, not accept.
+        // at an orphan node MUST NOT be considered EOI even if that
+        // orphan is the final node and `peek_kind` reports Eof.
         //
-        // The `pos == eof_node` check is precise: it accepts ONLY at
-        // the canonical EOF sentinel. The `pos >= len()` slice
-        // fallback covers SliceTokenSource's past-end semantics where
-        // `eof_node = len() - 1` and `pos = len()` is "consumed
-        // the Eof token and advanced past."
-        pos == tokens.eof_node()
-            || pos >= tokens.len()
+        // The `pos == eof_node` check is precise for every source. The
+        // remaining clauses are valid only for linear token-index sources;
+        // applying them to lattice node ids would convert orphan dead-ends
+        // into false acceptances.
+        if pos == tokens.eof_node() {
+            return true;
+        }
+        if !tokens.positions_are_linear_tokens() {
+            return false;
+        }
+        pos >= tokens.len()
             || (pos + 1 == tokens.len() && tokens.peek_kind(pos) == Some(TokenKind::Eof))
+    }
+
+    #[inline]
+    fn is_prefix_trailing_position(&self, pos: usize, tokens: &dyn WpdaTokenSource) -> bool {
+        if self.is_logical_eoi(pos, tokens) {
+            return false;
+        }
+        if tokens.positions_are_linear_tokens() {
+            return pos < tokens.eof_node();
+        }
+        pos < tokens.len() && tokens.peek_kind(pos) != Some(TokenKind::Eof)
     }
 
     #[inline]
@@ -16742,6 +16774,36 @@ mod tests {
         cursor
     }
 
+    fn lattice_source_with_orphan_after_eof() -> crate::wpda_runtime::LatticeTokenSource {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::lexer_types::{LexDag, LexDagEdge, LexDagNode};
+        use std::collections::BTreeMap;
+
+        let mut byte_to_node = BTreeMap::new();
+        byte_to_node.insert(0, 0);
+        byte_to_node.insert(1, 1);
+        byte_to_node.insert(2, 2);
+        crate::wpda_runtime::LatticeTokenSource::new(LexDag {
+            nodes: vec![
+                LexDagNode {
+                    byte_start: 0,
+                    edges: vec![LexDagEdge {
+                        kind: TokenKind::Ident,
+                        text: "x".to_string(),
+                        end_byte: 1,
+                        target_node: 1,
+                        weight: TropicalWeight(0.0),
+                        alt_idx: 0,
+                    }],
+                },
+                LexDagNode { byte_start: 1, edges: Vec::new() },
+                LexDagNode { byte_start: 2, edges: Vec::new() },
+            ],
+            byte_to_node,
+            eof_node: 1,
+        })
+    }
+
     #[test]
     fn eoi_accepting_terminal_accepts_same_span_root() {
         static KINDS: [TokenKind; 2] = [TokenKind::Ident, TokenKind::Eof];
@@ -16815,6 +16877,63 @@ mod tests {
 
         assert!(walker.is_logical_eoi(cursor.pos, &tokens));
         assert!(!walker.is_accepting_config(&cursor, &tokens));
+    }
+
+    #[test]
+    fn logical_eoi_rejects_lattice_orphan_after_eof() {
+        let tokens = lattice_source_with_orphan_after_eof();
+        let walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+
+        assert_eq!(tokens.eof_node(), 1);
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens.peek_kind(2), Some(TokenKind::Eof));
+        assert!(walker.is_logical_eoi(1, &tokens));
+        assert!(
+            !walker.is_logical_eoi(2, &tokens),
+            "nonlinear orphan nodes must not satisfy slice-style trailing-Eof fallback"
+        );
+    }
+
+    #[test]
+    fn lattice_orphan_after_eof_is_not_a_trailing_prefix() {
+        let tokens = lattice_source_with_orphan_after_eof();
+        let walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+
+        assert!(!walker.is_prefix_trailing_position(1, &tokens));
+        assert!(!walker.is_prefix_trailing_position(2, &tokens));
+    }
+
+    #[test]
+    fn lattice_visible_non_eof_node_is_trailing_prefix_not_eoi() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::lexer_types::{LexDag, LexDagEdge, LexDagNode};
+        use std::collections::BTreeMap;
+
+        let mut byte_to_node = BTreeMap::new();
+        byte_to_node.insert(0, 0);
+        byte_to_node.insert(1, 1);
+        let tokens = crate::wpda_runtime::LatticeTokenSource::new(LexDag {
+            nodes: vec![
+                LexDagNode { byte_start: 0, edges: Vec::new() },
+                LexDagNode {
+                    byte_start: 1,
+                    edges: vec![LexDagEdge {
+                        kind: TokenKind::Ident,
+                        text: "x".to_string(),
+                        end_byte: 2,
+                        target_node: 0,
+                        weight: TropicalWeight(0.0),
+                        alt_idx: 0,
+                    }],
+                },
+            ],
+            byte_to_node,
+            eof_node: 0,
+        });
+        let walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+
+        assert!(!walker.is_prefix_trailing_position(0, &tokens));
+        assert!(walker.is_prefix_trailing_position(1, &tokens));
     }
 
     fn recovery_test_infra_signature() -> crate::recovery_cohort::RecoveryInfraSignature {
