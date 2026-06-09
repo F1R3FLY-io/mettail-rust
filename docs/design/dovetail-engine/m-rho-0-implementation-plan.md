@@ -123,12 +123,50 @@ number; `.0.5` isolates all Tokio/RSpace and is gated behind an explicit go/no-g
 | #5 f1r3node guard green | .0.0 (+each) | 0 mettail refs in f1r3node manifests |
 | #6 axiom-free Rocq + Welch | every substage | `rocq-rho-bridge`; Welch in .0.5 |
 
+## ★ Integration decision (user, 2026-06-09): NO feature gating — full integration
+
+The user directed full, clean integration with NO feature gating (the end goal is
+MeTTaIL fully integrated with Rholang/f1r3node). The `engine` feature was a
+bring-up risk-isolation measure, not a design necessity, so it was REMOVED: the
+bridge crates' f1r3node deps are mandatory cross-repo `path` deps, centralized in
+the root `[workspace.dependencies]` (`models`, `rholang`; each bridge crate
+references the ones it uses via `workspace = true`). f1r3node deps are added
+per-substage as the code that uses them lands (adapter: `models`+`rholang` now;
+codegen: `rholang` at .0.3; runtime: `rspace_plus_plus`+`casper`+tokio at .0.5).
+
+**Toolchain finding (real, surfaced not hidden):** `gxhash 3.5.0` (pulled via
+`pathmap` → f1r3node-rust `models`) `compile_error!`s unless `cfg(target_feature =
+"aes")` is set, and the **cranelift** dev backend (mettail's fast-dev codegen) does
+NOT set that cfg (cranelift only enables cfgs for features it supports), whereas
+LLVM does. Clean fix (in the workspace, persistent):
+1. `.cargo/config.toml` `[target.x86_64-unknown-linux-gnu].rustflags +=
+   -C target-feature=+aes,+sse2` (mirrors f1r3node-rust/.cargo/config.toml).
+2. `Cargo.toml` `[profile.dev.package.gxhash]` + `[profile.test.package.gxhash]`
+   `codegen-backend = "llvm"` — forces ONLY gxhash onto LLVM (so the aes cfg is
+   honored + the aes intrinsics codegen), keeping the rest of the workspace on the
+   fast cranelift dev loop.
+Verified: `cargo check`/`cargo test -p mettail-rho-adapter` green config-only (no env
+override); the cross-repo build compiles + runs under mettail's toolchain.
+
+Note: targeted per-package test runs (e.g. `cargo test -p mettail-prattail`, the
+formal Makefile gates) do NOT pull f1r3node (the bridge crates are not their deps);
+only building the bridge crates (or `--workspace`) does.
+
 ## Status
 
-- **M-RHO.0.0 — SHIPPED** (this session): three inert `engine`-gated crates;
-  `BridgeInertness.v` (zero-admission, `Print Assumptions` clean); workspace +
-  `formal/Makefile` (`rocq-rho-bridge`) wired; default build f1r3node-free
-  (`cargo tree` 0); guard invariant verified (0 mettail refs). dovetail/Cargo.toml
-  "cube-pruning" wording corrected.
-- **Next:** M-RHO.0.1 (MettaGslt presentation), pending the B1-a confirmation
-  (re-host the conformance laws mettail-side for the inert milestone).
+- **M-RHO.0.0 — SHIPPED** (9c9300ec): three bridge crates; `BridgeInertness.v`
+  (zero-admission); workspace + `formal/Makefile` (`rocq-rho-bridge`) wired; guard
+  invariant verified (0 mettail refs). dovetail/Cargo.toml "cube-pruning" corrected.
+  (Crates were `engine`-gated at .0.0; ungated at .0.1 per the user decision above.)
+- **M-RHO.0.1 + M-RHO.0.2 — SHIPPED** (this session, ungated): `MettaGslt`
+  (`GsltPresentation`, `CanonicalProgram = Par`), `MettaSig` (`ResourceSignature`
+  delegating to the host lane algebra), `MettaProgram`; `MettaResourceLogic`
+  (`OslfResourceLogic<MettaGslt>`) delegating `demand`/`is_funded` to the verified
+  `delta_sigma`; the 4 OSLF conformance laws re-hosted (B1-a) + proven green for
+  `MettaResourceLogic` (3/3 adapter tests pass). Zero-admission Rocq:
+  `MettaGsltPresentation.v` (lane-decomposition sound+complete) +
+  `MettaOslfLawsConformance.v` (the 4 laws over the modelled `is_funded`), both
+  `Print Assumptions`-clean; `rocq-rho-bridge` green.
+- **Next:** M-RHO.0.3 (`generate_rho_vm`: calculator `LanguageDef` → Rholang source
+  + `RhoLoweringTotalOrRejects.v`), then .0.4 (differential oracle vs Ascent), then
+  .0.5 (real `RhoRuntime` run).

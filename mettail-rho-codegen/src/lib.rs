@@ -21,15 +21,14 @@
 //! `formal/rocq/rho_bridge/theories/BridgeInertness.v`; enforced by the host
 //! guard test `mettail_rust_is_not_a_cargo_dependency`).
 //!
-//! ## Status — INERT (M-RHO.0.0)
-//! Empty + `engine`-gated; the DEFAULT build pulls nothing from f1r3node.
-//! M-RHO.0.3 adds the pure `LanguageDef → Rholang` translator
-//! (`lower_term_to_rholang` / `lower_rule_to_rholang`) consumed by a new
+//! ## Status
+//! Skeleton — fully integrated, NOT feature-gated (no f1r3node deps yet; they land
+//! with the code that uses them). M-RHO.0.3 adds the pure `LanguageDef → Rholang`
+//! translator (`lower_term_to_rholang` / `lower_rule_to_rholang`) consumed by a new
 //! `macros::gen::runtime::rho_vm::generate_rho_vm` sibling of `generate_ascent_source`,
-//! plus a `rholang` parse round-trip (`Compiler::source_to_adt → Par == Ok`), and
-//! the totality-or-explicit-rejection proof `RhoLoweringTotalOrRejects.v`
+//! plus the `rholang` dep for a parse round-trip (`Compiler::source_to_adt → Par == Ok`),
+//! and the totality-or-explicit-rejection proof `RhoLoweringTotalOrRejects.v`
 //! (out-of-subset constructors are REFUSED, never silently dropped — "miss
 //! nothing" at the codegen layer).
 
-#![cfg_attr(not(feature = "engine"), allow(unused))]
 #![forbid(unsafe_code)]

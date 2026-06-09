@@ -20,13 +20,13 @@
 //! `formal/rocq/rho_bridge/theories/BridgeInertness.v`; enforced by the host
 //! guard test `mettail_rust_is_not_a_cargo_dependency`).
 //!
-//! ## Status — INERT (M-RHO.0.0)
-//! Empty + `engine`-gated; the DEFAULT build pulls nothing from f1r3node, so
-//! Ascent stays the sole oracle in the default build. Later substages add, under
-//! `engine`: the `RhoBackend { fn rho_source(&self) -> String }` seam +
-//! `assert_oracle_agree` (M-RHO.0.4), and an optional real `RhoRuntime::evaluate`
-//! run of the lowered calculator (M-RHO.0.5 — the only substage that links
-//! Tokio/RSpace; gated behind an explicit go/no-go).
+//! ## Status
+//! Skeleton — fully integrated, NOT feature-gated (no f1r3node deps yet; they land
+//! with the code that uses them). Ascent remains the differential oracle until the
+//! per-language flip (M-RHO.4). Later substages add: the
+//! `RhoBackend { fn rho_source(&self) -> String }` seam + `assert_oracle_agree`
+//! (M-RHO.0.4, `rholang`/`dovetail` deps), and a real `RhoRuntime::evaluate` run of
+//! the lowered calculator (M-RHO.0.5 — the substage that links
+//! `rspace_plus_plus`/`casper`/Tokio).
 
-#![cfg_attr(not(feature = "engine"), allow(unused))]
 #![forbid(unsafe_code)]

@@ -6,24 +6,15 @@ authors.workspace = true
 license.workspace = true
 description = "M-RHO bridge: COMPILE-TIME lowering of a MeTTaIL GSLT (LanguageDef) to a parallel-optimized Rholang VM — rules-as-data + Par, e-graph normalization, WTA/cost-Sig assignment, channel-keying. Depends ONE-WAY on f1r3node-rust."
 
-# ── INERT (M-RHO.0.0) ──────────────────────────────────────────────────────────
 # Compile-time only: lowers a `LanguageDef` to (a) reduction rules as `Par`
 # contracts, (b) native system-process handlers, (c) the OslfResourceLogic adapter
-# wiring. The e-graph / WTA / decision-tree stay COMPILE-TIME analyses that
-# GENERATE indexing + ordering + recognition plugging into f1r3node's existing
-# matcher/join/lock/check_commit. Depends ONE-WAY on f1r3node-rust (proven
-# one-way in `formal/rocq/rho_bridge/theories/BridgeInertness.v`).
-#
-# `engine`-gated so the DEFAULT build pulls NOTHING from f1r3node (the inert
-# convention, mirroring `dovetail`). M-RHO.0.3 adds, under `engine`, the
-# `generate_rho_vm(&LanguageDef) -> Rholang source` lowering (a pure translator,
-# tested without the proc-macro) + `rholang` (path) for a parse round-trip check.
-
-[features]
-default = []
-# Gates the f1r3node-rust binding (none yet — M-RHO.0.0 is inert).
-engine = []
+# wiring. The e-graph / WTA / decision-tree stay COMPILE-TIME analyses that GENERATE
+# indexing + ordering + recognition plugging into f1r3node's existing
+# matcher/join/lock/check_commit. Depends ONE-WAY on f1r3node-rust (proven one-way
+# in formal/rocq/rho_bridge/theories/BridgeInertness.v). Fully integrated (no
+# feature gating). The LanguageDef->Rholang translator + rholang parse round-trip
+# land in M-RHO.0.3 (when `rholang` is added as a dep here).
 
 [dependencies]
-# (none yet — inert M-RHO.0.0 skeleton; the LanguageDef→Rholang translator + the
-# rholang parse round-trip land in M-RHO.0.3)
+# (none yet — the LanguageDef→Rholang translator + the rholang parse round-trip
+# land in M-RHO.0.3)

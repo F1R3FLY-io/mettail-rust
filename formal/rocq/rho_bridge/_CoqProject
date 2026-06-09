@@ -10,3 +10,5 @@
 -Q theories RhoBridge
 
 theories/BridgeInertness.v
+theories/MettaGsltPresentation.v
+theories/MettaOslfLawsConformance.v

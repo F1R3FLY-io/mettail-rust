@@ -33,7 +33,11 @@ codegen-backend = true
 # --- Linux x86_64 ---
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# `target-feature=+aes,+sse2` is required by `gxhash` (pulled transitively via
+# `pathmap` → f1r3node-rust `models`, part of the M-RHO integration). Mirrors
+# f1r3node-rust/.cargo/config.toml so the cross-repo path deps build under
+# mettail-rust's toolchain. All x86_64 CPUs since ~2010 (Westmere) provide these.
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "target-feature=+aes,+sse2"]
 
 # --- macOS Apple Silicon ---
 [target.aarch64-apple-darwin]

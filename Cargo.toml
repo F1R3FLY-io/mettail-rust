@@ -51,9 +51,30 @@ indexmap = "2.0"
 ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
 
+# ── f1r3node-rust integration (M-RHO) — cross-repo path deps, one-way only ───────
+# MeTTaIL is the COMPILER, f1r3node-rust's Rho machine is the RUNTIME. The bridge
+# crates (mettail-rho-{codegen,runtime,adapter}) depend ONE-WAY on these; f1r3node
+# NEVER depends on mettail-rust (enforced by the host guard test
+# `mettail_rust_is_not_a_cargo_dependency` + proven in
+# formal/rocq/rho_bridge/theories/BridgeInertness.v). Sibling checkout at
+# ../f1r3node-rust (publish=false crates → path deps). Toolchain note: f1r3node-rust
+# pins nightly-2026-02-09; mettail-rust floats `nightly` + cranelift dev backend.
+models = { path = "../f1r3node-rust/models" }
+rholang = { path = "../f1r3node-rust/rholang" }
+
 [profile.dev]
 codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
 debug = "line-tables-only"    # Saves debuginfo generation time
+
+# `gxhash` (via pathmap → f1r3node-rust `models`, M-RHO integration) requires the
+# `aes`+`sse2` target-feature cfg, which the cranelift backend does NOT set (it
+# only enables cfgs for features cranelift supports), so it must build under LLVM.
+# Scoped to gxhash so the rest of the workspace keeps the fast cranelift dev loop.
+[profile.dev.package.gxhash]
+codegen-backend = "llvm"
+
+[profile.test.package.gxhash]
+codegen-backend = "llvm"
 
 [profile.release]
 codegen-backend = "llvm"      # Full LLVM optimization for runtime performance

@@ -6,27 +6,16 @@ authors.workspace = true
 license.workspace = true
 description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's RhoRuntime/DebruijnInterpreter + native handlers; exposes the RhoBackend seam + the differential oracle vs Ascent. Depends ONE-WAY on f1r3node-rust."
 
-# ── INERT (M-RHO.0.0) ──────────────────────────────────────────────────────────
-# Binds the `mettail-rho-codegen` output to a process-wide RhoRuntime /
-# DebruijnInterpreter + `Vec<Definition>` native handlers, and hosts the
-# differential oracle (rho-backend normal forms vs Ascent normal forms,
-# weight-erased + eqrel-quotiented, keyed by dovetail's exact ContentKey).
-# Threading/scheduling are OWNED BY f1r3node (eval_par/RSpace, tokio); MeTTaIL
-# emits `Par`, never forks. Depends ONE-WAY on f1r3node-rust (proven one-way in
-# `formal/rocq/rho_bridge/theories/BridgeInertness.v`).
-#
-# `engine`-gated so the DEFAULT build pulls NOTHING from f1r3node (the inert
-# convention, mirroring `dovetail`). Later substages add, under `engine`:
-#   M-RHO.0.4 — the `RhoBackend` seam + the differential oracle (rspace_plus_plus
-#               only if the oracle needs a runtime; the compile-time oracle does not).
-#   M-RHO.0.5 — (optional) a real RhoRuntime run: rholang + rspace_plus_plus +
-#               casper + tokio (the ONLY substage touching Tokio/RSpace).
-
-[features]
-default = []
-# Gates the f1r3node-rust binding (none yet — M-RHO.0.0 is inert).
-engine = []
+# Binds the mettail-rho-codegen output to a process-wide RhoRuntime /
+# DebruijnInterpreter + native handlers, and hosts the differential oracle
+# (rho-backend normal forms vs Ascent normal forms, weight-erased + eqrel-quotiented,
+# keyed by dovetail's exact ContentKey). Threading/scheduling are OWNED BY f1r3node
+# (eval_par/RSpace, tokio); MeTTaIL emits `Par`, never forks. Depends ONE-WAY on
+# f1r3node-rust (proven one-way in formal/rocq/rho_bridge/theories/BridgeInertness.v).
+# Fully integrated (no feature gating). The RhoBackend seam + oracle land in
+# M-RHO.0.4 (rholang/dovetail deps), the real RhoRuntime run in M-RHO.0.5
+# (rspace_plus_plus + casper + tokio).
 
 [dependencies]
-# (none yet — inert M-RHO.0.0 skeleton; the RhoBackend seam + oracle land in
-# M-RHO.0.4, the real RhoRuntime run in M-RHO.0.5)
+# (none yet — the RhoBackend seam + oracle land in M-RHO.0.4, the real RhoRuntime
+# run in M-RHO.0.5)
