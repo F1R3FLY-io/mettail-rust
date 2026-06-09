@@ -1,0 +1,15 @@
+# Rocq project for the Dovetail engine's formal obligations.
+#
+#   1. NBestExtraction — selection-layer no-prune: the best-first extractor's
+#      output removes an alternative ONLY when its composed weight is the
+#      semiring zero (0̄); every non-zero alternative survives; equal-weight
+#      DISTINCT alternatives both survive. (Direct formalization of the engine's
+#      governing invariant: weight ORDERS, never PRUNES; removal only by
+#      evidence.) The best-first ORDERING and the hypergraph-recursion
+#      COMPLETENESS are companion obligations (see the file header).
+#
+# Zero-Admitted / zero-Axiom (the project gate).
+
+-Q theories Dovetail
+
+theories/NBestExtraction.v
