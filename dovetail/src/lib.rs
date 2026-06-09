@@ -29,5 +29,6 @@
 pub mod egraph;
 pub mod extract;
 pub mod key;
+pub mod rules;
 pub mod space;
 pub mod wta;
