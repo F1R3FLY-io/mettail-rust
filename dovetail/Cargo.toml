@@ -16,3 +16,7 @@ default = []
 engine = []
 
 [dependencies]
+# The weight algebra (Semiring/StarSemiringRef, weight types, Newton-SCC closure)
+# — the single source of truth, shared with prattail. dovetail stays
+# substrate-agnostic: this is its ONLY workspace dependency.
+dovetail-semiring = { path = "../dovetail-semiring" }

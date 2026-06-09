@@ -210,6 +210,20 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         self.node_limit_hit
     }
 
+    /// Iterate the live canonical e-class ids (the WTA states).
+    pub fn classes(&self) -> impl Iterator<Item = EClassId> + '_ {
+        self.classes.keys().copied()
+    }
+
+    /// The exact (canonical, deduplicated) e-nodes of a class — the WTA
+    /// transitions into it. Empty if `id` names no live class.
+    pub fn nodes(&self, id: EClassId) -> &[ENode<L>] {
+        self.classes
+            .get(&self.find(id))
+            .map(|c| c.nodes.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Add a hashconsed e-node; returns the e-class it belongs to.
     pub fn add(&mut self, enode: ENode<L>) -> EClassId {
         let canonical = enode.canonicalize(&self.union_find);
