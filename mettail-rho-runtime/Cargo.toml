@@ -26,3 +26,8 @@ tokio = { workspace = true }
 mettail-rho-codegen = { path = "../mettail-rho-codegen" }
 mettail-ast = { path = "../ast" }
 syn = { workspace = true }
+# The Ascent backend (the differential oracle reference): the calculator language +
+# its run_ascent. Dev-only, so the gauntlet (`cargo test -p mettail-languages`)
+# stays f1r3node-free — the cross-backend coupling lives here, in the bridge crate.
+mettail-languages = { path = "../languages" }
+mettail-runtime = { path = "../runtime" }
