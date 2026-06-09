@@ -26,4 +26,5 @@
 //! default (`default = []`) and nothing in the existing workspace build path
 //! depends on it. See the implementation plan for the increment sequence.
 
+pub mod egraph;
 pub mod key;
