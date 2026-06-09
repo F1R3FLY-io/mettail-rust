@@ -178,6 +178,8 @@ Definition edge_kind_of_dispatch (d : dispatch_key) : edge_kind :=
   EdgeCrossCatProjection
     (dk_source d) (dk_bp d) (dk_wrap_cat d) (dk_wrap_rule d).
 
+Definition dispatch_cache_shareable (d1 d2 : dispatch_key) : Prop := d1 = d2.
+
 Lemma equiv_of_dispatch_ignores_pos_and_wrap :
   forall p1 p2 s bp wc1 wr1 wc2 wr2,
     equiv_of_dispatch {| dk_pos := p1;
@@ -193,12 +195,40 @@ Lemma equiv_of_dispatch_ignores_pos_and_wrap :
                          dk_wrap_rule := wr2 |}.
 Proof. reflexivity. Qed.
 
+Theorem dispatch_equiv_equality_preserves_source_bp :
+  forall d1 d2,
+    equiv_of_dispatch d1 = equiv_of_dispatch d2 ->
+    dk_source d1 = dk_source d2 /\ dk_bp d1 = dk_bp d2.
+Proof.
+  intros d1 d2 Heq.
+  destruct d1 as [p1 s1 bp1 wc1 wr1].
+  destruct d2 as [p2 s2 bp2 wc2 wr2].
+  simpl in *.
+  inversion Heq.
+  split; reflexivity.
+Qed.
+
 Theorem dispatch_key_equality_preserves_full_position :
   forall d1 d2,
     d1 = d2 -> dk_pos d1 = dk_pos d2.
 Proof.
   intros d1 d2 Heq.
   now rewrite Heq.
+Qed.
+
+Theorem dispatch_cache_share_preserves_obligation_axes :
+  forall d1 d2,
+    dispatch_cache_shareable d1 d2 ->
+    dk_pos d1 = dk_pos d2 /\
+    dk_source d1 = dk_source d2 /\
+    dk_bp d1 = dk_bp d2 /\
+    dk_wrap_cat d1 = dk_wrap_cat d2 /\
+    dk_wrap_rule d1 = dk_wrap_rule d2.
+Proof.
+  intros d1 d2 Hshare.
+  unfold dispatch_cache_shareable in Hshare.
+  subst d2.
+  repeat split; reflexivity.
 Qed.
 
 Theorem dispatch_key_distinguishes_distinct_positions :
@@ -220,6 +250,82 @@ Proof.
   now inversion Heq.
 Qed.
 
+Theorem dispatch_key_distinguishes_distinct_sources :
+  forall p s1 s2 bp wc wr,
+    s1 <> s2 ->
+    {| dk_pos := p;
+       dk_source := s1;
+       dk_bp := bp;
+       dk_wrap_cat := wc;
+       dk_wrap_rule := wr |} <>
+    {| dk_pos := p;
+       dk_source := s2;
+       dk_bp := bp;
+       dk_wrap_cat := wc;
+       dk_wrap_rule := wr |}.
+Proof.
+  intros p s1 s2 bp wc wr Hneq Heq.
+  apply Hneq.
+  now inversion Heq.
+Qed.
+
+Theorem dispatch_key_distinguishes_distinct_binding_powers :
+  forall p s bp1 bp2 wc wr,
+    bp1 <> bp2 ->
+    {| dk_pos := p;
+       dk_source := s;
+       dk_bp := bp1;
+       dk_wrap_cat := wc;
+       dk_wrap_rule := wr |} <>
+    {| dk_pos := p;
+       dk_source := s;
+       dk_bp := bp2;
+       dk_wrap_cat := wc;
+       dk_wrap_rule := wr |}.
+Proof.
+  intros p s bp1 bp2 wc wr Hneq Heq.
+  apply Hneq.
+  now inversion Heq.
+Qed.
+
+Theorem dispatch_key_distinguishes_distinct_wrap_categories :
+  forall p s bp wc1 wc2 wr,
+    wc1 <> wc2 ->
+    {| dk_pos := p;
+       dk_source := s;
+       dk_bp := bp;
+       dk_wrap_cat := wc1;
+       dk_wrap_rule := wr |} <>
+    {| dk_pos := p;
+       dk_source := s;
+       dk_bp := bp;
+       dk_wrap_cat := wc2;
+       dk_wrap_rule := wr |}.
+Proof.
+  intros p s bp wc1 wc2 wr Hneq Heq.
+  apply Hneq.
+  now inversion Heq.
+Qed.
+
+Theorem dispatch_key_distinguishes_distinct_wrap_rules :
+  forall p s bp wc wr1 wr2,
+    wr1 <> wr2 ->
+    {| dk_pos := p;
+       dk_source := s;
+       dk_bp := bp;
+       dk_wrap_cat := wc;
+       dk_wrap_rule := wr1 |} <>
+    {| dk_pos := p;
+       dk_source := s;
+       dk_bp := bp;
+       dk_wrap_cat := wc;
+       dk_wrap_rule := wr2 |}.
+Proof.
+  intros p s bp wc wr1 wr2 Hneq Heq.
+  apply Hneq.
+  now inversion Heq.
+Qed.
+
 Theorem dispatch_edge_equiv_preserves_wrap :
   forall d1 d2,
     edge_kind_equivalent (edge_kind_of_dispatch d1) (edge_kind_of_dispatch d2) ->
@@ -232,6 +338,88 @@ Proof.
   unfold edge_kind_equivalent in Heq.
   inversion Heq.
   split; reflexivity.
+Qed.
+
+Record worker_snapshot_key : Type := {
+  wsk_inner_state : nat;
+  wsk_last_action_output_cat : option nat;
+  wsk_pending_packing_weight : nat;
+  wsk_worker_weight : nat;
+  wsk_pre_dispatch_weight : nat
+}.
+
+Definition worker_snapshot_shareable
+    (left right : worker_snapshot_key) : Prop :=
+  left = right.
+
+Theorem worker_snapshot_share_preserves_observable_fields :
+  forall left right,
+    worker_snapshot_shareable left right ->
+    wsk_inner_state left = wsk_inner_state right /\
+    wsk_last_action_output_cat left = wsk_last_action_output_cat right /\
+    wsk_pending_packing_weight left = wsk_pending_packing_weight right /\
+    wsk_worker_weight left = wsk_worker_weight right /\
+    wsk_pre_dispatch_weight left = wsk_pre_dispatch_weight right.
+Proof.
+  intros left right Hshare.
+  unfold worker_snapshot_shareable in Hshare.
+  subst right.
+  repeat split; reflexivity.
+Qed.
+
+Theorem worker_snapshot_distinct_inner_state_prevents_sharing :
+  forall left right,
+    wsk_inner_state left <> wsk_inner_state right ->
+    ~ worker_snapshot_shareable left right.
+Proof.
+  intros left right Hdiff Hshare.
+  apply Hdiff.
+  apply worker_snapshot_share_preserves_observable_fields in Hshare.
+  tauto.
+Qed.
+
+Theorem worker_snapshot_distinct_output_category_prevents_sharing :
+  forall left right,
+    wsk_last_action_output_cat left <> wsk_last_action_output_cat right ->
+    ~ worker_snapshot_shareable left right.
+Proof.
+  intros left right Hdiff Hshare.
+  apply Hdiff.
+  apply worker_snapshot_share_preserves_observable_fields in Hshare.
+  tauto.
+Qed.
+
+Theorem worker_snapshot_distinct_pending_weight_prevents_sharing :
+  forall left right,
+    wsk_pending_packing_weight left <> wsk_pending_packing_weight right ->
+    ~ worker_snapshot_shareable left right.
+Proof.
+  intros left right Hdiff Hshare.
+  apply Hdiff.
+  apply worker_snapshot_share_preserves_observable_fields in Hshare.
+  tauto.
+Qed.
+
+Theorem worker_snapshot_distinct_worker_weight_prevents_sharing :
+  forall left right,
+    wsk_worker_weight left <> wsk_worker_weight right ->
+    ~ worker_snapshot_shareable left right.
+Proof.
+  intros left right Hdiff Hshare.
+  apply Hdiff.
+  apply worker_snapshot_share_preserves_observable_fields in Hshare.
+  tauto.
+Qed.
+
+Theorem worker_snapshot_distinct_pre_dispatch_weight_prevents_sharing :
+  forall left right,
+    wsk_pre_dispatch_weight left <> wsk_pre_dispatch_weight right ->
+    ~ worker_snapshot_shareable left right.
+Proof.
+  intros left right Hdiff Hshare.
+  apply Hdiff.
+  apply worker_snapshot_share_preserves_observable_fields in Hshare.
+  tauto.
 Qed.
 
 Record config_key : Type := {

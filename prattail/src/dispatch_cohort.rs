@@ -2315,6 +2315,46 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_cache_key_separates_all_obligation_axes() {
+        let base = DispatchKey::new(3, 7, 0, 2, 16);
+        let variants = [
+            DispatchKey::new(4, 7, 0, 2, 16),
+            DispatchKey::new(3, 8, 0, 2, 16),
+            DispatchKey::new(3, 7, 1, 2, 16),
+            DispatchKey::new(3, 7, 0, 3, 16),
+            DispatchKey::new(3, 7, 0, 2, 17),
+        ];
+
+        let mut cache = DispatchCohortCache::<TropicalWeight>::new();
+        assert!(matches!(
+            cache.register(base.clone(), TropicalWeight(0.0)),
+            RegisterOutcome::WorkerInserted
+        ));
+        for key in &variants {
+            assert_ne!(&base, key);
+            assert!(matches!(
+                cache.register(key.clone(), TropicalWeight(0.0)),
+                RegisterOutcome::WorkerInserted
+            ));
+        }
+
+        assert_eq!(cache.entries.len(), 1 + variants.len());
+        assert!(cache.entries.contains_key(&base));
+        assert!(variants.iter().all(|key| cache.entries.contains_key(key)));
+    }
+
+    #[test]
+    fn dispatch_equiv_key_only_quotients_position_and_wrap_axes() {
+        let base = DispatchKey::new(3, 7, 0, 2, 16);
+
+        assert_eq!(base.equiv(), DispatchKey::new(4, 7, 0, 2, 16).equiv());
+        assert_eq!(base.equiv(), DispatchKey::new(3, 7, 0, 3, 16).equiv());
+        assert_eq!(base.equiv(), DispatchKey::new(3, 7, 0, 2, 17).equiv());
+        assert_ne!(base.equiv(), DispatchKey::new(3, 8, 0, 2, 16).equiv());
+        assert_ne!(base.equiv(), DispatchKey::new(3, 7, 1, 2, 16).equiv());
+    }
+
+    #[test]
     fn resolved_drain_preserves_shell_incompatible_pending_member() {
         let key = DispatchKey::new(3, 7, 0, 2, 16);
         let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
@@ -2473,6 +2513,59 @@ mod tests {
                 position: key.pos,
             }),
         );
+    }
+
+    #[test]
+    fn snapshot_quotient_separates_each_observable_worker_field() {
+        let base = worker_snapshot();
+        let mut different_inner_state = base.clone();
+        different_inner_state.worker_inner_state = WpdaState::PrefixDispatch { pos: 5, cur_bp: 1 };
+        let mut different_output_cat = base.clone();
+        different_output_cat.worker_last_action_output_cat = Some(9);
+        let mut different_pending_weight = base.clone();
+        different_pending_weight.worker_pending_packing_weight =
+            LexicographicWeight::from_cost(1.0, 0, 0);
+        let mut different_worker_weight = base.clone();
+        different_worker_weight.worker_weight = LexicographicWeight::from_cost(2.0, 0, 0);
+        let mut different_pre_weight = base.clone();
+        different_pre_weight.worker_pre_dispatch_weight = LexicographicWeight::from_cost(3.0, 0, 0);
+
+        let variants = [
+            different_inner_state,
+            different_output_cat,
+            different_pending_weight,
+            different_worker_weight,
+            different_pre_weight,
+        ];
+
+        for variant in &variants {
+            assert!(
+                !worker_snapshot_observationally_eq(&base, variant),
+                "snapshot quotient must separate every field consumed by cohort revive",
+            );
+        }
+
+        let key = DispatchKey::new(3, 7, 0, 2, 16);
+        let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
+        assert!(matches!(
+            cache.register(key.clone(), lex_one()),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert_eq!(cache.resolve(key.clone(), 42, 4, 3, base), ResolveOutcome::FirstResolve,);
+        for variant in variants {
+            assert_eq!(
+                cache.resolve(key.clone(), 42, 4, 3, variant),
+                ResolveOutcome::SnapshotAppended,
+            );
+        }
+
+        match cache.register(key, lex_one()) {
+            RegisterOutcome::ResolvedHit { bodies, .. } => {
+                assert_eq!(bodies.len(), 1);
+                assert_eq!(bodies[0].worker_snapshots.len(), 6);
+            },
+            _ => panic!("expected ResolvedHit"),
+        }
     }
 
     #[test]
