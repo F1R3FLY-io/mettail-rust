@@ -760,6 +760,36 @@ fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
 }
 
 #[test]
+fn calculator_wpda_prefix_matches_eager_prefix_for_unary_minus_factorial() {
+    use calc::Int;
+
+    mettail_runtime::clear_var_cache();
+    let (eager_terms, eager_weights) =
+        Int::parse_via_wpda_all_with_weights("-3!").expect("-3! should parse through WPDA");
+    assert!(
+        eager_terms.len() >= 2,
+        "expected at least two ambiguity alternatives for -3!, got {:?}",
+        eager_terms
+    );
+    assert_eq!(eager_terms.len(), eager_weights.len());
+
+    let (zero_terms, zero_weights) =
+        Int::parse_via_wpda_prefix_with_weights("-3!", 0).expect("zero-demand prefix parses");
+    assert!(zero_terms.is_empty());
+    assert!(zero_weights.is_empty());
+
+    let (prefix_one, prefix_one_weights) =
+        Int::parse_via_wpda_prefix_with_weights("-3!", 1).expect("prefix(1) parses");
+    assert_eq!(prefix_one, eager_terms.iter().take(1).cloned().collect::<Vec<_>>());
+    assert_eq!(prefix_one_weights, eager_weights.iter().take(1).cloned().collect::<Vec<_>>());
+
+    let (prefix_two, prefix_two_weights) =
+        Int::parse_via_wpda_prefix_with_weights("-3!", 2).expect("prefix(2) parses");
+    assert_eq!(prefix_two, eager_terms.iter().take(2).cloned().collect::<Vec<_>>());
+    assert_eq!(prefix_two_weights, eager_weights.iter().take(2).cloned().collect::<Vec<_>>());
+}
+
+#[test]
 fn test_factorial_ambiguous_language_parse_preserves_both_alternatives() {
     use calc::{CalculatorTermInner, Int};
 
@@ -1316,6 +1346,30 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
             );
         },
         other => panic!("expected AmbiguityBudget, got {other:?}"),
+    }
+
+    let mut prefix_pos = 0usize;
+    let prefix_err = calc::parse_Float_via_wpda_prefix_with_source_and_bounding_mode(
+        &source,
+        &mut prefix_pos,
+        0,
+        1,
+        CursorBoundingMode::AmbiguityBudget(1),
+    )
+    .expect_err("prefix parser must report explicit AmbiguityBudget instead of pruning");
+    match prefix_err {
+        calc::WpdaParseError::AmbiguityBudget { budget, actual, position } => {
+            assert_eq!(budget, 1);
+            assert!(
+                actual > budget,
+                "prefix overflow must report the observed frontier, got budget={budget}, actual={actual}"
+            );
+            assert!(
+                position <= source.eof_node(),
+                "prefix overflow position {position} should be within the source DAG"
+            );
+        },
+        other => panic!("expected prefix AmbiguityBudget, got {other:?}"),
     }
 }
 

@@ -1969,6 +1969,30 @@ Proof.
     apply app_nil_r.
 Qed.
 
+Definition parser_prefix_realization
+    (demand : nat)
+    (roots : list nat) : list nat :=
+  lazy_prefix_realized_terms demand roots.
+
+Definition eager_parser_realization (roots : list nat) : list nat :=
+  realized_terms_for_roots roots.
+
+Theorem parser_prefix_matches_eager_firstn :
+  forall demand roots,
+    parser_prefix_realization demand roots =
+    firstn demand (eager_parser_realization roots).
+Proof.
+  intros demand roots.
+  unfold parser_prefix_realization, eager_parser_realization.
+  apply lazy_prefix_realization_matches_eager_prefix.
+Qed.
+
+Definition parser_prefix_realization_weights
+    (demand : nat)
+    (roots : list nat) : list nat :=
+  firstn (length (parser_prefix_realization demand roots))
+    (realized_weights_for_roots roots).
+
 Inductive weighted_facade_result : Type :=
   | WeightedFacadeAccepted (terms weights : list nat)
   | WeightedFacadeBudgetExceeded (budget actual : nat).
@@ -1992,6 +2016,21 @@ Proof.
     rewrite !length_app.
     rewrite !repeat_length.
     lia.
+Qed.
+
+Theorem parser_prefix_terms_weights_parallel :
+  forall demand roots,
+    length (parser_prefix_realization demand roots) =
+    length (parser_prefix_realization_weights demand roots).
+Proof.
+  intros demand roots.
+  unfold parser_prefix_realization_weights.
+  rewrite length_firstn.
+  rewrite parser_prefix_matches_eager_firstn.
+  unfold eager_parser_realization.
+  rewrite length_firstn.
+  rewrite <- realized_terms_weights_for_roots_parallel.
+  lia.
 Qed.
 
 Theorem weighted_facade_accepted_terms_weights_parallel :

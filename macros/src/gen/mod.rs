@@ -376,6 +376,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let parse_via_wpda_all_fn = format_ident!("parse_{}_via_wpda_all", cat);
             let parse_via_wpda_all_with_source_fn =
                 format_ident!("parse_{}_via_wpda_all_with_source", cat);
+            let parse_via_wpda_prefix_fn = format_ident!("parse_{}_via_wpda_prefix", cat);
+            let parse_via_wpda_prefix_with_source_fn =
+                format_ident!("parse_{}_via_wpda_prefix_with_source", cat);
             let parse_via_wpda_method = quote! {
                 /// WPDS-driven parser entry point.
                 ///
@@ -744,6 +747,214 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             })
                         }
                     }
+                }
+
+                /// Demand-bounded WPDS parser entry.
+                ///
+                /// Returns at most `max_alternatives` accepted terms and
+                /// their WPDA evidence weights without routing through the
+                /// eager all-results facade. A zero demand still validates
+                /// the parse but returns empty term/weight vectors on
+                /// success.
+                pub fn parse_via_wpda_prefix_with_weights(
+                    input: &str,
+                    max_alternatives: usize,
+                ) -> Result<
+                    (
+                        Vec<#cat>,
+                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                    ),
+                    ParseError,
+                > {
+                    mettail_prattail::hang_dump::install_hang_dump_handler();
+                    let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
+                        expected: Cow::Owned(msg),
+                        range: Range::from_byte_offsets(input, input.len(), input.len()),
+                        hint: None,
+                    })?;
+                    if dag.has_ambiguity() {
+                        let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
+                        use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
+                        let input_end_range =
+                            Range::from_byte_offsets(input, input.len(), input.len());
+                        let dag_range = |position: usize| -> Range {
+                            if let Some(node) = source.dag.nodes.get(position) {
+                                let end_byte = node
+                                    .edges
+                                    .first()
+                                    .map(|edge| edge.end_byte)
+                                    .unwrap_or(node.byte_start);
+                                return Range::from_byte_offsets(input, node.byte_start, end_byte);
+                            }
+                            input_end_range
+                        };
+                        let dag_found = |position: usize| -> String {
+                            source
+                                .peek_kind(position)
+                                .map(|kind| format!("{:?}", kind))
+                                .unwrap_or_else(|| "end of input".to_string())
+                        };
+                        let mut pos = 0usize;
+                        return match #parse_via_wpda_prefix_with_source_fn(
+                            &source,
+                            &mut pos,
+                            0,
+                            max_alternatives,
+                        ) {
+                            Ok((terms, weights)) => {
+                                let eof_node = source.eof_node();
+                                if pos < eof_node {
+                                    return Err(ParseError::TrailingTokens {
+                                        found: dag_found(pos),
+                                        range: dag_range(pos),
+                                        hint: Some(Cow::Borrowed(
+                                            "the WPDS parser finished but input remains; check for missing operators or extra tokens",
+                                        )),
+                                    });
+                                }
+                                if max_alternatives > 0 && terms.is_empty() {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                                        range: input_end_range,
+                                        hint: None,
+                                    });
+                                }
+                                Ok((terms, weights))
+                            }
+                            Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                                expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                                range: input_end_range,
+                                hint: None,
+                            }),
+                            Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Owned(message),
+                                    found: dag_found(position),
+                                    range: dag_range(position),
+                                    hint: None,
+                                })
+                            }
+                            Err(WpdaParseError::Incomplete { position }) => {
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
+                                    found: dag_found(position),
+                                    range: dag_range(position),
+                                    hint: None,
+                                })
+                            }
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
+                                Err(ParseError::AmbiguityBudget {
+                                    budget, actual, range: dag_range(position),
+                                    hint: Some(Cow::Borrowed(
+                                        "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                    )),
+                                })
+                            }
+                        };
+                    }
+                    let tokens = lex(input)?;
+                    let kinds: Vec<mettail_prattail::automata::TokenKind> =
+                        tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
+                    let texts: Vec<&str> = tokens
+                        .iter()
+                        .map(|(t, r)| token_text(t, input, *r))
+                        .collect();
+                    let mut pos = 0usize;
+                    match #parse_via_wpda_prefix_fn(
+                        &kinds,
+                        &texts,
+                        &mut pos,
+                        0,
+                        max_alternatives,
+                    ) {
+                        Ok((terms, weights)) => {
+                            if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                                return Err(ParseError::TrailingTokens {
+                                    found: format_token_friendly(&tokens[pos].0),
+                                    range: tokens[pos].1,
+                                    hint: Some(Cow::Borrowed(
+                                        "the WPDS parser finished but input remains; check for missing operators or extra tokens",
+                                    )),
+                                });
+                            }
+                            if max_alternatives > 0 && terms.is_empty() {
+                                return Err(ParseError::UnexpectedEof {
+                                    expected: Cow::Borrowed(
+                                        "a complete parse — WPDS produced no result",
+                                    ),
+                                    range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                    hint: None,
+                                });
+                            }
+                            Ok((terms, weights))
+                        }
+                        Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                            expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                            range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                            hint: None,
+                        }),
+                        Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::UnexpectedToken {
+                                expected: Cow::Owned(message),
+                                found: tokens
+                                    .get(position)
+                                    .map(|(t, _)| format_token_friendly(t))
+                                    .unwrap_or_else(|| "end of input".to_string()),
+                                range,
+                                hint: None,
+                            })
+                        }
+                        Err(WpdaParseError::Incomplete { position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::UnexpectedToken {
+                                expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
+                                found: tokens
+                                    .get(position)
+                                    .map(|(t, _)| format_token_friendly(t))
+                                    .unwrap_or_else(|| "end of input".to_string()),
+                                range,
+                                hint: None,
+                            })
+                        }
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::AmbiguityBudget {
+                                budget, actual, range,
+                                hint: Some(Cow::Borrowed(
+                                    "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                )),
+                            })
+                        }
+                    }
+                }
+
+                /// Demand-bounded WPDS parser entry that returns only terms.
+                ///
+                /// Use `parse_via_wpda_prefix_with_weights` when downstream
+                /// evaluation needs WPDA parse/evidence weights for lazy
+                /// priority traversal.
+                pub fn parse_via_wpda_prefix(
+                    input: &str,
+                    max_alternatives: usize,
+                ) -> Result<Vec<#cat>, ParseError> {
+                    Self::parse_via_wpda_prefix_with_weights(input, max_alternatives)
+                        .map(|(terms, _weights)| terms)
                 }
 
                 /// M8 compatibility wrapper that returns only terms.

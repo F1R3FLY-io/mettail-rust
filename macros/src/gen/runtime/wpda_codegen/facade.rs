@@ -50,6 +50,11 @@ pub(crate) fn emit_parse_fns(
         let all_with_source_fn_name = format_ident!("parse_{}_via_wpda_all_with_source", cat_name);
         let all_with_source_bounded_fn_name =
             format_ident!("parse_{}_via_wpda_all_with_source_and_bounding_mode", cat_name);
+        let prefix_with_source_fn_name =
+            format_ident!("parse_{}_via_wpda_prefix_with_source", cat_name);
+        let prefix_with_source_bounded_fn_name =
+            format_ident!("parse_{}_via_wpda_prefix_with_source_and_bounding_mode", cat_name);
+        let prefix_fn_name = format_ident!("parse_{}_via_wpda_prefix", cat_name);
         let all_fn_name = format_ident!("parse_{}_via_wpda_all", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
         fns.push(quote! {
@@ -251,6 +256,284 @@ pub(crate) fn emit_parse_fns(
                     min_bp,
                     mettail_prattail::wpda_runtime::CursorBoundingMode::Unbounded,
                 )
+            }
+
+            /// Source-generic bounded-prefix parser. Returns at most
+            /// `max_alternatives` distinct semantic alternatives in the
+            /// same weight-ordered surface shape as `parse_<Cat>_via_wpda_all`.
+            ///
+            /// This is a demand-bounded API: it asks each accepted SPPF
+            /// root only for the raw realization prefix needed to satisfy
+            /// the requested semantic prefix, growing the raw probe only
+            /// when duplicate semantic realizations consume that demand.
+            /// It does not call the eager all-results facade internally.
+            #[allow(non_snake_case)]
+            pub fn #prefix_with_source_fn_name(
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                pos: &mut usize,
+                min_bp: u8,
+                max_alternatives: usize,
+            ) -> Result<
+                (
+                    Vec<#cat_ident>,
+                    Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                ),
+                WpdaParseError,
+            > {
+                #prefix_with_source_bounded_fn_name(
+                    source,
+                    pos,
+                    min_bp,
+                    max_alternatives,
+                    mettail_prattail::wpda_runtime::CursorBoundingMode::Unbounded,
+                )
+            }
+
+            /// Source-generic bounded-prefix parser with explicit
+            /// cursor-frontier bounding. The cursor budget reports
+            /// structured `AmbiguityBudget` overflow without pruning; the
+            /// `max_alternatives` demand only limits how many semantic
+            /// alternatives are realized for this call.
+            #[allow(non_snake_case)]
+            pub fn #prefix_with_source_bounded_fn_name(
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                pos: &mut usize,
+                min_bp: u8,
+                max_alternatives: usize,
+                bounding_mode: mettail_prattail::wpda_runtime::CursorBoundingMode,
+            ) -> Result<
+                (
+                    Vec<#cat_ident>,
+                    Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                ),
+                WpdaParseError,
+            > {
+                use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                use mettail_prattail::wpda_walker::WpdaWalker;
+                use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                use std::collections::HashMap;
+                type DW = LexicographicWeight;
+                #[derive(Default)]
+                struct __MettailWpdaSemanticKeyHasher {
+                    bytes: Vec<u8>,
+                }
+                impl __MettailWpdaSemanticKeyHasher {
+                    fn into_key(self) -> Vec<u8> {
+                        self.bytes
+                    }
+                    fn push_raw(&mut self, tag: u8, payload: &[u8]) {
+                        self.bytes.push(tag);
+                        self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+                        self.bytes.extend_from_slice(payload);
+                    }
+                    fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
+                        self.bytes.push(tag);
+                        self.bytes.extend_from_slice(payload);
+                    }
+                }
+                impl std::hash::Hasher for __MettailWpdaSemanticKeyHasher {
+                    fn finish(&self) -> u64 {
+                        let mut h = 0xcbf29ce484222325u64;
+                        for b in &self.bytes {
+                            h ^= *b as u64;
+                            h = h.wrapping_mul(0x100000001b3);
+                        }
+                        h
+                    }
+                    fn write(&mut self, bytes: &[u8]) {
+                        self.push_raw(0, bytes);
+                    }
+                    fn write_u8(&mut self, i: u8) {
+                        self.push_fixed(1, &[i]);
+                    }
+                    fn write_u16(&mut self, i: u16) {
+                        self.push_fixed(2, &i.to_le_bytes());
+                    }
+                    fn write_u32(&mut self, i: u32) {
+                        self.push_fixed(3, &i.to_le_bytes());
+                    }
+                    fn write_u64(&mut self, i: u64) {
+                        self.push_fixed(4, &i.to_le_bytes());
+                    }
+                    fn write_u128(&mut self, i: u128) {
+                        self.push_fixed(5, &i.to_le_bytes());
+                    }
+                    fn write_usize(&mut self, i: usize) {
+                        self.push_fixed(6, &(i as u128).to_le_bytes());
+                    }
+                    fn write_i8(&mut self, i: i8) {
+                        self.push_fixed(7, &i.to_le_bytes());
+                    }
+                    fn write_i16(&mut self, i: i16) {
+                        self.push_fixed(8, &i.to_le_bytes());
+                    }
+                    fn write_i32(&mut self, i: i32) {
+                        self.push_fixed(9, &i.to_le_bytes());
+                    }
+                    fn write_i64(&mut self, i: i64) {
+                        self.push_fixed(10, &i.to_le_bytes());
+                    }
+                    fn write_i128(&mut self, i: i128) {
+                        self.push_fixed(11, &i.to_le_bytes());
+                    }
+                    fn write_isize(&mut self, i: isize) {
+                        self.push_fixed(12, &(i as i128).to_le_bytes());
+                    }
+                }
+                fn __mettail_wpda_semantic_key(term: &#cat_ident) -> Vec<u8> {
+                    let mut hasher = __MettailWpdaSemanticKeyHasher::default();
+                    term.semantic_hash(&mut hasher);
+                    hasher.into_key()
+                }
+                fn __mettail_wpda_collect_prefix(
+                    walker: &WpdaWalker<DW, #engine_ident>,
+                    roots: &[mettail_prattail::sppf::SppfId],
+                    max_alternatives: usize,
+                    position: usize,
+                ) -> Result<
+                    (
+                        Vec<#cat_ident>,
+                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                    ),
+                    WpdaParseError,
+                > {
+                    if max_alternatives == 0 {
+                        return Ok((Vec::new(), Vec::new()));
+                    }
+                    const RAW_PREFIX_CAP: usize = 4096;
+                    let mut raw_probe_limit = max_alternatives.saturating_add(1).max(1);
+                    loop {
+                        let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                        let mut typed_weights:
+                            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
+                            Vec::new();
+                        let mut seen_terms: HashMap<Vec<u8>, usize> = HashMap::new();
+                        let mut exhausted_all_roots = true;
+                        for &root in roots {
+                            let realized = walker.realize_root_to_terms_with_weights(
+                                root,
+                                Some(raw_probe_limit),
+                            );
+                            if realized.len() >= raw_probe_limit {
+                                exhausted_all_roots = false;
+                            }
+                            for (term, weight) in realized {
+                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                    .map_err(|_| WpdaParseError::EmptyResult)?;
+                                let typed = std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone());
+                                let semantic_key = __mettail_wpda_semantic_key(&typed);
+                                if let Some(existing_idx) =
+                                    seen_terms.get(&semantic_key).copied()
+                                {
+                                    if weight < typed_weights[existing_idx] {
+                                        typed_terms[existing_idx] = typed;
+                                        typed_weights[existing_idx] = weight;
+                                    }
+                                    continue;
+                                }
+                                seen_terms.insert(semantic_key, typed_terms.len());
+                                typed_terms.push(typed);
+                                typed_weights.push(weight);
+                            }
+                        }
+                        let mut paired: Vec<_> =
+                            typed_terms.into_iter().zip(typed_weights.into_iter()).collect();
+                        paired.sort_by(|(_, a), (_, b)| a.cmp(b));
+                        if paired.len() > max_alternatives {
+                            paired.truncate(max_alternatives);
+                        }
+                        if paired.len() >= max_alternatives || exhausted_all_roots {
+                            if paired.is_empty() {
+                                return Err(WpdaParseError::EmptyResult);
+                            }
+                            let (typed_terms, typed_weights): (Vec<_>, Vec<_>) =
+                                paired.into_iter().unzip();
+                            return Ok((typed_terms, typed_weights));
+                        }
+                        if raw_probe_limit >= RAW_PREFIX_CAP {
+                            return Err(WpdaParseError::AmbiguityBudget {
+                                budget: RAW_PREFIX_CAP,
+                                actual: RAW_PREFIX_CAP + 1,
+                                position,
+                            });
+                        }
+                        raw_probe_limit =
+                            raw_probe_limit.saturating_mul(2).min(RAW_PREFIX_CAP);
+                    }
+                }
+                const MAX_STEPS: usize = 1_000_000;
+                let mut walker = WpdaWalker::<DW, _>::new_for_category(
+                    #engine_ident::default(),
+                    #cat_src_idx_u16,
+                    min_bp,
+                );
+                let mut recovery_config = mettail_prattail::recovery::RecoveryConfig::default();
+                recovery_config.max_recovery_depth = 0;
+                walker.set_recovery_config(recovery_config);
+                walker.set_bounding_mode(bounding_mode);
+                match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
+                    Ok(()) => match walker.resolve_at_end_of_input(source) {
+                        WpdaResolveResult::Accepted { roots, .. } => {
+                            let completion_position = walker.position();
+                            *pos = completion_position;
+                            __mettail_wpda_collect_prefix(
+                                &walker,
+                                &roots,
+                                max_alternatives,
+                                completion_position,
+                            )
+                        }
+                        WpdaResolveResult::AcceptedWithTrailing {
+                            roots, position, ..
+                        } => {
+                            *pos = position;
+                            __mettail_wpda_collect_prefix(
+                                &walker,
+                                &roots,
+                                max_alternatives,
+                                position,
+                            )
+                        }
+                        WpdaResolveResult::ParseError { message, position } => {
+                            Err(WpdaParseError::ParseFailed {
+                                message,
+                                position,
+                                attempts: Vec::new(),
+                            })
+                        }
+                        WpdaResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdaParseError::Incomplete { position })
+                        }
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position })
+                        }
+                    },
+                    Err(exceeded) => Err(WpdaParseError::Incomplete {
+                        position: exceeded.position,
+                    }),
+                }
+            }
+
+            /// Slice-source convenience wrapper for bounded-prefix parsing.
+            #[allow(non_snake_case)]
+            pub fn #prefix_fn_name(
+                kinds: &[mettail_prattail::automata::TokenKind],
+                texts: &[&str],
+                pos: &mut usize,
+                min_bp: u8,
+                max_alternatives: usize,
+            ) -> Result<
+                (
+                    Vec<#cat_ident>,
+                    Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                ),
+                WpdaParseError,
+            > {
+                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
+                    kinds, texts,
+                );
+                #prefix_with_source_fn_name(&src, pos, min_bp, max_alternatives)
             }
 
             /// Source-generic all-results parser with explicit cursor-frontier
