@@ -8,21 +8,28 @@
 
 ## Governing invariant — extraction completeness (NO missed results)
 
-**Any** enumeration/optimization technique (best-first, k-best, cube-pruning, beam, …) is
-admissible **iff it provably misses no result.** This is the single gate; the name is
-irrelevant. Concretely:
+The single gate is **"does it miss a result?"** — the technique's name is irrelevant.
+**Admissible search heuristics are DESIRABLE**, not suspect; only *inadmissible / lossy*
+heuristics are forbidden. Concretely:
+- **Admissible heuristics (A* / KA*) are encouraged.** Guiding the best-first search with
+  an *admissible* heuristic — a lower bound on the remaining weight-to-complete (e.g. the
+  bottom-up 1-best "inside" weight, computed in one pass) — provably preserves true
+  non-decreasing-weight order AND completeness while exploring far less. This is exactly
+  "follow the most-likely paths by the metrics," done correctly. **Use such heuristics.**
+- **Forbidden: inadmissible / lossy heuristics** that can overestimate and skip a genuine
+  result — e.g. a *cube-pruning beam* (bounded frontier) or a top-k *cutoff* that discards
+  the rest. These introduce missing-result bugs and are out.
 - **Demand only DEFERS** computation — the stream is *resumable to exhaustion*; pulling
   further always yields the next result and can surface every alternative. A "k" is just
-  how far the caller has pulled, never a cutoff that discards the rest.
+  how far the caller has pulled, never a cutoff.
 - **The ONLY removal** of an alternative is by **evidence** (rewrite-to-`⊥`, guard/type
   refutation, exact-key observational-equality dedup) — never by weight, beam, or heuristic.
 - **Weight ORDERS** the stream; it never PRUNES.
-- **Default, provably-complete mechanism:** an *unbounded* best-first priority queue
-  (exhaustive-on-demand). A faster technique may replace it **only** with a no-miss proof
-  *plus* a differential check that its output set equals the exhaustive enumeration's.
-
-(The lossy *beam* form of cube-pruning is therefore out — it misses results. An exhaustive
-best-first enumeration, or any k-best/cube variant proven to miss nothing, is in.)
+- **Default mechanism:** **A* / KA* best-first enumeration** over the hypergraph with the
+  1-best inside weight as the admissible heuristic (provably exhaustive-on-demand,
+  optimal-order). Any *different* technique may replace it only with a no-miss proof *plus*
+  a differential check that its output set equals the exhaustive enumeration's. (An
+  admissible-heuristic A* needs no such extra proof beyond admissibility itself.)
 
 ## 0. Executive summary
 
