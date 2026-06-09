@@ -63,19 +63,21 @@ updates it. It exists so we never (a) ship a Rust change without a non-vacuous p
 
 ## E. Engine (Dovetail) obligations — `formal/rocq/dovetail/` (new) + reuse
 
-**dovetail RUST core SHIPPED + test-verified (31/31), committed** — Increments 1 (rigail
-extraction), 2 (key), 3 (e-graph), 4 (WTA view), 5 (exact no-miss extractor), 7 (rules-as-data
-saturation), 8 (tuplespace seam). FV status below; Increment 6 + the new proofs are the
-remaining M-E.0 obligations.
+**dovetail RUST core SHIPPED + test-verified (39/39), committed** — Increments 1 (rigail
+extraction), 2 (key), 3 (e-graph), 4 (WTA view), 5 (exact no-miss extractor), 6 (Newton-SCC
+cyclic closure), 7 (rules-as-data saturation), 8 (tuplespace seam). **Engine FV now COMPLETE
+(zero-admission): the extractor MISSES NOTHING across the candidate SET, the ORDER, the
+RECURSION, and the cyclic WEIGHT.** Remaining engine FV obligations are M-RHO.* (op-correspondence
+etc.), below.
 
 | Obligation | Source | Status |
 |------------|--------|--------|
-| Exact runtime e-graph dedup no-loss (Inc 3) | **COVERED** by `EGraphBudgetDedup.v` (the dovetail e-graph is a faithful port of the same algorithm) + invariant 1 | **proven** (reuse; add a traceability note) |
+| Exact runtime e-graph dedup no-loss (Inc 3) | **COVERED** by `EGraphBudgetDedup.v` (the dovetail e-graph is a faithful port of the same algorithm) + invariant 1 | **proven** (reuse; traceability: `dovetail/src/key.rs` `ContentKey` exact byte-key + `dovetail/src/egraph.rs` add/merge/rebuild/budget ↔ `formal/rocq/egraph/theories/EGraphBudgetDedup.v` no-overshoot/overflow/dedup-NoDup) |
 | WTA no-miss extraction — SELECTION layer (Inc 5) | `NBestExtraction.v` (rocq-dovetail, zero-admission, committed `98a2d0d`) | **proven**: only-`0̄`-removal, no-miss (`select_complete`), equal-weight-both-survive, resumability (`select_prefix_monotone`), exhaustive-on-demand |
 | WTA extraction — best-first ORDERING (Inc 5) | `NBestExtraction.v` (`select_ordered_sorted`/`_perm`/`_complete`, zero-admission, committed `2ff227b9`) | **proven**: output sorted best-first; a permutation of the kept candidates (ordering reorders, never drops); every non-`0̄` alternative present |
-| WTA extraction — hypergraph-recursion COMPLETENESS (Inc 5) | candidate-set = ALL derivations of a class | **regression-only** (9 Rust tests T1–T9: ambiguous/cartesian-no-miss, 0̄-excluded, cycle-safety); zero-admission Rocq PENDING (research-grade) |
-| Cyclic inside-weight closure (Inc 6) | `InsideWeightSccClosure.v` (SCC→PackingFactored lowering) | **regression-only** (3 wta cyclic tests: self-cycle, 2-node SCC, acyclic-equality); zero-admission Rocq PENDING |
-| Cyclic e-class weight closure (Inc 6) | reuse `rigail::solve_scc_weights_newton` (Newton-SCC) | TODO — extractor currently CUTS cycles (sound but incomplete; `had_cycle_cut()` surfaces it) |
+| WTA extraction — hypergraph-recursion COMPLETENESS (Inc 5) | `EnumerationCompleteness.v` (rocq-dovetail, zero-admission, committed `4d482514`) | **proven**: `class_enum_complete` (EVERY hyperedge + EVERY valid rank-vector enumerated — NO derivation dropped), `enum_vectors_complete`/`_sound`, `class_enum_sound`; the per-edge cartesian product unioned over edges = Huang–Chiang Alg.3 candidate set. 9 Rust tests T1–T9 are the operational cross-check |
+| Cyclic inside-weight closure (Inc 6) | `InsideWeightSccClosure.v` (rocq-dovetail, zero-admission) | **proven**: `lowering_factor_faithful`/`lowered_eq_recurrence`/`lowering_preserves_fixpoints` (the SCC→PackingFactored re-indexing is faithful + fixpoint-preserving), `star_closure_is_lfp` (scalar/self-loop closure = exact LEAST fixpoint = ⊕-aggregate over all cycle-unfolded derivations), `trivial_scc_constant` (trivial-SCC `continue` sound), `bool_cka` (non-vacuity). n-D multi-call Newton CONVERGENCE cited (Esparza–Kiefer–Luttenberger 2007, implemented in rigail). Commutativity precondition = the inside-weight cost semirings (Tropical/Viterbi/prob). 3 wta cyclic tests cross-check |
+| Cyclic e-class k≥2 enumeration closure (Inc 6) | extractor `on_stack` cycle guard; `had_cycle_cut()` | **bounded-by-design** (NOT a silent miss): exact cyclic INSIDE weight via Newton (1-best/admissible-heuristic exact, proven above); k≥2 lazy enumeration over cyclic SCCs is CUT and SURFACED by `had_cycle_cut()`. Full k≥2 cyclic unfolding = research-grade (pgmcp `fv-cyclic-eclass-k2-enumeration-closure`) |
 | spec→Rholang-VM operational correspondence (up-to-weak-bisim) | new, schematic-over-codegen; reuse `CATranslation`/`Bisimulation`/`CASimulationBicat` | TODO (M-RHO.1) |
 | OslfResourceLogic conformance (4 laws) | reuse `GSLTOSLFCapstone.v` + 2nd instance `CAUntypedLambda.v` | TODO (M-RHO.0) |
 | Ambiguity-set preservation | new (least mature); differential non-confluent parity + `WeakBarbedEquiv` backstop | TODO (M-RHO.1/.3) |

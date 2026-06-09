@@ -14,3 +14,4 @@
 
 theories/NBestExtraction.v
 theories/EnumerationCompleteness.v
+theories/InsideWeightSccClosure.v

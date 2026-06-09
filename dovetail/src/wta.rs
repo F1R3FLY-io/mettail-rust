@@ -123,11 +123,18 @@ where
 /// Multiplying by star here would double-close (a bug, caught by the 2-node SCC
 /// test).
 ///
-/// FV obligation (future `formal/rocq/dovetail/theories/InsideWeightSccClosure.v`):
+/// FV (PROVEN, zero-admission — `formal/rocq/dovetail/theories/InsideWeightSccClosure.v`):
 /// the SCC→`PackingFactored` lowering is a syntactic re-indexing of the e-graph
 /// inside recurrence (in-SCC unknowns by SCC-local index; out-of-SCC terms as
-/// solved constants); given that equality, Esparza–Kiefer–Luttenberger Newton
-/// correctness yields the exact least-fixpoint aggregate.
+/// solved constants) — `lowering_factor_faithful` + `lowered_eq_recurrence` +
+/// `lowering_preserves_fixpoints` prove that equality and that it preserves
+/// fixpoints; `star_closure_is_lfp` proves the scalar/self-loop closure is the
+/// exact LEAST fixpoint (= the ⊕-aggregate over all cycle-unfolded derivations,
+/// missing none); `trivial_scc_constant` proves the trivial-SCC `continue` above
+/// is sound. Given that lowering equality, Esparza–Kiefer–Luttenberger Newton
+/// correctness (rigail) yields the exact least-fixpoint aggregate for the n-D
+/// multi-call case. Commutativity of `⊗` (true of the Tropical/Viterbi/prob
+/// inside-weight cost semirings) is the precondition for the out-of-SCC factoring.
 pub fn compute_inside_closed<L, W, F>(egraph: &EGraph<L>, weigh: &F) -> HashMap<EClassId, W>
 where
     L: Clone + Eq + std::hash::Hash,
