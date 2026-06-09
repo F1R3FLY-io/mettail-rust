@@ -12,3 +12,4 @@
 theories/BridgeInertness.v
 theories/MettaGsltPresentation.v
 theories/MettaOslfLawsConformance.v
+theories/RhoLoweringTotalOrRejects.v

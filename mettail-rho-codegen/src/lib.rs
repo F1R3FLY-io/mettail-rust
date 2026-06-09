@@ -32,3 +32,96 @@
 //! nothing" at the codegen layer).
 
 #![forbid(unsafe_code)]
+
+pub mod lower;
+pub use lower::{lower_language_def, RhoLowering};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_ast::language::LanguageDef;
+    use rholang::rust::interpreter::compiler::compiler::Compiler;
+
+    // The calculator's scalar-operator fragment, by its real rule names. Body-less
+    // (the lowering keys on the concrete-syntax operator + operand types, not the
+    // `![…]` eval body), so this parses by `syn::parse_str` without validation.
+    // First block = Rholang-native scalar ops (lower to contracts); last four =
+    // out-of-subset (`^`/`bitand` have no Rholang op; `!` is postfix; `AddBigInt`
+    // has non-native BigInt operands) and MUST be rejected, never silently dropped.
+    const CALC_SCALAR_FRAGMENT: &str = r#"
+        name: CalcScalarFrag,
+        types { Proc }
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ;
+            SubInt . a:Int, b:Int |- a "-" b : Int ;
+            MulInt . a:Int, b:Int |- a "*" b : Int ;
+            DivInt . a:Int, b:Int |- a "/" b : Int ;
+            ModInt . a:Int, b:Int |- a "%" b : Int ;
+            Neg . a:Int |- "-" a : Int ;
+            EqInt . a:Int, b:Int |- a "==" b : Bool ;
+            NeInt . a:Int, b:Int |- a "!=" b : Bool ;
+            LtInt . a:Int, b:Int |- a "<" b : Bool ;
+            And . a:Bool, b:Bool |- a "and" b : Bool ;
+            Not . a:Bool |- "not" a : Bool ;
+            PowInt . a:Int, b:Int |- a "^" b : Int ;
+            BitAndInt . a:Int, b:Int |- a "bitand" b : Int ;
+            Fact . a:Int |- a "!" : Int ;
+            AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ;
+        }
+    "#;
+
+    fn parse_fragment() -> LanguageDef {
+        syn::parse_str::<LanguageDef>(CALC_SCALAR_FRAGMENT)
+            .expect("calculator scalar fragment must parse as a LanguageDef")
+    }
+
+    #[test]
+    fn lowers_supported_scalar_ops_and_rejects_the_rest() {
+        let def = parse_fragment();
+        let out = lower_language_def(&def);
+        assert_eq!(
+            out.lowered,
+            vec![
+                "AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg", "EqInt", "NeInt",
+                "LtInt", "And", "Not",
+            ],
+            "Rholang-native scalar ops must lower to contracts"
+        );
+        assert_eq!(
+            out.rejected,
+            vec!["PowInt", "BitAndInt", "Fact", "AddBigInt"],
+            "out-of-subset rules must be rejected (surfaced), never silently dropped"
+        );
+    }
+
+    #[test]
+    fn lowering_is_total_and_disjoint() {
+        // Miss nothing: every term rule is accounted for in exactly one of
+        // lowered / rejected (the operational image of RhoLoweringTotalOrRejects.v).
+        let def = parse_fragment();
+        let out = lower_language_def(&def);
+        assert_eq!(
+            out.lowered.len() + out.rejected.len(),
+            def.terms.len(),
+            "every rule must be classified exactly once (total)"
+        );
+        for name in &out.lowered {
+            assert!(!out.rejected.contains(name), "lowered/rejected must be disjoint: {name}");
+        }
+    }
+
+    #[test]
+    fn emitted_rholang_parses_via_host_compiler() {
+        // The parse round-trip gate: the lowered Rholang is well-formed (normalizes
+        // to a Par) under f1r3node-rust's own compiler.
+        let def = parse_fragment();
+        let out = lower_language_def(&def);
+        let result = Compiler::source_to_adt(&out.source);
+        assert!(
+            result.is_ok(),
+            "lowered Rholang must parse via Compiler::source_to_adt; source:\n{}\nerr: {:?}",
+            out.source,
+            result.err()
+        );
+    }
+}
