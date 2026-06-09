@@ -24,7 +24,7 @@ FORMAL_CAPPED_RUN ?= 0
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-rho-bridge
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
@@ -83,7 +83,7 @@ prattail-wpda: require-capped prepare-tmp rocq-prattail-wpda tla-prattail-wpda t
 
 rocq-support: require-capped prepare-tmp rocq-trampoline rocq-advanced-automata
 rocq-support: rocq-ascent-optimizations rocq-codegen-optimizations
-rocq-support: rocq-dovetail rocq-egraph rocq-lattice rocq-logict rocq-mathematical-analyses
+rocq-support: rocq-dovetail rocq-rho-bridge rocq-egraph rocq-lattice rocq-logict rocq-mathematical-analyses
 rocq-support: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 rocq-support: rocq-sft rocq-unification
 
@@ -107,6 +107,9 @@ rocq-egraph: require-capped
 
 rocq-dovetail: require-capped
 	$(MAKE) -C rocq/dovetail
+
+rocq-rho-bridge: require-capped
+	$(MAKE) -C rocq/rho_bridge
 
 rocq-lattice: require-capped
 	$(MAKE) -C rocq/lattice
@@ -156,6 +159,7 @@ clean:
 	$(MAKE) -C rocq/ascent_optimizations clean
 	$(MAKE) -C rocq/codegen_optimizations clean
 	$(MAKE) -C rocq/egraph clean
+	$(MAKE) -C rocq/rho_bridge clean
 	$(MAKE) -C rocq/lattice clean
 	$(MAKE) -C rocq/logict clean
 	$(MAKE) -C rocq/mathematical_analyses clean

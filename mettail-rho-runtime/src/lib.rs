@@ -1,0 +1,32 @@
+//! # mettail-rho-runtime — bind the generated VM to f1r3node's Rho machine
+//!
+//! Binds the `mettail-rho-codegen` output to f1r3node-rust's process-wide
+//! `RhoRuntime` / `DebruijnInterpreter` (+ a `Vec<Definition>` of native system
+//! handlers), and hosts the **differential oracle** against the Ascent backend.
+//!
+//! **Threading/scheduling are OWNED BY f1r3node** — `eval_par` (`tokio::spawn`
+//! per `P|Q`) + RSpace disjoint-channel COMMs on the work-stealing runtime.
+//! MeTTaIL's eval job collapses to "emit `Par` (independent redexes = parallel
+//! members) + channel-keying for disjointness" — emit `Par`, never fork.
+//!
+//! The differential oracle compares the rho-backend normal forms against
+//! `Language::run_ascent(term)?.normal_forms()` (the existing baseline the
+//! `gen_calculator_op` suite uses), under **weight-erasure + eqrel-quotient**,
+//! keyed by `dovetail::key::ContentKey` (exact bytes — never a 64-bit hash),
+//! honoring "miss nothing": weights order, never prune; refute only at `0̄`.
+//!
+//! ## Dependency direction (STRICTLY one-way)
+//! Depends ONE-WAY on f1r3node-rust; never the reverse (proven in
+//! `formal/rocq/rho_bridge/theories/BridgeInertness.v`; enforced by the host
+//! guard test `mettail_rust_is_not_a_cargo_dependency`).
+//!
+//! ## Status — INERT (M-RHO.0.0)
+//! Empty + `engine`-gated; the DEFAULT build pulls nothing from f1r3node, so
+//! Ascent stays the sole oracle in the default build. Later substages add, under
+//! `engine`: the `RhoBackend { fn rho_source(&self) -> String }` seam +
+//! `assert_oracle_agree` (M-RHO.0.4), and an optional real `RhoRuntime::evaluate`
+//! run of the lowered calculator (M-RHO.0.5 — the only substage that links
+//! Tokio/RSpace; gated behind an explicit go/no-go).
+
+#![cfg_attr(not(feature = "engine"), allow(unused))]
+#![forbid(unsafe_code)]

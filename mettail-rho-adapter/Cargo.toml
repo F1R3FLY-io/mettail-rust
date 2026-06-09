@@ -1,0 +1,29 @@
+[package]
+name = "mettail-rho-adapter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "M-RHO bridge: the OslfResourceLogic<MettaGslt> adapter — pure cost/funding analysis (no RSpace/Tokio), consumed GENERICALLY by f1r3node-rust's funding gate. Depends ONE-WAY on f1r3node-rust."
+
+# ── INERT (M-RHO.0.0) ──────────────────────────────────────────────────────────
+# This crate implements f1r3node-rust's `OslfResourceLogic<MettaGslt>` by
+# delegating demand/is_funded to the host's VERIFIED `delta_sigma`. It is PURE
+# analysis: NO RSpace, NO Tokio. It depends ONE-WAY on f1r3node-rust (never the
+# reverse — enforced by the host guard test `mettail_rust_is_not_a_cargo_dependency`
+# and proven in `formal/rocq/rho_bridge/theories/BridgeInertness.v`).
+#
+# The f1r3node-rust binding is gated behind the `engine` feature so the DEFAULT
+# build pulls NOTHING from f1r3node (the inert-milestone convention, mirroring the
+# `dovetail` crate). M-RHO.0.1 adds, under `engine`:
+#   models   = { path = "../../f1r3node-rust/models" }      # models::rhoapi::Par
+#   rholang  = { path = "../../f1r3node-rust/rholang" }      # delta_sigma::{demand,is_funded}
+# (both are publish=false → cross-repo path deps, optional, pulled in only by `engine`.)
+
+[features]
+default = []
+# Gates the f1r3node-rust binding (none yet — M-RHO.0.0 is inert).
+engine = []
+
+[dependencies]
+# (none yet — inert M-RHO.0.0 skeleton; engine deps land in M-RHO.0.1)

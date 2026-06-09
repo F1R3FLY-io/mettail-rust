@@ -1,0 +1,12 @@
+# Rocq project for the MeTTaIL <-> f1r3node-rust bridge (mettail-rho-*) obligations.
+#
+#   BridgeInertness — the STRICTLY ONE-WAY dependency invariant the bridge crates
+#     embody and the f1r3node guard test `mettail_rust_is_not_a_cargo_dependency`
+#     enforces: MeTTaIL may depend on f1r3node-rust, f1r3node NEVER on MeTTaIL,
+#     and the dependency graph is acyclic. (M-RHO.0.0 inert milestone.)
+#
+# Zero-Admitted / zero-Axiom (the project gate).
+
+-Q theories RhoBridge
+
+theories/BridgeInertness.v

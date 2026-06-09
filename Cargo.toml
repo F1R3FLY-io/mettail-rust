@@ -1,5 +1,6 @@
 [workspace]
 members = ["ast", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "rigail",
+    "mettail-rho-codegen", "mettail-rho-runtime", "mettail-rho-adapter",
     # "ascent/ascent",
     # "ascent/ascent_base",
     # "ascent/ascent_macro",

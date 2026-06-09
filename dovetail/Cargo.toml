@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Substrate-agnostic GSLT reduction engine core: a generic-W weighted tree automaton over a runtime e-graph (DFTA) with N-best/set-valued cube-pruning extraction. Weights order, never prune; exact content keying."
+description = "Substrate-agnostic GSLT reduction engine core: a generic-W weighted tree automaton over a runtime e-graph (DFTA) with exact lazy best-first enumeration (Huang-Chiang Alg.3, N-best/set-valued, no-miss). Weights order, never prune; removal only at semiring 0-bar; exact content keying."
 
 # Dovetail is deliberately substrate-agnostic so it can be extracted as its own
 # published crate later: NO dependency on the parser (mettail-prattail), the
