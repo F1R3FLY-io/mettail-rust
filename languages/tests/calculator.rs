@@ -734,7 +734,7 @@ fn test_factorial_with_negation() {
 }
 
 #[test]
-fn test_factorial_ambiguous_negation_preserves_both_parse_alternatives() {
+fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
     use calc::Int;
 
     mettail_runtime::clear_var_cache();
@@ -901,7 +901,7 @@ fn weighted_parse_evidence_orders_evaluation_prefix() {
 }
 
 #[test]
-fn test_factorial_ambiguous_negation_rejects_invalid_branch_by_evidence() {
+fn calculator_unary_minus_factorial_ambiguity_survives_to_evaluation() {
     calc_normal_form("-3!", "-6");
 }
 

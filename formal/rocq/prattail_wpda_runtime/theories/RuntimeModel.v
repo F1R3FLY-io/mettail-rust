@@ -2376,6 +2376,66 @@ Proof.
   - reflexivity.
 Qed.
 
+Definition semantic_rejection_filter
+    (accepts : exact_parse_alternative_model -> bool)
+    (alts : list exact_parse_alternative_model)
+    : list exact_parse_alternative_model :=
+  filter accepts alts.
+
+Theorem semantic_rejection_preserves_unrejected_siblings :
+  forall accepts alts alt,
+    In alt alts ->
+    accepts alt = true ->
+    In alt (semantic_rejection_filter accepts alts).
+Proof.
+  intros accepts alts alt Hin Haccepts.
+  unfold semantic_rejection_filter.
+  apply filter_In.
+  split; assumption.
+Qed.
+
+Theorem semantic_rejection_removes_rejected_branches :
+  forall accepts alts alt,
+    In alt (semantic_rejection_filter accepts alts) ->
+    accepts alt = true.
+Proof.
+  intros accepts alts alt Hin.
+  unfold semantic_rejection_filter in Hin.
+  apply filter_In in Hin as [_ Haccepts].
+  exact Haccepts.
+Qed.
+
+Definition negative_factorial_branch : exact_parse_alternative_model :=
+  {| epam_semantic_key := [0]; epam_payload := 0 |}.
+
+Definition negated_factorial_branch : exact_parse_alternative_model :=
+  {| epam_semantic_key := [1]; epam_payload := 1 |}.
+
+Definition factorial_semantic_accepts
+    (alt : exact_parse_alternative_model) : bool :=
+  if semantic_key_eq_dec
+       (epam_semantic_key alt)
+       (epam_semantic_key negated_factorial_branch)
+  then true
+  else false.
+
+Theorem calculator_unary_minus_factorial_rejection_model :
+  semantic_rejection_filter
+    factorial_semantic_accepts
+    [negative_factorial_branch; negated_factorial_branch] =
+  [negated_factorial_branch].
+Proof.
+  unfold semantic_rejection_filter, factorial_semantic_accepts,
+    negative_factorial_branch, negated_factorial_branch.
+  simpl.
+  destruct (semantic_key_eq_dec [0] [1]) as [Heq01 | _].
+  - discriminate Heq01.
+  - destruct (semantic_key_eq_dec [1] [1]) as [_ | Hneq11].
+    + reflexivity.
+    + contradiction Hneq11.
+      reflexivity.
+Qed.
+
 Record weighted_parse_alternative_model : Type := {
   wpam_alt : exact_parse_alternative_model;
   wpam_weight : nat;
