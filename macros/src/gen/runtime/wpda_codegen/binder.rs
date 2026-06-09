@@ -3252,6 +3252,12 @@ mod tests {
         }
     }
 
+    fn fraction_alias_rule() -> GrammarRule {
+        let mut rule = fraction_rule();
+        rule.label = Ident::new("FractionAlt", Span::call_site());
+        rule
+    }
+
     #[test]
     fn classifies_lambda_lam_rule() {
         let shape = classify_binder(&lambda_lam_rule()).expect("Lam should classify");
@@ -3281,6 +3287,38 @@ mod tests {
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("BinderRule"));
         assert!(s.contains("\"lam \""));
+    }
+
+    #[test]
+    fn multi_rule_binder_prefix_fork_keeps_rule_identity_in_stack_and_state() {
+        let categories = vec!["BigInt".to_string(), "BigRat".to_string()];
+        let per_cat = vec![Vec::new(), vec![fraction_rule(), fraction_alias_rule()]];
+        let language = synthetic_lang_for_lambda_test();
+        let ts = emit_binder_prefix_arms(&language, &categories, &per_cat);
+        let s = ts.to_string();
+
+        assert!(s.contains("WpdaStepAction :: Fork"));
+        assert!(s.contains("consume_trigger : true"));
+        assert!(
+            s.contains("ForkActionKind :: PushWithTriggerTerminal"),
+            "each same-trigger branch must own the consumed trigger under its rule identity",
+        );
+        assert!(
+            s.contains("StackSymbolV2 :: rule_at (1u16 , 0u16 , 1u8"),
+            "first branch must keep its category/rule/position stack identity",
+        );
+        assert!(
+            s.contains("StackSymbolV2 :: rule_at (1u16 , 1u16 , 1u8"),
+            "second branch must keep its category/rule/position stack identity",
+        );
+        assert!(
+            s.contains("rule_idx : 0u16") && s.contains("rule_idx : 1u16"),
+            "same-trigger branches must remain distinct in WpdaState::BinderRule",
+        );
+        assert!(
+            s.matches("body_src_idx : 0u16").count() >= 2,
+            "both branches should parse their first operand through the declared source category",
+        );
     }
 
     fn synthetic_lang_for_lambda_test() -> mettail_ast::language::LanguageDef {

@@ -677,6 +677,44 @@ Proof.
   now rewrite Heq.
 Qed.
 
+Record factored_expansion_key : Type := {
+  fek_semantic_context : nat;
+  fek_category : nat;
+  fek_input_position : nat;
+  fek_stack : nat;
+  fek_evidence_obligation : nat
+}.
+
+Definition factored_expansion_shareable
+    (left right : factored_expansion_key) : Prop :=
+  left = right.
+
+Theorem factored_expansion_share_preserves_cache_key_obligations :
+  forall left right,
+    factored_expansion_shareable left right ->
+    fek_semantic_context left = fek_semantic_context right /\
+    fek_category left = fek_category right /\
+    fek_input_position left = fek_input_position right /\
+    fek_stack left = fek_stack right /\
+    fek_evidence_obligation left = fek_evidence_obligation right.
+Proof.
+  intros left right Hshare.
+  unfold factored_expansion_shareable in Hshare.
+  subst right.
+  repeat split; reflexivity.
+Qed.
+
+Theorem factored_expansion_distinct_evidence_prevents_sharing :
+  forall left right,
+    fek_evidence_obligation left <> fek_evidence_obligation right ->
+    ~ factored_expansion_shareable left right.
+Proof.
+  intros left right Hdiff Hshare.
+  apply Hdiff.
+  apply factored_expansion_share_preserves_cache_key_obligations in Hshare.
+  tauto.
+Qed.
+
 Inductive predecessor_kind : Type :=
   | PredCategoryEntry
   | PredGroupingMarker
