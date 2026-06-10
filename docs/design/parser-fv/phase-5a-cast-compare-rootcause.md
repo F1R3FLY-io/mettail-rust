@@ -106,6 +106,51 @@ the enclosing CategoryEntry, not an internal arg CategoryEntry). This is the car
 frame-level effort the anti-churn discipline reserves for this exact (furious-history)
 cast-family bug — NOT another `(edge,kind,eff)` guess.
 
+## ★ FV-DRIVEN root + FALSIFIED fall-through (2026-06-10, explore+plan agents + FV)
+
+**Root PROVEN (instrumented PUSH/POP/EVID, `int(3)==3`/`int(3.14)==3` vs `3==3`):** a
+LITERAL of cat C routes through the cross-cat-LHS DELEGATE — pos-0 dispatch lays
+`CrossCatLhs{C}` (literal `3`: 11× `CrossCatLhs{2}`); on operand pop the reentry
+(`wpda_walker.rs:15508-15543`) pushes `CrossCatLhsReentry{C}` + sets InfixLoop; the guard's
+`cross_cat_lhs_infix_evidence_source` (`:6405`) recognizes it ⇒ EqInt admitted. A keyword-
+ambiguous CAST token routes through the lex-fork's CrossCatPROJECTION path (`int`: 36×
+`CrossCatProjection`, 0× `CrossCatLhs`); the cast result reaches `==` with a `Generic` top
+(`evidence=None` ⇒ suppressed) or Unwinds. The cast's only cross-cat-LHS edge is the
+ARGUMENT's (keyed by arg-cat, popped at `)`), never the RESULT's.
+
+**FV (PROVEN, zero-admission, `rocq-prattail-wpda` capped green):**
+`formal/rocq/prattail_wpda_runtime/theories/CastResultCrossCatLhsEvidence.v` — a faithful
+operational model (edge + control-state). Theorems: `run_cast_fixed_accepts`,
+`fix_matches_literal` (route via the delegate = reentry{result-cat}+InfixLoop ⇒ admitted,
+identical to a literal); `edge_only_fix_insufficient` (reentry edge while Unwinding still
+Rejects — InfixLoop leg required); `arg_keyed_fix_insufficient` (arg-cat keying Rejects —
+result-cat keying required); `fix_sound`/`same_category_not_guarded` (no regression on
+`-3!`).
+
+**FALSIFIED IMPLEMENTATION #2 — fall-through (REVERTED).** Wired a generated
+`prefix_has_cross_cat_lhs_arm(cat,kind)` into the lex-fork `__fall_through` so a cast token
+falls through to the normal dispatch's cross-cat-LHS delegate. **Empirically: fixed all 16
+`comparison_after_cast_results` + `operator_chains_after_casts` + 2 string cases AND
+`gen_calculator_op` 156→0; but REGRESSED 10 nested/chained-cast tests**
+(`chained_casts_with_operators::*` 4, `nested_keyword_prefix_functions::*` 5,
+`string_edge_cases::str_cast_add_str_cast`) — `int(float(int(3.14)))`/`str(42)+str(43)`
+explode the cursor frontier (panorama: **327 cursors**, 14.5M-line livelock) far past the
+budget of 16. Caught by the exact-failing-set diff vs the committed baseline BEFORE
+committing (the "don't claim a fix that isn't" discipline). The fall-through adds dispatch
+branches that COMPOUND under cast nesting.
+
+**ARCHITECTURAL TENSION (the real difficulty, determined):** the guard FORCES a
+category-changing infix through the cross-cat-LHS delegate (the Bool/result-cat parse), but
+(a) routing a cast token through that delegate fans out and compounds under nesting, and
+(b) the cast's natural `CrossCatProjection` path resolves into the Proc/Int context +
+Unwinding, never reaching the guard in the Bool context; and (c) stamping evidence on the
+Int-category parse is UNSOUND (it would let the Int parse emit a Bool, violating category
+discipline). So a clean fix must avoid adding per-dispatch delegate branches — either a
+surgical reentry at the cast's OUTERMOST resolution in the correct (result-cat) context, or
+pruning the spurious multi-source/nested delegate fan-out. The fall-through explosion ROOT
+(why 327, vs the bounded literal) is NOT yet determined — must drill before the next
+attempt (no guessing).
+
 ---
 
 ## Confirmed failure (reproduced, `feature/wfst-architecture`)
