@@ -8,6 +8,7 @@ theories/CastCompareFrontierBound.v
 theories/CastDelegateMergeBound.v
 theories/CastLookaheadGateBound.v
 theories/CastLookaheadHostSynthesis.v
+theories/CastRehostOutputProjection.v
 theories/RecoveryBound.v
 theories/RecoverySignature.v
 theories/FiniteHarness.v
