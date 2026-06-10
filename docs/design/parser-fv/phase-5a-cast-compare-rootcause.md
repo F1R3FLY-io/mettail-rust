@@ -58,6 +58,28 @@ the `==`/infix CANNOT attach AFTER a cast result (`int(3.14) == 3` → `1:11: un
 Fixed("==")`). That is the ORIGINAL Phase 5A target (a normal-InfixLoop attachment root,
 NOT the lex-fork) — next sub-task. DRILL instrumentation removed; probe deleted.
 
+### Cast-compare BEDROCK — EVID-confirmed (2026-06-10)
+Probe discriminator (calculator): literals `3 == 3`/`3.0 == 3.0`/`true == true` OK; cast +
+CATEGORY-CHANGING infix `int(3) == 3`/`float(3) == 3.0` (EqInt/EqFloat →Bool) FAIL; cast +
+SAME-cat infix `int(3) + 3` OK; cast to Bool `bool(1) == true` (EqBool Bool→Bool, not
+category-changing) OK; cast alone `int(3.14)` OK. ⇒ failure = *a cast result as LHS of a
+CATEGORY-CHANGING infix*. Trace (`PRATTAIL_TRACE=actions`): `int(3) == 3` → 7×
+`suppress category-changing infix source=2 result=7 evidence=None`; `3 == 3` ALSO emits 7
+suppresses BUT parses OK (a literal's cross-cat-LHS delegate keeps a `CrossCatLhs{Int}`
+edge → pop→reentry → `evidence=Some(2)` → guard admits EqInt). Temp trace in
+`cross_cat_lhs_infix_evidence_source` (`wpda_walker.rs:6405`, since removed) showed the
+cast result's InfixLoop top = `CategoryEntry{cat=2 Int}` with **`edge=Some(Generic)`** (NOT
+CrossCatLhs/Reentry/Projection) ⇒ `_ => None` ⇒ suppressed. ROOT: the cast's
+`CrossCatLhs{Int}` delegate edge is BURIED during the cast's own nested cross-cat
+projection, leaving a plain `Generic` top. FIX LOCUS: mirror the reentry at
+`apply_pop_body_to_cursor:15508-15527` but for the CAST RESOLUTION — lay down
+`CrossCatLhsReentry{result-cat C}` when a cast resolves to a cross-cat-infix-SOURCE C and
+heads to InfixLoop. NARROW (cast-result only, keyed by RESULT cat) — a blanket relax = the
+H2 bypass that regressed 27 `-3!`. Needs a trace of the cast's exact pop/edge sequence
+(the `==` top is `Generic`, so the laydown is at the cast's POP, not the infix step)
+BEFORE editing → a dedicated focused effort (this is the multi-layer cross-cat area the
+prior session churned; drill-to-bedrock-first per the anti-churn discipline).
+
 ---
 
 ## Confirmed failure (reproduced, `feature/wfst-architecture`)
