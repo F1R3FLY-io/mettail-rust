@@ -2,6 +2,7 @@
 
 theories/RuntimeModel.v
 theories/EvidenceComplete.v
+theories/LexForkKeywordReservation.v
 theories/RecoveryBound.v
 theories/RecoverySignature.v
 theories/FiniteHarness.v

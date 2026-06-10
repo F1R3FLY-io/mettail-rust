@@ -383,16 +383,51 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 }
             }
 
+            // Phase 5A keyword-reservation fix (2026-06-10): wire the
+            // long-generated-but-never-called `prefix_primary_has_dispatch_rule`
+            // into the fall-through decision. `lex_alt_rules_for_prefix` only
+            // represents `Atomic | PrefixOp | CrossCatProjection`; it DROPS
+            // collection-literal rules (ListLit/BagLit/MapLit) and multi-token
+            // keyword-prefix rules (ElemList `at(...)`, DeleteList `delete(...)`,
+            // …). For a keyword that ALSO matches the ident regex
+            // (`list`/`at`/`error`/`int`/…) the lattice surfaces a SAME-LENGTH
+            // `{Fixed("kw"), Ident}` ambiguity, so the lex-fork would Fork into
+            // only the secondary `Ident -> Var` branch — making the keyword parse
+            // as a bare variable (collections/keyword-prefix ops fail with
+            // trailing `(`; `error op error` blows the cursor budget via the
+            // 11-way cross-cat Var fan-out). When the PRIMARY token has a real
+            // PrefixDispatch arm (`prefix_primary_has_dispatch_rule`) AND every
+            // lexical alternative is the SAME LENGTH as the primary, fall through
+            // to the normal `match peek` dispatch: it owns the collection/
+            // keyword-prefix/terminal arms and dispatches the explicitly-declared
+            // keyword. The same-length guard preserves genuine MULTI-length
+            // disambiguation (e.g. `-3` = `{Minus@1, Integer@2}` must keep
+            // forking both). Keyword-reservation at a same-length lexical tie: a
+            // grammar-declared keyword beats the auto-injected `Var` fallback —
+            // evidence-based (the grammar declares the literal), not a heuristic.
+            let __primary_has_dispatch = tokens
+                .peek_kind(*pos)
+                .map(|pk| prefix_primary_has_dispatch_rule(primary_src, &pk))
+                .unwrap_or(false);
+            let __primary_next_pos = tokens.next_pos(*pos, 0);
+            let __all_alts_same_length = alts
+                .iter()
+                .enumerate()
+                .all(|(__i, _)| tokens.next_pos(*pos, __i + 1) == __primary_next_pos);
             // M6c.8.5 (2026-05-14): Fork when ≥2 branches survive OR
             // when the sole survivor is a SECONDARY (not the primary).
             // Fall-through only when 0 branches survived (standard
             // arm handles dispatch / fails naturally) OR when exactly
             // the primary survived (standard PrefixDispatch dispatches
             // on `peek_kind = primary` — byte-identical to non-
-            // ambiguous lex, optimization preserved).
+            // ambiguous lex, optimization preserved) OR when the primary
+            // keyword owns a normal dispatch arm that the lex-alt table
+            // cannot represent and all alternatives are same-length
+            // (Phase 5A keyword-reservation above).
             let __fall_through =
                 __branches.is_empty()
-                    || (__branches.len() == 1 && __primary_survived);
+                    || (__branches.len() == 1 && __primary_survived)
+                    || (__primary_has_dispatch && __all_alts_same_length);
             if !__fall_through {
                 return WpdaStepAction::Fork {
                     branches: __branches,

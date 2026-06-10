@@ -6,6 +6,60 @@
 > the standing mandate: prove the root by a flip BEFORE naming a fix; document what
 > does not work. pgmcp #265; local task #5.
 
+## ★★ TRUE ROOT — PROVEN (2026-06-10, fresh-context re-investigation) — lex-fork drops keyword dispatch
+
+**The pre-compaction "cast/EqInt evidence" framing (H1–H4 below) chased the wrong layer.**
+Fresh reproduction at HEAD `65b40581`: `gen_rhocalc_op` = **33 fails** (30 ×
+`eval_rhocalc_*_err_err_smoke` → *"frontier of 17 cursors exceeds budget of 16"* + 3 ×
+map); `gen_calculator_op` = **156 fails**, dominated by collection ops (`at`/`delete`/
+`concat`/`length`/`get`/`keys`/`put`/`merge`/`union`/`remove`/`diff`/`count`) all
+`"unexpected Fixed(\"(\") after parsing"`. Same `"unexpected Fixed(\"==\")"` shape as the
+cast family (line below) — ALL are the SAME root.
+
+**Single common root (PROVEN — lattice probe + 6.5M-line walker trace + code read):**
+keywords that ALSO match the ident regex (`list`/`bag`/`map`/`at`/`error`/`int`/…) make
+`lex_dag` emit a SAME-LENGTH lattice ambiguity `{Fixed("kw"), Ident}` (probe: `list(5)`
+pos 0 primary=`Fixed("list")`, alt=`Ident` end_byte=4). `is_ambiguous_at` ⇒ the lex-fork
+(`emit_lex_fork_at_prefix_dispatch`, `forks.rs:150`) fires and rebuilds dispatch via
+`lex_alt_rules_for_prefix`, whose `LexAltRuleKind` only covers `Atomic|PrefixOp|
+CrossCatProjection` (`_ => {}` drops collection-literal ListLit/BagLit/MapLit and
+multi-token keyword-prefix rules like ElemList `at(...)`). The keyword branch is
+dropped/over-forked, so the lex-fork `return`s a Fork of only the secondary `Var`
+branch(es) ⇒ the keyword parses as a bare variable, `(...)` trails (collections /
+ops), or the 11-way cross-cat `Ident→Var` fan-out blows the 16-cursor budget
+(`error op error`). Trace (`list(5)`): max pos = 1 (never consumes `(`), `coll_depth`
+never > 0, `CollectionOpenParen` never entered, 333,567-step livelock.
+
+**FIX (designed-but-unwired mechanism, now wired):** `kind_dispatch.rs` already generates
+`prefix_primary_has_dispatch_rule(cat, kind)` — docstring: *"The lex fork uses this to
+avoid replacing a valid primary keyword/binder arm with a lone secondary Ident -> Var
+branch"* — true for `NonAtomic` rules whose first syntax literal matches (ListLit
+`"list"`, ElemList `"at"`) and for `TerminalKeyword`/`PrefixOperator`/`CrossCatPrefixUnary`
+triggers (Err `"error"`). It was **NEVER CALLED** (only `mod.rs:624` asserts it is
+generated). Wire it into the lex-fork fall-through, guarded SAME-LENGTH so genuine
+multi-length `{Minus@1, Integer@2}` (`-3`) keeps forking: fall through to the normal
+`match peek` dispatch (which has the collection + keyword-prefix arms) when
+`prefix_primary_has_dispatch_rule(primary_src, primary_kind) && all alts same-length`.
+Keyword-reservation at a same-length lexical tie: the explicitly-declared keyword beats
+the auto-injected `Var` fallback. Probe: `languages/examples/lex_probe.rs` (DELETE after).
+Baselines: `/tmp/5a-rhocalc-op-baseline.txt`, `/tmp/5a-calc-op-baseline.txt`.
+
+**RESULT (VERIFIED, 2026-06-10):** one-line wiring in `forks.rs`
+(`emit_lex_fork_at_prefix_dispatch` fall-through) fixed **189 of the 217** baseline
+op-suite failures with **ZERO regressions** (exact failing-set diff, not just counts):
+`gen_calculator_op` 156→6, `gen_rhocalc_op` 33→1, `edge_case_tests` 28→21; prattail lib
+stays 3979/0. FV: `LexForkKeywordReservation.v` (5 theorems, registered in `_CoqProject`,
+`make check-capped FORMAL_CAPPED_TARGET=rocq-prattail-wpda` green; `Print Assumptions` =
+"Closed under the global context" — zero-admission/zero-axiom). The remaining **28** are
+the genuinely-separate **cast-then-compare** family (`comparison_after_cast_results::*`,
+`{eq,ne,lt,gt,le,ge}fixed_casterrfixed`, `castop_putmap_castbigrat`, `operator_chains_
+after_casts`, `postfix_cross_category`) + 2 ambient (`nested_new`, `parallel_ambients`) —
+the `==`/infix CANNOT attach AFTER a cast result (`int(3.14) == 3` → `1:11: unexpected
+Fixed("==")`). That is the ORIGINAL Phase 5A target (a normal-InfixLoop attachment root,
+NOT the lex-fork) — next sub-task. DRILL instrumentation removed; probe deleted.
+
+---
+
 ## Confirmed failure (reproduced, `feature/wfst-architecture`)
 
 ```
@@ -180,6 +234,39 @@ site (the `suppress category-changing infix source=2 result=7 pos=5` ConsumeAndP
 find WHICH emission produces it; candidate sites: the IterativeChainAbsorb fallthrough,
 the lex-fork infix dispatch `#lex_fork_infix_dispatch` at engine_impl.rs:956, or a
 walker-side ConsumeAndPush, NOT necessarily the :1248 singleton).
+
+## ★ CONVERGENT ROOT (H4, reconciles ALL prior falsifications) — 2026-06-10
+
+The guard `guard_category_changing_infix` (`wpda_walker.rs:6435-6462`) suppresses a
+category-changing infix in TWO ways when `lhs_evidence != Some(infix_source)`:
+- `ConsumeAndPush` arm (`:6449`): returns `Advance(Unwinding)` (drops it).
+- `Fork` arm (`:6456-6462`): `branches.retain(|b| lhs_evidence == Some(source))` —
+  REMOVES the category-changing branch (→ empty Fork).
+The cast's `EqInt` is suppressed with **`evidence=None`** (needed source = Int(2)):
+`suppress category-changing infix source=2 result=7 pos=5 evidence=None`.
+`lhs_evidence = cross_cat_lhs_infix_evidence_source(cursor)` is `Some(src)` ONLY when
+the cursor's incoming GSS edge is `CrossCatLhs{src}` / `CrossCatLhsReentry{src}`
+(`:6405-6423`, edge made at `:7642`). The cast result carries NO such edge for its
+RESULT category (the cast pushed `CrossCatLhs{source=5=Fixed}` for its ARGUMENT, and at
+the EqInt step the evidence is `None`).
+
+**This RECONCILES the falsifications:** H2 (bypass guard) failed because a bare
+`ConsumeAndPush{CrossCatDelegate}` does not register the `CrossCatProjection` (only the
+Fork/push-child path `allocate_uncached_push_child:14854` does); H3 (singleton→Fork)
+failed because the guard's Fork-filter (`:6456`) removed the EqInt branch for
+`evidence=None`. So NEITHER alone suffices.
+
+**FIX (H4, to verify in fresh context):** make a cast result lay down a `CrossCatLhs`
+(or `CrossCatLhsReentry`) evidence edge keyed by its **RESULT** category (Int=2) when it
+resolves, so (1) `lhs_evidence = Some(Int)` ⇒ the guard ADMITS the `EqInt` infix, and
+(2) the cast result then dispatches the infix the same way a genuine cross-cat-LHS
+operand does (the working path that DOES register the projection + fires EqInt). This
+is precisely the "cast SOURCE classification" the phase name refers to: the evidence is
+absent/keyed-by-source, but the post-cast infix needs it keyed by the RESULT category.
+VERIFY FIRST: instrument the guard to print `lhs_evidence` for the LITERAL `1 == 1`
+EqInt step — confirm it is `Some(2)` (vs the cast's `None`); that is the smoking gun.
+Then add the result-category evidence at the cast-resolve site and verify the 12 cast
+cases pass with zero `-3!`/op-suite regressions. Do NOT weaken the guard (load-bearing).
 
 **VERIFIED FACT (DRILL3 at allocate_uncached_push_child:14854, 2026-06-10):** for the
 cast `int(3.14) == 3`, EVERY registered `CrossCatProjection` is at `bp=0` (the prefix
