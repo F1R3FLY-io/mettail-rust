@@ -6,6 +6,7 @@ theories/LexForkKeywordReservation.v
 theories/CastResultCrossCatLhsEvidence.v
 theories/CastCompareFrontierBound.v
 theories/CastDelegateMergeBound.v
+theories/CastLookaheadGateBound.v
 theories/RecoveryBound.v
 theories/RecoverySignature.v
 theories/FiniteHarness.v
