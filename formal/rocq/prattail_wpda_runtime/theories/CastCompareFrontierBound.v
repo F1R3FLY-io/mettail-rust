@@ -1,48 +1,44 @@
 (*
- * CastCompareFrontierBound: the FRONTIER + BOUNDEDNESS refinement of
- * CastResultCrossCatLhsEvidence.v. Together they form the FV derivation of the
- * Phase 5A cast-then-compare fix — worked through in the model BEFORE implementing.
+ * CastCompareFrontierBound: a FAITHFUL operational model of the Phase 5A
+ * cast-then-compare problem, ENRICHED with the dimension an earlier, too-abstract
+ * model missed — a lane's RETURN CONTEXT (the category its continuation/return
+ * frame can HOST as a result). Working backwards from THIS model rules out the
+ * wrong fix at design time and characterizes the correct one.
  *
- * WHY THIS FILE EXISTS (the dimension the earlier model missed):
- *   CastResultCrossCatLhsEvidence.v proved that giving a cast LHS a
- *   `CrossCatLhsReentry{C}` edge + InfixLoop control (as a literal gets via the
- *   cross-cat-LHS delegate) makes the C-sourced category-changing infix fire.
- *   But it modeled ONE lane in isolation. When that conclusion was implemented as
- *   "route the cast TOKEN through the delegate at DISPATCH," it was empirically
- *   UNBOUNDED: nested casts `int(float(int(..)))` exploded the cursor frontier
- *   (327 cursors / 10 regressions). The earlier model could not see this because
- *   it did not model the FRONTIER (the SET of cursors the cast produces) nor its
- *   SIZE as a function of nesting depth.
+ * THE BUG (PROVEN via instrumented PRATTAIL_TRACE=actions of `3==3` vs `int(3)==3`):
+ *   A category-changing infix `op : C -> D` (e.g. EqInt: source Int=C, result
+ *   Bool=D) is admitted by the InfixLoop guard only when the operand cursor
+ *   carries cross-cat-LHS evidence Some(C). When it fires, it produces a value of
+ *   the RESULT category D. That value is ACCEPTED (wrappable to a root) ONLY if
+ *   the firing cursor's return frame can host a D — i.e. its RETURN CONTEXT is D.
+ *   - LITERAL `3 == 3`: the Int LHS is parsed by the Bool-EqInt cross-cat-LHS
+ *     DELEGATE — a cursor DISPATCHED BY Bool, so its return context is Bool=D.
+ *     EqInt fires ⇒ Bool, hosted by the Bool context ⇒ wrapped to a Proc root
+ *     (`ProcBool`) ⇒ accepted. (Trace: `Symbol(nt=0, span=[0,3])` ×4 — the Proc
+ *     root EXISTS.)
+ *   - CAST `int(3) == 3`: the cast result `int(3)` (an Int) reaches the same `==`
+ *     guard, but on the TOP-LEVEL Int-parse cursor, whose return context is
+ *     Int=C, NOT Bool=D. If EqInt is admitted there, it fires ⇒ Bool, but the
+ *     Int return context CANNOT host a Bool ⇒ the Bool is ORPHANED ⇒ NO Proc root
+ *     ⇒ EOI-acceptance empty ⇒ longest-prefix salvage. (Trace: `Symbol(nt=7,
+ *     span=[0,6])` ×25 — the Bool EXISTS — but NO `Symbol(nt=0, span=[0,6])` —
+ *     the root wrap FAILS.)
  *
- * GROUNDED FACTS (instrumented PUSH/POP/EVID traces of `int(3)==3` etc.):
- *   At the `==` position the cast operand contributes a SET of lanes (cursors):
- *     - an Int-category parse lane:  (cat=C,    edge=Generic,                 InfixLoop)
- *         reaches the guard but Generic ⇒ evidence None ⇒ EqInt SUPPRESSED;
- *     - a catch-all Proc-injection lane: (cat=Proc, edge=CrossCatProjection{C}, Unwinding)
- *         injects to the catch-all Proc category and UNWINDS ⇒ `==` trails.
- *   A LITERAL of cat C instead contributes a delegate-reentry lane
- *     (cat=C, edge=CrossCatLhsReentry{C}, InfixLoop) ⇒ guard ADMITS ⇒ `3==3` OK.
+ * WHY THE "RECOGNIZE THE INT-PARSE CAST CURSOR" FIX (approach A) IS UNSOUND:
+ *   Admitting EqInt on the Int-context cast cursor produces an ORPHANED Bool
+ *   (return context Int <> result Bool). The model below PROVES this (Orphaned,
+ *   frontier does NOT accept), reproducing the empirical col-4 failure — so the
+ *   model now rejects the design that the abstract model wrongly endorsed.
  *
- * THE FIX THIS MODEL DERIVES AND PROVES (accepting AND bounded):
- *   APPEND ONE cross-cat-LHS-reentry lane (cat=C, CrossCatLhsReentry{C}, InfixLoop)
- *   AT THE CAST RESULT (post-resolution — where the parser already knows the
- *   operand is a cast of result cat C and the inner content is ALREADY parsed),
- *   ALONGSIDE the existing lanes. Post-resolution the inner content is NOT
- *   re-dispatched, so this is +1 lane per cast RESULT (LINEAR in nesting depth),
- *   NOT the K^depth multiplication of the dispatch-time fall-through.
- *
- * The model proves, at the FRONTIER level:
- *   - current_rejects                  : the current frontier does NOT accept;
- *   - literal_accepts                  : the literal frontier DOES accept;
- *   - resultreentry_accepts            : the FIXED frontier accepts (the appended lane fires);
- *   - resultreentry_adds_one_lane      : the fix appends EXACTLY ONE lane;
- *   - resultreentry_linear             : the fix's frontier is LINEAR (<= 3*d) in depth d;
- *   - fallthrough_exponential/_unbounded: the dispatch-time fall-through is 2^d, unbounded;
- *   - fix_bounded_fallthrough_explodes : past depth 4 the fall-through strictly exceeds the fix;
- *   - resultreentry_preserves_proc_lane: the Proc-injection lane SURVIVES (ambiguity end-to-end);
- *   - fix_is_conservative              : the fix is purely additive — it removes NO existing
- *                                        acceptance (literals, same-category ops, `-3!` untouched);
- *   - resultreentry_sound              : the fix accepts ONLY the C-sourced infix (no spurious cross-cat).
+ * THE CORRECT REQUIREMENT (derived, to be implemented next):
+ *   The cast result must be produced by a cursor whose RETURN CONTEXT is the
+ *   infix RESULT category D — i.e. the cast must be parsed AS the Int LHS of the
+ *   Bool-EqInt delegate (return context Bool), exactly as the literal is. The
+ *   model PROVES such a delegate lane is Hosted (accepted), and that acceptance
+ *   NECESSARILY requires a lane with return context D. The remaining engineering
+ *   problem — making the Bool-EqInt delegate parse the cast `int(3)` as its Int
+ *   LHS WITHOUT the dispatch-time fan-out (2^depth, falsified) — is bounded by
+ *   the same frontier-size argument retained below.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -56,146 +52,195 @@ Import ListNotations.
 
 Section CastCompareFrontierBound.
 
-  (* ===== guard-relevant GSS edge kinds + evidence (mirror of wpda_walker.rs) ===== *)
-
   Inductive EdgeKind : Type :=
     | Generic
     | CrossCatLhs (src : nat)
     | CrossCatLhsReentry (src : nat)
     | CrossCatProjection (src : nat).
 
-  (* Mirror of `cross_cat_lhs_infix_evidence_source`: evidence ONLY from
-     CrossCatLhs/CrossCatLhsReentry whose recorded source equals the top cat. *)
-  Definition evidence (top_cat : nat) (e : EdgeKind) : option nat :=
-    match e with
-    | CrossCatLhs s | CrossCatLhsReentry s =>
-        if Nat.eqb s top_cat then Some s else None
-    | Generic | CrossCatProjection _ => None
-    end.
-
-  (* Control state of a lane's cursor at the infix position. *)
   Inductive Ctrl : Type := CInfix | CUnwind.
 
-  (* A LANE = one cursor at the infix position: its category, its GSS-top edge,
-     and whether it reaches the InfixLoop guard. *)
-  Record Lane : Type := mkLane { ln_cat : nat; ln_edge : EdgeKind; ln_ctrl : Ctrl }.
+  (* A LANE = one cursor at the infix position. ln_return_cat is the category its
+     continuation / return frame can HOST as a result (the dimension the earlier
+     model lacked). *)
+  Record Lane : Type := mkLane {
+    ln_cat : nat;          (* the operand category on the lane's GSS top *)
+    ln_edge : EdgeKind;    (* incoming GSS edge *)
+    ln_ctrl : Ctrl;        (* reaches the InfixLoop guard? *)
+    ln_cast_origin : bool; (* SPPF top is a cast/cross-category-prefix result *)
+    ln_return_cat : nat    (* category the return frame can HOST *)
+  }.
 
-  (* A lane FIRES a category-changing infix of source `s` iff it reaches the guard
-     (InfixLoop) and the evidence keyed by its own category equals `s`. *)
-  Definition lane_fires (s : nat) (l : Lane) : bool :=
+  (* cross-cat-LHS evidence: edge (delegate) OR cast-origin (a complete C value). *)
+  Definition evidence (l : Lane) : option nat :=
+    match ln_edge l with
+    | CrossCatLhs s | CrossCatLhsReentry s =>
+        if Nat.eqb s (ln_cat l) then Some s else None
+    | Generic => if ln_cast_origin l then Some (ln_cat l) else None
+    | CrossCatProjection _ => None
+    end.
+
+  (* Firing a category-changing infix (source s, RESULT d) on a lane has three
+     outcomes — the KEY enrichment:
+       Suppressed : the guard rejects (no evidence, or not in InfixLoop, or source
+                    mismatch) — the infix never fires;
+       Orphaned   : the infix FIRES (evidence + source match) but the lane's RETURN
+                    CONTEXT <> d, so the produced result cannot be hosted/wrapped
+                    to a root (the `int(3)==3` Bool-with-no-Proc-root failure);
+       Hosted     : the infix fires AND the return context = d, so the result is
+                    accepted. *)
+  Inductive FireOutcome : Type := Suppressed | Orphaned | Hosted.
+
+  Definition fire_infix (s d : nat) (l : Lane) : FireOutcome :=
     match ln_ctrl l with
-    | CUnwind => false
+    | CUnwind => Suppressed
     | CInfix =>
-        match evidence (ln_cat l) (ln_edge l) with
-        | Some e => Nat.eqb e s
-        | None => false
+        match evidence l with
+        | Some e =>
+            if Nat.eqb e s
+            then (if Nat.eqb (ln_return_cat l) d then Hosted else Orphaned)
+            else Suppressed
+        | None => Suppressed
         end
     end.
 
-  (* A FRONTIER accepts the category-changing infix iff SOME lane fires it. *)
-  Definition frontier_accepts (s : nat) (f : list Lane) : bool :=
-    existsb (lane_fires s) f.
+  (* A lane ACCEPTS the infix iff firing it is Hosted (Orphaned does NOT accept —
+     this is what the abstract model got wrong). *)
+  Definition lane_hosts (s d : nat) (l : Lane) : bool :=
+    match fire_infix s d l with Hosted => true | _ => false end.
 
-  (* ===== the cast operand's frontier at `==`, GROUNDED in the trace ===== *)
-  (* result cat = c; the comparison infix source is also c (e.g. EqInt: Int->Bool). *)
-  (* proc = the catch-all wrapper category the projection injects into (proc <> c). *)
+  Definition frontier_accepts (s d : nat) (f : list Lane) : bool :=
+    existsb (lane_hosts s d) f.
 
-  Definition int_parse_lane (c : nat) : Lane := mkLane c Generic CInfix.
+  (* ===== THE HOSTING LAW (the enrichment, the crux) ===== *)
+
+  (* A fired infix is ACCEPTED only if the firing lane's return context equals the
+     infix RESULT category. This is the law the earlier model omitted. *)
+  Theorem hosting_requires_return_cat :
+    forall s d l, fire_infix s d l = Hosted -> ln_return_cat l = d.
+  Proof.
+    intros s d l H. unfold fire_infix in H.
+    destruct (ln_ctrl l); [| discriminate H].
+    destruct (evidence l) as [e|]; [| discriminate H].
+    destruct (Nat.eqb e s); [| discriminate H].
+    destruct (Nat.eqb (ln_return_cat l) d) eqn:E; [| discriminate H].
+    apply Nat.eqb_eq in E. exact E.
+  Qed.
+
+  (* Acceptance of the frontier NECESSARILY exhibits a lane whose return context is
+     the result category d — so NO frontier all of whose lanes return <> d can ever
+     accept a category-changing infix into d. *)
+  Theorem accept_requires_result_context :
+    forall s d f, frontier_accepts s d f = true -> exists l, In l f /\ ln_return_cat l = d.
+  Proof.
+    intros s d f H. unfold frontier_accepts in H.
+    apply existsb_exists in H. destruct H as [l [Hin Hh]].
+    exists l. split; [exact Hin |].
+    unfold lane_hosts in Hh.
+    destruct (fire_infix s d l) eqn:E; try discriminate Hh.
+    apply (hosting_requires_return_cat s d l E).
+  Qed.
+
+  (* ===== the cast operand's lanes, GROUNDED in the trace ===== *)
+  (* cast result cat c (Int); infix source = c, infix RESULT d (Bool), d <> c. *)
+
+  (* APPROACH A (falsified): recognize the TOP-LEVEL Int-parse cast cursor. Its
+     return context is c (Int) — it was parsing an Int. cast_origin=true ⇒ evidence
+     Some(c). *)
+  Definition cast_recognized_lane (c : nat) : Lane := mkLane c Generic CInfix true c.
+  (* The catch-all Proc-injection lane: unwinds. *)
   Definition proc_inject_lane (c proc : nat) : Lane :=
-    mkLane proc (CrossCatProjection c) CUnwind.
-  Definition reentry_lane (c : nat) : Lane := mkLane c (CrossCatLhsReentry c) CInfix.
+    mkLane proc (CrossCatProjection c) CUnwind false proc.
+  (* THE CORRECT lane: the cast parsed AS the Bool-EqInt delegate's Int LHS — a
+     cursor dispatched BY Bool, so return context d (Bool); evidence via the
+     delegate reentry edge. This is also exactly the LITERAL's admitting lane. *)
+  Definition delegate_lane (c d : nat) : Lane := mkLane c (CrossCatLhsReentry c) CInfix false d.
 
-  (* The lanes the cast ALWAYS produces today (trace). *)
-  Definition base_lanes (c proc : nat) : list Lane :=
-    [ int_parse_lane c ; proc_inject_lane c proc ].
+  Definition frontier_approach_a (c proc : nat) : list Lane :=
+    [ cast_recognized_lane c ; proc_inject_lane c proc ].
+  Definition frontier_delegate (c d proc : nat) : list Lane :=
+    [ delegate_lane c d ; proc_inject_lane c proc ].
 
-  (* CURRENT routing: just the base lanes. *)
-  Definition frontier_current (c proc : nat) : list Lane := base_lanes c proc.
+  (* ===== approach A is UNSOUND: it ORPHANS the result ===== *)
 
-  (* THE FIX: base lanes + ONE cross-cat-LHS-reentry lane appended at the cast RESULT. *)
-  Definition frontier_resultreentry (c proc : nat) : list Lane :=
-    base_lanes c proc ++ [ reentry_lane c ].
-
-  (* A literal's frontier (for the non-regression comparison): the delegate reentry
-     lane plus the plain category parse lane. *)
-  Definition frontier_literal (c : nat) : list Lane :=
-    [ reentry_lane c ; int_parse_lane c ].
-
-  (* The reentry lane fires the C-sourced infix. *)
-  Lemma reentry_lane_fires : forall c, lane_fires c (reentry_lane c) = true.
+  (* The recognized Int-context cast lane FIRES EqInt but is ORPHANED (return cat
+     c=Int cannot host the result d=Bool). *)
+  Theorem approach_a_orphaned :
+    forall c d, d <> c -> fire_infix c d (cast_recognized_lane c) = Orphaned.
   Proof.
-    intro c. unfold lane_fires, reentry_lane, evidence; cbn.
-    rewrite Nat.eqb_refl. cbn. rewrite Nat.eqb_refl. reflexivity.
+    intros c d Hne. unfold fire_infix, cast_recognized_lane, evidence; cbn.
+    rewrite Nat.eqb_refl.
+    destruct (Nat.eqb c d) eqn:E.
+    - apply Nat.eqb_eq in E. lia.
+    - reflexivity.
   Qed.
 
-  (* ===== the bug + the fix, at the FRONTIER level ===== *)
-
-  (* CURRENT cast frontier does NOT accept: the Int-parse lane has no evidence
-     (Generic) and the Proc-injection lane unwinds. This is the
-     "WPDS finished but input remains, found ==" failure. *)
-  Theorem current_rejects : forall c proc, frontier_accepts c (frontier_current c proc) = false.
+  (* Therefore the approach-A frontier does NOT accept — modeling the empirical
+     `int(3)==3` failure (Bool produced, but no Proc root, so EOI-accept empty). *)
+  Theorem approach_a_rejects :
+    forall c d proc, d <> c -> frontier_accepts c d (frontier_approach_a c proc) = false.
   Proof.
-    intros c proc.
-    unfold frontier_accepts, frontier_current, base_lanes,
-           int_parse_lane, proc_inject_lane, lane_fires, evidence; cbn.
-    reflexivity.
+    intros c d proc Hne.
+    assert (Ha : lane_hosts c d (cast_recognized_lane c) = false).
+    { unfold lane_hosts. rewrite (approach_a_orphaned c d Hne). reflexivity. }
+    assert (Hb : lane_hosts c d (proc_inject_lane c proc) = false).
+    { unfold lane_hosts, fire_infix, proc_inject_lane; cbn. reflexivity. }
+    unfold frontier_accepts, frontier_approach_a, existsb.
+    rewrite Ha, Hb. reflexivity.
   Qed.
 
-  (* A LITERAL frontier accepts (it has the delegate reentry lane) — `3 == 3` works. *)
-  Theorem literal_accepts : forall c, frontier_accepts c (frontier_literal c) = true.
+  (* ===== the CORRECT requirement: a result-context (delegate) lane HOSTS ===== *)
+
+  Theorem delegate_hosted : forall c d, fire_infix c d (delegate_lane c d) = Hosted.
   Proof.
-    intro c. unfold frontier_accepts. rewrite existsb_exists.
-    exists (reentry_lane c). split.
-    - unfold frontier_literal. simpl. left. reflexivity.
-    - apply reentry_lane_fires.
+    intros c d. unfold fire_infix, delegate_lane, evidence; cbn.
+    repeat (rewrite Nat.eqb_refl; cbn). reflexivity.
   Qed.
 
-  (* THE FIX: the appended reentry lane fires ⇒ the fixed frontier accepts. *)
-  Theorem resultreentry_accepts : forall c proc, frontier_accepts c (frontier_resultreentry c proc) = true.
+  Theorem frontier_delegate_accepts :
+    forall c d proc, frontier_accepts c d (frontier_delegate c d proc) = true.
   Proof.
-    intros c proc. unfold frontier_accepts. rewrite existsb_exists.
-    exists (reentry_lane c). split.
-    - unfold frontier_resultreentry. apply in_or_app. right. simpl. left. reflexivity.
-    - apply reentry_lane_fires.
+    intros c d proc. unfold frontier_accepts. rewrite existsb_exists.
+    exists (delegate_lane c d). split.
+    - unfold frontier_delegate. simpl. left. reflexivity.
+    - unfold lane_hosts. rewrite (delegate_hosted c d). reflexivity.
   Qed.
 
-  (* ===== boundedness: the fix is LINEAR; the dispatch-time fall-through is EXPONENTIAL ===== *)
+  (* The literal's admitting lane IS the delegate lane (return context = result
+     cat), so `3==3` works for the same reason the correct cast fix must. *)
+  Theorem literal_accepts : forall c d proc, frontier_accepts c d (frontier_delegate c d proc) = true.
+  Proof. exact frontier_delegate_accepts. Qed.
 
-  (* Concrete lane-count: the fix appends EXACTLY ONE lane to the frontier. *)
-  Theorem resultreentry_adds_one_lane :
-    forall c proc, length (frontier_resultreentry c proc) = S (length (frontier_current c proc)).
+  (* SOUNDNESS: the delegate frontier accepts ONLY the result cat's own infix
+     source — i.e. accepting source s forces s = c (the cast/operand cat). *)
+  Theorem delegate_sound :
+    forall s d c proc, frontier_accepts s d (frontier_delegate c d proc) = true -> s = c.
   Proof.
-    intros c proc. unfold frontier_resultreentry, frontier_current, base_lanes. simpl. reflexivity.
+    intros s d c proc H.
+    unfold frontier_accepts, frontier_delegate, existsb,
+           lane_hosts, fire_infix, delegate_lane, proc_inject_lane, evidence in H.
+    cbn in H. rewrite Nat.eqb_refl in H. cbn in H.
+    destruct (Nat.eqb c s) eqn:E.
+    - apply Nat.eqb_eq in E. lia.
+    - cbn in H. discriminate H.
   Qed.
 
-  (* Depth-parameterized frontier sizes. A cast RESULT is post-resolution: its
-     already-parsed inner content is NOT re-dispatched, so CURRENT and the FIX add
-     a CONSTANT number of lanes per cast level (base = 2; the fix's reentry = +1),
-     hence both are LINEAR in nesting depth d. *)
-  Definition size_current (d : nat) : nat := 2 * d.
-  Definition size_resultreentry (d : nat) : nat := 2 * d + d.   (* base + 1 reentry per level *)
+  (* ===== boundedness: the correct fix must add lanes LINEARLY, not 2^depth ===== *)
+  (* The delegate fix adds one delegate lane per cast result (post-resolution, no
+     re-dispatch of inner content) — LINEAR. The falsified dispatch-time
+     fall-through routes each cast TOKEN through the delegate before resolution,
+     re-dispatching inner content multiplicatively (>= 2^depth). *)
 
-  (* The FALSIFIED dispatch-time fall-through routes each cast TOKEN through the
-     delegate BEFORE its operand is resolved; each level's delegate re-dispatches
-     the inner content, MULTIPLYING the branch count (factor >= 2 ⇒ >= 2^d). *)
-  Fixpoint size_fallthrough (d : nat) : nat :=
-    match d with
-    | O => 1
-    | S d' => 2 * size_fallthrough d'
-    end.
+  Definition size_delegate (d : nat) : nat := 2 * d + d.  (* base + 1 delegate per level *)
+  Fixpoint size_fallthrough (n : nat) : nat :=
+    match n with O => 1 | S n' => 2 * size_fallthrough n' end.
 
-  (* The fix adds exactly d lanes over current — additive (1 per level), not multiplicative. *)
-  Theorem resultreentry_additive : forall d, size_resultreentry d = size_current d + d.
-  Proof. intro d. unfold size_resultreentry, size_current. lia. Qed.
+  Theorem delegate_linear : forall n, size_delegate n <= 3 * n.
+  Proof. intro n. unfold size_delegate. lia. Qed.
 
-  (* The fix's frontier is linearly bounded. *)
-  Theorem resultreentry_linear : forall d, size_resultreentry d <= 3 * d.
-  Proof. intro d. unfold size_resultreentry. lia. Qed.
-
-  (* The fall-through frontier is exactly 2^d. *)
-  Theorem fallthrough_exponential : forall d, size_fallthrough d = 2 ^ d.
+  Theorem fallthrough_exponential : forall n, size_fallthrough n = 2 ^ n.
   Proof.
-    induction d as [|d IH]; simpl.
+    induction n as [|n IH]; simpl.
     - reflexivity.
     - rewrite IH. lia.
   Qed.
@@ -204,105 +249,37 @@ Section CastCompareFrontierBound.
   Proof. induction n; simpl; lia. Qed.
 
   Lemma n_lt_2pow : forall n, n < 2 ^ n.
-  Proof.
-    induction n as [|n IH]; simpl.
-    - lia.
-    - pose proof (pow2_pos n). lia.
-  Qed.
+  Proof. induction n as [|n IH]; simpl; [lia |]. pose proof (pow2_pos n). lia. Qed.
 
-  (* The fall-through frontier grows without bound (exceeds any fixed budget B). *)
-  Theorem fallthrough_unbounded : forall B, exists d, B < size_fallthrough d.
+  Theorem fallthrough_unbounded : forall B, exists n, B < size_fallthrough n.
   Proof.
     intro B. exists (S B). rewrite fallthrough_exponential.
     pose proof (n_lt_2pow (S B)). lia.
   Qed.
 
-  Lemma three_d_lt_pow2 : forall d, 4 <= d -> 3 * d < 2 ^ d.
+  Lemma three_d_lt_pow2 : forall n, 4 <= n -> 3 * n < 2 ^ n.
   Proof.
-    induction d as [|d IH]; intro H.
+    induction n as [|n IH]; intro H.
     - lia.
-    - destruct (Nat.le_gt_cases 4 d) as [Hle|Hgt].
-      + specialize (IH Hle).
-        replace (2 ^ S d) with (2 * 2 ^ d) by (simpl; lia).
-        lia.
-      + assert (d = 3) by lia. subst. simpl. lia.
+    - destruct (Nat.le_gt_cases 4 n) as [Hle|Hgt].
+      + specialize (IH Hle). replace (2 ^ S n) with (2 * 2 ^ n) by (simpl; lia). lia.
+      + assert (n = 3) by lia. subst. simpl. lia.
   Qed.
 
-  (* Past depth 4 the dispatch-time fall-through STRICTLY exceeds the fix — the
-     formal statement of "the fix stays bounded while the fall-through explodes,"
-     with the gap = 2^d - 3*d growing without bound. *)
   Theorem fix_bounded_fallthrough_explodes :
-    forall d, 4 <= d -> size_resultreentry d < size_fallthrough d.
+    forall n, 4 <= n -> size_delegate n < size_fallthrough n.
   Proof.
-    intros d Hd. rewrite fallthrough_exponential. unfold size_resultreentry.
-    replace (2 * d + d) with (3 * d) by lia.
-    apply three_d_lt_pow2; exact Hd.
+    intros n Hn. rewrite fallthrough_exponential. unfold size_delegate.
+    replace (2 * n + n) with (3 * n) by lia.
+    apply three_d_lt_pow2; exact Hn.
   Qed.
 
-  (* ===== ambiguity preservation + non-regression + soundness ===== *)
-
-  (* The Proc-injection lane SURVIVES in the fixed frontier — the fix only APPENDS,
-     so every prior interpretation is preserved (ambiguity end-to-end). *)
-  Theorem resultreentry_preserves_proc_lane :
-    forall c proc, In (proc_inject_lane c proc) (frontier_resultreentry c proc).
+  (* Ambiguity preservation: the Proc-injection lane survives in the delegate
+     frontier (the fix only ADDS the delegate lane). *)
+  Theorem delegate_preserves_proc_lane :
+    forall c d proc, In (proc_inject_lane c proc) (frontier_delegate c d proc).
   Proof.
-    intros c proc. unfold frontier_resultreentry, base_lanes.
-    apply in_or_app. left. simpl. right. left. reflexivity.
-  Qed.
-
-  Theorem resultreentry_preserves_int_parse_lane :
-    forall c proc, In (int_parse_lane c) (frontier_resultreentry c proc).
-  Proof.
-    intros c proc. unfold frontier_resultreentry, base_lanes.
-    apply in_or_app. left. simpl. left. reflexivity.
-  Qed.
-
-  (* The fix is PURELY ADDITIVE — it APPENDS a lane. Appending a lane never removes
-     an acceptance: any frontier that accepts `s` still accepts `s` afterwards. This
-     is non-vacuous (instantiate f := frontier_literal c, s := c, which accepts by
-     literal_accepts) and is exactly why the fix cannot regress literals,
-     same-category operators, or the load-bearing `-3!` — those frontiers are
-     untouched by, or only grown by, the appended cast-result lane. *)
-  Theorem append_lane_monotone :
-    forall s f l, frontier_accepts s f = true -> frontier_accepts s (f ++ [l]) = true.
-  Proof.
-    intros s f l H. unfold frontier_accepts in *.
-    rewrite existsb_app. rewrite H. reflexivity.
-  Qed.
-
-  (* Corollary: literals still accept after the fix appends the cast-result lane. *)
-  Corollary literal_accepts_after_fix :
-    forall c l, frontier_accepts c (frontier_literal c ++ [l]) = true.
-  Proof.
-    intros c l. apply append_lane_monotone. apply literal_accepts.
-  Qed.
-
-  (* The appended reentry lane can ONLY introduce acceptance of the c-sourced infix:
-     if the augmented frontier accepts `s`, then either the original already did, or
-     s = c. So the fix never fabricates a spurious cross-category acceptance. *)
-  Theorem append_reentry_only_adds_c :
-    forall s f c,
-      frontier_accepts s (f ++ [reentry_lane c]) = true ->
-      frontier_accepts s f = true \/ s = c.
-  Proof.
-    intros s f c H. unfold frontier_accepts in H.
-    rewrite existsb_app in H. apply Bool.orb_true_iff in H. destruct H as [H|H].
-    - left. exact H.
-    - right. simpl in H. rewrite Bool.orb_false_r in H.
-      unfold lane_fires, reentry_lane, evidence in H. simpl in H.
-      rewrite Nat.eqb_refl in H. simpl in H. apply Nat.eqb_eq in H. lia.
-  Qed.
-
-  (* SOUNDNESS at the frontier level: the fixed frontier accepts ONLY when the infix
-     source equals the cast result cat — no spurious cross-category infix slips in. *)
-  Theorem resultreentry_sound :
-    forall s c proc, frontier_accepts s (frontier_resultreentry c proc) = true -> s = c.
-  Proof.
-    intros s c proc H.
-    unfold frontier_accepts, frontier_resultreentry, base_lanes,
-           int_parse_lane, proc_inject_lane, reentry_lane, lane_fires, evidence in H.
-    simpl in H. rewrite Nat.eqb_refl in H. simpl in H.
-    rewrite Bool.orb_false_r in H. apply Nat.eqb_eq in H. lia.
+    intros c d proc. unfold frontier_delegate. simpl. right. left. reflexivity.
   Qed.
 
 End CastCompareFrontierBound.
