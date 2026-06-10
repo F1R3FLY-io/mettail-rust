@@ -15,3 +15,5 @@ theories/FiniteHarness.v
 theories/CohortQuotient.v
 theories/ChainAbsorb.v
 theories/TomitaAggregation.v
+
+theories/CastDispatchHostResolution.v
