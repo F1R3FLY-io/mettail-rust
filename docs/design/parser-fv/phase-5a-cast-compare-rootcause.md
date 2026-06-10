@@ -145,6 +145,40 @@ i.e. `PRATTAIL_TRACE=actions`) at `apply_action_to_cursor` (~:6635) and
 `[wpds-DRILL]` lines before committing the fix. Do NOT `git checkout`/revert it
 (survives on disk; remove by hand).
 
+## COMPLETE bedrock chain (drilled, for one-step resume)
+
+1. Cast `int(3.14)` reduces to Int (trace `transient start cat=2 rule=15 pos=5`,
+   children = [Trigger(int), Symbol(nt=5 Fixed)]). Result category Int(2) is correct.
+2. The Int result resolves ONLY into the `bp:0` Proc-injection cohort
+   (`cohort resolve key=pos:2 src:2 bp:0 wrap=(0,0)`) and then UNWINDS. It is never
+   offered to the Int-category infix dispatch at the operator binding power (bp:5).
+3. **Producer of the cross-cat infix projection** = `allocate_uncached_push_child`
+   (`prattail/src/wpda_walker.rs:14854`): it pushes
+   `EdgeKind::CrossCatProjection{source_src_idx, inner_cur_bp, wrap_cat, wrap_rule}`
+   **IFF** `branch.new_state == WpdaState::CrossCatDelegate{source_src_idx, inner_cur_bp}`.
+   That registers the cohort the consumer at `:15716`/`:15775` later resolves.
+4. A literal Int operand, in its InfixLoop dispatch on `==`, GENERATES a Fork branch
+   with `new_state = CrossCatDelegate{source=Int(2), inner_cur_bp=5}` for EqInt
+   (wrap=(Bool=7, EqInt rule 0)) → CrossCatProjection registered → `cohort resolve …
+   bp:5 wrap=(7,0)` → `transient start cat=7 rule=0 arity=2` (EqInt) → Bool over full
+   input. The cast result NEVER generates that CrossCatDelegate fork (it unwound at
+   step 2), so the projection is never registered; the only EqInt attempt is the
+   guarded-CONSUME path (`suppress category-changing infix source=2 result=7 pos=5`),
+   which H2 proved is a dead end.
+5. **FIX:** after the cast result reduces to its TARGET category, route the cursor
+   into the InfixLoop dispatch for that target category at the operator bp, so it
+   emits the same cross-cat infix `CrossCatDelegate{target_cat, op_bp}` Fork the
+   literal emits → CrossCatProjection registered → comparison projects. The
+   InfixLoop dispatch that emits these cross-cat infix forks is CODEGEN-generated
+   (`macros/src/gen/runtime/wpda_codegen/` — the InfixLoop step emitter); the
+   post-cast-reduction state transition is `apply_pop_body_to_cursor`
+   `effective_new_state` (`:15490-15511`: CategoryEntry pred → InfixLoop; else →
+   Unwinding). NEXT READ: (a) the codegen InfixLoop emitter to see how it decides to
+   emit cross-cat infix `CrossCatDelegate` forks for an operand's category, and
+   (b) why the cast-result cursor lands at `bp:0`-unwind instead of InfixLoop at the
+   operator. Keep `guard_category_changing_infix`. Canary: `-3!` tests; also re-run
+   gen_calculator_op/gen_rhocalc_op/edge_case baseline-relative (0 new failures).
+
 ## Process directives (this session)
 - **Boyscout rule** ([[feedback_boyscout_rule]]): fix discovered+localized issues NOW,
   in the same effort; do not defer. "Multi-session OK" is for separate un-started scope.
