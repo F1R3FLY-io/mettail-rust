@@ -6422,6 +6422,106 @@ where
         }
     }
 
+    /// Phase 5A cast-then-compare (2026-06-10): is the cursor's TOP SPPF symbol a
+    /// CAST / cross-category-prefix RESULT (a trigger-bearing `"t" "(" a ")"`
+    /// rule)? Reuses `min_terminal_span(cat, rule) > 0` as the cast-result
+    /// classifier — that predicate already selects EXACTLY the trigger-bearing
+    /// cast shape (leading literal + all-Simple params + >=1 in-span trailing
+    /// literal) and returns 0 for bare literals/vars/binders/collections. This is
+    /// the NARROWNESS lever: a literal operand's top has `min_terminal_span == 0`,
+    /// so literals are never recognized here and keep relying on their cross-cat-LHS
+    /// delegate. The packing `rule_idx` encodes `(cat << 16) | rule_index`.
+    fn operand_sppf_top_is_cast_result(&self, cursor: &BranchCursor<W>) -> bool {
+        let Some(top_sid) = self.sppf_stack_arena.top(cursor.sppf_stack_id) else {
+            return false;
+        };
+        for &packing_id in self.sppf.packings_of(top_sid) {
+            if let Some(crate::sppf::SppfNode::Packing { rule_idx, .. }) = self.sppf.node(packing_id)
+            {
+                let cat = (*rule_idx >> 16) as u16;
+                let rule = (*rule_idx & 0xFFFF) as u16;
+                if self.engine.min_terminal_span(cat, rule) > 0 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Phase 5A cast-then-compare (2026-06-10, FV-derived; proofs in
+    /// `CastLookaheadHostSynthesis.v` + `CastResultCrossCatLhsEvidence.v`): decide
+    /// whether to SYNTHESIZE the cross-cat-LHS hosting reentry for a cast-result
+    /// operand at a category-changing infix. Returns `Some(C)` (the operand /
+    /// result category to key the reentry by) iff ALL hold:
+    ///   1. the cursor is in InfixLoop (operand fully parsed, at the infix);
+    ///   2. `action` is a CATEGORY-CHANGING infix `op : C -> D` (`D != C`). Because
+    ///      the engine only emitted this action since the infix's trigger token IS
+    ///      the lookahead, "lookahead = trigger" holds BY CONSTRUCTION — the
+    ///      `CastLookaheadHostSynthesis` gate is satisfied without a separate peek;
+    ///   3. there is NO existing cross-cat-LHS evidence (a genuine delegate operand
+    ///      already has `Some(C)` and takes the normal admit path untouched — and
+    ///      this makes the synthesis fire AT MOST ONCE per operand: after it, the
+    ///      reentry edge supplies evidence, so this returns `None`);
+    ///   4. the cursor's GSS top is `CategoryEntry{C}` with `C == source` (key by
+    ///      the RESULT cat, never the cast's argument cat —
+    ///      `arg_keyed_fix_insufficient`);
+    ///   5. the operand's SPPF top is a CAST result (`operand_sppf_top_is_cast_result`
+    ///      — narrowness; literals excluded).
+    fn cast_result_hosting_reentry_source(
+        &self,
+        cursor: &BranchCursor<W>,
+        action: &WpdaStepAction<W>,
+    ) -> Option<u16> {
+        if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return None;
+        }
+        let source_src_idx = match action {
+            WpdaStepAction::ConsumeAndPush { symbol, new_state, .. } => {
+                Self::category_changing_infix_source(symbol, new_state)?
+            },
+            WpdaStepAction::Fork { branches, .. } => {
+                branches.iter().find_map(Self::branch_category_changing_infix_source)?
+            },
+            _ => return None,
+        };
+        // (3) only the broken case — no existing cross-cat-LHS evidence.
+        if self.cross_cat_lhs_infix_evidence_source(cursor).is_some() {
+            return None;
+        }
+        // (4) GSS top is CategoryEntry{C} with C == source (result-cat keyed).
+        let top = self.gss.node(cursor.node)?;
+        if top.symbol.kind != SymbolKind::CategoryEntry
+            || top.symbol.category_src_idx != source_src_idx
+        {
+            return None;
+        }
+        // (5) the operand is a cast result (narrowness).
+        if !self.operand_sppf_top_is_cast_result(cursor) {
+            return None;
+        }
+        Some(source_src_idx)
+    }
+
+    /// Phase 5A cast-then-compare: push the cross-cat-LHS REENTRY that establishes
+    /// the operand's return-context = the infix result cat — the IDENTICAL push a
+    /// literal gets at `apply_pop_body_to_cursor` (the proven `delegate_lane`). The
+    /// caller then re-enters InfixLoop so the cast cursor re-dispatches the infix
+    /// HOSTED. +1 GSS node, +0 cursors, post-resolution.
+    fn synthesize_cross_cat_lhs_reentry(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        source_src_idx: u16,
+    ) {
+        let source_entry = StackSymbolV2::category_entry(source_src_idx);
+        let _ = self.cursor_gss_push_with_kind(
+            cursor,
+            source_entry,
+            cursor.pos,
+            W::one_ref(),
+            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx },
+        );
+    }
+
     fn guard_category_changing_infix(
         &self,
         cursor: &BranchCursor<W>,
@@ -6507,6 +6607,27 @@ where
         // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
         // record per-variant call counts to identify the dominant
         // apply_action arm for L2-L3 graduation targeting.
+        // Phase 5A cast-then-compare (2026-06-10, FV-derived): lookahead-gated
+        // hosting synthesis. If `action` is a category-changing infix op:C->D
+        // matched on a CAST-RESULT operand that lacks cross-cat-LHS evidence,
+        // synthesize the CrossCatLhsReentry{C} (return-context = D, the literal's
+        // delegate reentry) and re-enter InfixLoop so the cast cursor re-dispatches
+        // op HOSTED — exactly the literal's path. The matched action means the
+        // trigger is the lookahead (gated by construction); +1 GSS node, +0
+        // cursors, post-resolution; narrow (cast results only). Fires at most once
+        // (the reentry then supplies evidence). FV: CastLookaheadHostSynthesis.synth,
+        // CastResultCrossCatLhsEvidence.run_cast_fixed_accepts.
+        if let Some(source_src_idx) = self.cast_result_hosting_reentry_source(cursor, &action) {
+            self.synthesize_cross_cat_lhs_reentry(cursor, source_src_idx);
+            self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: 0 });
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] cast-host synth reentry source={} pos={}",
+                    source_src_idx, cursor.pos
+                );
+            }
+            return self.cursor_resolution_check(cursor);
+        }
         let action = self.guard_category_changing_infix(cursor, action);
         #[cfg(feature = "walker-stats")]
         {
