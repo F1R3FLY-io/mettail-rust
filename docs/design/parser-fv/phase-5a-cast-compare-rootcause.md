@@ -145,7 +145,32 @@ i.e. `PRATTAIL_TRACE=actions`) at `apply_action_to_cursor` (~:6635) and
 `[wpds-DRILL]` lines before committing the fix. Do NOT `git checkout`/revert it
 (survives on disk; remove by hand).
 
-## COMPLETE bedrock chain (drilled, for one-step resume)
+## ⚠ CORRECTION (DRILL2, NOT yet converged — do not treat the chain below as final)
+
+A second instrumentation (`[wpds-DRILL2]` at the `effective_new_state` decision,
+`apply_pop_body_to_cursor:~15514`) CONTRADICTS step 2 of the chain below: the
+cast-result Int (cat=2) **DOES** reach `InfixLoop { cur_bp: 0 }` at pos=5
+(`CE-pop cat=2 edge=None pred_id=GSS_NODE_NONE pred_kind=None eff=InfixLoop pos=5`) —
+the SAME state a literal Int reaches. So "the cast result never enters the InfixLoop
+dispatch / unwinds at bp:0" is WRONG. The true blocker is INSIDE the InfixLoop
+dispatch / `engine.step` at the operator position: with the cast-result cursor in
+`InfixLoop{cur_bp:0}` at the `==`, `engine.step` does NOT emit the `EqInt`
+`CrossCatDelegate{Int,bp:5}` Fork it emits for a literal Int cursor in the same state.
+NOT YET ISOLATED why (candidate axes: the cursor's GSS top / SPPF top differs; the
+operator token position vs the cast span; a visited_dispatch/proj-descriptor dedup
+that already fired for the cast path; the `1:11 unexpected ==` means the dispatch
+returns no action / Unwinding for the cast cursor). NEXT: compare `engine.step`'s
+inputs+output for a literal-Int InfixLoop cursor vs the cast-result InfixLoop cursor
+at the `==` (same `cur_bp:0`) — what cursor/GSS/SPPF field differs that makes the
+generated InfixLoop step emit the EqInt fork for one and not the other. The
+`engine.step` InfixLoop logic is codegen (`macros/src/gen/runtime/wpda_codegen/`).
+Two `[wpds-DRILL]`/`[wpds-DRILL2]` instrumentation blocks are in the working tree
+(~:6635, ~:15514, ~:15511/:15537) — remove before any fix commit.
+
+**STATUS: root NOT converged.** Per the anti-false-root discipline, no fix until the
+literal-vs-cast `engine.step` divergence at the operator is isolated + verified.
+
+## (SUPERSEDED — see correction above) earlier chain hypothesis
 
 1. Cast `int(3.14)` reduces to Int (trace `transient start cat=2 rule=15 pos=5`,
    children = [Trigger(int), Symbol(nt=5 Fixed)]). Result category Int(2) is correct.
