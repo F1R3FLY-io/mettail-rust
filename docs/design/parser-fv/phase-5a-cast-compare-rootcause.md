@@ -181,6 +181,28 @@ find WHICH emission produces it; candidate sites: the IterativeChainAbsorb fallt
 the lex-fork infix dispatch `#lex_fork_infix_dispatch` at engine_impl.rs:956, or a
 walker-side ConsumeAndPush, NOT necessarily the :1248 singleton).
 
+**VERIFIED FACT (DRILL3 at allocate_uncached_push_child:14854, 2026-06-10):** for the
+cast `int(3.14) == 3`, EVERY registered `CrossCatProjection` is at `bp=0` (the prefix
+injections — `source=2 bp=0 wrap=(0,0)` ProcInt, `wrap=(6,1)` IntToFloat, `wrap=(3,..)`
+IntToBigInt, etc.; also source=3/5/6/7 injections). **NO `bp>0` projection is EVER
+registered** — in particular the `EqInt` projection (`source=2 bp=5 wrap=(7, EqInt
+rule)`) is NEVER registered, whereas a literal Int's `1==1` trace DOES register+resolve
+`bp:5 wrap=(7,0)`. So the cast's InfixLoop dispatch at `==` emits a (guard-suppressed)
+`ConsumeAndPush` for EqInt, NOT the `Fork{CrossCatDelegate}` that would register the
+projection. This is the single most reliable finding; the WHY (why the cast's EqInt is
+a singleton ConsumeAndPush while the literal's is a Fork — candidate-count / state diff
+at the InfixLoop) is the remaining un-isolated question.
+
+**DECISIVE NEXT EXPERIMENT (fresh context):** (a) re-confirm whether H3 actually
+rebuilt (touch macros, verify cargo recompiles `mettail-macros` + regenerates) — the
+H3 falsification may have been a stale-build artifact; with DRILL3 in place, re-apply
+H3 and check if `DRILL3 source=2 bp=5` then appears. (b) site-tag EVERY `ConsumeAndPush`
+emission in engine_impl.rs (singleton :1248, IterativeChainAbsorb fallthrough,
+`#lex_fork_infix_dispatch` :956, InfixChainIterative arm) to find WHICH emits the cast's
+EqInt ConsumeAndPush. (c) instrument the InfixLoop `__cands.len()` to print the
+candidate count + each candidate's new_state for the cast's `==` step vs a literal
+`1==1` `==` step — the candidate-count difference (singleton vs Fork) is the crux.
+
 **STATUS: root NOT converged after 3 falsified hypotheses (H1 EOI, H2 guard, H3
 singleton-ConsumeAndPush) — this is the multi-round false-root CHURN pattern the user
 forbids; context saturation is the driver. Per the anti-false-root rule + the
