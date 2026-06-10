@@ -80,6 +80,32 @@ H2 bypass that regressed 27 `-3!`. Needs a trace of the cast's exact pop/edge se
 BEFORE editing → a dedicated focused effort (this is the multi-layer cross-cat area the
 prior session churned; drill-to-bedrock-first per the anti-churn discipline).
 
+### Cast-compare — FALSIFIED approach #1 (2026-06-10, reverted) + deepened bedrock
+POP-sequence trace (temp `[wpds-POP]` in `apply_pop_body_to_cursor`, since removed) for
+`int(3) == 3` shows the cast DOES set up a `CrossCatLhs{2}`/`CrossCatLhsReentry{2}` edge
+but it is POPPED at **pos=3** (the cast's `)`, pred=`CategoryEntry{7=Bool}`) — ONE token
+BEFORE `==` at pos=4 — leaving a `Generic`-edge top. Why: the cast's Int ARGUMENT (`3`)
+is itself an Int (a cross-cat source) so it spawns a NESTED CrossCatLhs reentry that the
+cast's `)` close pops; the OUTER cast-result evidence is never established.
+
+**FALSIFIED FIX #1 (do NOT retry):** adding a parallel re-establishment block in
+`apply_pop_body_to_cursor` after the CrossCatLhs reentry — "when `popped_edge ==
+CrossCatProjection` && popped is `CategoryEntry` && eff=InfixLoop, re-push
+`CategoryEntry{last_action_output_cat}` + `CrossCatLhsReentry`" — FAILED: `int(3) == 3`
+still failed AND it REGRESSED `int(3) != 3` (col 8 → col 4, the cast's own `(` now
+trailed). Reason: a cast emits MANY `CrossCatProjection` CategoryEntry pops DURING its
+internal/arg parse, so the block fires mid-cast and corrupts the cast's `(arg)` frames.
+The re-establishment must fire ONLY at the OUTERMOST cast-result resolution, which cannot
+be distinguished from internal cast frames by `(edge, popped.kind, eff)` alone.
+
+**NEXT (dedicated, cursor-identity trace required):** instrument a SINGLE cursor's frame
+stack across the whole `int(3) == 3` parse (cursor id + GSS stack snapshot per step) to
+identify the exact step where the EqInt-bearing cursor loses its reentry, and re-establish
+evidence ONLY there (gated by cast-result-outermost, e.g. the cast's Return resolving into
+the enclosing CategoryEntry, not an internal arg CategoryEntry). This is the careful
+frame-level effort the anti-churn discipline reserves for this exact (furious-history)
+cast-family bug — NOT another `(edge,kind,eff)` guess.
+
 ---
 
 ## Confirmed failure (reproduced, `feature/wfst-architecture`)
