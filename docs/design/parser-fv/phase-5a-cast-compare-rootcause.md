@@ -103,13 +103,31 @@ Tracing `int(3.14) == 3` confirms:
   operand gets) ever appears; all cohort resolves are `bp:0 wrap=(0,X)` (Proc
   injections). The cast operand never re-enters the binding-power-5 infix dispatch.
 
-**Localized fix site:** `apply_pop_body_to_cursor` (`prattail/src/wpda_walker.rs:~15537`).
-When the `CrossCatLhs { source_src_idx }` edge is popped, the re-entry pushes
-`StackSymbolV2::category_entry(*source_src_idx)` — i.e. it re-enters the **SOURCE**
-category's dispatch (Fixed=5). For the post-cast infix continuation the cursor needs
-the cast's **RESULT/TARGET** category (Int=2) so the Int infix projection (`EqInt`,
-`GtEqInt`, …) is scheduled. The re-entry keying on the source category (not the
-result) is why `==` finds no Int comparison rule.
+**CORRECTION (re-trace with enriched instrumentation):** the `apply_pop_body_to_cursor`
+`CrossCatLhs{source_src_idx}` re-entry at `:15530-15558` is a RED HERRING for the
+post-cast infix — it fires at **pos=3** (the cast's INNER Fixed argument `3.14`) with
+`last_out=Some(5)` (Fixed), `pred_cat=Some(7)` (Bool). It is the cast's argument
+handling, NOT the `==` continuation. So `cursor.last_action_output_cat` is NOT a
+reliable cast-RESULT signal here (it's Fixed=5, not Int=2). Do NOT key the fix on it.
+
+**Actual blocker (pos≈5, after the cast completes):** the earlier trace shows
+`suppress category-changing infix source=2 result=7 pos=5` (×7) — i.e. the cast
+RESULT is correctly Int (source=2) at the `==`, and an `EqInt` (Int→Bool, result=7)
+is attempted via the GUARDED-CONSUME path, which `guard_category_changing_infix`
+suppresses (evidence mismatch). But H2 proved the consume path is a DEAD END (even
+un-suppressed it does not fire EqInt). The WORKING mechanism a literal Int operand
+uses is the **`bp:5` cohort cross-category infix projection** (`cohort resolve
+key=pos:.. src:2 bp:5 wrap=(7,0)` → `transient start cat=7 rule=0 arity=2`), which is
+NEVER scheduled for the cast-result operand.
+
+**Real fix site (to find next):** the COHORT-PROJECTION SCHEDULER (the producer of
+the `bp:5 wrap=(result_cat, rule)` cohort entries; consumers are the "cohort
+resolve"/"cohort revive" emits at `wpda_walker.rs:~15780`/`~15104`). Determine where a
+literal operand's resolution schedules the `bp:5` Int→Bool projection and why a
+cast-result operand's resolution (post-cast, at pos≈4) does not reach that scheduler
+(it lands on the guarded-consume path instead). Fix = route the cast-result operand
+into the same cohort-projection scheduling for its RESULT category at the operator's
+binding power. Keep `guard_category_changing_infix`. Canary: `-3!` tests.
 
 **Candidate fix (to verify, foreground, regression-checked against `-3!`):** the
 post-cast infix re-entry must dispatch on the cast RESULT category, not the source —
