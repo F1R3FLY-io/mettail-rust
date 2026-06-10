@@ -91,9 +91,55 @@ Do NOT delete `guard_category_changing_infix` (H2 proved it load-bearing).
 infix continuations as a literal of category C) — the genuine model, not a static
 count-lemma.
 
+## Deeper trace evidence (PRATTAIL_TRACE=actions, with `[wpds-DRILL]` instrumentation)
+
+Tracing `int(3.14) == 3` confirms:
+- `[wpds-DRILL] PushWithEdgeKind sym_cat=5 pos=2 edge=CrossCatLhs { source_src_idx: 5 }
+  new_state=PrefixDispatch { pos: 2, cur_bp: 0 }` — the cast pushes a `CrossCatLhs`
+  edge whose `source_src_idx = 5` (**Fixed**, the cast's SOURCE; `3.14` lexes as
+  Fixed), and enters `PrefixDispatch{cur_bp:0}`.
+- The cast result interns as Int (nt=2) — correct target.
+- NO `cohort resolve … bp:5 wrap=(7,0)` (the EqInt Int→Bool projection a literal Int
+  operand gets) ever appears; all cohort resolves are `bp:0 wrap=(0,X)` (Proc
+  injections). The cast operand never re-enters the binding-power-5 infix dispatch.
+
+**Localized fix site:** `apply_pop_body_to_cursor` (`prattail/src/wpda_walker.rs:~15537`).
+When the `CrossCatLhs { source_src_idx }` edge is popped, the re-entry pushes
+`StackSymbolV2::category_entry(*source_src_idx)` — i.e. it re-enters the **SOURCE**
+category's dispatch (Fixed=5). For the post-cast infix continuation the cursor needs
+the cast's **RESULT/TARGET** category (Int=2) so the Int infix projection (`EqInt`,
+`GtEqInt`, …) is scheduled. The re-entry keying on the source category (not the
+result) is why `==` finds no Int comparison rule.
+
+**Candidate fix (to verify, foreground, regression-checked against `-3!`):** the
+post-cast infix re-entry must dispatch on the cast RESULT category, not the source —
+either by carrying the result category on the edge (a `CrossCatLhs` keyed by/also
+carrying the result cat), or by re-entering `category_entry(result_cat)` for the
+cast-continuation case while leaving the genuine cross-cat-LHS infix case (which the
+`-3!` tests exercise) on the source. Must NOT weaken `guard_category_changing_infix`
+(load-bearing, H2). Confirm `cur_bp:0` → the operator's bp (5) projection is then
+scheduled.
+
+**Working-tree note:** `prattail/src/wpda_walker.rs` has 29 lines of uncommitted
+`[wpds-DRILL]` eprintln trace instrumentation (gated by `trace_actions_enabled()`,
+i.e. `PRATTAIL_TRACE=actions`) at `apply_action_to_cursor` (~:6635) and
+`apply_pop_body_to_cursor` (~:15511/:15537). It is throwaway diagnostics — REMOVE all
+`[wpds-DRILL]` lines before committing the fix. Do NOT `git checkout`/revert it
+(survives on disk; remove by hand).
+
+## Process directives (this session)
+- **Boyscout rule** ([[feedback_boyscout_rule]]): fix discovered+localized issues NOW,
+  in the same effort; do not defer. "Multi-session OK" is for separate un-started scope.
+- **No sub-agents** — complete this fix in the FOREGROUND (user does not trust
+  sub-agents' "pragmatic"/debt-hiding shortcuts).
+- **Git** — NEVER `git stash` / `git checkout` / `git branch` / `git worktree` /
+  `git reset` / `git restore` etc. unless explicitly requested; stay on
+  `feature/wfst-architecture`.
+- Don't spend time on pre-existence/blame (no history bisection).
+
 ## Status
-- STEP 0 done (failure characterized, 78-case family). H1 + H2 FALSIFIED by
-  bisection + flip. Bedrock localized to the missing bp:5 cohort infix projection
-  for cast-result operands. Fix NOT yet applied (drilling to bedrock first, per
-  mandate; the fix is a regression-sensitive walker change — the `-3!` ambiguity
-  tests are the canary). Next session converges from this ledger.
+STEP 0 + root-cause COMPLETE (flip-falsified H1/H2; bedrock localized to the
+`CrossCatLhs` source-vs-result re-entry at `wpda_walker.rs:~15537` + the missing bp:5
+Int projection). Fix is the next foreground step (regression-sensitive; `-3!` canary).
+This ledger + the pgmcp task/memory are the complete resumable record — context may be
+cleared without loss; resume from here.
