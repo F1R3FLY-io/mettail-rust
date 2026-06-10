@@ -1,6 +1,55 @@
 # Evidence-Gated Cross-Cat Dispatch — the FV-derived fix for cast-then-compare (Task #21 / Phase 5A)
 
-> Status: **DESIGN (FV-grounded), pre-implementation.** `feature/wfst-architecture @ 32fbf254`.
+> ## ⚠ RED-TEAM REFUTATION (2026-06-10, two independent adversarial critics, CONVERGED) — §2/§4/§5 MECHANISM IS REFUTED; DO NOT IMPLEMENT AS WRITTEN
+>
+> Per [[feedback_red_team_design_until_convergence]] this design was red-teamed before
+> implementation. Both critics independently refuted its **mechanism** (the FV *math* is valid;
+> the **grounding in the real walker is wrong**). Re-grounding is required. The convergent blockers:
+>
+> 1. **The cohort merge engages ONLY for `WpdaState::CrossCatDelegate`** (the RHS sub-parse;
+>    `wpda_walker.rs:14673`), **never for the `CrossCatLhs` delegate** this design routes into
+>    (`prefix.rs:1301-1323` pushes `CategoryEntry + PrefixDispatch + EdgeKind::CrossCatLhs`, which never
+>    touches the cohort cache). ⇒ `CastDelegateMergeBound`'s linear bound is about a mechanism the
+>    chosen path does not use; the "BOUNDED" leg of `dispatch_resolution_correct` is **unestablished for
+>    the implementation**, so §6's "lex-fork change must never land alone" has no fence.
+> 2. **The merge key `(source_cat, position)` (§2/§4 step 4) is EXACTLY what M4 *removed* to fix the
+>    cast family.** `DispatchKey` deliberately carries `wrap_cat/wrap_rule` (`dispatch_cohort.rs:84-89`:
+>    distinct wraps at one `(pos,source,bp)` previously collapsed = "the cast-family root cause").
+>    Narrowing it re-breaks a flip-proven fix. AND the narrow MERGE quotient **already exists** as
+>    `EquivKey = (source_src_idx, inner_cur_bp)` (`dispatch_cohort.rs:153`, COQ-S1) — the design
+>    re-proposes existing work and conflates the wide *cache* key with the narrow *merge* key.
+> 3. **The lookahead gate is CIRCULAR with the lex-fork.** The lex-fork decides at the cast's FIRST
+>    token (`forks.rs:174`); the infix trigger (`==`) is behind the arbitrary-length `(...)` operand, so
+>    `gated` cannot be evaluated at dispatch. The live code fires it at operand-completion
+>    (`cast_result_hosting_reentry_source:6451`, post-resolution) — which §1 wrongly calls "dead." That
+>    post-resolution reentry (efec0eb7) is **live in HEAD and works for grouped casts** (+2); the design
+>    overstated "post-resolution insufficient" (it is insufficient only for the OUTPUT injection of
+>    *direct* casts lacking a hosting context, per `CastRehostOutputProjection` — a narrower claim).
+> 4. **Cast triggers (`int`/`float`/`str`/`cast_error_*`) ARE the keyword/ident-ambiguous tokens the
+>    `51d57c91` keyword-reservation fall-through routes to the keyword arm** (`forks.rs:386-430`, the
+>    189-fix). "Stop bypassing the `CrossCatLhs` arm for cast triggers" (§4 step 3) is the *opposite*
+>    decision at the *same site on the same token class*; over-broad re-routing regresses
+>    `list`/`at`/`error`. No model proves the re-route predicate disjoint from the keyword-reservation set.
+> 5. **The FV models are sound-as-arithmetic but vacuous-as-implementation-bounds** — they don't model
+>    `DispatchKey`/`register`/`resolve`/`revive`, the `CrossCatLhs`-vs-`CrossCatDelegate` split,
+>    `guard_category_changing_infix` (the actual SUPPRESSION site, `:6525`), the `ConfigKey` merge
+>    discriminators (the `-3!`/bare-vs-delegate split, `:2293-2324`), BP-gating (`l_bp >= cur_bp`), the
+>    lex-DAG *set* lookahead, the multi-SOURCE cast trigger (`int` = FloatToInt/BoolToInt/StrToInt/
+>    IntId/IntBin), or multi-PARENT injection (Int→{Proc,BigInt,BigRat}).
+>
+> **CORRECTED NEXT STEP (do FIRST, next session):** re-investigate the GROUND TRUTH — trace
+> `int(3) == 3` with `PRATTAIL_TRACE=actions` at HEAD (efec0eb7) and locate the *exact* arm that
+> fails (agent 2 observed the salvage reports col-4 `(`; confirm whether EqInt actually fires + where
+> the Proc root is lost), THEN re-ground the FV in the *real* mechanisms (`CrossCatDelegate` cohort +
+> `EquivKey` merge + the M4 `DispatchKey`), with a model that takes the actual keys + `register`
+> collision semantics as input and *derives* the per-level cursor count (not a definitional `S d`).
+> Keep the keyword-reservation non-interference as a transcribed theorem. The §1 worker-identity
+> finding (`CastRehostOutputProjection`) stands; §2/§4/§5's dispatch *mechanism* does not.
+>
+> ---
+>
+> Status: **DESIGN — MECHANISM REFUTED by red-team (see banner above); re-grounding required.**
+> `feature/wfst-architecture @ 32fbf254`.
 > Supersedes the post-resolution approach (efec0eb7's reentry synth + this session's reverted
 > projection/direct-injection/EOI-salvage experiments), which formal verification proved
 > **insufficient** for the output injection. Authored 2026-06-10 after the user-chosen pivot.
