@@ -151,6 +151,28 @@ pruning the spurious multi-source/nested delegate fan-out. The fall-through expl
 (why 327, vs the bounded literal) is NOT yet determined — must drill before the next
 attempt (no guessing).
 
+### Explosion entanglement with the cohort subsystem (2026-06-10, explore-agent drill, CORRECTED)
+The explosion is NOT "single vs multi-token cast" (an explore agent claimed this — WRONG:
+`int(3)==3` is multi-token and PARSED FINE with the fall-through; `int(3.14)==3`,
+`float(3)==3.0` too). It is specifically **MULTIPLE / NESTED cast tokens**
+(`str(42)+str(43)` = 2 casts+Add → 327 cursors; `int(float(int(3.14)))` = 3 nested →
+explode; `float(int(3.14)+1)`). Code-grounded mechanism (verifiable): each cast token the
+fall-through routes through the cross-cat-LHS delegate adds a Fork; `source_priority`
+MULTIPLIES per fork (`wpda_walker.rs:7615-7618`
+`child=src_pri.saturating_mul(branches).saturating_add(idx)`); the `visited_proj_descriptors`
+GLL gate keys on `(gss_node, sppf_stack_id, cat, cur_bp)` (`:7572-7581`) so nested casts
+(distinct SPPF stacks) do NOT merge; the dispatch-cohort key (`:15718-15723`) is
+`(pos,source_src_idx,inner_cur_bp,wrap_cat,wrap_rule)` — NOT path-keyed. ⇒ multiple/nested
+casts compound MULTIPLICATIVELY. So the cast-compare delegate fix is ENTANGLED with the
+cohort-dedup / source_priority over-generation — the SAME fragile subsystem behind the
+historical `list(5)` livelock (Phase 6 territory). A bounded fix needs either (i) the
+cohort dedup to MERGE the added delegate cursors (Phase-6-level), or (ii) a route that adds
+NO per-cast-token forks. The explore agent's "prune guard-suppressed snapshots from cohort
+revival" is an UNVERIFIED hypothesis on a partly-erroneous analysis — do NOT implement
+without a cursor-IDENTITY trace (instrument cursor lineage on a minimal nested case) that
+PROVES the exact over-generation step. This is a dedicated, fragile-subsystem effort — not
+a quick patch.
+
 ---
 
 ## Confirmed failure (reproduced, `feature/wfst-architecture`)
