@@ -167,8 +167,28 @@ generated InfixLoop step emit the EqInt fork for one and not the other. The
 Two `[wpds-DRILL]`/`[wpds-DRILL2]` instrumentation blocks are in the working tree
 (~:6635, ~:15514, ~:15511/:15537) — remove before any fix commit.
 
-**STATUS: root NOT converged.** Per the anti-false-root discipline, no fix until the
-literal-vs-cast `engine.step` divergence at the operator is isolated + verified.
+**FALSIFIED H3 (singleton-ConsumeAndPush, 2026-06-10):** hypothesis was that the
+InfixLoop singleton fast-path (`engine_impl.rs:1248`) emits a bare
+`ConsumeAndPush{new_state: CrossCatDelegate}` for a category-changing infix that never
+registers the `CrossCatProjection` (only the Fork/push-child path does). Implemented
+the fix (route singleton `CrossCatDelegate` → `Fork`-of-one) and VERIFIED: the 12 cast
+cases STILL FAIL (2 pass / 12 fail, unchanged). So the cast's category-changing-infix
+ConsumeAndPush either does NOT come from the `:1248` singleton, or a Fork-of-one still
+doesn't register/fire the projection. REVERTED (engine_impl.rs clean). Do not
+re-attempt the `:1248` singleton fix without first proving the cast's EqInt emission
+site (the `suppress category-changing infix source=2 result=7 pos=5` ConsumeAndPush —
+find WHICH emission produces it; candidate sites: the IterativeChainAbsorb fallthrough,
+the lex-fork infix dispatch `#lex_fork_infix_dispatch` at engine_impl.rs:956, or a
+walker-side ConsumeAndPush, NOT necessarily the :1248 singleton).
+
+**STATUS: root NOT converged after 3 falsified hypotheses (H1 EOI, H2 guard, H3
+singleton-ConsumeAndPush) — this is the multi-round false-root CHURN pattern the user
+forbids; context saturation is the driver. Per the anti-false-root rule + the
+persist-clear authorization, the next attempt MUST start from FRESH context: first
+isolate the EXACT emission site of the cast's `suppress category-changing infix
+source=2 result=7 pos=5` ConsumeAndPush (instrument every ConsumeAndPush emission with
+a site tag), confirm by experiment which site it is, THEN design the fix. No more code
+changes on un-isolated roots.**
 
 ## (SUPERSEDED — see correction above) earlier chain hypothesis
 
