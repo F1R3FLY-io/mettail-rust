@@ -1599,9 +1599,10 @@ const FLAT_TABLE_THRESHOLD: usize = 256;
 /// Diagnostic dump of the decision tree's match-arm structure.
 ///
 /// Produces a human-readable summary for PRATTAIL_DUMP_PARSER debugging.
-/// Actual codegen is performed by the trampoline integration, which queries
-/// `dispatch_strategy()` and generates code with frame management, segment
-/// splitting, and constructor emission. See `trampoline.rs` lines 545-913.
+/// Actual dispatch codegen is the WPDA walker emission in
+/// `macros/src/gen/runtime/wpda_codegen/{prefix,kind_dispatch,forks}.rs`
+/// (trampoline.rs DELETED Stage 10.6); `dispatch_strategy()` itself feeds the
+/// dead-rule lint and the NFA-spillover refinement (pipeline.rs "1.7a").
 pub fn emit_match_arms(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf: &mut String) {
     if tree.segments.is_empty() || tree.segments[0].is_empty() {
         return;
@@ -1743,8 +1744,8 @@ pub fn flatten_tree(tree: &CategoryDecisionTree) -> Vec<FlatState> {
 /// Diagnostic dump of the decision tree's flat-table structure.
 ///
 /// Produces a human-readable summary for PRATTAIL_DUMP_PARSER debugging.
-/// Actual codegen is performed by the trampoline integration via
-/// `dispatch_strategy()`. See `trampoline.rs`.
+/// Actual dispatch codegen is the WPDA walker emission in
+/// `macros/src/gen/runtime/wpda_codegen/` (trampoline.rs DELETED Stage 10.6).
 pub fn emit_flat_table(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf: &mut String) {
     use std::fmt::Write;
 
@@ -1791,7 +1792,8 @@ pub fn emit_flat_table(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf
 ///
 /// Returns true if the tree has been built for this category and has at least
 /// one entry. Categories with only cross-category or infix rules may not have
-/// a decision tree (they are handled by dispatch.rs / pratt.rs).
+/// a decision tree (they are handled by the WPDA walker codegen's cross-cat
+/// and InfixLoop arms; dispatch.rs/pratt.rs DELETED).
 #[cfg(test)]
 pub fn has_decision_tree(trees: &HashMap<String, CategoryDecisionTree>, category: &str) -> bool {
     trees
@@ -2604,8 +2606,9 @@ pub fn category_content_hash(tree: &CategoryDecisionTree) -> u128 {
 }
 
 /// Version tag to invalidate cache when codegen logic changes.
-/// Bump this whenever trampoline.rs, recursive.rs, dispatch.rs, or
-/// pratt.rs codegen logic changes.
+/// Bump this whenever the WPDA walker codegen
+/// (macros/src/gen/runtime/wpda_codegen/) or this decision-tree logic
+/// changes. (trampoline.rs/recursive.rs/dispatch.rs/pratt.rs DELETED.)
 pub const CACHE_VERSION: u32 = 1;
 
 /// Incremental state tracking for content-addressable comparison

@@ -16,14 +16,15 @@
  * Spec-to-Code Traceability:
  *   Rocq Definition              | Rust Code                                | Location
  *   -----------------------------|------------------------------------------|-----------------------------------------
- *   shared_prefix                | shared_prefix_depth()                    | prattail/src/decision_tree.rs:3206
- *   prefix_cse                   | detect_prefix_cse_opportunities()        | prattail/src/decision_tree.rs:982
- *   cse_annotation               | emit_prefix_cse_annotation()             | prattail/src/decision_tree.rs:1106
+ *   shared_prefix                | shared_prefix_depth()                    | prattail/src/decision_tree.rs:3410
+ *   prefix_cse                   | detect_shared_nonterminal_prefixes()     | prattail/src/decision_tree.rs:1059
+ *   cse_annotation               | format_cse_annotation()                  | prattail/src/decision_tree.rs:1175
  *   rd_discriminators             | first_of_rd_suffix() FIRST sets          | prattail/src/prediction.rs
- *   Optimization::PrefixCse      | cost_benefit::Optimization::PrefixCse    | prattail/src/cost_benefit.rs:134
+ *   Optimization::PrefixCse      | cost_benefit::Optimization::PrefixCse    | prattail/src/cost_benefit.rs:195
  *   OptimizationGates::prefix_cse | prefix_cse gate field                   | prattail/src/cost_benefit.rs
  *   first_of_rd_suffix           | first_of_rd_suffix()                     | prattail/src/prediction.rs
- *   write_prefix_match_arms      | trampoline prefix dispatch               | prattail/src/trampoline.rs
+ *   write_prefix_match_arms      | PrefixDispatch arm emission              | macros/src/gen/runtime/wpda_codegen/prefix.rs
+ *                                | (trampoline.rs DELETED Stage 10.6; the WPDA walker owns prefix dispatch)
  *
  * Rocq 9.1 compatible.
  *)

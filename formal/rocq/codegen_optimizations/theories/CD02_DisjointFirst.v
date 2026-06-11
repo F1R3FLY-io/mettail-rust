@@ -12,12 +12,16 @@
  *   Rocq Definition              | Rust Code                                | Location
  *   -----------------------------|------------------------------------------|-----------------------------------------
  *   first_set                    | FirstSet / compute_first_sets()          | prattail/src/prediction.rs:218
- *   dispatch                     | write_category_dispatch()                | prattail/src/dispatch.rs
- *   segment_merging              | merge_safe_nt_boundaries()               | prattail/src/decision_tree.rs:782
+ *   dispatch                     | CategoryDecisionTree::dispatch_strategy()| prattail/src/decision_tree.rs:2917
+ *                                | (dispatch.rs DELETED; runtime dispatch = the WPDA walker codegen,
+ *                                |  macros/src/gen/runtime/wpda_codegen/{prefix,kind_dispatch,forks}.rs)
+ *   segment_merging              | merge_safe_nonterminal_boundaries()      | prattail/src/decision_tree.rs:869
  *   RuleInfo                     | RuleInfo struct                          | prattail/src/pipeline.rs
- *   Optimization::SegmentMerging | cost_benefit::Optimization::SegmentMerging | prattail/src/cost_benefit.rs:127
+ *   Optimization::SegmentMerging | cost_benefit::Optimization::SegmentMerging | prattail/src/cost_benefit.rs:189
  *   first_of_rd_suffix           | first_of_rd_suffix()                     | prattail/src/prediction.rs
- *   NFA fallback                 | NFA try-all alternatives                 | prattail/src/trampoline.rs
+ *   NFA fallback                 | WPDA walker Fork over candidates         | macros/src/gen/runtime/wpda_codegen/forks.rs
+ *                                | (trampoline.rs DELETED Stage 10.6; fanout candidate-set non-loss
+ *                                |  is proven in CD07_NfaFallbackNonLoss.v)
  *
  * Rocq 9.1 compatible.
  *)
@@ -292,12 +296,16 @@ Qed.
 (*  All proofs are COMPLETE -- zero Admitted.                               *)
 (*                                                                         *)
 (*  Abstraction Gaps                                                       *)
-(*  1. NFA fallback: When dispatch is ambiguous (overlapping FIRST sets), *)
-(*     the Rust uses an NFA try-all alternative (trampoline.rs) to test   *)
-(*     all candidate rules.  This is outside the scope of this proof.     *)
-(*  2. Segment merging: The decision tree (decision_tree.rs:810) uses     *)
-(*     FIRST disjointness for safe merge_nt_boundaries.  We prove the    *)
-(*     property but not its application in segment merging.                *)
+(*  1. NFA fallback — DISCHARGED by CD07_NfaFallbackNonLoss.v (2026-06-10):*)
+(*     ambiguous dispatch is a WPDA walker Fork over the fanout's         *)
+(*     candidate set (trampoline.rs DELETED Stage 10.6; the candidate     *)
+(*     set is DispatchStrategy::AmbiguousFanout's rule_labels,            *)
+(*     decision_tree.rs:2917+). CD07 proves the fanout COMPLETE+SOUND     *)
+(*     over every entry kind (incl. NonterminalBoundary continuations)    *)
+(*     and that lex-min selection orders, never prunes.                    *)
+(*  2. Segment merging: The decision tree (decision_tree.rs:869) uses     *)
+(*     FIRST disjointness for safe merge_safe_nonterminal_boundaries().  *)
+(*     We prove the property but not its application in segment merging.  *)
 (*  3. Infix exclusion: Infix rules are excluded from FIRST computation  *)
 (*     (prediction.rs:237) and dispatched by the Pratt binding power      *)
 (*     layer.  This model only covers prefix/RD rules.                     *)
