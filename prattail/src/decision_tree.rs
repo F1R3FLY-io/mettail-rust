@@ -2955,7 +2955,28 @@ impl CategoryDecisionTree {
                         shared_terminals: Vec::new(),
                         live_rules_context: None,
                     },
-                    DecisionAction::NonterminalBoundary { .. } => DispatchStrategy::NotPresent,
+                    // CD07 Phase 4A (2026-06-10; FV: CD07_NfaFallbackNonLoss
+                    // .{nfa_fallback_nonlossy, fixed_empty_boundary_not_present}):
+                    // a boundary entry CARRIES the rules reachable through its
+                    // continuation segments — mapping it to NotPresent reported
+                    // a rule-carrying token as resolved-by-absence, which let
+                    // the NFA-spillover refinement (pipeline.rs "1.7a") strip
+                    // the category's NFA fallback (shipped_spillover_loss).
+                    // Surface the reachable rules as a fanout; an EMPTY
+                    // boundary still reports NotPresent (conservative).
+                    DecisionAction::NonterminalBoundary { options } => {
+                        let rule_labels = self.boundary_rule_labels(options);
+                        if rule_labels.is_empty() {
+                            DispatchStrategy::NotPresent
+                        } else {
+                            DispatchStrategy::AmbiguousFanout {
+                                rule_labels,
+                                shared_prefix_len: 0,
+                                shared_terminals: Vec::new(),
+                                live_rules_context: None,
+                            }
+                        }
+                    },
                 }
             },
             _ => {
@@ -3030,7 +3051,19 @@ impl CategoryDecisionTree {
                                     rule_labels.push(c.rule_label.clone());
                                 }
                             },
-                            _ => {},
+                            // CD07 Phase 4A (2026-06-10; FV:
+                            // CD07_NfaFallbackNonLoss.{fanout_complete,
+                            // shipped_drops_boundary}): a mixed
+                            // Commit+NonterminalBoundary overlap group must
+                            // report the boundary's reachable rules too — the
+                            // prior `_ => {}` silently dropped them, so the
+                            // dead-rule lint could falsely flag a token as
+                            // dead-only while the dropped boundary rules were
+                            // live (and any future consumer of the fanout
+                            // would under-fork).
+                            DecisionAction::NonterminalBoundary { options } => {
+                                rule_labels.extend(self.boundary_rule_labels(options));
+                            },
                         }
                     }
                     DispatchStrategy::AmbiguousFanout {
@@ -3042,6 +3075,44 @@ impl CategoryDecisionTree {
                 }
             },
         }
+    }
+
+    /// CD07 Phase 4A (2026-06-10; FV: CD07_NfaFallbackNonLoss — the boundary's
+    /// `entry_labels`): collect every rule label reachable through a
+    /// `NonterminalBoundary`'s continuation segments, transitively (a resume
+    /// segment may itself contain boundaries), deduped with deterministic
+    /// (sorted) order, cycle-safe via a visited-segment set. This is what
+    /// makes `dispatch_strategy` COMPLETE over mixed Commit+Boundary overlap
+    /// groups (fanout_complete) and stops a rule-carrying boundary token from
+    /// reporting NotPresent (nfa_fallback_nonlossy).
+    fn boundary_rule_labels(&self, options: &[NTOption]) -> Vec<String> {
+        let mut labels: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut visited: HashSet<usize> = HashSet::new();
+        let mut stack: Vec<usize> = options.iter().map(|o| o.resume_segment).collect();
+        while let Some(seg_idx) = stack.pop() {
+            if !visited.insert(seg_idx) {
+                continue;
+            }
+            let Some(segment) = self.segments.get(seg_idx) else {
+                continue;
+            };
+            for (_path, action) in segment.iter() {
+                match action {
+                    DecisionAction::Commit { rule_label, .. } => {
+                        labels.insert(rule_label.clone());
+                    },
+                    DecisionAction::Ambiguous { candidates } => {
+                        for c in candidates {
+                            labels.insert(c.rule_label.clone());
+                        }
+                    },
+                    DecisionAction::NonterminalBoundary { options } => {
+                        stack.extend(options.iter().map(|o| o.resume_segment));
+                    },
+                }
+            }
+        }
+        labels.into_iter().collect()
     }
 
     /// Get all dispatch tokens present in this category's trie.
@@ -3914,6 +3985,115 @@ mod tests {
             tree.dispatch_strategy("Plus", &token_ids),
             DispatchStrategy::NotPresent
         ));
+    }
+
+    #[test]
+    fn test_dispatch_strategy_includes_nonterminal_boundary_rules() {
+        // CD07 Phase 4A flip test (2026-06-10; FV: CD07_NfaFallbackNonLoss
+        // .{shipped_drops_boundary, fanout_complete, nfa_fallback_nonlossy}):
+        // (a) a MIXED Commit+NonterminalBoundary overlap group must report the
+        //     boundary's reachable rules in the fanout — the prior `_ => {}`
+        //     dropped them (the dead-rule lint could falsely flag the token);
+        // (b) a boundary-ONLY dispatch token must report a fanout, NOT
+        //     NotPresent — the prior :2958 mapping counted a rule-carrying
+        //     token as resolved-by-absence, letting the NFA-spillover
+        //     refinement (pipeline.rs "1.7a") strip the category's fallback.
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets,
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            // Commit path under dispatch token LParen: "(" ")".
+            make_rd_rule(
+                "Paren",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            // "(" <Int> ")": terminal prefix [LParen], then an NT boundary —
+            // the boundary entry is stored at path [LParen], overlapping
+            // Paren's [LParen, RParen] under dispatch token LParen.
+            make_rd_rule(
+                "Group",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "x".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            // TWO NT-continuing rules sharing the "if" prefix: the trie node
+            // at [KwIf] holds a NonterminalBoundary{options:[Int, Float]} —
+            // the genuine singleton-boundary entry (:2958). (A SINGLE
+            // NT-continuing rule commits at its unique prefix instead —
+            // lossless — so the boundary action needs the shared prefix.)
+            make_rd_rule(
+                "IfInt",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "x".to_string(),
+                    },
+                    RDSyntaxItem::Terminal("then".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloat",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "y".to_string(),
+                    },
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+        ];
+        builder.insert_rd_rules(&rules);
+        let tree = builder.get_tree("Int").expect("should have Int tree");
+
+        // (a) mixed group at LParen: BOTH labels present.
+        match tree.dispatch_strategy("LParen", &token_ids) {
+            DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
+                assert!(
+                    rule_labels.iter().any(|l| l == "Paren"),
+                    "fanout must keep the Commit rule: {rule_labels:?}"
+                );
+                assert!(
+                    rule_labels.iter().any(|l| l == "Group"),
+                    "fanout must include the NonterminalBoundary's reachable \
+                     rules (fanout_complete): {rule_labels:?}"
+                );
+            },
+            other => panic!("expected AmbiguousFanout at LParen, got {other:?}"),
+        }
+
+        // (b) boundary-only at KwIf: a fanout carrying the boundary's rule,
+        // never NotPresent (nfa_fallback_nonlossy).
+        match tree.dispatch_strategy("KwIf", &token_ids) {
+            DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
+                assert!(
+                    rule_labels.iter().any(|l| l == "IfInt") && rule_labels.iter().any(|l| l == "IfFloat"),
+                    "boundary-only token must surface ALL reachable rules: {rule_labels:?}"
+                );
+            },
+            other => panic!(
+                "expected AmbiguousFanout at boundary-only KwIf (NOT NotPresent), got {other:?}"
+            ),
+        }
     }
 
     #[test]
