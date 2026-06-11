@@ -3955,6 +3955,36 @@ fn generate_language_trait_impl_multi(
                                 return mettail_runtime::TermType::Base(#primary_type_str.to_string());
                             }
                         }
+                        // ROOT-B bare-var-fan quotient (user policy 2026-06-11;
+                        // FV: BareVarFanQuotient.v — top_is_upper_bound /
+                        // quotient_preserves_alternatives / detector_sound,
+                        // zero-admission): an EVIDENCE-FREE Var fan over a
+                        // single identifier joins to the TOP (start) category —
+                        // every category injects into it (the ProcX wrap
+                        // family), so the start category is the fan's lattice
+                        // join, the categorical "unknown". Detector: every
+                        // alternative DISPLAYS as the same bare identifier
+                        // (token-soundness: a single-Ident input admits only
+                        // literal-free var/injection chains, whose terminal
+                        // yield is the identifier itself). This quotients the
+                        // REPORT only — the alternative list is untouched (no
+                        // parse-side drop; Display-equality here selects a
+                        // report, it never merges or drops alternatives).
+                        let mut displays = alts.iter().map(|a| format!("{}", a));
+                        if let Some(first) = displays.next() {
+                            let is_bare_ident = !first.is_empty()
+                                && first
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.is_alphabetic() || c == '_')
+                                    .unwrap_or(false)
+                                && first.chars().all(|c| c.is_alphanumeric() || c == '_');
+                            if is_bare_ident && displays.all(|s| s == first) {
+                                return mettail_runtime::TermType::Base(
+                                    #primary_type_str.to_string(),
+                                );
+                            }
+                        }
                         mettail_runtime::TermType::Base("Ambiguous".to_string())
                     },
                     #(#infer_term_type_arms),*
