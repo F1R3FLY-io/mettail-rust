@@ -24,3 +24,4 @@ theories/BareVarFanQuotient.v
 theories/MixfixLiteralAccounting.v
 theories/CollectionForkEvidence.v
 theories/ParikhObligationGate.v
+theories/EvidenceGatedDelegates.v
