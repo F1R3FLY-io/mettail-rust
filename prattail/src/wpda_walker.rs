@@ -541,6 +541,20 @@ pub enum WpdaStepAction<W: SemiringRef> {
         weight: W,
         new_state: WpdaState,
     },
+    /// #307 ROOT-A D3 (2026-06-11; FV: MixfixLiteralAccounting.{checked_run_iff_spells,
+    /// checked_never_fabricates}): like `ConsumeAndReplace`, but the consumed
+    /// token's successor position is CARRIED EXPLICITLY — the engine matched a
+    /// rule literal by TEXT-MEMBERSHIP over the position's complete lattice
+    /// out-edge set and `next_pos` is the MATCHED edge's target. This bypasses
+    /// the generic `advance_cursor_pos` (alt-0-hardwired — the "half-fix trap")
+    /// and the `unwrap_or(pos + 1)` fabrication (unreachable on this path: the
+    /// engine only emits this action for an existing edge).
+    ConsumeAtAndReplace {
+        symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+        next_pos: usize,
+    },
     /// Phase 5b: replace the GSS top with `replace_symbol`, then push
     /// `push_symbol` on top. Used by `ParamParse` slot dispatch to
     /// (1) advance the marker's position before the sub-parse begins, so
@@ -675,6 +689,14 @@ fn project_continuation_record_for_action<W: SemiringRef>(
         },
         WpdaStepAction::ConsumeAndReplace { .. } => {
             (header + symbol_size + w_size + state_size, 11, 0)
+        },
+        // #307 ROOT-A (2026-06-11): checked mixfix-literal consume that
+        // advances along the MATCHED lattice edge — record adds the
+        // explicit next_pos (usize). Uses the reserved "Other" variant
+        // slot 17 of `action_variant_counts` (this projection's index
+        // space is independent of `apply_action_variant_index`).
+        WpdaStepAction::ConsumeAtAndReplace { .. } => {
+            (header + symbol_size + w_size + state_size + size_of::<usize>(), 17, 0)
         },
         WpdaStepAction::ReplaceAndPush { .. } => {
             (header + symbol_size * 2 + w_size + state_size, 12, 0)
@@ -1159,6 +1181,16 @@ pub enum ForkActionKind {
     /// `emit_push_side_effects`. Pos advancement controlled by Fork's
     /// `consume_trigger: bool`.
     Push,
+    /// #307 ROOT-A D3 multi-target literal consume (FV:
+    /// MixfixLiteralAccounting.fork_completeness): a mixfix rule literal
+    /// matched MORE THAN ONE same-text lattice edge with DISTINCT targets
+    /// (reachable only via soft-fail orphan node duplication — same text ⇒
+    /// same end byte ⇒ normally the same node). Every matching target is
+    /// followed (preserve-disambiguation; never pick-one). The branch's
+    /// `symbol` is the SAME marker already on top (a self-replace no-op by
+    /// construction), so the child is the parent cursor advanced to this
+    /// edge's target in the branch's state.
+    ConsumeAtAndReplace { next_pos: usize },
 
     /// Push, but first mirror the consumed structural trigger token as a
     /// branch-owned `TriggerTerminal`. This is the Fork equivalent of
@@ -7304,6 +7336,18 @@ where
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             },
+            WpdaStepAction::ConsumeAtAndReplace { symbol, weight, new_state, next_pos } => {
+                // #307 ROOT-A D3: membership-checked literal consume — the
+                // engine carries the MATCHED edge's target; never the alt-0
+                // advance, never the pos+1 fabrication (FV:
+                // MixfixLiteralAccounting.checked_never_fabricates).
+                let _ =
+                    self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
+                cursor.pos = next_pos;
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
+                self.cursor_resolution_check(cursor)
+            },
             WpdaStepAction::ConsumeIdentAndReplace { symbol, weight, new_state, start_scope } => {
                 if tokens.peek_kind(cursor.pos).is_some() {
                     let text = tokens.peek_text(cursor.pos).unwrap_or("");
@@ -7789,6 +7833,25 @@ where
                     // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
+                        ForkActionKind::ConsumeAtAndReplace { next_pos } => {
+                            // #307 ROOT-A D3 multi-target literal consume (FV:
+                            // MixfixLiteralAccounting.fork_completeness): the
+                            // branch's symbol is the SAME marker already on
+                            // top (self-replace no-op), so the child is the
+                            // parent advanced to this matched edge's target in
+                            // the branch's state. No GSS mutation.
+                            let mut child = cursor.clone();
+                            child.pos = next_pos;
+                            child.weight = cursor.weight.times_ref(&branch.weight);
+                            child.inner_state = branch.new_state.clone();
+                            child.source_priority = child_source_priority;
+                            children.push(child);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
+                            child_came_from_cross_cat.push(false);
+                        },
                         action_kind @ (ForkActionKind::Push
                         | ForkActionKind::PushWithTriggerTerminal
                         | ForkActionKind::PushCrossCatLhs) => {

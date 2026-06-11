@@ -585,9 +585,20 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         info.rule_idx,
                                         0u16,
                                     ),
-                                    new_state: WpdaState::PrefixDispatch {
-                                        pos: primary_next_pos,
-                                        cur_bp: 0,
+                                    // #307 ROOT-A D2: enter the pre-operand
+                                    // literal run (kind=2) — this lex-fork site
+                                    // previously jumped straight to the operand
+                                    // (PrefixDispatch), resurrecting the part-0
+                                    // skip on lattice-ambiguous triggers. The
+                                    // child is allocated at the action_kind's
+                                    // next_pos, so the pos-less state reads the
+                                    // post-trigger position.
+                                    new_state: WpdaState::MixfixLiteralRun {
+                                        result_src_idx,
+                                        rule_idx: info.rule_idx,
+                                        completed_idx: 0,
+                                        kind: 2,
+                                        sub_pos: 0,
                                     },
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
@@ -700,9 +711,17 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         info.rule_idx,
                                         alt_idx,
                                     ),
-                                    new_state: WpdaState::PrefixDispatch {
-                                        pos: alt_next_pos,
-                                        cur_bp: 0,
+                                    // #307 ROOT-A D2: enter the pre-operand
+                                    // literal run (kind=2) — see the primary
+                                    // MixfixFirstTrigger site above; the child
+                                    // is allocated at the action_kind's
+                                    // next_pos (alt_next_pos).
+                                    new_state: WpdaState::MixfixLiteralRun {
+                                        result_src_idx,
+                                        rule_idx: info.rule_idx,
+                                        completed_idx: 0,
+                                        kind: 2,
+                                        sub_pos: 0,
                                     },
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {

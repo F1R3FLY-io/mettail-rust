@@ -1039,6 +1039,20 @@ pub(crate) fn emit_engine_impl_full(
                         }
 
                         // Mixfix tier (BP_TIER_MIXFIX = 0.20).
+                        // #307 ROOT-A D1/D2 (2026-06-11; FV:
+                        // MixfixLiteralAccounting.accounting_gap): the trigger
+                        // previously dispatched the part-0 OPERAND directly
+                        // (PrefixDispatch), skipping the part's PRECEDING
+                        // literals (POutput's "(") — the part-0 accounting
+                        // gap. It now enters the pre-operand literal run
+                        // (kind=2), which consumes parts[0].preceding by
+                        // membership-checked steps and then dispatches the
+                        // operand. Empty preceding (Tern/PAmb) passes through
+                        // with zero consumes (empty_pre_passthrough). The
+                        // state is pos-less: every entry path (singleton
+                        // ConsumeAndPush, engine Fork{consume_trigger:true},
+                        // lex-fork next_pos child allocation) advances
+                        // cursor.pos past the trigger BEFORE it activates.
                         if let Some((l_bp, result_src, rule_idx)) =
                             #mixfix_dispatch
                         {
@@ -1052,9 +1066,12 @@ pub(crate) fn emit_engine_impl_full(
                                             mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                             result_src, rule_idx,
                                         ),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
-                                            cur_bp: 0,
+                                        new_state: WpdaState::MixfixLiteralRun {
+                                            result_src_idx: result_src,
+                                            rule_idx,
+                                            completed_idx: 0,
+                                            kind: 2,
+                                            sub_pos: 0,
                                         },
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::Push,
@@ -1406,26 +1423,160 @@ pub(crate) fn emit_engine_impl_full(
                                 result_src_idx, rule_idx,
                             )),
                         };
-                        match (*kind, part) {
-                            (0, Some((_, _preceding, following))) => {
-                                if (*sub_pos as usize) < following.len() {
-                                    // Consume following[sub_pos].
-                                    let _expected = following[*sub_pos as usize];
-                                    WpdaStepAction::ConsumeAndReplace {
+                        // #307 ROOT-A D3 (2026-06-11; FV:
+                        // MixfixLiteralAccounting.{checked_run_iff_spells,
+                        // primary_equality_loses, unchecked_accepts_mismatch,
+                        // checked_never_fabricates, fork_completeness}):
+                        // membership-checked literal consume. A rule literal
+                        // matches iff its TEXT equals some out-edge of the
+                        // position (primary OR lattice alternative — single-
+                        // token primary equality would lose multi-length
+                        // lattice parses, e.g. the `-3` node). The consume
+                        // advances along the MATCHED edge's target, carried
+                        // explicitly (the generic advance is alt-0-hardwired).
+                        // No match (incl. vacuously at edge-less EOF/orphan
+                        // nodes — lattice peek SYNTHESIZES Some(Eof), never
+                        // None) ⇒ pure Error before any mutation
+                        // (advance-or-die). Multiple distinct targets (soft-
+                        // fail orphan duplication only) ⇒ Fork, never
+                        // pick-one. The PREVIOUS code consumed UNCHECKED
+                        // (`_expected` unused) — stealing enclosing
+                        // delimiters or fabricating positions: the ROOT-A
+                        // defect (rhocalc `x!(0)` never parsed).
+                        fn __mixfix_literal_targets(
+                            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                            pos: usize,
+                            expected: &str,
+                        ) -> Vec<usize> {
+                            let mut targets: Vec<usize> = Vec::with_capacity(2);
+                            if tokens.peek_text(pos) == Some(expected) {
+                                if let Some(np) = tokens.next_pos(pos, 0) {
+                                    targets.push(np);
+                                }
+                            }
+                            for (i, alt) in tokens.peek_alternatives(pos).iter().enumerate() {
+                                if alt.text == expected {
+                                    if let Some(np) = tokens.next_pos(pos, i + 1) {
+                                        if !targets.contains(&np) {
+                                            targets.push(np);
+                                        }
+                                    }
+                                }
+                            }
+                            targets
+                        }
+                        macro_rules! __checked_literal_consume {
+                            ($expected:expr, $next_state:expr) => {{
+                                let __expected: &str = $expected;
+                                let __next_state = $next_state;
+                                let __targets =
+                                    __mixfix_literal_targets(tokens, _pos, __expected);
+                                match __targets.len() {
+                                    0 => WpdaStepAction::Error(format!(
+                                        "mixfix literal mismatch: expected {:?} at pos {} \
+                                         (rule {}:{}) — no lattice edge matches",
+                                        __expected, _pos, result_src_idx, rule_idx,
+                                    )),
+                                    1 => WpdaStepAction::ConsumeAtAndReplace {
                                         symbol: StackSymbolV2::mixfix_marker(
                                             *result_src_idx,
                                             *rule_idx,
                                             *completed_idx,
                                         ),
                                         weight: lex_one(),
-                                        new_state: WpdaState::MixfixLiteralRun {
+                                        new_state: __next_state,
+                                        next_pos: __targets[0],
+                                    },
+                                    _ => WpdaStepAction::Fork {
+                                        branches: __targets
+                                            .iter()
+                                            .map(|np| {
+                                                mettail_prattail::wpda_walker::ForkBranch {
+                                                    symbol: StackSymbolV2::mixfix_marker(
+                                                        *result_src_idx,
+                                                        *rule_idx,
+                                                        *completed_idx,
+                                                    ),
+                                                    weight: lex_one(),
+                                                    new_state: __next_state.clone(),
+                                                    action_kind:
+                                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
+                                                            next_pos: *np,
+                                                        },
+                                                }
+                                            })
+                                            .collect(),
+                                        consume_trigger: false,
+                                    },
+                                }
+                            }};
+                        }
+                        match (*kind, part) {
+                            // #307 ROOT-A D1: the NEW pre-operand literal run
+                            // — consumes parts[completed_idx].PRECEDING before
+                            // the operand dispatch; the marker stays at
+                            // completed_idx (the bump is owed only after the
+                            // operand completes). Empty preceding (Tern/PAmb)
+                            // passes straight through to the operand
+                            // (empty_pre_passthrough: zero blast radius).
+                            (2, Some((operand_src_idx, preceding, _following))) => {
+                                if (*sub_pos as usize) < preceding.len() {
+                                    let expected = preceding[*sub_pos as usize];
+                                    __checked_literal_consume!(
+                                        expected,
+                                        WpdaState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 2,
+                                            sub_pos: sub_pos + 1,
+                                        }
+                                    )
+                                } else if operand_src_idx == *result_src_idx {
+                                    // Part-0 operand under the marker — the
+                                    // shipped convention, correct exactly when
+                                    // the operand category equals the result
+                                    // category (all shipped part-0 rules:
+                                    // POutput q:Proc→Proc, PAmb, Tern); the
+                                    // marker is the frontier top, so
+                                    // PrefixDispatch derives the dispatch
+                                    // category from it.
+                                    WpdaStepAction::Advance(WpdaState::PrefixDispatch {
+                                        pos: _pos,
+                                        cur_bp: 0,
+                                    })
+                                } else {
+                                    // Cross-category part-0 operand: explicit
+                                    // CategoryEntry push (the kind=1 proven
+                                    // pattern) — closes the latent
+                                    // wrong-category hole; the marker is NOT
+                                    // bumped (bp counts completed operands).
+                                    WpdaStepAction::Push {
+                                        symbol: StackSymbolV2::category_entry(
+                                            operand_src_idx,
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: 0,
+                                        },
+                                    }
+                                }
+                            }
+                            (0, Some((_, _preceding, following))) => {
+                                if (*sub_pos as usize) < following.len() {
+                                    // Consume following[sub_pos] — CHECKED.
+                                    let expected = following[*sub_pos as usize];
+                                    __checked_literal_consume!(
+                                        expected,
+                                        WpdaState::MixfixLiteralRun {
                                             result_src_idx: *result_src_idx,
                                             rule_idx: *rule_idx,
                                             completed_idx: *completed_idx,
                                             kind: 0,
                                             sub_pos: sub_pos + 1,
-                                        },
-                                    }
+                                        }
+                                    )
                                 } else if *completed_idx + 1 == parts_len {
                                     // Last operand done; Pop the marker.
                                     WpdaStepAction::Pop {
@@ -1453,22 +1604,18 @@ pub(crate) fn emit_engine_impl_full(
                                 match next_part {
                                     Some((operand_src_idx, preceding, _following)) => {
                                         if (*sub_pos as usize) < preceding.len() {
-                                            let _expected = preceding[*sub_pos as usize];
-                                            WpdaStepAction::ConsumeAndReplace {
-                                                symbol: StackSymbolV2::mixfix_marker(
-                                                    *result_src_idx,
-                                                    *rule_idx,
-                                                    *completed_idx,
-                                                ),
-                                                weight: lex_one(),
-                                                new_state: WpdaState::MixfixLiteralRun {
+                                            // Consume preceding[sub_pos] — CHECKED (#307 D3).
+                                            let expected = preceding[*sub_pos as usize];
+                                            __checked_literal_consume!(
+                                                expected,
+                                                WpdaState::MixfixLiteralRun {
                                                     result_src_idx: *result_src_idx,
                                                     rule_idx: *rule_idx,
                                                     completed_idx: *completed_idx,
                                                     kind: 1,
                                                     sub_pos: sub_pos + 1,
-                                                },
-                                            }
+                                                }
+                                            )
                                         } else {
                                             // All literals consumed; push the next
                                             // operand's CategoryEntry.

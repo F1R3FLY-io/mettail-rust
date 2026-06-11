@@ -456,7 +456,7 @@ pub struct WalkerStats {
     /// Push = 36.6%, Pop = 14.4%. The combined Fork + Push (78.7%) is
     /// the dominant lever; Pop alone is structurally insufficient for
     /// the L4 (chain_10000 < 500 MB) target.
-    pub apply_action_variant_histogram: [u64; 19],
+    pub apply_action_variant_histogram: [u64; 20],
 
     /// Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27): Push
     /// EdgeKind histogram, sampled at the apply_action_to_cursor Push
@@ -550,6 +550,11 @@ pub fn apply_action_variant_index<W: crate::automata::semiring::SemiringRef>(
         WpdaStepAction::Consume { .. } => 9,
         WpdaStepAction::ConsumeIdentAndReplace { .. } => 10,
         WpdaStepAction::ConsumeAndReplace { .. } => 11,
+        // #307 ROOT-A red-team fix (2026-06-11): own bucket 19 — sharing
+        // bucket 11 with ConsumeAndReplace conflated the two actions in
+        // exactly the per-action-kind attribution the evidence-pruning
+        // P-series diagnostics depend on.
+        WpdaStepAction::ConsumeAtAndReplace { .. } => 19,
         WpdaStepAction::ReplaceAndPush { .. } => 12,
         WpdaStepAction::ParsePredicate { .. } => 13,
         WpdaStepAction::OptGroupAbsent { .. } => 14,
@@ -583,7 +588,8 @@ pub fn apply_action_variant_label(idx: usize) -> &'static str {
         "Accept",
         "Error",
         "Idle",
-    ][idx.min(18)]
+        "ConsumeAtAndReplace",
+    ][idx.min(19)]
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27): bucket
@@ -2374,7 +2380,7 @@ mod tests {
             // Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27).
             pop_kind_histogram: [0; 13],
             // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27).
-            apply_action_variant_histogram: [0; 19],
+            apply_action_variant_histogram: [0; 20],
             // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27).
             push_kind_histogram: [0; 13],
             // Phase F.13 chain_10000 COQ-S0 (2026-05-27).
