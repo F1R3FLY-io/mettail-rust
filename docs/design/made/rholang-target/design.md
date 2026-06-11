@@ -1,9 +1,77 @@
 # Retargeting the `language!` Generator at Rholang — CESK via CBN into ρ-Calculus
 
-**Status:** Design complete; implementation pending.
-**Date:** 2026-04-20.
+**Status:** ⚠ **SUPERSEDED IN PART (2026-06-09/10)** — the CESK-encoding strategy (§6–§7 and every
+"CESK-wrapper" construction below) is **REJECTED**; the architecture, dependency direction,
+tooling survey, and bibliography remain the architectural record. See the banner below.
+**Date:** 2026-04-20 (amended 2026-06-10).
 **Author:** Dylon Edwards (architect of record).
-**Document kind:** Design (made).
+**Document kind:** Design (made; amended with rejection rationale — content retained per the
+"amend, do not excise" directive).
+
+---
+
+## ⚠ AMENDMENT (2026-06-09/10): the CESK-via-CBN encoding is REJECTED — the CESK machine is REPLACED by the Rho machine, not translated into it
+
+**The user's directive (verbatim intent):** *"By rewriting the backend from a CESK machine to a
+Rho machine, I mean it must fully embrace the inherent parallelism of Rholang and Rho calculus,
+not that the CESK machine will be implemented in Rholang."* And: *"I do not want the CESK machine
+translated to the Rho machine, it must be replaced with the Rho machine altogether! CESK machines
+are inherently serialized! Rho machines are inherently parallel! … It is a distinctly separate
+programming model!"*
+
+**Why the CESK encoding is architecturally wrong (the rejection rationale):**
+
+1. **CESK's spine is serial by construction.** A CESK configuration `⟨c, ρ, σ, κ⟩` advances by
+   exactly one transition at a time; the continuation stack `κ` is a total order on pending work
+   and the store `σ` is a single global synchronization point. Encoding that spine into Rholang
+   (§7's `⟦s⟧^k`) produces a process that *simulates the serial machine over the parallel
+   substrate* — every `→_CESK` step becomes a COMM that the next step must rendezvous behind. The
+   Rho machine's defining property (independent redexes reduce concurrently as distinct `Par`
+   members; COMM events form a partial order, not a sequence) is structurally erased by the
+   encoding: parallelism cannot be recovered by translating a sequential machine faithfully —
+   *operational correspondence to a serial machine is a proof of serialization*.
+2. **The store-as-tuplespace mapping inherits the bottleneck.** Modelling `σ` with RSpace makes
+   every variable access a produce/consume on a shared map — re-serializing RSpace's per-channel
+   concurrency behind one logical store. The Rho-native design needs *no σ at all*: state lives in
+   channels keyed for disjointness, so RSpace's per-channel locks ARE the concurrency control.
+3. **The replacement (the FINAL design — see the engine epic, M-RHO):** MeTTaIL is the COMPILER;
+   f1r3node-rust's Rho machine is the RUNTIME. `generate_rho_vm` compiles each GSLT into a
+   parallel-optimized Rholang VM: reduction rules become `Par` contracts (COMM family →
+   produce/consume; structural/congruence → `eval_par`'s ambient par-context; HOL `fold`/`step` →
+   native `Definition` handlers; injections → `Par` wrappers). **Threading, scheduling, GC, and
+   cost belong to f1r3node** (`eval_par` `tokio::spawn` per `P|Q`, RSpace COMM-driven scheduling,
+   per-channel locks). MeTTaIL's eval-side job collapses to **"emit `Par`, never fork"** +
+   channel-keying for disjointness. Bridge crates `mettail-rho-{codegen,runtime,adapter}` depend
+   ONE-WAY on f1r3node-rust; the `OslfResourceLogic<MettaGslt>` adapter delegates `demand`/
+   `is_funded` to the verified `delta_sigma`. (M-RHO.0 landed 2026-06-09: 3 crates + adapter +
+   zero-admission `rocq-rho-bridge`.)
+
+**What this document remains authoritative for:** the dependency-direction analysis (MeTTaIL must
+never be a cargo dependency of f1r3node), the tooling/LSP/REPL/debugger survey, the Milner-CBN
+background and bibliography, the predicated-types cross-references, and the historical record of
+*why the CESK path looked attractive and where it fails*. Readers implementing the current
+direction should consult the engine epic (plan `codex-was-cleaning-up-ethereal-kettle.md`,
+"★ Engine epic — FINAL DESIGN") and the `mettail-rho-*` crates.
+
+### Channel-register vs. atomic vs. immutable — the state-idiom taxonomy (added per the 2026-06-10 review)
+
+Rholang offers a native mutable-cell idiom — the **channel-as-register**: a channel holding
+exactly one datum, read by `for (v <- cell) { … cell!(newV) … }` (consume-then-replace). It is
+Rho-native and correct, but **each register is a per-channel serialization point** (every reader
+rendezvouses on the cell). The replacement design uses each idiom where its contention profile is
+right:
+
+| State                                            | Idiom                                                   | Why                                                                                                                                      |
+|--------------------------------------------------|---------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| Per-reduction operands / continuations           | **Immutable data in messages** (`Par` structure)        | No mutation at all — the default. Persistent structures share; nothing contends.                                                          |
+| Genuinely serial protocol state (e.g. a REPL session cursor, a named accumulator a witness-collection appends to) | **Channel-as-register**, used **sparingly**             | The serialization point is the *semantics* (one logical owner); the register makes it explicit and Rho-native.                            |
+| High-frequency shared counters — the **cost/phlo budget**, metrics | **Lock-free atomics** (host-side `SegQueue`/CAS, `with_metering_child`) | A register here would serialize every parallel fork on one channel — exactly the contention the parallel design must avoid. Cost accounting is host infrastructure, not process semantics. |
+| Ambiguity result sets                            | **Persistent receive (`<=`) accumulator** (`@witnesses`) | Many concurrent producers, no read-modify-write race — append-only collection, ambiguity preserved as first-class.                        |
+
+Rule of thumb: *immutable by default; a register only where the semantics is one-owner-serial;
+atomics where the host owns a hot counter; never a register on the cost path.*
+
+---
 
 **Related design documents** (relative paths from this file):
 [predicated-types](../../exploring/predicated-types.md),
@@ -718,6 +786,8 @@ carried into ρ; we pick CBN for reasons in §6.
 
 ## 6. Why CBN for Rholang
 
+> ⚠ **REJECTED (2026-06-09/10)** — this encoding translates the serial CESK spine into Rholang and thereby serializes the parallel Rho machine; the CESK machine is **replaced**, not encoded. See the AMENDMENT banner at the head of this document. Retained as the historical record.
+
 Given that both Milner encodings are correct, why do we use CBN in
 this design?
 
@@ -779,6 +849,8 @@ gets by, e.g., writing a CBV interpreter in Haskell.
 ---
 
 ## 7. The CESK-to-ρ Encoding (CBN)
+
+> ⚠ **REJECTED (2026-06-09/10)** — this encoding translates the serial CESK spine into Rholang and thereby serializes the parallel Rho machine; the CESK machine is **replaced**, not encoded. See the AMENDMENT banner at the head of this document. Retained as the historical record.
 
 This section specifies the translation function
 `⟦·⟧_k ρ : CESK-states → ρ-processes`. The encoding is parameterised
