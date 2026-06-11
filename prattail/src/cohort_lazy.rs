@@ -136,6 +136,9 @@ pub struct CohortShell<W: SemiringRef> {
     pub optional_scope_marks: Arc<Vec<usize>>,
     /// SPPF collection arena shared by all members (Phase F.4).
     pub sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
+    /// #307 ROOT-F coverage backstop (2026-06-11): parallel per-slot
+    /// separator counts (see BranchCursor::collection_sep_counts).
+    pub collection_sep_counts: std::sync::Arc<Vec<u32>>,
     /// Shared cycle-defense at the moment the cohort formed. Any
     /// member that would mutate this triggers materialization.
     pub visited_dispatch: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
@@ -555,6 +558,7 @@ impl<W: SemiringRef + LexProvenance> CohortShell<W> {
             binder_scope_marks: binder_scope_marks_arc,
             optional_scope_marks: optional_scope_marks_arc,
             sppf_collection_arena: std::sync::Arc::clone(&parent.sppf_collection_arena),
+            collection_sep_counts: std::sync::Arc::clone(&parent.collection_sep_counts),
             visited_dispatch: visited_dispatch_arc,
             visited_recovery: visited_recovery_arc,
             visited_proj_descriptors: visited_proj_descriptors_set,
@@ -692,6 +696,7 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         pending_packing_weight: state.pending_packing_weight.clone(),
         collection_stack_depth: shell.collection_depth,
         sppf_collection_arena: std::sync::Arc::clone(&shell.sppf_collection_arena),
+        collection_sep_counts: std::sync::Arc::clone(&shell.collection_sep_counts),
         last_action_output_cat: state.last_action_output_cat,
         cohort_origin: shell.cohort_origin.clone(),
         cohort_revive_depth: state.cohort_revive_depth,
@@ -1112,6 +1117,7 @@ mod tests {
             im::OrdSet::new(),
             // Sig-B GLL-descriptor (#9): empty projection-descriptor set.
             im::OrdSet::new(),
+            Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),

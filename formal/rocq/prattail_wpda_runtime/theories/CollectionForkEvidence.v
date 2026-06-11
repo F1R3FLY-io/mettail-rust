@@ -503,3 +503,96 @@ Section ActionSemantics.
   Qed.
 
 End ActionSemantics.
+
+(* ════════════════════════════════════════════════════════════════════
+   ELEMENT-COVERAGE ACCOUNTING (the "shorter-Ambiguous ghost" backstop,
+   2026-06-11): the runtime tracks elements via TWO bookkeeping channels
+   — the consume path (separators consumed) and the splice path (arena
+   items). Splice-divergent lineages (a cursor that consumes an element
+   but skips/loses its splice, then still reaches the close via shared
+   frontier state) produce STRICT SUB-MULTISET arenas, which intern as
+   ghost packings on the shared zero-width collection symbol.
+
+   The model proves the ACCOUNTING IDENTITY of the language: every
+   explicit-separator collection continuation run consumes EXACTLY one
+   more element than separators (elements = seps + 1). The fire-time
+   coverage gate transcribes it: a packing whose item count ≠
+   sep_count + 1 (or 2·(sep_count+1) for kv-pair collections, where each
+   pair splices key AND value) corresponds to NO derivation of the
+   language — refuting it is the legal definite kill
+   (`coverage_gate_refutes_only_out_of_language`), and every language
+   derivation passes (`coverage_gate_no_loss`).
+   ════════════════════════════════════════════════════════════════════ *)
+
+Section ElementCoverage.
+
+  Variable out_edges : nat -> list (nat * nat).
+  Variable l_close : nat.
+  Variable l_sep   : nat.
+  Variable elem_spell : nat -> nat -> Prop.
+
+  (* The explicit-separator continuation language, instrumented with the
+     two counts: loop_counts n m elems seps. Mirrors loop_lang
+     (sep_empty = false). *)
+  Inductive loop_counts : nat -> nat -> nat -> nat -> Prop :=
+    | lc_close : forall n t,
+        In (l_close, t) (out_edges n) ->
+        loop_counts n t 0 0
+    | lc_sep : forall n t e m elems seps,
+        In (l_sep, t) (out_edges n) ->
+        elem_spell t e ->
+        loop_counts e m elems seps ->
+        loop_counts n m (S elems) (S seps).
+
+  (* ── The accounting identity: post-element continuations consume
+        exactly as many further elements as separators. With the one
+        element already completed before the loop entry, the TOTAL is
+        elems = seps + 1 — the fire-time expectation. ── *)
+  Theorem continuation_elements_equal_separators :
+    forall n m elems seps,
+      loop_counts n m elems seps -> elems = seps.
+  Proof.
+    intros n m elems seps H. induction H.
+    - reflexivity.
+    - rewrite IHloop_counts. reflexivity.
+  Qed.
+
+  (* ── The coverage gate: a fire claiming `items` spliced elements with
+        `seps` consumed separators is admissible iff items = seps + 1
+        (counting the pre-loop element). ── *)
+  Definition coverage_admissible (items seps : nat) : Prop :=
+    items = S seps.
+
+  (* ── No-loss: every language derivation passes the gate (the spliced
+        item count of a FAITHFUL lineage equals 1 + the continuation's
+        element count = 1 + seps). ── *)
+  Theorem coverage_gate_no_loss :
+    forall n m elems seps,
+      loop_counts n m elems seps ->
+      coverage_admissible (S elems) seps.
+  Proof.
+    intros n m elems seps H.
+    unfold coverage_admissible.
+    f_equal.
+    exact (continuation_elements_equal_separators n m elems seps H).
+  Qed.
+
+  (* ── Definite kill: a sub-multiset arena (items < seps + 1) — or any
+        mismatch — corresponds to NO derivation: the language admits
+        only items = seps + 1, so the refuted packing is out of the
+        language (token-unsound: it consumed separators whose elements
+        are missing from its yield). ── *)
+  Theorem coverage_gate_refutes_only_out_of_language :
+    forall items seps,
+      ~ coverage_admissible items seps ->
+      forall n m elems,
+        loop_counts n m elems seps ->
+        items <> S elems.
+  Proof.
+    intros items seps Hnot n m elems Hrun Heq.
+    apply Hnot. unfold coverage_admissible. subst items.
+    f_equal.
+    exact (continuation_elements_equal_separators n m elems seps Hrun).
+  Qed.
+
+End ElementCoverage.

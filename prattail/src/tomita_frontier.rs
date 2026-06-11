@@ -226,6 +226,9 @@ pub struct FrontierArc<W: SemiringRef> {
     pub optional_scope_marks: Arc<Vec<usize>>,
     /// Per-cursor SPPF collection arena.
     pub sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
+    /// #307 ROOT-F coverage backstop (2026-06-11): parallel per-slot
+    /// separator counts (see BranchCursor::collection_sep_counts).
+    pub collection_sep_counts: std::sync::Arc<Vec<u32>>,
 }
 
 impl<W: SemiringRef + Clone> FrontierArc<W> {
@@ -254,6 +257,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
         binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
         optional_scope_marks: Arc<Vec<usize>>,
         sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
+        collection_sep_counts: Arc<Vec<u32>>,
     ) -> Self {
         Self {
             weight,
@@ -274,6 +278,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             visited_proj_descriptors,
             binder_scope_marks,
             optional_scope_marks,
+            collection_sep_counts,
             sppf_collection_arena,
         }
     }
@@ -328,6 +333,7 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             binder_scope_marks: Arc::new(cursor.binder_scope_marks.clone()),
             optional_scope_marks: Arc::new(cursor.optional_scope_marks.clone()),
             sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+            collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
         }
     }
 }
@@ -374,6 +380,7 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         binder_scope_marks: (*arc.binder_scope_marks).clone(),
         optional_scope_marks: (*arc.optional_scope_marks).clone(),
         sppf_collection_arena: Arc::clone(&arc.sppf_collection_arena),
+        collection_sep_counts: Arc::clone(&arc.collection_sep_counts),
     }
 }
 
@@ -798,6 +805,7 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         )
     }
 
@@ -811,6 +819,7 @@ mod tests {
         binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
         optional_scope_marks: Arc<Vec<usize>>,
         sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
+        collection_sep_counts: Arc<Vec<u32>>,
     ) -> FrontierArc<LexicographicWeight> {
         FrontierArc::new(
             LexicographicWeight::default(),
@@ -836,6 +845,7 @@ mod tests {
             binder_scope_marks,
             optional_scope_marks,
             sppf_collection_arena,
+            collection_sep_counts,
         )
     }
 
@@ -866,6 +876,7 @@ mod tests {
             binder_scope_marks: Vec::new(),
             optional_scope_marks: Vec::new(),
             sppf_collection_arena: Arc::new(Vec::new()),
+            collection_sep_counts: Arc::new(Vec::new()),
         }
     }
 
@@ -1161,11 +1172,13 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         );
         let arc_b = arc_with_heavy(
             Arc::clone(&deltas_b_arc),
             im::OrdSet::new(),
             im::OrdSet::new(),
+            Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1194,11 +1207,13 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         );
         let arc_b = arc_with_heavy(
             Arc::new(Vec::new()),
             im::OrdSet::new(),
             im::OrdSet::new(),
+            Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1224,6 +1239,7 @@ mod tests {
             Arc::new(vec![(1u16, vec!["x".to_string(), "y".to_string()])]),
             Arc::new(vec![5usize, 10usize]),
             Arc::new(vec![vec![1u32, 2u32, 3u32]]),
+            Arc::new(Vec::new()),
         );
         let cursor = materialize_branch_cursor_from_arc(&fresh_shell(), &arc);
         assert_eq!(cursor.recovery_deltas.len(), 1);
@@ -1258,11 +1274,13 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         );
         let arc_b = arc_with_heavy(
             Arc::new(Vec::new()),
             im::OrdSet::new(),
             im::OrdSet::new(),
+            Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1294,6 +1312,7 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         );
         assert_eq!(Arc::strong_count(&deltas), 2);
         // Drop the arc: strong_count drops back to 1.
@@ -1313,11 +1332,13 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
         );
         let arc_b = arc_with_heavy(
             Arc::clone(&shared),
             im::OrdSet::new(),
             im::OrdSet::new(),
+            Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1370,6 +1391,7 @@ mod tests {
             binder_scope_marks: Vec::new(),
             optional_scope_marks: Vec::new(),
             sppf_collection_arena: Arc::new(Vec::new()),
+            collection_sep_counts: Arc::new(Vec::new()),
         };
         let shell = TomitaShell::from_cursor(&cursor);
         assert_eq!(shell.node, 42);

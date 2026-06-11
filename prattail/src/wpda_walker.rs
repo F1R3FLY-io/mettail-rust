@@ -1255,6 +1255,12 @@ pub enum ForkActionKind {
     /// but advancing along the MATCHED edge's `next_pos` instead of the
     /// alt-0 `child_next_pos`. Fork must emit `consume_trigger: false`.
     ConsumeAtAndPop { next_pos: usize },
+    /// #307 ROOT-F coverage backstop (2026-06-11): the collection
+    /// SEPARATOR consume — `Consume` semantics plus a per-slot separator
+    /// count increment on the child (the fire-time coverage gate's
+    /// witness: CollectionForkEvidence.coverage_gate_no_loss /
+    /// coverage_gate_refutes_only_out_of_language).
+    ConsumeCollectionSep,
 
     /// Stage 3.16 (Cluster 1) — Consume token + replace top-of-GSS, but ALSO
     /// log a builder delta (e.g. `StartBinderScope { names: vec![] }` for
@@ -1858,6 +1864,15 @@ pub struct BranchCursor<W: SemiringRef> {
     /// ConfigKey discrimination because any two cursors with identical
     /// splice sequence reach identical arena content by construction.
     pub sppf_collection_arena: Arc<Vec<Vec<crate::sppf::SppfId>>>,
+    /// #307 ROOT-F coverage backstop (2026-06-11): per-slot count of
+    /// COLLECTION SEPARATORS this cursor consumed (parallel to
+    /// `sppf_collection_arena`; CoW Arc). The fire-time coverage gate
+    /// compares arena items against seps+1 (or 2·(seps+1) for kv
+    /// collections) — the accounting identity proven by
+    /// CollectionForkEvidence.continuation_elements_equal_separators —
+    /// refuting splice-divergent sub-multiset lineages (the
+    /// "shorter-Ambiguous ghost" packings) as definite token-unsound.
+    pub collection_sep_counts: Arc<Vec<u32>>,
     // Phase F.13 H1 (2026-05-20): `sppf_symbol_terms` PROMOTED from
     // per-cursor `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global
     // `HashMap<SppfId, Arc<dyn Any>>` at `WpdaWalker::sppf_symbol_terms`.
@@ -2035,6 +2050,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // Phase F.4 (2026-05-18): Arc bump — clone is O(1); first
             // splice in the cloned cursor triggers Arc::make_mut CoW.
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
+            collection_sep_counts: Arc::clone(&self.collection_sep_counts),
             // Phase F.3a (2026-05-20): Option<u16> is Copy.
             last_action_output_cat: self.last_action_output_cat,
             cohort_origin: self.cohort_origin.clone(),
@@ -2142,6 +2158,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase F.4 (2026-05-18): fresh empty Arc — seed cursor has
             // no collection accumulator state.
             sppf_collection_arena: Arc::new(Vec::new()),
+            collection_sep_counts: Arc::new(Vec::new()),
             // Phase F.3a (2026-05-20): fresh cursor has no action yet.
             last_action_output_cat: None,
             cohort_origin: None,
@@ -2227,6 +2244,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase F.4 (2026-05-18): Arc bump (O(1)); CoW on first
             // splice in the child cursor.
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
+            collection_sep_counts: Arc::clone(&parent.collection_sep_counts),
             // Phase F.3a (2026-05-20): inherit parent's mirror.
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
@@ -4161,6 +4179,7 @@ where
                     collection_stack_depth: 0,
                     // Phase F.4 (2026-05-18): fresh empty Arc.
                     sppf_collection_arena: Arc::new(Vec::new()),
+                    collection_sep_counts: Arc::new(Vec::new()),
                     // Phase F.3a (2026-05-20): fresh cursor.
                     last_action_output_cat: None,
                     cohort_origin: None,
@@ -6453,6 +6472,7 @@ where
                         collection_stack_depth: 0,
                         // Phase F.4 (2026-05-18): fresh empty Arc.
                         sppf_collection_arena: Arc::new(Vec::new()),
+                        collection_sep_counts: Arc::new(Vec::new()),
                         // Phase F.3a (2026-05-20): post-Drop reset clears the
                         // mirror — the dropped cursor's action history is gone.
                         last_action_output_cat: None,
@@ -8062,6 +8082,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8168,6 +8189,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8250,6 +8272,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8264,6 +8287,93 @@ where
                                 // First write in this child triggers Arc::make_mut.
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
+                            children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        },
+
+                        ForkActionKind::ConsumeCollectionSep => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times_ref(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
+                                source_priority: child_source_priority,
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                            };
+                            child.pos = Self::child_next_pos(tokens, child.pos);
+                            // #307 ROOT-F coverage backstop: count the consumed
+                            // separator on the innermost active slot.
+                            {
+                                let slot = (child.collection_stack_depth as usize)
+                                    .saturating_sub(1);
+                                let counts = Arc::make_mut(&mut child.collection_sep_counts);
+                                while counts.len() <= slot {
+                                    counts.push(0);
+                                }
+                                counts[slot] = counts[slot].saturating_add(1);
+                            }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
                             crate::stats_thunk_created!(
@@ -8325,6 +8435,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8427,6 +8538,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8513,6 +8625,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8600,6 +8713,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8689,6 +8803,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8824,6 +8939,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -8952,6 +9068,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -9147,6 +9264,7 @@ where
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -12139,6 +12257,7 @@ where
             // their own `items`); it is retained because parse-time fire
             // (`fire_action_via_transient`) still reads it before commit.
             sppf_collection_arena: winner.sppf_collection_arena,
+            collection_sep_counts: winner.collection_sep_counts,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
             cohort_origin: winner.cohort_origin.clone(),
@@ -13424,10 +13543,23 @@ where
         // #307 ROOT-F diagnostics (2026-06-11): fire-time arena contents.
         if trace_actions_enabled() && !collection_ids.is_empty() {
             eprintln!(
-                "[wpds-action] fire-arena pos={} ids={:?} arena={:?}",
+                "[wpds-action] fire-arena pos={} ids={:?} arena={:?} seps={:?}",
                 cursor.pos, collection_ids, cursor.sppf_collection_arena,
+                cursor.collection_sep_counts,
             );
         }
+        // #307 ROOT-F coverage backstop (2026-06-11): ENFORCEMENT REVERTED
+        // pending #313 (root-f-ghost-coverage-backstop-completion). The
+        // accounting identity (CollectionForkEvidence: items = seps + 1;
+        // 2·(seps+1) for kv slots) is SOUND for G2-separated collections,
+        // but binder/class-2 collections consume separators through their
+        // own guarded routes (NOT ForkActionKind::ConsumeCollectionSep),
+        // so their sep counts under-read and the gate over-refuted
+        // (rhocalc 123/3 → 115/11). The counting substrate
+        // (collection_sep_counts + ConsumeCollectionSep) stays — it is
+        // behavior-neutral and is the witness #313's completed gate will
+        // consume once every separator route is counted (or the
+        // close-origin/elements-entered witness lands).
         for id in &collection_ids {
             if let Some(items) = cursor.sppf_collection_arena.get(*id as usize).cloned() {
                 for &item_sid in &items {
@@ -13878,6 +14010,12 @@ where
         // start_collection re-allocation semantics; the SPPF mirror
         // must match.
         arena[id as usize].clear();
+        // #307 ROOT-F coverage backstop: parallel separator-count slot.
+        let counts = Arc::make_mut(&mut cursor.collection_sep_counts);
+        while counts.len() <= id as usize {
+            counts.push(0);
+        }
+        counts[id as usize] = 0;
         id
     }
 
@@ -15275,6 +15413,7 @@ where
             pending_packing_weight: parent.pending_packing_weight.times_ref(&branch.weight),
             collection_stack_depth: parent.collection_stack_depth,
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
+            collection_sep_counts: Arc::clone(&parent.collection_sep_counts),
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
             cohort_revive_depth: parent.cohort_revive_depth,

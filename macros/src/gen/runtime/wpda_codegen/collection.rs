@@ -513,8 +513,13 @@ pub(crate) fn emit_collection_loop_arm(
                                             pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                             cur_bp: 0,
                                         },
+                                        // #307 ROOT-F coverage backstop: the
+                                        // dedicated separator-consume kind
+                                        // increments the child's per-slot sep
+                                        // count (the fire-time accounting
+                                        // witness).
                                         action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Consume,
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeCollectionSep,
                                     },
                                 );
                             }
