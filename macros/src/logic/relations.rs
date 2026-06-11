@@ -195,6 +195,21 @@ pub fn generate_relations(language: &LanguageDef, _demanded: &BTreeSet<String>) 
             relation #rw_rel(#cat, #cat);
         });
 
+        // #307 eval-layer fix (2026-06-11): canonicalization provenance.
+        // Auto-injected NormCast rules write their (lhs, rhs) pair here
+        // IN ADDITION to rw_rel (the carrier still needs the canonical
+        // form for fold-matching), so the result-graph extraction can
+        // exclude value-preserving cast canonicalizations from the
+        // user-visible rewrite list (a bare `0` otherwise reports
+        // `0 ~> 0` between its seeded wrapper alternatives and every
+        // literal is "non-normal"). Structural detection is impossible
+        // post-`.normalize()` of the inserted RHS — provenance is the
+        // only sound discriminator.
+        let canon_rel = format_ident!("__canon_{}", lang_type.name.to_string().to_lowercase());
+        relations.push(quote! {
+            relation #canon_rel(#cat, #cat);
+        });
+
         // Fold (big-step eval) relation, only if this category has fold-mode constructors
         // or participates as a fold rule parameter.
         // A-RT03: dual-indexed like rw_cat — fold rules query column 0 in recursive

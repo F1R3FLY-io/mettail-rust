@@ -1346,6 +1346,31 @@ fn generate_language_struct(
                 // Build rewrite list
                 let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites
                     .iter()
+                    .filter(|(from, to)| {
+                        // #307 eval-layer fix (2026-06-11): drop
+                        // quotient-internal rewrites (same exact semantic
+                        // key — transparent-wrapper canonicalization), as
+                        // at the multi-cat site.
+                        let (__k_from, __k_to) = {
+                            struct __RwKeyHasher {
+                                bytes: Vec<u8>,
+                            }
+                            impl std::hash::Hasher for __RwKeyHasher {
+                                fn finish(&self) -> u64 {
+                                    0
+                                }
+                                fn write(&mut self, b: &[u8]) {
+                                    self.bytes.extend_from_slice(b);
+                                }
+                            }
+                            let mut __hf = __RwKeyHasher { bytes: Vec::new() };
+                            from.semantic_hash(&mut __hf);
+                            let mut __ht = __RwKeyHasher { bytes: Vec::new() };
+                            to.semantic_hash(&mut __ht);
+                            (__hf.bytes, __ht.bytes)
+                        };
+                        __k_from != __k_to
+                    })
                     .map(|(from, to)| {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};
@@ -2306,6 +2331,7 @@ fn generate_language_struct_multi(
             let cat = &t.name;
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+            let canon_rel = format_ident!("__canon_{}", cat.to_string().to_lowercase());
             let eq_ind = format_ident!("__eq_{}_ind_common", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
             quote! {
@@ -2318,6 +2344,16 @@ fn generate_language_struct_multi(
                         .iter()
                         .map(|(from, to)| (from.clone(), to.clone()))
                         .collect();
+                    // #307 eval-layer fix (2026-06-11): canonicalization
+                    // provenance lookup. NormCast rules wrote their pairs
+                    // into __canon_<cat> (relations.rs/rules.rs); a rw pair
+                    // with canon provenance is a value-preserving cast lift
+                    // — excluded from user-visible rewrites and NF status.
+                    let __is_canon_pair = |__from: &#cat, __to: &#cat| -> bool {
+                        prog.#canon_rel
+                            .iter()
+                            .any(|(a, b)| a == __from && b == __to)
+                    };
                     for t in &all_terms_cat {
                         let wrapped = #inner_enum_name::#variant(t.clone());
                         let term_id = {
@@ -2355,7 +2391,36 @@ fn generate_language_struct_multi(
                         if !__seen_sem.insert(__sem_key) {
                             continue;
                         }
-                        let has_rewrites = rewrites_cat.iter().any(|(from, _)| from == t);
+                        // #307 eval-layer fix (2026-06-11): NF status
+                        // ignores quotient-internal rewrites (same exact
+                        // semantic key — see the rewrite-list filter below).
+                        let has_rewrites = rewrites_cat.iter().any(|(from, to)| {
+                            if from != t {
+                                return false;
+                            }
+                            if __is_canon_pair(from, to) {
+                                return false;
+                            }
+                            let (__k_from, __k_to) = {
+                            struct __RwKeyHasher {
+                                bytes: Vec<u8>,
+                            }
+                            impl std::hash::Hasher for __RwKeyHasher {
+                                fn finish(&self) -> u64 {
+                                    0
+                                }
+                                fn write(&mut self, b: &[u8]) {
+                                    self.bytes.extend_from_slice(b);
+                                }
+                            }
+                                let mut __hf = __RwKeyHasher { bytes: Vec::new() };
+                                from.semantic_hash(&mut __hf);
+                                let mut __ht = __RwKeyHasher { bytes: Vec::new() };
+                                to.semantic_hash(&mut __ht);
+                                (__hf.bytes, __ht.bytes)
+                            };
+                            __k_from != __k_to
+                        });
                         __all_term_infos.push(mettail_runtime::TermInfo {
                             term_id,
                             display: format!("{}", t),
@@ -2365,8 +2430,42 @@ fn generate_language_struct_multi(
                     for (from, to) in &rewrites_cat {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};
+                        if __is_canon_pair(from, to) {
+                            continue;
+                        }
                         let w_from = #inner_enum_name::#variant(from.clone());
                         let w_to = #inner_enum_name::#variant(to.clone());
+                        // #307 eval-layer fix (2026-06-11): a rewrite whose
+                        // endpoints share the EXACT semantic key is
+                        // quotient-INTERNAL (transparent-cast wrapper
+                        // canonicalization between observationally identical
+                        // terms, e.g. two seeded zero-wrappers both
+                        // displaying `0`) — not a user-visible reduction
+                        // step. The `-3!` pair keeps DISTINCT keys
+                        // (Fact/Neg are non-transparent), so genuine
+                        // rewrites are untouched. This is the same exact-key
+                        // observational quotient the term dedup uses.
+                        let (__k_from, __k_to) = {
+                            struct __RwKeyHasher {
+                                bytes: Vec<u8>,
+                            }
+                            impl std::hash::Hasher for __RwKeyHasher {
+                                fn finish(&self) -> u64 {
+                                    0
+                                }
+                                fn write(&mut self, b: &[u8]) {
+                                    self.bytes.extend_from_slice(b);
+                                }
+                            }
+                            let mut __hf = __RwKeyHasher { bytes: Vec::new() };
+                            w_from.semantic_hash(&mut __hf);
+                            let mut __ht = __RwKeyHasher { bytes: Vec::new() };
+                            w_to.semantic_hash(&mut __ht);
+                            (__hf.bytes, __ht.bytes)
+                        };
+                        if __k_from == __k_to {
+                            continue;
+                        }
                         let mut h1 = DefaultHasher::new();
                         let mut h2 = DefaultHasher::new();
                         w_from.hash(&mut h1);
@@ -2374,7 +2473,8 @@ fn generate_language_struct_multi(
                         __all_rewrites.push(mettail_runtime::Rewrite {
                             from_id: h1.finish(),
                             to_id: h2.finish(),
-                            rule_name: Some("rewrite".to_string()),
+                            // Category-tagged for diagnosability.
+                            rule_name: Some(format!("rewrite:{}", stringify!(#cat))),
                         });
                     }
                     {

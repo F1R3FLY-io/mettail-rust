@@ -458,7 +458,21 @@ pub(crate) fn build_per_category_rules(
             let Some(&home_i) = cat_idx.get(home.as_str()) else {
                 continue;
             };
-            for binder_cat in &category_names {
+            // #307 eval-layer fix (2026-06-11): emit ONE surface lambda
+            // rule per home category (tag = Lam<Home>), not one per
+            // (home, binder_cat) pair. All Lam{BinderCat} rules shared
+            // the IDENTICAL surface syntax `^x.{p}` — a pure 13-way
+            // tag-ambiguity fan by construction (the binder's category
+            // is not inferable from the surface; binding lives in the
+            // body's typed occurrences). The fan exploded the cursor
+            // budget (`$name(^loc.{loc!(init)}, n)` via the Language
+            // path: 65 cursors > 64) and produced 13 α-equivalent
+            // alternatives differing only in the inert tag. β-reduction
+            // is tag-agnostic (normalize.rs matches every Lam<D'> tag
+            // and substitutes by the APPLICATION's domain), so a single
+            // tag loses nothing. Declared-rule abstractions (PInputs,
+            // PNew) build their own variants and are unaffected.
+            for binder_cat in std::iter::once(home) {
                 let binder_ident = Ident::new(binder_cat, Span::call_site());
                 let home_ident = Ident::new(home, Span::call_site());
                 let lam_label = format_ident!("Lam{}", binder_cat);

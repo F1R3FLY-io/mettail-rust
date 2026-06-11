@@ -1207,6 +1207,24 @@ pub fn generate_base_rewrites(
                 language,
                 true, // rewrites use equation matching
             ));
+
+            // #307 eval-layer fix (2026-06-11): canonicalization
+            // provenance. Auto-injected NormCast rules ALSO write their
+            // pair into __canon_<cat> so the result-graph extraction can
+            // exclude these value-preserving cast lifts from the
+            // user-visible rewrite list (see relations.rs).
+            if rw.is_auto_injected && rw.name.to_string().starts_with("NormCast") {
+                let canon_rel =
+                    format_ident!("__canon_{}", category.to_string().to_lowercase());
+                rules.push(generate_rule_clause(
+                    &rw.left,
+                    &rw.right,
+                    &conditions,
+                    &canon_rel,
+                    language,
+                    true,
+                ));
+            }
         }
     }
 

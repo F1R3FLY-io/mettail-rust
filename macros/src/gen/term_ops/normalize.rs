@@ -1411,12 +1411,33 @@ fn generate_assemble_arm(
             // HOL Apply<Dom>
             if let Some(dom_str) = strip_prefix(&label_str, "Apply") {
                 if hol_pairs.contains(&(cat_str.to_string(), dom_str.to_string())) {
-                    return Some(generate_beta_apply_assemble_arm(cat, dom_str));
+                    // #307 eval-layer fix (2026-06-11): collect EVERY
+                    // Lam<D'> tag of this category. The surface lambda
+                    // `^x.{p}` is tag-AMBIGUOUS (all Lam{BinderCat}
+                    // synthetic rules share the syntax; the parser's
+                    // winner tag carries no binding information — the
+                    // body's bound occurrences are typed by USE). β must
+                    // therefore accept any Lam tag and substitute by the
+                    // APPLICATION's domain ($name(^loc.{loc!(init)}, n)
+                    // parsed LamProc but loc is Name-bound — the
+                    // domain-exact match never fired and ApplyName was
+                    // permanently stuck).
+                    let lam_doms: Vec<String> = hol_pairs
+                        .iter()
+                        .filter(|(c, _)| c == cat_str)
+                        .map(|(_, d)| d.clone())
+                        .collect();
+                    return Some(generate_beta_apply_assemble_arm(cat, dom_str, &lam_doms));
                 }
             }
             if let Some(dom_str) = strip_prefix(&label_str, "MApply") {
                 if hol_pairs.contains(&(cat_str.to_string(), dom_str.to_string())) {
-                    return Some(generate_beta_mapply_assemble_arm(cat, dom_str));
+                    let lam_doms: Vec<String> = hol_pairs
+                        .iter()
+                        .filter(|(c, _)| c == cat_str)
+                        .map(|(_, d)| d.clone())
+                        .collect();
+                    return Some(generate_beta_mapply_assemble_arm(cat, dom_str, &lam_doms));
                 }
             }
 
@@ -2014,15 +2035,29 @@ fn emit_pre_field_constructs(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream>
 ///    c. Box the substituted Cat into `sources`, push `Visit<Cat>` to
 ///       renormalize — iterative, not recursive.
 /// 3. Else: reconstruct `Cat::Apply<Dom>(Box::new(lam), Box::new(arg))`.
-fn generate_beta_apply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
+fn generate_beta_apply_assemble_arm(
+    cat: &Ident,
+    dom_str: &str,
+    lam_doms: &[String],
+) -> TokenStream {
     let dom_ident = format_ident!("{}", dom_str);
     let assemble_variant = format_ident!("AssembleBetaApply_{}_{}", cat, dom_ident);
     let wrap_cat = format_ident!("Wrap{}", cat);
     let wrap_dom = format_ident!("Wrap{}", dom_ident);
-    let lam_variant = format_ident!("Lam{}", dom_ident);
     let apply_variant = format_ident!("Apply{}", dom_ident);
     let subst_method = format_ident!("substitute_{}", dom_str.to_lowercase());
     let visit_cat = format_ident!("Visit{}", cat);
+    // #307 eval-layer fix (2026-06-11): β accepts EVERY Lam<D'> tag of
+    // this category (the surface `^x.{p}` is tag-ambiguous across the
+    // synthetic Lam{BinderCat} rules — the winner's tag is arbitrary;
+    // binding lives in the body's typed occurrences). Substitution uses
+    // the APPLICATION's domain method, which hits exactly the
+    // Dom-typed bound occurrences; the domain-exact tag is listed
+    // first for readability, the behavior is identical across arms.
+    let mut ordered: Vec<&String> = lam_doms.iter().collect();
+    ordered.sort_by_key(|d| (d.as_str() != dom_str, d.as_str().to_string()));
+    let lam_variants: Vec<Ident> =
+        ordered.iter().map(|d| format_ident!("Lam{}", d.as_str())).collect();
 
     quote! {
         NormTask::#assemble_variant { slot, lam_slot, arg_slot } => {
@@ -2040,9 +2075,18 @@ fn generate_beta_apply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
             };
 
             // Ref-match to avoid moving out of `lam` (which impls Drop).
-            if let #cat::#lam_variant(scope) = &lam {
-                // β-reduce: clone scope, unbind, substitute, renormalize.
-                let (binder, body) = scope.clone().unbind();
+            // Per-tag arms ONLY extract the scope (tiny frames — 13
+            // duplicated full bodies blew the 2MiB test-thread stack in
+            // debug builds); the single β body follows.
+            let __scope = match &lam {
+                #(
+                    #cat::#lam_variants(scope) => Some(scope.clone()),
+                )*
+                _ => None,
+            };
+            if let Some(scope) = __scope {
+                // β-reduce: unbind, substitute, renormalize.
+                let (binder, body) = scope.unbind();
                 let substituted = (*body).#subst_method(&binder.0, &arg);
                 sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(substituted)));
                 let src_ptr: *const #cat = {
@@ -2052,12 +2096,14 @@ fn generate_beta_apply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
                         _ => unreachable!(),
                     }
                 };
-                // Drop lam + arg explicitly so we don't hold them across stack push.
+                // Drop lam + arg explicitly so we don't hold them across
+                // stack push.
                 drop(lam);
                 drop(arg);
                 stack.push(NormTask::#visit_cat { src: src_ptr, slot });
             } else {
-                // Not a β-redex — reconstruct Apply with normalized subterms.
+                // Not a β-redex — reconstruct Apply with normalized
+                // subterms.
                 results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
                     #cat::#apply_variant(std::sync::Arc::new(lam), std::sync::Arc::new(arg))
                 ));
@@ -2067,15 +2113,25 @@ fn generate_beta_apply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
 }
 
 /// Multi-β Assemble arm.
-fn generate_beta_mapply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
+fn generate_beta_mapply_assemble_arm(
+    cat: &Ident,
+    dom_str: &str,
+    lam_doms: &[String],
+) -> TokenStream {
     let dom_ident = format_ident!("{}", dom_str);
     let assemble_variant = format_ident!("AssembleBetaMApply_{}_{}", cat, dom_ident);
     let wrap_cat = format_ident!("Wrap{}", cat);
     let wrap_dom = format_ident!("Wrap{}", dom_ident);
-    let mlam_variant = format_ident!("MLam{}", dom_ident);
     let mapply_variant = format_ident!("MApply{}", dom_ident);
     let multi_subst_method = format_ident!("multi_substitute_{}", dom_str.to_lowercase());
     let visit_cat = format_ident!("Visit{}", cat);
+    // #307 eval-layer fix (2026-06-11): multi-β accepts EVERY MLam<D'>
+    // tag (symmetric with the Apply generalization — the tag carries no
+    // binding information; the typed multi-substitution does).
+    let mut ordered: Vec<&String> = lam_doms.iter().collect();
+    ordered.sort_by_key(|d| (d.as_str() != dom_str, d.as_str().to_string()));
+    let mlam_variants: Vec<Ident> =
+        ordered.iter().map(|d| format_ident!("MLam{}", d.as_str())).collect();
 
     quote! {
         NormTask::#assemble_variant { slot, lam_slot, args_start, args_count } => {
@@ -2095,8 +2151,14 @@ fn generate_beta_mapply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream 
                 }
             }
 
-            if let #cat::#mlam_variant(scope) = &lam {
-                let (binders, body) = scope.clone().unbind();
+            let __scope = match &lam {
+                #(
+                    #cat::#mlam_variants(scope) => Some(scope.clone()),
+                )*
+                _ => None,
+            };
+            if let Some(scope) = __scope {
+                let (binders, body) = scope.unbind();
                 let vars: Vec<_> = binders.iter().map(|b| &b.0).collect();
                 let substituted = (*body).#multi_subst_method(&vars, &args_vec);
                 sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(substituted)));
