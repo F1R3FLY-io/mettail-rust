@@ -312,3 +312,60 @@
 ## Round 2 verdict: 0 soundness BLOCKERs; 1 build BLOCKER (FIXED in 9fdaed68); MAJORs are
 ## decision-shaped (P2 lattice = critical path; P3 demoted) — folded into v3. Round 3 next.
 
+---
+
+## Round 3 — Convergence check (single dual-lens critic vs v3 @ 60c1a926): **NOT-CONVERGED on
+## TEXT-CONSISTENCY ONLY — "no design-level residue remains"**
+
+- **Fold verification: COMPLETE** — every round-1/round-2 resolution verified present in the BODY
+  (not just the header), with line-level spot-checks. No asserted-but-missing resolution.
+- **F1 [MAJOR]:** §10 commit summary + the P3 body Implementation/Weighted-by-product subsections
+  still shipped the demoted apparatus (`PreStarLiveness.v` enforcement + weighted table). FIXED:
+  §10 line rewritten to the demoted form; body subsections wrapped in the conditional-pass guard;
+  weighted by-product restated as STRUCK-with-conditional-revival.
+- **F2 [MAJOR]:** §9 risk #2 still carried the v2 "until lattice-validated" linear-only arming
+  deferral that round-2 M-1 deleted. FIXED: §9 #2 restated — masks ship ARMED on both source
+  kinds, shadow-validated on lattice first.
+- **F3 [minor]:** P5 entry gate said "after P1-P3 enforcement". FIXED: "after P1/P2 enforcement
+  (P3 diagnostic-only)"; residual_dead_steps subtraction restated as minus-P2-real minus
+  {P2∪P3}-shadow.
+- **F4 [minor]:** the v1→v2 changelog still advertised the struck hoist. FIXED: [STRUCK in v3]
+  annotation.
+- **F5 [minor]:** §9 titled "v2 — round 1". FIXED: re-versioned v3; risk #1 restated to the
+  demoted form; risk #5 byte budgets scoped "(P5; P3 only if its entry gate passes)".
+- **F6 [implementation-phase carry-forward]:** the `stack_fully_modeled` sticky bit is
+  monotone-never-cleared while `incoming_edge_stack` supports `intern_pop` — a cursor that pops
+  its last unmodeled frame stays barred from refutation. SOUND (conservative direction), moot
+  under the P3 demotion; if P3 enforcement is ever revived, consider an unmodeled-frame DEPTH
+  COUNTER (decrement on pop) instead of a bit — O(1), recovers refutation.
+- **Residue-coherence judgment (the program survives its own demotions):** the measurable spine =
+  P1 (delegate fan, measurement-gated) + P2 (recovery-off obligation refutation, ≥20%-gated,
+  lattice-armed) + P4 (ESS report always-on; demotion flip-gated with STOP fallback) + P5/P6
+  (entry-gated, STOP-expected). Every kill is diagnostic-gated with a recordable STOP; I1-I8
+  intact.
+- **Round-3 failed attacks (record):** sticky-bit cloning leak (children inherit the
+  field-by-field bit); sticky-bit GSS-sharing leak (bit is per-cursor, not per-shared-node);
+  repair-class union vacuity (disclosed + scoped to recovery-off); stale 342k baseline in a live
+  gate (all hits are retirement statements); P4 p<0.05-from-reordering brittleness (ESS
+  report-only + demotion flip-gated); eoi_dead_cursors structurally empty (premature-Accepted
+  machinery proves the population plausible); F6 alphabet line orphaned (P5 still consumes it).
+
+## Round 4 — confirmation pass on the round-3 edits: ★ **CONVERGED** ★
+
+- All five round-3 fixes verified correctly and completely in place (F1: §10 + P3 body demoted/
+  conditional; F2: §9 #2 armed-on-both-kinds; F3: P5 entry-gate phrase + shadow-set subtraction;
+  F4: changelog [STRUCK] annotation; F5: §9 re-versioned + risks #1/#5 demoted/scoped).
+- Full-document sweep against every established decision (P3 demoted; lattice masks critical
+  path; hoist struck; EquivKey-only merge; repair_synthesizable_classes; whole-stack guard;
+  within-step demotion): NO design-level residue, NO new contradiction.
+- Two cosmetic minors found and FIXED in the same pass: §7 seam-map P3 rows annotated
+  conditional; §9 risk #3 naming drift (`insertable_classes`→`repair_synthesizable_classes`).
+- Carry-forward (implementation-phase, non-blocking): ledger F6 — if P3 enforcement is ever
+  revived, prefer an unmodeled-frame DEPTH COUNTER over the monotone sticky bit.
+
+**FINAL VERDICT (4 rounds, 5 independent critic agents): the design is CONVERGED.** Round 1
+refuted v1 on 4 BLOCKERs; round 2 refuted v2 on 4 soundness MAJORs + 1 build BLOCKER + 3
+effectiveness MAJORs; round 3 found text-consistency residue only ("no design-level residue
+remains"); round 4 confirmed the fold and swept clean. Next: user review → FV models (model
+commit precedes any Rust) → measure-first staged implementation per §10.
+

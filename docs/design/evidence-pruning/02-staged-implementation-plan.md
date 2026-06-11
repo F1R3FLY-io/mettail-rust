@@ -22,7 +22,7 @@
 > to non-nullable positions (M1) + per-DAG-NODE masks (M2) + top-`RuleAt`-frame obligations on
 > `WpdaGssNode` (F4) + per-literal trigger classes (F6); P3 gains a Step-(-1) transition inventory
 > with an allow-list entry gate (B2⊕F3) + the cheaper `semantic_root_accepts` hoist weighed first
-> (F8); P4 ordering proofs get a real scheduler model (M3) + the within-step demotion invariant;
+> (F8) **[STRUCK in v3 per round-2 N1 — category error; replaced by `category_reaches_accepting`]**; P4 ordering proofs get a real scheduler model (M3) + the within-step demotion invariant;
 > P0 provisions the missing benches + battery scoping by commit class (F5); line refs replaced by
 > function anchors (F9); I4 corpus adversarially seeded per failure mode (m1).
 >
@@ -466,13 +466,16 @@ the corpus → implement; `< 3%` → STOP (record "A subsumed by B on these gram
 emitted under a feature for future grammars, since A's weighted variant still feeds P4's bounds).
 Table budget gate as above. Zero `refuted_then_accepted` everywhere.
 
-**Implementation (commit 3):** promote the frame annotation out of the stats cfg; enforcement at
-the same two per-frontier/per-child sites as P2; `cursors_dropped_via_prestar_gate` attribution.
-Kill switch `PRATTAIL_EP_P3`.
-**Weighted by-product (same commit or 3b):** run `prestar` over the existing
-`LexicographicWeight`-compatible weight domain (wpds.rs is already generic over `Semiring`) and emit
-the meet-over-all-paths completion weight per live configuration — the admissible cost-to-go table
-consumed by P4. This is the RSJM05 "heuristic for free".
+**Implementation (commit 3) — CONDITIONAL: executes ONLY if the Step-(-1) entry gate unexpectedly
+passes (round-3 Finding 1: under the demotion this subsection is INERT — the live P3 deliverables
+are the inventory + the diagnostic shadow measurement + the recorded STOP):** promote the frame
+annotation out of the stats cfg; enforcement at the same two per-frontier/per-child sites as P2;
+`cursors_dropped_via_prestar_gate` attribution. Kill switch `PRATTAIL_EP_P3`.
+**Weighted by-product — STRUCK as a P4 input (round-2 M-3):** the weighted prestar runs over the
+SAME skeleton model and inherits the SAME abstraction hole, so its meet-over-all-paths completion
+weight is NOT an admissible bound over the real frontier. Retained here only as the
+conditional-pass artifact (if the inventory gate passes AND the weighted table is proven
+admissible over the modeled subset, P4 may consume it restricted to {in-model}-state cursors).
 
 **Flip experiment (commit 4):** as P2; additionally a ProcX-root-fan panel (the 12→16-cursor inputs
 from inventory gap #1: category-viability death should now fire at dispatch).
@@ -533,9 +536,10 @@ revert demotion (record STOP for the demotion half). Kill switch `PRATTAIL_EP_P4
 
 ## P5 — Stage D: regular residual over-approximation gate (residue-gated endgame)
 
-**Entry gate (measure-first, no model until it passes):** after P1-P3 enforcement, define
-`residual_dead_steps` = steps spent on cursors that die at EOI minus steps already shadow/real-
-refuted by P2/P3, measured on the corpus. Implement Stage D **only if** `residual_dead_steps ≥ 15%`
+**Entry gate (measure-first, no model until it passes):** after P1/P2 enforcement (P3 is
+diagnostic-only per its demotion), define
+`residual_dead_steps` = steps spent on cursors that die at EOI minus P2-real-refuted minus
+{P2-shadow ∪ P3-shadow}-refuted steps, measured on the corpus. Implement Stage D **only if** `residual_dead_steps ≥ 15%`
 of `apply_action_calls` (the ALL(*) lesson predicts the cheap gates already took the volume;
 expected outcome: STOP).
 
@@ -602,9 +606,9 @@ seam is sound today; P1-P3 shrink its volume.
 |---|---|---|
 | lex | DAG soft-fail orphans, edge weights | P2's backward class-DP over the lex DAG (mask = union over paths) |
 | lex→dispatch fork | keyword reservation (51d57c91), d1 fall-through+gate (82310a24) | P1 d2 + unified model; P2 mask replaces rescans |
-| dispatch | PathMap trie, visited_dispatch, `ContextWeight::is_zero` | P2 obligation gate at spawn; P3 liveness at push |
+| dispatch | PathMap trie, visited_dispatch, `ContextWeight::is_zero` | P2 obligation gate at spawn; P3 liveness at push *(only if the P3 entry gate passes; diagnostic-only otherwise)* |
 | parse step | Tomita merge, cohort cache, progress detector | P2/P3 per-frontier refutation (post-drain, per merged class); P4 demotion |
-| EOI | premature-Accepted, trailing salvage | P3 makes input-independent death fire at the killing transition; ESS in budget reports |
+| EOI | premature-Accepted, trailing salvage | P3 *(conditional, as above)* would make input-independent death fire at the killing transition; ESS in budget reports |
 | realize | min_terminal_span, semantic_root, semantic_hash dedup, caps(report) | unchanged here — ROOT-F track owns packing-level pollution |
 | eval | guards, dedup, Err-rewrites, seed filter | EV-0 probe; demand transform only on gate pass |
 | dovetail | budget reports, exact k-best + 0̄-inside skip | DV-0 probe; demand-gated saturation only on gate pass |
@@ -627,23 +631,27 @@ seam is sound today; P1-P3 shrink its volume.
   ambiguity contract and the test corpora. Coordinate on rebaselines and on EV-0's corpus choice
   (run EV-0 before the realizer rewires eval, so the measurement attributes to the current engine).
 
-## 9. Risk register (v2 — mitigations upgraded per red-team round 1)
+## 9. Risk register (v3 — reconciled with red-team rounds 1-3)
 
 1. **P3 `abstraction_superset` fidelity** ⇒ Step-(-1) transition inventory with ≤K-must-add entry
-   gate + runtime `WpdaState` ALLOW-LIST enforcement (refuse to refute in unmodeled states) +
-   per-state shadow partitioning + the recorded prediction that P3 may STOP (B2⊕F3). The v1
-   "`recovery_depth == 0`-only" mitigation is DELETED (it was inverted — see I8 v2).
+   gate; **P3 is DEMOTED to inventory + diagnostic-only (round-2 M-3)** — no enforcement
+   apparatus; the whole-stack `stack_fully_modeled` guard (round-2 N2) + per-state shadow
+   partitioning apply to the DIAGNOSTIC and to any conditional-pass revival. The v1
+   "`recovery_depth == 0`-only" mitigation is DELETED (it was inverted — see I8 v2/v3).
 2. **Lattice masks under lex ambiguity** (P2): per-DAG-NODE masks keyed by node-id with
-   edge-monotonicity; union-over-paths direction; `lattice_node_mask_welldefined`; gate armed only
-   on `positions_are_linear_tokens()` sources until lattice-validated (M2).
-3. **Recovery composition** (all definite gates): I8 v2 — `refute ⇒ must ∩ insertable_classes = ∅`;
+   edge-monotonicity; union-over-paths direction; `lattice_node_mask_welldefined` ships in the P2
+   MODEL commit and the gate ships **ARMED on BOTH source kinds, shadow-validated on lattice
+   inputs first** (round-2 M-1: the cast corpus routes through `LatticeTokenSource` — a
+   linear-only arming gate would enforce nothing on its own target corpus; the v2
+   "until lattice-validated" deferral is DELETED).
+3. **Recovery composition** (all definite gates): I8 v3 — `refute ⇒ must ∩ repair_synthesizable_classes = ∅`;
    INSERT is the suffix-growing repair; counters partitioned by `recovery_enabled`; missing-operator
    INSERT probe in the corpus (B1).
 4. **Lex-fork blast radius** (P1 d2): the falsified-fall-through history (360c55ec) — d2 lands only
    WITH its gate, never alone; `extension_preserves_189_behavior`/`multilength_unaffected`
    re-verified; ledtest SENTINEL aborts on any regression.
-5. **Table size blowups** (P3/P5): explicit byte budgets with STOP outcomes; per-literal trigger
-   classes feed the alphabet-size line (F6).
+5. **Table size blowups** (P5; P3 only if its entry gate passes): explicit byte budgets with STOP
+   outcomes; per-literal trigger classes feed the alphabet-size line (F6).
 6. **Measurement honesty:** all waste percentages computed on BOTH the pathological corpus and the
    neutral corpus (chains); a gate passing only on a synthetic input does not justify enforcement
    (record per-corpus numbers in the ledger). ALL waste numbers re-baselined POST-ROOT-A; the
@@ -662,7 +670,9 @@ seam is sound today; P1-P3 shrink its volume.
   flippable) → L (Welch + decisions).
 - P2: M `ParikhObligationGate.v` → D `suffix_classes.rs` + shadow → I enforcement + rescan
   replacement (separate sub-commit) → L.
-- P3: M `PreStarLiveness.v` → D tables + shadow annotation → I enforcement + weighted table → L.
+- P3 (DEMOTED): M = the Step-(-1) transition-inventory doc ONLY → D = diagnostic-only shadow
+  measurement → recorded STOP (expected) → L. [`PreStarLiveness.v`, enforcement, and the weighted
+  table are all conditional on the entry gate unexpectedly passing — round-2 M-3.]
 - P4: M `ForwardOrderOnly.v` + `InnovationDemotionOrderOnly.v` → I ESS + demotion → L.
 - P5: entry-gate measurement commit; then M `RegularResidualGate.v` → D → I → L only on gate pass.
 - P6a/P6b: probe commit each; models (`SaturationDemandGate.v`, `DemandTransformEquivalence.v`)
