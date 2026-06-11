@@ -1134,6 +1134,98 @@ pub fn detect_shared_nonterminal_prefixes(
     results
 }
 
+/// CD06 Phase 4B M1.0 (2026-06-10): MEASURE-FIRST shared-suffix statistics.
+///
+/// The would-apply measurement gating CD06 right-factoring
+/// (`A → β a | γ a ⟹ A → A' a`): per category, bucket rules by their LAST
+/// syntax item restricted to `Terminal`/`NonTerminal` tails (rules ending in
+/// Binder/Collection/SepList/etc. are ineligible — the factoring transform is
+/// only defined over plain item tails). `shared` counts rules in ≥2-member
+/// buckets; the ratio `shared/eligible` is an UPPER BOUND on factorable rules
+/// (any factorable pair shares at least its last item), so a ratio below the
+/// gate (~0.10) safely STOPS CD06 at diagnostic-only (recorded negative).
+#[derive(Debug, Clone, Default)]
+pub struct SharedSuffixMeasurement {
+    /// Rules whose last item is a Terminal/NonTerminal (factoring-eligible).
+    pub eligible: usize,
+    /// Eligible rules sharing their LAST item with ≥1 other rule of the same
+    /// category (the crude upper bound — dominated by degenerate shared close
+    /// delimiters like trailing `)`).
+    pub shared_depth1: usize,
+    /// Eligible rules sharing their last TWO items (the meaningful would-apply
+    /// signal: a ≥2-item tail — in practice an NT-bearing `<X> ")"` tail — is
+    /// where right-factoring could share real structure).
+    pub shared_depth2: usize,
+    /// Depth-2 group descriptions: "Cat: tail-key ← [rules…]".
+    pub groups_depth2: Vec<String>,
+}
+
+impl SharedSuffixMeasurement {
+    pub fn ratio_depth1(&self) -> f64 {
+        if self.eligible == 0 {
+            0.0
+        } else {
+            self.shared_depth1 as f64 / self.eligible as f64
+        }
+    }
+    pub fn ratio_depth2(&self) -> f64 {
+        if self.eligible == 0 {
+            0.0
+        } else {
+            self.shared_depth2 as f64 / self.eligible as f64
+        }
+    }
+}
+
+/// CD06 Phase 4B M1.0: compute the shared-suffix measurement over RD rules.
+pub fn measure_shared_nonterminal_suffixes(
+    rd_rules: &[crate::grammar::ir::RDRuleInfo],
+) -> SharedSuffixMeasurement {
+    use crate::grammar::ir::RDSyntaxItem;
+    fn item_key(item: &RDSyntaxItem) -> Option<String> {
+        match item {
+            RDSyntaxItem::Terminal(t) => Some(format!("T:{t}")),
+            RDSyntaxItem::NonTerminal { category, .. } => Some(format!("N:{category}")),
+            _ => None, // Binder/Collection/SepList/… items are ineligible tails
+        }
+    }
+    // (category, tail key) → rule labels, at depths 1 and 2.
+    let mut buckets1: std::collections::BTreeMap<(String, String), Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut buckets2: std::collections::BTreeMap<(String, String), Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut eligible = 0usize;
+    for rule in rd_rules {
+        let Some(last) = rule.items.last().and_then(item_key) else {
+            continue;
+        };
+        eligible += 1;
+        buckets1
+            .entry((rule.category.clone(), last.clone()))
+            .or_default()
+            .push(rule.label.clone());
+        if rule.items.len() >= 2 {
+            if let Some(prev) = item_key(&rule.items[rule.items.len() - 2]) {
+                buckets2
+                    .entry((rule.category.clone(), format!("{prev} {last}")))
+                    .or_default()
+                    .push(rule.label.clone());
+            }
+        }
+    }
+    let shared_depth1 =
+        buckets1.values().filter(|ls| ls.len() >= 2).map(|ls| ls.len()).sum::<usize>();
+    let mut shared_depth2 = 0usize;
+    let mut groups_depth2 = Vec::new();
+    for ((cat, key), labels) in &buckets2 {
+        if labels.len() >= 2 {
+            shared_depth2 += labels.len();
+            groups_depth2.push(format!("{cat}: {key} ← [{}]", labels.join(", ")));
+        }
+    }
+    SharedSuffixMeasurement { eligible, shared_depth1, shared_depth2, groups_depth2 }
+}
+
 /// Format a `SharedNonterminalPrefix` as a human-readable diagnostic string.
 ///
 /// Used by the lint layer and diagnostic output to report CSE opportunities.

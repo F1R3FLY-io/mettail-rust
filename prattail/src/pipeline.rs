@@ -3363,6 +3363,31 @@ fn generate_parser_code(
         }
     }
 
+    // ── CD06 Phase 4B M1.0 (2026-06-10): MEASURE-FIRST shared-suffix gate ──
+    // The would-apply measurement for CD06 right-factoring (A → β a | γ a ⟹
+    // A → A' a). Reports the per-grammar shared_suffix_ratio (an UPPER BOUND:
+    // last-item bucketing over Terminal/NonTerminal tails). Per the plan's
+    // gate, a ratio < ~0.10 on the production grammars STOPS CD06 at
+    // diagnostic-only (no suffix-trie codegen) and records the negative.
+    {
+        let m = crate::decision_tree::measure_shared_nonterminal_suffixes(&bundle.rd_rules);
+        pipeline_diagnostic(
+            &bundle.grammar_name, DiagnosticId::I17, "cd06-shared-suffix-measure",
+            crate::lint::LintSeverity::Info,
+            format!(
+                "CD06 measure-first: shared_suffix_ratio depth1={:.4} ({}/{}; crude — dominated by shared close delimiters) depth2={:.4} ({}/{}; the would-apply signal; gate ≥0.10 to wire factoring); depth2 groups: [{}]",
+                m.ratio_depth1(),
+                m.shared_depth1,
+                m.eligible,
+                m.ratio_depth2(),
+                m.shared_depth2,
+                m.eligible,
+                m.groups_depth2.join("; "),
+            ),
+            None,
+        );
+    }
+
     // ── Sprint 4: Dead-prefix recovery weight penalty ──────────────────────
     // After trie+WFST dead-rule confirmation, detect "dead prefixes" — dispatch
     // tokens whose entire trie subtree leads only to dead rules. Increase their

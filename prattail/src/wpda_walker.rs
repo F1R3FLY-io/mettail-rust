@@ -3084,10 +3084,27 @@ impl PackedDispatchConfig {
 ///   - `cat_src` (u16) + `cur_bp` (u8): the dispatch's category + binding
 ///     power, exactly as in `PackedDispatchConfig`.
 ///
-/// `pos` is INTENTIONALLY DROPPED: at a fixed dispatch the `sppf_stack_id`
-/// is the discriminator, and `pos` is redundant (the chaining fold
-/// re-enters at the SAME `pos` with an ADVANCED `sppf_stack_id`, so a
-/// `pos`-bearing key would falsely separate it). 12 bytes, `Copy`, no Arc.
+/// ★ FALSIFIED PREMISE (Phase 5B, 2026-06-10; FV:
+/// `SelfCollectionElementProgress.v`): `pos` was originally dropped on the
+/// claim "at a fixed dispatch the `sppf_stack_id` is the discriminator, and
+/// `pos` is redundant". That premise is FALSE for SELF-collections (PPar:
+/// Proc elements inside a Proc collection): `emit_splice_into_collection`
+/// POPS the element's SppfId off the stack — RESTORING the exact pre-element
+/// `StackId` — and every element dispatches at the SAME CollectionMarker GSS
+/// node with `cur_bp: 0`, so element k+1's descriptor was bit-identical to
+/// element 1's and the cycle defense KILLED it (flip-proven minimal
+/// reproducer: `{1 | 2}` failed; `{1 | (2)}` passed; `{1 | z!(0)}` silently
+/// MIS-PARSED via the mixed-fork branch-strip). `pos` is the GLL descriptor's
+/// `i` component (Scott & Johnstone's (L, u, i, w)) and is now INCLUDED —
+/// but ONLY for CollectionMarker-node dispatches (`NO_POS` elsewhere): the
+/// flip experiment showed the set ALSO serves as the cross-position
+/// dispatch-suppression memo (GLOBAL pos-keying re-exploded the cross-cat
+/// projection fan — rhocalc `x!(0)` failed, suite 0.6s→133s), while the
+/// sppf-restore aliasing exists ONLY at marker nodes. At marker nodes: a
+/// genuine no-progress cycle consumes no input so it re-enters at the SAME
+/// pos (still caught — `no_progress_still_caught`), while the pos-advancing
+/// collection re-entry is admitted (`collection_reentry_admitted`); a finer
+/// key can only reduce kills (`finer_key_kills_subset`). 16 bytes, `Copy`.
 ///
 /// Memory Option A: this is a SEPARATE cross-cat-only set
 /// (`BranchCursor::visited_proj_descriptors`), empty on chain workloads,
@@ -3099,11 +3116,13 @@ pub struct ProjDescriptorKey {
     /// GSS tip node id (`cursor.node`). The `u` in the GLL descriptor.
     pub gss_node: u32,
     /// SPPF-stack arena handle (`cursor.sppf_stack_id.0`). The `w`
-    /// (progress) discriminator — the load-bearing addition over
-    /// `PackedDispatchConfig`. Structural arena dedup guarantees equal
-    /// pushed-SppfId chains share this id (so a no-progress re-entry
-    /// reproduces it) while a productive reduced-Symbol push advances it.
+    /// (progress) discriminator. Structural arena dedup guarantees equal
+    /// pushed-SppfId chains share this id — but the collection splice
+    /// RESTORES it across elements, which is why `pos` is also required.
     pub sppf_stack: u32,
+    /// Input position (`cursor.pos`). The `i` in the GLL descriptor — the
+    /// component whose omission caused the self-collection kills (above).
+    pub pos: u32,
     /// Dispatch category source index (GSS node's `symbol.category_src_idx`).
     pub cat_src: u16,
     /// Current binding power at the `PrefixDispatch` (`cur_bp`).
@@ -3111,9 +3130,15 @@ pub struct ProjDescriptorKey {
 }
 
 impl ProjDescriptorKey {
+    /// Sentinel for non-CollectionMarker dispatches: the key stays pos-LESS
+    /// there (byte-identical suppression to the shipped behavior — the
+    /// cross-position dispatch-memo role of the set is preserved). Real
+    /// positions are token indices ≪ u32::MAX, so no collision.
+    pub const NO_POS: u32 = u32::MAX;
+
     #[inline(always)]
-    pub fn new(gss_node: u32, sppf_stack: u32, cat_src: u16, cur_bp: u8) -> Self {
-        ProjDescriptorKey { gss_node, sppf_stack, cat_src, cur_bp }
+    pub fn new(gss_node: u32, sppf_stack: u32, pos: u32, cat_src: u16, cur_bp: u8) -> Self {
+        ProjDescriptorKey { gss_node, sppf_stack, pos, cat_src, cur_bp }
     }
 }
 
@@ -3133,7 +3158,29 @@ fn extract_proj_descriptor<W: SemiringRef>(
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
             .unwrap_or(0);
-        Some(ProjDescriptorKey::new(cursor.node, cursor.sppf_stack_id.0, cat_src, *cur_bp))
+        // Phase 5B F1 REFINEMENT (2026-06-10, flip-driven): the descriptor set
+        // does DOUBLE DUTY — cycle defense AND cross-position dispatch
+        // suppression (the memo that keeps the cross-cat projection fan from
+        // re-firing at every input position). Keying pos GLOBALLY removed the
+        // second role and re-exploded the fan (rhocalc `x!(0)` failed, suite
+        // 0.6s→133s — the H1'/13-subparse family returning). The sppf-restore
+        // aliasing that motivated pos exists ONLY at CollectionMarker-node
+        // dispatches (the splice pops the element's SppfId, restoring the
+        // pre-element StackId at the SAME marker node). So pos participates in
+        // the key EXACTLY there; everywhere else the key stays pos-less
+        // (NO_POS) and behavior is byte-identical to the shipped suppression.
+        let node_is_marker = gss
+            .node(cursor.node)
+            .map(|n| n.symbol.kind == SymbolKind::CollectionMarker)
+            .unwrap_or(false);
+        let pos_key = if node_is_marker { cursor.pos as u32 } else { ProjDescriptorKey::NO_POS };
+        Some(ProjDescriptorKey::new(
+            cursor.node,
+            cursor.sppf_stack_id.0,
+            pos_key,
+            cat_src,
+            *cur_bp,
+        ))
     } else {
         None
     }
@@ -15560,8 +15607,26 @@ where
                     );
                 if pred_kind == SymbolKind::CollectionMarker && !skip_for_class3 {
                     let should_splice = match popped_symbol.map(|s| s.kind) {
-                        Some(SymbolKind::CategoryEntry) | Some(SymbolKind::RuleAt(_)) => true,
-                        Some(_) => {
+                        // Phase 5B F2 (2026-06-10; FV:
+                        // SelfCollectionElementProgress.{fixed_splices_iff_complete,
+                        // shipped_splices_incomplete_element,
+                        // fixed_keeps_complete_splice}): CategoryEntry pops
+                        // stay UNCONDITIONAL (they are the cross-cat redirect
+                        // close, where the element's whole Pratt parse —
+                        // including infix extension — happened INSIDE the
+                        // frame). RuleAt pops were also unconditional under
+                        // the stale premise "these only top a CollectionMarker
+                        // at element completion" — FALSE since in-collection
+                        // infix extension: a literal-led PREFIX rule (rhocalc
+                        // PDrop `*(z)`) completes its RULE while the element
+                        // may continue with an infix (`{*(z) + 2}`); the
+                        // premature splice stole the infix LHS and Add fired
+                        // against the CollectionId (expected-cat reject, the
+                        // whole family dead). RuleAt pops now take the SAME
+                        // one-step probe as every other pop kind: splice iff
+                        // the element has NO Pratt continuation.
+                        Some(SymbolKind::CategoryEntry) => true,
+                        Some(SymbolKind::RuleAt(_)) | Some(_) => {
                             // Pratt element-close: simulate one
                             // InfixLoop{cur_bp:0} step. Splice iff
                             // the engine would advance to Unwinding
