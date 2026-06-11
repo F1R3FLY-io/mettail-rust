@@ -3369,6 +3369,18 @@ fn generate_parser_code(
     // last-item bucketing over Terminal/NonTerminal tails). Per the plan's
     // gate, a ratio < ~0.10 on the production grammars STOPS CD06 at
     // diagnostic-only (no suffix-trie codegen) and records the negative.
+    //
+    // VERDICT (2026-06-11, Phase 4B closed): the measured depth2 ratios
+    // EXCEEDED the screen (calculator 0.19, rhocalc 0.42, Ambient 0.57,
+    // GuardedRho 0), so the group-level analysis decided instead: every
+    // depth-2 bucket's rules are already discriminated by disjoint LEADING
+    // literals (CD02 top-down dispatch), so a shared tail is parsed once
+    // whether or not it is factored — right-factoring would merge generated
+    // CODE (size only) and remove ZERO parse work. CD06 is STOPPED at
+    // diagnostic-only; the transform itself is proven meaning-preserving in
+    // CD06_SuffixFactor.v (factor_eq_matching_rule = exact match-list
+    // equality) should a future grammar show non-disjoint leading dispatch
+    // over heavy shared tails.
     {
         let m = crate::decision_tree::measure_shared_nonterminal_suffixes(&bundle.rd_rules);
         pipeline_diagnostic(

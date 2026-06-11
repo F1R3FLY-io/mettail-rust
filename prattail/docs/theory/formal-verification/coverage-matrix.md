@@ -52,14 +52,14 @@ updates it. It exists so we never (a) ship a Rust change without a non-vacuous p
 | Phase | New `.v` | Key theorems | Status |
 |-------|----------|--------------|--------|
 | EC | `EvidenceComplete.v` (prattail_wpda_runtime, zero-admission, `31bb90bc`) | **proven**: `no_valid_alternative_dropped`, `evidence_only_removal` (removal = observational-equiv merge), `weight_is_order_only` (kept key-set invariant under reweighting), `assemble_keys_nodup` (residual ambiguity surfaced), `weight_drop_can_lose_valid_alternative` (negative fence). `from_alternatives` (language.rs:722) verified already evidence-complete (semantic_fingerprint-only dedup; weight-free). The FV fence subsumes the planned lint guard (no SGLR prefer/avoid in MeTTaIL) |
-| 4A | `CD07_NfaFallbackNonLoss.v` | fanout_complete; fanout_sound; lexmin_orders_not_prunes | TODO |
+| 4A | `CD07_NfaFallbackNonLoss.v` | fanout_complete; fanout_sound; lexmin_orders_not_prunes | **proven** (zero-admission, committed `81ad0aa8`) + shipped_drops_boundary, selection_is_member, shipped_spillover_loss (negative fence), nfa_fallback_nonlossy, fixed_empty_boundary_not_present. Both latent-loss sites fixed; dispatch_strategy consumers re-scoped (dead-rule lint + NFA-spillover refinement only — the plan's "Walker Fork" premise was stale) |
 | 5A | (extend `RuntimeModel.v`) | cast_edge_source_roundtrip; eoi_ordering_is_permutation | TODO |
 | 5C | (extend `RuntimeModel.v`) | budget_overflow_is_surfaced; under_budget_preserves_all; lazy_member_counted_once | TODO |
 | 5B | `BCG07_CongruenceSeedKey.v` | congruence_seed_key_disjoint; congruence_propagation_complete | TODO |
 | 2 | `LazyRecognizer.v` | realized_prefix_is_eager_firstn (post weight-order fix); realization_prefix_stable; budget_overflow_reported_not_pruned | TODO |
 | 3a | (extend `RuntimeModel.v`) | reachability_dedup_exact_key_no_loss | TODO |
 | 3 | `LazyEvalEnum.v` + `DemandTransform.v` | demand_eval_equals_eager_in_the_limit; demand_only_computes_reachable; enum_take_k_is_eager_quotient_prefix; fixpoint_bound_reported_not_pruned | TODO |
-| 4B | `CD06_SuffixFactor.v` | factor_eq_matching_rule; factor_sound/complete; factor_language_eq | TODO (measure-first; may stay diagnostic-only) |
+| 4B | `CD06_SuffixFactor.v` | factor_eq_matching_rule; factor_sound/complete; factor_language_eq | **proven** (zero-admission, all 8 theorems `Closed under the global context`): central `factor_eq_matching_rule` is exact match-LIST equality (labels + grammar order + multiplicity, NO disjointness precondition) ⇒ `factor_sound`/`factor_complete`/`factor_language_eq` + `factor_preserves_ambiguity_degree` are corollaries; T5 `degraded_path_preserved`/`residual_subset` (ineligible alternatives untouched); `factored_aux_counts_eligible` ties the model to the M1.0 measurement. **VERDICT: CD06 STOPPED at diagnostic-only** — measured depth2 ratios (calculator 0.19, rhocalc 0.42, Ambient 0.57, GuardedRho 0) EXCEED the 0.10 screen, but every depth-2 bucket is already leading-literal-disjoint under CD02 top-down dispatch ⇒ a shared tail is parsed once either way ⇒ factoring saves code size only, ZERO parse work ⇒ transform NOT wired (no suffix_trie.rs, no `Optimization::SuffixFactoring`); the I17 `cd06-shared-suffix-measure` diagnostic is retained |
 
 ## E. Engine (Dovetail) obligations — `formal/rocq/dovetail/` (new) + reuse
 

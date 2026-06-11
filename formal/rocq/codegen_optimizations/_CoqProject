@@ -10,4 +10,5 @@ theories/AL04_MphPostLex.v
 theories/AL05_ChainCollapse.v
 theories/CD02_DisjointFirst.v
 theories/CD05_PrefixParse.v
+theories/CD06_SuffixFactor.v
 theories/CD07_NfaFallbackNonLoss.v

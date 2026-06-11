@@ -1144,6 +1144,20 @@ pub fn detect_shared_nonterminal_prefixes(
 /// buckets; the ratio `shared/eligible` is an UPPER BOUND on factorable rules
 /// (any factorable pair shares at least its last item), so a ratio below the
 /// gate (~0.10) safely STOPS CD06 at diagnostic-only (recorded negative).
+///
+/// VERDICT (2026-06-11, Phase 4B closed): the measured depth2 ratios EXCEEDED
+/// the screen (calculator 0.19, rhocalc 0.42, Ambient 0.57, GuardedRho 0), so
+/// the group-level analysis decided instead: every depth-2 bucket's rules are
+/// already discriminated by disjoint LEADING literals (CD02 top-down
+/// dispatch), so a shared tail is parsed once whether or not it is factored —
+/// right-factoring would merge generated code (size only) and remove zero
+/// parse work. CD06 is STOPPED at diagnostic-only: this measurement plus the
+/// I17 `cd06-shared-suffix-measure` diagnostic are the only artifacts. The
+/// transform itself is proven meaning-preserving (exact match-list equality,
+/// ambiguity degree included) in
+/// `formal/rocq/codegen_optimizations/theories/CD06_SuffixFactor.v`, so any
+/// future wiring — if a grammar ever shows non-disjoint leading dispatch over
+/// heavy shared tails — starts from a verified transform.
 #[derive(Debug, Clone, Default)]
 pub struct SharedSuffixMeasurement {
     /// Rules whose last item is a Terminal/NonTerminal (factoring-eligible).
