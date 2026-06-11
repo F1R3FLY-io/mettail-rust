@@ -40,10 +40,25 @@ fn workload() -> Vec<&'static str> {
         // Trailing tokens — recovery at multiple positions on cascaded
         // single-token errors.
         "1 2 3 4 5 6 7 8 9 10",
+        // ── Evidence-pruning P0 extension (2026-06-11; plan v3 P0.4 /
+        // round-2 m-4): zero-innovation stall inputs for the P4
+        // demotion panel. These park cursors on ε/recovery edges
+        // WITHOUT consuming (repeated leading junk before any
+        // consumable token), so the P4 innovation-demotion reordering
+        // has stalled members to demote — the original five inputs
+        // maximize cohort-cache hits, not innovation stalls. ──
+        "@ @ @ @ @ 1 + 2",
+        "( ( ( @ @ @",
+        "+ + + + + + + + 1",
     ]
 }
 
 fn main() {
+    // Evidence-pruning P0 (2026-06-11): the P4 demotion arm. The walker
+    // reads `PRATTAIL_EP_P4_DEMOTE` once per construction (off|shadow|
+    // on); this bench just LABELS the emitted line with the active arm
+    // so the Welch driver can interleave control/treatment runs.
+    let arm = std::env::var("PRATTAIL_EP_P4_DEMOTE").unwrap_or_else(|_| "off".to_string());
     let inputs = workload();
     // Warm-up iteration (excluded from timing) to populate any one-time
     // lazy-init caches (token_id_map, RecoveryInfra build, etc.).
@@ -60,6 +75,8 @@ fn main() {
         }
     }
     let elapsed_ms = start.elapsed().as_millis();
-    // Single-line output for the t-test harness.
-    println!("{}", elapsed_ms);
+    // Single-line output for the t-test harness (arm-labelled since the
+    // P0 extension; the legacy harness splits on ',' and takes the last
+    // field).
+    println!("{},{}", arm, elapsed_ms);
 }

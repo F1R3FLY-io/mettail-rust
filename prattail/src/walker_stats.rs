@@ -2126,6 +2126,72 @@ macro_rules! stats_inc {
     };
 }
 
+// ── Evidence-pruning program (P-series) ────────────────────────────────
+//
+// Conventions (plan: docs/design/evidence-pruning/02-staged-implementation-
+// plan.md v3, USER-APPROVED 2026-06-11; ledger: 02-program-ledger.md):
+//
+// - Kill switches: `PRATTAIL_EP_<STAGE>=off|shadow|on`, read ONCE per
+//   walker construction (never per step).
+// - Shadow counters per definite gate, PARTITIONED by WpdaState-class ×
+//   recovery_enabled (I4; a single hit in a rare state must never be
+//   statistically buried):
+//     `<stage>_shadow_would_refute_total: [u64; WPDA_STATE_CLASS_COUNT * 2]`
+//     `<stage>_shadow_refuted_then_accepted: [u64; ..]`  (MUST stay all-0)
+//     `<stage>_shadow_steps_after_would_refute: [u64; ..]`
+//   Index = `state_class * 2 + (recovery_enabled as usize)`.
+// - Display prints ONLY non-zero slots (round-3 m-3: full 2×N dumps per
+//   stage are unreadable next to the ~86 existing report lines).
+// - Increment via `stats_inc_idx!` below (`stats_inc!` takes a bare
+//   ident and cannot index — round-2 m-1).
+
+/// Coarse `WpdaState` partition for P-series shadow counters. Buckets,
+/// not variants: the soundness partition needs "which intrinsic
+/// subsystem", not the full enum.
+pub const WPDA_STATE_CLASS_COUNT: usize = 8;
+
+/// Map a `WpdaState` to its P-series partition class.
+/// 0 dispatch (PrefixDispatch/AmbiguityFanout) · 1 infix (InfixLoop/
+/// InfixChainIterative) · 2 mixfix (MixfixContinuation/MixfixLiteralRun)
+/// · 3 collection (CollectionLoop/CollectionOpenParen) · 4 binder
+/// (BinderRule/BinderListLoop/OptionalGroup) · 5 cross-cat
+/// (CrossCatDelegate) · 6 unwind/saturate (Unwinding/Saturating/
+/// GroupingClosePreservingInner) · 7 other/terminal.
+pub fn wpda_state_class(state: &crate::wpda_runtime::WpdaState) -> usize {
+    use crate::wpda_runtime::WpdaState as S;
+    match state {
+        S::PrefixDispatch { .. } | S::AmbiguityFanout { .. } => 0,
+        S::InfixLoop { .. } | S::InfixChainIterative { .. } => 1,
+        S::MixfixContinuation { .. } | S::MixfixLiteralRun { .. } => 2,
+        S::CollectionLoop { .. } | S::CollectionOpenParen { .. } => 3,
+        S::BinderRule { .. } | S::BinderListLoop { .. } | S::OptionalGroup { .. } => 4,
+        S::CrossCatDelegate { .. } => 5,
+        S::Unwinding | S::Saturating { .. } | S::GroupingClosePreservingInner { .. } => 6,
+        _ => 7,
+    }
+}
+
+/// Increment slot `$idx` of a dimensioned `[u64; N]` counter on
+/// `self.stats` (zero-cost when feature off). The P-series partitioned-
+/// counter primitive (round-2 m-1: `stats_inc!` cannot index).
+///
+/// Usage:
+///   `stats_inc_idx!(self, parikh_shadow_would_refute_total,
+///        crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
+///            + recovery_enabled as usize);`
+#[macro_export]
+macro_rules! stats_inc_idx {
+    ($walker:expr, $field:ident, $idx:expr) => {
+        #[cfg(feature = "walker-stats")]
+        {
+            let __i: usize = $idx;
+            if __i < $walker.stats.$field.len() {
+                $walker.stats.$field[__i] = $walker.stats.$field[__i].saturating_add(1);
+            }
+        }
+    };
+}
+
 /// Add an arbitrary value to a `u64` counter on `self.stats` (zero-cost
 /// when feature off).
 ///
