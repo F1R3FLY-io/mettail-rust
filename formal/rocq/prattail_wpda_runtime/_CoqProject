@@ -17,3 +17,4 @@ theories/ChainAbsorb.v
 theories/TomitaAggregation.v
 
 theories/CastDispatchHostResolution.v
+theories/CastLexForkCrossCatLhsGap.v
