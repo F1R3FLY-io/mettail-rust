@@ -501,11 +501,27 @@ fn worker_snapshot_observationally_eq<W: SemiringRef>(
     a: &WorkerSnapshot<W>,
     b: &WorkerSnapshot<W>,
 ) -> bool {
+    // Phase 5A d1 (2026-06-10; FV: CohortSnapshotObservationalDedup
+    // .{dedup_revival_no_loss, dedup_preserves_revived_set,
+    // narrow_key_fits_where_full_key_overflows}, zero-admission): compare ONLY
+    // the fields the revive consumer reads. `revive_cohort_member_with_snapshot`
+    // (wpda_walker.rs) copies inner_state / last_action_output_cat /
+    // pending_packing_weight to the revived cursor; `worker_pre_dispatch_weight`
+    // is explicitly discarded there (`let _`, the falsified Stage-1.5.3
+    // tropical-delta scheme) and `worker_weight` is never read (cursor.weight =
+    // member.weight_at_dispatch ⊗ symbol_weight_sum). Snapshots differing only
+    // in those dead fields revive BYTE-IDENTICALLY, so collapsing them is exact
+    // observational-equivalence dedup (never weight-pruning) — and it stops the
+    // d1 cross-cat-LHS delegates' re-resolution of shared cohort keys from
+    // spuriously exhausting MAX_WORKER_SNAPSHOTS_PER_KEY (frontier-17-vs-16
+    // AmbiguityBudget failures on nested/chained casts). The `-3!` per-packing
+    // distinction is carried by `worker_pending_packing_weight`, which STAYS in
+    // the key (the Stage-1.5.2 lesson). INVARIANT: this key must cover exactly
+    // the consumer-read fields — if revive starts reading the weight fields
+    // again, they must return to this comparison.
     a.worker_inner_state == b.worker_inner_state
         && a.worker_last_action_output_cat == b.worker_last_action_output_cat
         && a.worker_pending_packing_weight == b.worker_pending_packing_weight
-        && a.worker_weight == b.worker_weight
-        && a.worker_pre_dispatch_weight == b.worker_pre_dispatch_weight
 }
 
 fn append_snapshot_bounded<W: SemiringRef>(
@@ -2260,7 +2276,13 @@ mod tests {
     fn worker_snapshot_with_rule(rule_idx: u16) -> WorkerSnapshot<LexicographicWeight> {
         WorkerSnapshot {
             worker_inner_state: WpdaState::Ready { min_bp: 0 },
-            worker_last_action_output_cat: None,
+            // Phase 5A d1 (2026-06-10): vary a CONSUMED field so each synthetic
+            // snapshot is a genuinely distinct revival. Pre-d1 this helper
+            // varied only `worker_weight` — a field the revive consumer never
+            // reads — which the narrowed observational quotient now (correctly)
+            // collapses, so weight-only variants no longer exercise the
+            // snapshot cap (FV: CohortSnapshotObservationalDedup).
+            worker_last_action_output_cat: Some(rule_idx),
             worker_pending_packing_weight: lex_one(),
             worker_weight: LexicographicWeight::from_cost(0.0, 0, rule_idx),
             worker_pre_dispatch_weight: lex_one(),
@@ -2517,6 +2539,18 @@ mod tests {
 
     #[test]
     fn snapshot_quotient_separates_each_observable_worker_field() {
+        // Phase 5A d1 (2026-06-10): the quotient compares ONLY the fields the
+        // revive consumer reads (inner_state / last_action_output_cat /
+        // pending_packing_weight). The weight fields (`worker_weight`,
+        // `worker_pre_dispatch_weight`) are DEAD at the consumer — revive
+        // discards `worker_pre_dispatch_weight` (`let _`, the falsified
+        // Stage-1.5.3 tropical-delta) and never reads `worker_weight` — so
+        // snapshots differing only there revive byte-identically and MUST
+        // collapse (FV: CohortSnapshotObservationalDedup.dedup_revival_no_loss
+        // / narrow_key_fits_where_full_key_overflows). Pre-d1 this test
+        // asserted all 5 fields separate; that over-fine key let the d1
+        // cross-cat-LHS delegates spuriously exhaust
+        // MAX_WORKER_SNAPSHOTS_PER_KEY (frontier-17-vs-16 budget failures).
         let base = worker_snapshot();
         let mut different_inner_state = base.clone();
         different_inner_state.worker_inner_state = WpdaState::PrefixDispatch { pos: 5, cur_bp: 1 };
@@ -2530,18 +2564,22 @@ mod tests {
         let mut different_pre_weight = base.clone();
         different_pre_weight.worker_pre_dispatch_weight = LexicographicWeight::from_cost(3.0, 0, 0);
 
-        let variants = [
-            different_inner_state,
-            different_output_cat,
-            different_pending_weight,
-            different_worker_weight,
-            different_pre_weight,
-        ];
-
-        for variant in &variants {
+        // CONSUMED fields separate (each yields a distinct revived cursor).
+        let consumed_variants =
+            [different_inner_state, different_output_cat, different_pending_weight];
+        for variant in &consumed_variants {
             assert!(
                 !worker_snapshot_observationally_eq(&base, variant),
                 "snapshot quotient must separate every field consumed by cohort revive",
+            );
+        }
+        // DEAD fields collapse (identical revived cursor — exact
+        // observational-equivalence dedup, never weight-pruning).
+        let dead_variants = [different_worker_weight, different_pre_weight];
+        for variant in &dead_variants {
+            assert!(
+                worker_snapshot_observationally_eq(&base, variant),
+                "snapshots differing only in consumer-dead weight fields must collapse",
             );
         }
 
@@ -2552,17 +2590,25 @@ mod tests {
             RegisterOutcome::WorkerInserted
         ));
         assert_eq!(cache.resolve(key.clone(), 42, 4, 3, base), ResolveOutcome::FirstResolve,);
-        for variant in variants {
+        for variant in consumed_variants {
             assert_eq!(
                 cache.resolve(key.clone(), 42, 4, 3, variant),
                 ResolveOutcome::SnapshotAppended,
+            );
+        }
+        for variant in dead_variants {
+            assert_eq!(
+                cache.resolve(key.clone(), 42, 4, 3, variant),
+                ResolveOutcome::SnapshotDuplicate,
             );
         }
 
         match cache.register(key, lex_one()) {
             RegisterOutcome::ResolvedHit { bodies, .. } => {
                 assert_eq!(bodies.len(), 1);
-                assert_eq!(bodies[0].worker_snapshots.len(), 6);
+                // base + 3 consumed-distinct variants; the 2 dead-field
+                // variants collapsed as duplicates.
+                assert_eq!(bodies[0].worker_snapshots.len(), 4);
             },
             _ => panic!("expected ResolvedHit"),
         }

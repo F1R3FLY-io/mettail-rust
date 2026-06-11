@@ -18376,7 +18376,11 @@ mod tests {
     ) -> crate::dispatch_cohort::WorkerSnapshot<LexicographicWeight> {
         crate::dispatch_cohort::WorkerSnapshot {
             worker_inner_state: WpdaState::Ready { min_bp: 0 },
-            worker_last_action_output_cat: None,
+            // Phase 5A d1 (2026-06-10): vary a CONSUMED field so each synthetic
+            // snapshot is a genuinely distinct revival under the narrowed
+            // observational quotient (weight-only variants now collapse —
+            // FV: CohortSnapshotObservationalDedup).
+            worker_last_action_output_cat: Some(rule_idx),
             worker_pending_packing_weight: LexicographicWeight::one(),
             worker_weight: lex(0.0, 0, rule_idx),
             worker_pre_dispatch_weight: LexicographicWeight::one(),

@@ -93,3 +93,75 @@ derives both growth shapes from one counting function over the context classific
 `cast_probe` (direct/nested casts + controls) · op-suites diffed vs
 `baseline-cf03e571-failures.txt` (217) · `-3!` canary · prattail-lib gauntlet ·
 `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-prattail-wpda` (zero-admission).
+
+## 6. IMPLEMENTED (2026-06-10d): d1 + the snapshot-dedup completion
+
+**d1 shipped** (the fall-through extension; chosen as the recommended shape — it generalizes the
+proven 51d57c91 mechanism, zero extra fork branches, and applies the same documented same-length
+keyword-reservation policy):
+- `kind_dispatch.rs`: new generated predicate `prefix_crosscat_lhs_has_dispatch_rule(cat, kind)`
+  emitted by `emit_prefix_crosscat_lhs_dispatch_arms` — true iff ∃ source `I` ∈
+  cross_cat_infix_sources(cat) with `kind` ∈ FIRST(I); the source-set computation mirrors
+  `prefix.rs:892-903` verbatim (no drift) and token coverage reuses `first_set_of_category`.
+- `forks.rs`: the fall-through disjunct becomes
+  `(__primary_has_dispatch || __primary_has_crosscat_lhs) && __all_alts_same_length`.
+
+**The one consequence + its principled completion:** the d1 delegate cursors re-resolve the SAME
+cohort keys as the owner-category parse, and the shipped snapshot-dedup compared the two
+consumer-DEAD weight fields (`worker_weight`, `worker_pre_dispatch_weight` — revive reads only
+`{inner_state, last_action_output_cat, pending_packing_weight}`; the pre-dispatch weight is
+`let _`-discarded per the falsified Stage-1.5.3 delta scheme). Weight-only-distinct snapshots
+occupied cap slots while reviving BYTE-IDENTICALLY — the d1 delegates tipped saturated keys to
+17 > `MAX_WORKER_SNAPSHOTS_PER_KEY = 16` (spurious AmbiguityBudget failures on nested/chained
+casts). Fix: narrow `worker_snapshot_observationally_eq` to the consumed fields — exact
+observational-equivalence dedup (never weight-pruning), `-3!`'s per-packing distinction stays in
+the key via `pending_packing_weight`. FV: `CohortSnapshotObservationalDedup.v` (zero-admission)
+— `dedup_revival_no_loss`, `dedup_preserves_revived_set`,
+`narrow_key_fits_where_full_key_overflows`, `dedup_never_longer`.
+
+Note vs the red-team banner in `evidence-gated-cross-cat-dispatch.md`: d1 needed **no lookahead
+gate** (the gate WAS circular — refutation upheld; completeness instead comes from the additive
+viability of the delegate + evidence rejection at EOI) and **no cohort-key change** (the M4
+`DispatchKey` and the `EquivKey` merge are untouched; the dedup narrowing is at the SNAPSHOT
+level, orthogonal to both).
+
+### Verification results (2026-06-10d, d1 + snapshot-dedup)
+
+| Gate | Before (efec0eb7) | After | Verdict |
+|---|---|---|---|
+| `cast_probe` (13 cases incl. nested + `-3!` + controls) | 4 direct-cast FAIL | **13/13 OK** | ✓ flip |
+| `gen_calculator_op` | 1324/6 (`*casterrfixed*` ×6) | **1330/0** | ✓ 6 fixed |
+| `edge_case_tests` | 210/19 | **227/2** (`ambient` ×2 pre-existing) | ✓ 17 fixed |
+| `gen_rhocalc_op` | 530/1 (`castbigrat`) | **530/1** (same case) | ✓ neutral |
+| prattail lib | 3979/0 | **3979/0** (2 overflow tests updated to consumed-distinct constructors) | ✓ |
+| `cargo test --lib egraph::` | 51/0 | **51/0** | ✓ mandate |
+| `rocq-prattail-wpda` | green | **green** (9 cast models, all zero-admission) | ✓ |
+
+**Net: 23 failures fixed, 0 new failures** (remaining 3 — `ambient_edge_cases::{nested_new,
+parallel_ambients}` + `cross_cat_rhocalc_castop_putmap_castbigrat_smoke` — are all in the original
+cf03e571 baseline and are different families). The fixed set includes every
+`comparison_after_cast_results` case (12), `operator_chains_after_casts` (2),
+`chained_casts_with_operators` regressors (4 — transient, introduced+fixed within this change),
+`nested_keyword_prefix_functions` (5 — transient), `string_edge_cases` (3), the no-arg
+`casterrfixed` family (6), and `rhocalc_edge_cases::int_of_float_add`.
+
+**Perf — the falsified premise + the trigger-presence gate (the third component):** the model's
+original `fix_levels` premise ("inner cast levels are owner-context") was FALSIFIED empirically:
+the cast arm forks over its BODY categories, and the Bool-body branch is a SourceCtx at EVERY
+nesting level; each delegate RE-PARSES its suffix, so an n-deep trigger-free cast tower cost
+2^n WORK at constant cursor count (nextest: `float_int_float_roundtrip` 18.4 s,
+`int_float_int_roundtrip` 30.2 s, `deep_chain_str_float_int_bool` TIMED OUT >120 s; sequential
+suite wall 978 s). Fix: gate the fall-through on **trigger-presence in the remaining input** —
+an infix can fire only by CONSUMING its trigger from the remaining input, so absence is definite,
+monotone refutation of every future firing (the non-circular realization of the lookahead-gate
+idea — whole-suffix token presence, not next-token prediction, decidable at dispatch). FV:
+`CastLexForkCrossCatLhsGap.TriggerPresenceGate` (`gate_no_loss`,
+`gate_zero_overhead_when_absent`, `gate_kills_tower_blowup` — 2^n vs owner-only work, derived;
+plus the scientific-ledger record of the falsified premise). Generated:
+`prefix_crosscat_lhs_trigger_ahead(cat, tokens, pos)` (per-result-cat trigger sets from the same
+rule walk as the source sets), ANDed into the fall-through disjunct. Result: edge_case
+**227 passed in 7.25 s** (was 978 s — ~135×), `nested_keyword_prefix_functions` 23/23 in 6.37 s,
+zero correctness change (cast_probe 13/13; every previously-fixed case stays fixed — trigger
+present ⇒ delegate kept). Cast-free workloads (chains `1+2+…`) never enter any of the new paths
+(Integer tokens are not lex-ambiguous; the snapshot-dedup narrowing only shrinks per-key slots,
+`dedup_never_longer`).

@@ -409,6 +409,43 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 .peek_kind(*pos)
                 .map(|pk| prefix_primary_has_dispatch_rule(primary_src, &pk))
                 .unwrap_or(false);
+            // Phase 5A cast-then-compare d1 (2026-06-10; FV:
+            // CastLexForkCrossCatLhsGap — d1_restores_hosting +
+            // extension_preserves_189_behavior + multilength_unaffected +
+            // d1_fanout_constant, all zero-admission): the SECOND fall-through
+            // evidence source. A keyword/ident-ambiguous token whose keyword
+            // heads rules in a SOURCE category of a category-changing infix
+            // RESULTING in the current state cat (e.g. `int` — cat-Int casts —
+            // in a Bool-seeking context entered via the ProcBool projection;
+            // Bool's Pass-0 owns a CrossCatLhs{Int} arm for it) must fall
+            // through to the normal dispatch: the lex-alt table has NO
+            // LexAltRuleKind::CrossCatLhs variant, so forking here would drop
+            // the delegate interpretation and leave only `Ident -> Var` (the
+            // trace-proven cast-then-compare gap: `int(3) == 3` parsed `int`
+            // as VarBool, the EqInt result orphaned in the Int-context worker).
+            // Falling through makes the operand cursor a dispatch-time
+            // d-WORKER whose continuation hosts the infix result natively.
+            // Same-length keyword reservation applies, identically to the
+            // primary-rule fall-through above; inner cast levels are
+            // owner-context (same-cat primaries), so the fan-out stays
+            // depth-independent (the falsified per-level routing is the
+            // 2^depth shape fenced by fix_strictly_below_falsified).
+            // TRIGGER-PRESENCE GATE (FV: gate_no_loss /
+            // gate_zero_overhead_when_absent / gate_kills_tower_blowup): the
+            // delegate can host a result ONLY via an infix that CONSUMES its
+            // trigger from the remaining input, so absence is definite,
+            // monotone refutation — gate the fall-through on presence. This
+            // collapses trigger-free nested-cast towers (str(float(int(...)))
+            // — the cast arm's Bool-body branch is a SourceCtx at EVERY level,
+            // each delegate re-parsing its suffix = 2^depth WORK, observed as
+            // 18s/30s/>120s-timeout) back to owner-only work, while every
+            // input that can actually host a category-changing infix keeps
+            // its delegate.
+            let __primary_has_crosscat_lhs = tokens
+                .peek_kind(*pos)
+                .map(|pk| prefix_crosscat_lhs_has_dispatch_rule(primary_src, &pk))
+                .unwrap_or(false)
+                && prefix_crosscat_lhs_trigger_ahead(primary_src, tokens, *pos);
             let __primary_next_pos = tokens.next_pos(*pos, 0);
             let __all_alts_same_length = alts
                 .iter()
@@ -427,7 +464,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let __fall_through =
                 __branches.is_empty()
                     || (__branches.len() == 1 && __primary_survived)
-                    || (__primary_has_dispatch && __all_alts_same_length);
+                    || ((__primary_has_dispatch || __primary_has_crosscat_lhs)
+                        && __all_alts_same_length);
             if !__fall_through {
                 return WpdaStepAction::Fork {
                     branches: __branches,

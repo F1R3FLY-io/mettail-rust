@@ -18,3 +18,4 @@ theories/TomitaAggregation.v
 
 theories/CastDispatchHostResolution.v
 theories/CastLexForkCrossCatLhsGap.v
+theories/CohortSnapshotObservationalDedup.v

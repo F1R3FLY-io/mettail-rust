@@ -99,6 +99,10 @@ pub fn emit_lex_alt_rule_for_fn(
         }
     }
     let prefix_primary_dispatch_arms = emit_prefix_primary_dispatch_arms(_language, per_cat);
+    let prefix_crosscat_lhs_dispatch_arms =
+        emit_prefix_crosscat_lhs_dispatch_arms(_language, categories);
+    let prefix_crosscat_lhs_trigger_set_arms =
+        emit_prefix_crosscat_lhs_trigger_set_arms(_language, categories);
     let infix_arms = emit_infix_lex_alt_rule_arms(_language, per_cat, categories);
     quote! {
         /// M6c.6.4.b (2026-05-14): map `(cat_src_idx, kind)` at
@@ -139,6 +143,73 @@ pub fn emit_lex_alt_rule_for_fn(
                 #( #prefix_primary_dispatch_arms )*
                 _ => false,
             }
+        }
+
+        /// Phase 5A cast-then-compare d1 (2026-06-10; FV:
+        /// `CastLexForkCrossCatLhsGap.{d1_restores_hosting,
+        /// extension_preserves_189_behavior, multilength_unaffected,
+        /// d1_fanout_constant}`): true when normal PrefixDispatch owns a
+        /// Pass-0 CROSS-CAT-LHS arm for `(cat_src_idx, kind)` — i.e. some
+        /// source category `I` of a category-changing infix RESULTING in this
+        /// category has `kind` in FIRST(I). The lex fork's fall-through
+        /// consults this alongside `prefix_primary_has_dispatch_rule`: a
+        /// keyword/ident-ambiguous cast trigger (e.g. `int` in a Bool-seeking
+        /// context) falls through to the normal dispatch whose unified Pass-0
+        /// arm pushes the `CrossCatLhs{I}` delegate — making the operand
+        /// cursor a dispatch-time d-WORKER whose continuation hosts the infix
+        /// result natively (the lex-alt table cannot represent this arm: no
+        /// `LexAltRuleKind::CrossCatLhs` variant). Same-length keyword
+        /// reservation applies, exactly as in the primary-rule fall-through.
+        /// Source set mirrors `prefix.rs` Pass-0 (cross_cat_infix_sources).
+        #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+        fn prefix_crosscat_lhs_has_dispatch_rule(
+            cat_src_idx: u16,
+            kind: &mettail_prattail::automata::TokenKind,
+        ) -> bool {
+            #( #prefix_crosscat_lhs_dispatch_arms )*
+            false
+        }
+
+        /// Phase 5A d1 trigger-presence gate (2026-06-10; FV:
+        /// `CastLexForkCrossCatLhsGap.{gate_no_loss,
+        /// gate_zero_overhead_when_absent, gate_kills_tower_blowup}`): true
+        /// when some category-changing infix RESULTING in `cat_src_idx` has
+        /// its TRIGGER token in the remaining input (`pos+1..`). A
+        /// cross-cat-LHS delegate can host a result ONLY by an infix that
+        /// CONSUMES its trigger from the remaining input — so absence is
+        /// definite, monotone refutation of every future firing, and gating
+        /// the fall-through on presence drops no parse the input admits while
+        /// collapsing trigger-free nested-cast towers from 2^depth delegate
+        /// re-parse WORK back to owner-only work (the observed
+        /// 18s/30s/>120s-timeout class). A spurious hit (the trigger occurs
+        /// outside the relevant region) only dispatches a delegate that dies
+        /// by evidence — soundness is one-sided by construction.
+        #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+        fn prefix_crosscat_lhs_trigger_ahead(
+            cat_src_idx: u16,
+            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+            pos: usize,
+        ) -> bool {
+            let triggers: &[&str] = match cat_src_idx {
+                #( #prefix_crosscat_lhs_trigger_set_arms )*
+                _ => &[],
+            };
+            if triggers.is_empty() {
+                return false;
+            }
+            let mut i = pos + 1;
+            let n = tokens.len();
+            while i < n {
+                if let Some(mettail_prattail::automata::TokenKind::Fixed(t)) =
+                    tokens.peek_kind(i)
+                {
+                    if triggers.iter().any(|trig| t == *trig) {
+                        return true;
+                    }
+                }
+                i += 1;
+            }
+            false
         }
 
         /// M6c.6.4.b (2026-05-14): InfixLoop-site counterpart.
@@ -196,6 +267,90 @@ fn emit_prefix_primary_dispatch_arms(
             }
         })
         .collect()
+}
+
+/// Phase 5A cast-then-compare d1 (2026-06-10): emit the
+/// `prefix_crosscat_lhs_has_dispatch_rule` arms. For each category `d`, the
+/// source set is computed EXACTLY as `prefix.rs`'s Pass-0
+/// `cross_cat_infix_sources` (walk all rules whose result category is `d`;
+/// keep cross-category infix LHS operand cats) so the predicate is true
+/// precisely where the normal dispatch owns a unified Pass-0 `CrossCatLhs`
+/// arm — no drift between the fall-through gate and the arm it falls through
+/// to. Token coverage per source reuses `first_set_of_category` (the same
+/// FIRST computation Pass-0's bucket patterns use). Each arm is a statement
+/// `match Some(kind.clone()) { pat if cat==d && guard => return true, _ => {} }`
+/// mirroring `emit_cross_cat_projection_prefix_pushes`'s pattern shape.
+/// Phase 5A d1 trigger-presence gate (2026-06-10): emit the per-result-cat
+/// TRIGGER-token sets for `prefix_crosscat_lhs_trigger_ahead`. For each
+/// category `d` with cross-cat infix sources, the set is the `terminal` of
+/// every category-changing infix resulting in `d` (the same rule walk as
+/// `emit_prefix_crosscat_lhs_dispatch_arms` / prefix.rs Pass-0 — no drift).
+/// Each arm: `#d_idx => &[#(triggers),*],`.
+fn emit_prefix_crosscat_lhs_trigger_set_arms(
+    language: &LanguageDef,
+    categories: &[String],
+) -> Vec<TokenStream> {
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (result_idx, result_cat_name) in categories.iter().enumerate() {
+        let result_src_idx = result_idx as u16;
+        let mut triggers: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for rule in &language.terms {
+            if rule.category.to_string() != *result_cat_name {
+                continue;
+            }
+            if let Some(info) = super::infix::classify_rule_public(rule) {
+                if info.is_cross_category && info.category != info.result_category {
+                    triggers.insert(info.terminal.clone());
+                }
+            }
+        }
+        if triggers.is_empty() {
+            continue;
+        }
+        let trigger_lits: Vec<&String> = triggers.iter().collect();
+        arms.push(quote! {
+            #result_src_idx => &[ #( #trigger_lits ),* ],
+        });
+    }
+    arms
+}
+
+fn emit_prefix_crosscat_lhs_dispatch_arms(
+    language: &LanguageDef,
+    categories: &[String],
+) -> Vec<TokenStream> {
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (result_idx, result_cat_name) in categories.iter().enumerate() {
+        let result_src_idx = result_idx as u16;
+        // Mirror of prefix.rs:892-903 (Pass-0 cross_cat_infix_sources), with a
+        // BTreeSet for deterministic emission order.
+        let mut sources: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for rule in &language.terms {
+            if rule.category.to_string() != *result_cat_name {
+                continue;
+            }
+            if let Some(info) = super::infix::classify_rule_public(rule) {
+                if info.is_cross_category && info.category != info.result_category {
+                    sources.insert(info.category.clone());
+                }
+            }
+        }
+        for source_cat_name in &sources {
+            for first in first_set_of_category(source_cat_name, language) {
+                let pattern = first.pattern;
+                let guard = first.extra_guard.unwrap_or_else(|| quote! { true });
+                arms.push(quote! {
+                    match Some(kind.clone()) {
+                        #pattern if cat_src_idx == #result_src_idx && (#guard) => {
+                            return true;
+                        },
+                        _ => {},
+                    }
+                });
+            }
+        }
+    }
+    arms
 }
 
 /// M6c.6.4.b: Emit local match snippets that push

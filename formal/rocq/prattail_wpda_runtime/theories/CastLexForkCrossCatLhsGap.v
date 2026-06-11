@@ -305,4 +305,104 @@ Section CastLexForkCrossCatLhsGap.
     branches_current SourceCtx = [IVar].
   Proof. reflexivity. Qed.
 
+  (* ════════════════════════════════════════════════════════════════════════
+     SCIENTIFIC LEDGER (2026-06-10d): the `fix_levels` premise — "inner cast
+     levels are OwnerCtx" — was FALSIFIED empirically. The cast arm forks over
+     its BODY categories (FloatToInt/BoolToInt/StrToInt/IntId), and the
+     Bool-body branch is a SourceCtx at EVERY nesting level. Moreover the
+     blowup is WORK-per-branch, not branch-count: the d1 SourceCtx branch is a
+     fall-through SINGLETON (count 1 — `d1_fanout_constant` is true but about
+     the wrong measure), yet the delegate it dispatches RE-PARSES its whole
+     suffix, so an n-deep cast tower costs T(n) = T_owner(n-1) + T_delegate(n-1)
+     ≈ 2^n WORK at constant cursor count (observed: 18 s / 30 s / >120 s-timeout
+     on the depth-3/3/4 nested-cast tests). The fix below GATES the delegate on
+     TRIGGER-PRESENCE in the remaining input — definite, monotone evidence (an
+     infix fires only by CONSUMING its trigger token from the remaining input,
+     so absence refutes every future firing): the no-comparison towers collapse
+     to owner-only work, while every genuinely d-hosting input keeps its
+     delegate (no-loss).
+     ════════════════════════════════════════════════════════════════════════ *)
+
+  Section TriggerPresenceGate.
+
+    (* present = some d-resulting cross-cat infix TRIGGER token occurs in the
+       remaining input (a whole-suffix scan — position-independent, monotone:
+       consuming tokens never makes an absent trigger present). *)
+    Variable present : bool.
+
+    (* d1 GATED branch sets: the fall-through's crosscat disjunct additionally
+       requires `present`; when absent, the lex fork behaves exactly as the
+       CURRENT system (Var-only in SourceCtx). *)
+    Definition branches_d1g (k : CtxKind) : list Interp :=
+      match k with
+      | OwnerCtx => [ICast]
+      | SourceCtx => if present then [IDelegate] else [IVar]
+      | OtherCtx => [IVar]
+      end.
+
+    (* NO-LOSS: the premise (transcribed from the InfixLoop dispatch — an infix
+       fires only via ConsumeAndPush of its trigger) means a d-hosting
+       derivation EXISTS only if its trigger is in the remaining input, i.e.
+       present = true — and then the gated branches still host d. *)
+    Theorem gate_no_loss :
+      present = true ->
+      exists i, In i (branches_d1g SourceCtx) /\ hosts_d i SourceCtx = true.
+    Proof.
+      intro Hp. exists IDelegate. unfold branches_d1g. rewrite Hp.
+      split; [left; reflexivity | reflexivity].
+    Qed.
+
+    (* ZERO OVERHEAD when absent: the gated system is BRANCH-IDENTICAL to the
+       current system in every context — the timed-out no-comparison towers
+       return to baseline behavior. *)
+    Theorem gate_zero_overhead_when_absent :
+      present = false -> forall k, branches_d1g k = branches_current k.
+    Proof.
+      intros Hp k. destruct k; unfold branches_d1g, branches_current;
+        [reflexivity | rewrite Hp; reflexivity | reflexivity].
+    Qed.
+
+    (* ── THE WORK MEASURE (the falsified premise corrected): an n-deep cast
+          tower where EVERY level carries a Bool-body SourceCtx branch. ── *)
+
+    (* ungated d1: at each level the delegate re-parses the suffix — the
+       owner's work plus an equal delegate's work: 2^n. *)
+    Fixpoint work_ungated (n : nat) : nat :=
+      match n with
+      | 0 => 1
+      | S k => work_ungated k + work_ungated k
+      end.
+
+    (* gated d1 with the trigger ABSENT: the delegate never dispatches —
+       owner-only work at every level. *)
+    Fixpoint work_gated_absent (n : nat) : nat :=
+      match n with
+      | 0 => 1
+      | S k => work_gated_absent k + 0
+      end.
+
+    Theorem ungated_work_exponential : forall n, work_ungated n = 2 ^ n.
+    Proof.
+      induction n as [| n IH]; simpl.
+      - reflexivity.
+      - rewrite IH. lia.
+    Qed.
+
+    Theorem gated_absent_work_constant : forall n, work_gated_absent n = 1.
+    Proof.
+      induction n as [| n IH]; simpl; [reflexivity | rewrite IH; reflexivity].
+    Qed.
+
+    (* The contrast — the gate eliminates the tower blowup (the observed
+       18 s / 30 s / >120 s growth) on trigger-free inputs. *)
+    Theorem gate_kills_tower_blowup :
+      forall n, 1 <= n -> work_gated_absent n < work_ungated n.
+    Proof.
+      intros n Hn. rewrite gated_absent_work_constant, ungated_work_exponential.
+      destruct n as [| n]; [lia |].
+      simpl. pose proof (Nat.pow_nonzero 2 n ltac:(lia)). lia.
+    Qed.
+
+  End TriggerPresenceGate.
+
 End CastLexForkCrossCatLhsGap.
