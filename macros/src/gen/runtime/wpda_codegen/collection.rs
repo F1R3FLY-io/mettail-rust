@@ -399,41 +399,111 @@ pub(crate) fn emit_collection_loop_arm(
                     let element_src_idx = *_element_src_idx;
                     match *kv_phase {
                         0u8 => {
-                            // Stage 3.16 invariant (Cluster 1, Mechanism γ,
-                            // 2026-05-05): three-branch Fork over close / sep /
-                            // bare-element. Lex-min over the three branches'
-                            // weights picks the surviving cursor:
-                            //   - close branch: from_cost(0.0, ...) — wins when
-                            //     token_text == close.
-                            //   - sep branch: from_cost(0.0, ...) — wins when
-                            //     token_text == sep (different token from close
-                            //     ⇒ mutually exclusive; on G1-style ambiguous
-                            //     close==sep, source-order picks close first).
-                            //   - bare-element branch: from_cost(SKIP_BIAS, ...)
-                            //     — wins when token_text matches neither close
-                            //     nor sep (G3 future-grammar support: `[a b c]`
-                            //     whitespace-separated lists). Penalized so close
-                            //     and sep branches win when their tokens match.
+                            // #307 ROOT-F G1-G4 (2026-06-11; FV:
+                            // CollectionForkEvidence.v, 13 thms zero-admission;
+                            // design red-team CONVERGED round 2): the
+                            // post-element fork emits ONLY evidence-licensed
+                            // branches. The Stage-3.16 unconditional three-way
+                            // fork over-generated: BRANCH-1 consumed ANY token
+                            // as a pseudo-close ({0|1} finalized {0} after
+                            // eating `|` — pseudo_close_overgenerates) and
+                            // BRANCH-3 split elements separator-free
+                            // ({c d} parsed; {c!(p)} shredded into c, p —
+                            // bare_element_overgenerates). The realize layer
+                            // cannot refute the junk (min_terminal_span = 0
+                            // for collections + zero-width symbol span), so
+                            // the fix is at GENERATION: gated_run_iff_loop_lang
+                            // proves the gated machine accepts EXACTLY the
+                            // collection continuation language (no-loss).
                             //
-                            // Branches whose runtime guard fails downstream (e.g.
-                            // close branch when token_text != close means the
-                            // following Unwinding step will diverge from a clean
-                            // close-context) drop via cursor_resolution_check at
-                            // commit_winner time.
-                            WpdaStepAction::Fork {
-                                branches: vec![
-                                    // BRANCH 1: close — ConsumeAndPop into Unwinding.
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::category_entry(0),
-                                        weight: lex_w(
-                                            0.0, *result_src_idx, *rule_idx,
-                                        ),
-                                        new_state: WpdaState::Unwinding,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPop,
-                                    },
-                                    // BRANCH 2: sep — Consume token, return to
-                                    // PrefixDispatch for next element.
+                            // G1 close: membership over the COMPLETE out-edge
+                            //   set (peek_text primary + peek_alternatives,
+                            //   deduped — the ROOT-A __mixfix_literal_targets
+                            //   discipline); one branch per matching edge,
+                            //   each a ConsumeAtAndPop carrying the MATCHED
+                            //   edge's target (R2-1: the post-close position
+                            //   feeds the splice/re-host reads inside
+                            //   apply_pop_body_to_cursor; alt-0 advance is the
+                            //   alt0_close_lands_on_wrong_target defect).
+                            // G2 sep: the consume branch is emitted iff a sep
+                            //   edge is PRESENT (membership detection). The
+                            //   consume itself resolves the PRIMARY edge
+                            //   (R2-2 constraint: safe while detection stays a
+                            //   presence test and shipped seps are primary-
+                            //   resolved — longest-match orders multi-char
+                            //   delimiters first; if sep detection ever forks
+                            //   per matched edge, the consume needs next_pos
+                            //   carriage like G1).
+                            // G3 bare-element: licensed ONLY for separator-free
+                            //   (whitespace-joined) collection grammars —
+                            //   sep.is_empty() is a per-slot compile-time
+                            //   constant from the lookup (the ENTRY separator;
+                            //   Map kv_sep never governs this fork).
+                            // G4 advance-or-die: zero licensed branches ⇒
+                            //   WpdaStepAction::Error (no_branch_no_word +
+                            //   advance_or_die_emits_error: an empty Fork
+                            //   would silently delete the cursor).
+                            let mut __branches: Vec<
+                                mettail_prattail::wpda_walker::ForkBranch<_>,
+                            > = Vec::with_capacity(3);
+                            // G1: close branches by edge membership.
+                            if token_text == close {
+                                if let Some(np) = tokens.next_pos(_pos, 0) {
+                                    __branches.push(
+                                        mettail_prattail::wpda_walker::ForkBranch {
+                                            symbol: StackSymbolV2::category_entry(0),
+                                            weight: lex_w(
+                                                0.0, *result_src_idx, *rule_idx,
+                                            ),
+                                            new_state: WpdaState::Unwinding,
+                                            action_kind:
+                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
+                                                    next_pos: np,
+                                                },
+                                        },
+                                    );
+                                }
+                            }
+                            for (__i, __alt) in
+                                tokens.peek_alternatives(_pos).iter().enumerate()
+                            {
+                                if __alt.text == close {
+                                    if let Some(np) = tokens.next_pos(_pos, __i + 1) {
+                                        let __dup = __branches.iter().any(|b| {
+                                            matches!(
+                                                b.action_kind,
+                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
+                                                    next_pos,
+                                                } if next_pos == np
+                                            )
+                                        });
+                                        if !__dup {
+                                            __branches.push(
+                                                mettail_prattail::wpda_walker::ForkBranch {
+                                                    symbol: StackSymbolV2::category_entry(0),
+                                                    weight: lex_w(
+                                                        0.0, *result_src_idx, *rule_idx,
+                                                    ),
+                                                    new_state: WpdaState::Unwinding,
+                                                    action_kind:
+                                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
+                                                            next_pos: np,
+                                                        },
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            // G2: sep branch, presence-gated.
+                            let __sep_present = !sep.is_empty()
+                                && (token_text == sep
+                                    || tokens
+                                        .peek_alternatives(_pos)
+                                        .iter()
+                                        .any(|a| a.text == sep));
+                            if __sep_present {
+                                __branches.push(
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
                                         weight: lex_w(
@@ -446,10 +516,11 @@ pub(crate) fn emit_collection_loop_arm(
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::Consume,
                                     },
-                                    // BRANCH 3: bare-element (G3 support) —
-                                    // Push CategoryEntry(element_src) onto GSS,
-                                    // dispatch element parse without consuming
-                                    // a separator first.
+                                );
+                            }
+                            // G3: bare-element, separator-free grammars only.
+                            if sep.is_empty() {
+                                __branches.push(
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(
                                             element_src_idx,
@@ -465,10 +536,21 @@ pub(crate) fn emit_collection_loop_arm(
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::Push,
                                     },
-                                ],
-                                // Each branch's action_kind encodes its own
-                                // consume semantics (or no-consume for Push).
-                                consume_trigger: false,
+                                );
+                            }
+                            // G4: advance-or-die.
+                            if __branches.is_empty() {
+                                WpdaStepAction::Error(format!(
+                                    "collection continuation mismatch at pos {}:                                      expected close {:?} or separator {:?}                                      (rule {}:{}) — no lattice edge matches",
+                                    _pos, close, sep, result_src_idx, rule_idx,
+                                ))
+                            } else {
+                                WpdaStepAction::Fork {
+                                    branches: __branches,
+                                    // Each branch's action_kind encodes its own
+                                    // consume semantics (or no-consume for Push).
+                                    consume_trigger: false,
+                                }
                             }
                         }
                         1u8 => {

@@ -344,6 +344,7 @@ impl DivergenceClass {
             | WpdaStepAction::ConsumeAndPush { .. }
             | WpdaStepAction::ConsumeAtAndReplace { .. }
             | WpdaStepAction::ConsumeAndPop { .. }
+            | WpdaStepAction::ConsumeAtAndPop { .. }
             | WpdaStepAction::Consume { .. }
             | WpdaStepAction::ConsumeIdentAndReplace { .. }
             | WpdaStepAction::ConsumeAndReplace { .. }
@@ -399,6 +400,7 @@ impl DivergenceClass {
             | WpdaStepAction::ConsumeAndPush { .. }
             | WpdaStepAction::ConsumeAtAndReplace { .. }
             | WpdaStepAction::ConsumeAndPop { .. }
+            | WpdaStepAction::ConsumeAtAndPop { .. }
             | WpdaStepAction::Consume { .. }
             | WpdaStepAction::ConsumeIdentAndReplace { .. }
             | WpdaStepAction::ConsumeAndReplace { .. }

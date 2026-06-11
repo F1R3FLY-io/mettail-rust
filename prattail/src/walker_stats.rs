@@ -456,7 +456,7 @@ pub struct WalkerStats {
     /// Push = 36.6%, Pop = 14.4%. The combined Fork + Push (78.7%) is
     /// the dominant lever; Pop alone is structurally insufficient for
     /// the L4 (chain_10000 < 500 MB) target.
-    pub apply_action_variant_histogram: [u64; 20],
+    pub apply_action_variant_histogram: [u64; 21],
 
     /// Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27): Push
     /// EdgeKind histogram, sampled at the apply_action_to_cursor Push
@@ -555,6 +555,10 @@ pub fn apply_action_variant_index<W: crate::automata::semiring::SemiringRef>(
         // exactly the per-action-kind attribution the evidence-pruning
         // P-series diagnostics depend on.
         WpdaStepAction::ConsumeAtAndReplace { .. } => 19,
+        // #307 ROOT-F (2026-06-11): membership-checked collection close —
+        // own bucket 20 (never shared with ConsumeAndPop: per-action
+        // attribution feeds the evidence-pruning P-series diagnostics).
+        WpdaStepAction::ConsumeAtAndPop { .. } => 20,
         WpdaStepAction::ReplaceAndPush { .. } => 12,
         WpdaStepAction::ParsePredicate { .. } => 13,
         WpdaStepAction::OptGroupAbsent { .. } => 14,
@@ -589,7 +593,8 @@ pub fn apply_action_variant_label(idx: usize) -> &'static str {
         "Error",
         "Idle",
         "ConsumeAtAndReplace",
-    ][idx.min(19)]
+        "ConsumeAtAndPop",
+    ][idx.min(20)]
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27): bucket
@@ -926,7 +931,7 @@ pub struct ContinuationSizeProjection {
     /// Per-action-variant counts (17 variants in `WpdaStepAction` +
     /// Other catch-all). Index matches `continuation_size_variant_index`
     /// helper below.
-    pub action_variant_counts: [u64; 18],
+    pub action_variant_counts: [u64; 19],
 }
 
 /// Power-of-two-ish bucket for continuation size (matches the histogram
@@ -952,7 +957,7 @@ impl ContinuationSizeProjection {
         self.apply_action_observations = 0;
         self.apply_action_size_max_bytes = 0;
         self.step_continuations_emitted = 0;
-        self.action_variant_counts = [0; 18];
+        self.action_variant_counts = [0; 19];
     }
 
     /// Record an ApplyAction observation: size in bytes + variant index
@@ -2380,7 +2385,7 @@ mod tests {
             // Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27).
             pop_kind_histogram: [0; 13],
             // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27).
-            apply_action_variant_histogram: [0; 20],
+            apply_action_variant_histogram: [0; 21],
             // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27).
             push_kind_histogram: [0; 13],
             // Phase F.13 chain_10000 COQ-S0 (2026-05-27).

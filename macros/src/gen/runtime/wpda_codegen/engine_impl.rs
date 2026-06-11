@@ -287,7 +287,19 @@ pub(crate) fn emit_engine_impl_full(
                                 let slot_idx = node.symbol.bp.unwrap_or(0u8);
                                 let close_lookup: Option<&'static str> = #collection_close_lookup;
                                 let token_text = tokens.peek_text(*pos).unwrap_or("");
-                                let token_is_close = Some(token_text) == close_lookup;
+                                // #307 ROOT-F G1 site-2 (2026-06-11): the
+                                // empty-collection close detection is edge
+                                // MEMBERSHIP (primary + alternatives), not
+                                // primary-only text equality (the ROOT-A
+                                // primary_equality_loses trap — live for
+                                // multi-char closes like the Bag "}#").
+                                let token_is_close = Some(token_text) == close_lookup
+                                    || close_lookup.is_some_and(|cl| {
+                                        tokens
+                                            .peek_alternatives(*pos)
+                                            .iter()
+                                            .any(|a| a.text == cl)
+                                    });
                                 let element_src_lookup: Option<u16> = {
                                     let result_src_idx = result_src_idx;
                                     let rule_idx = rule_idx;
@@ -303,17 +315,46 @@ pub(crate) fn emit_engine_impl_full(
                                         >,
                                     > = Vec::with_capacity(2);
                                     if token_is_close {
-                                        __branches.push(
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::category_entry(0),
-                                                weight: lex_w(
-                                                    0.0, result_src_idx, rule_idx,
-                                                ),
-                                                new_state: WpdaState::Unwinding,
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPop,
-                                            },
-                                        );
+                                        // #307 ROOT-F G1 site-2: one
+                                        // ConsumeAtAndPop per matched close
+                                        // edge (deduped by target), never the
+                                        // alt-0 ConsumeAndPop advance.
+                                        let cl = close_lookup.unwrap_or("");
+                                        let mut __targets: Vec<usize> =
+                                            Vec::with_capacity(2);
+                                        if token_text == cl {
+                                            if let Some(np) = tokens.next_pos(*pos, 0) {
+                                                __targets.push(np);
+                                            }
+                                        }
+                                        for (__i, __alt) in
+                                            tokens.peek_alternatives(*pos).iter().enumerate()
+                                        {
+                                            if __alt.text == cl {
+                                                if let Some(np) =
+                                                    tokens.next_pos(*pos, __i + 1)
+                                                {
+                                                    if !__targets.contains(&np) {
+                                                        __targets.push(np);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        for np in __targets {
+                                            __branches.push(
+                                                mettail_prattail::wpda_walker::ForkBranch {
+                                                    symbol: StackSymbolV2::category_entry(0),
+                                                    weight: lex_w(
+                                                        0.0, result_src_idx, rule_idx,
+                                                    ),
+                                                    new_state: WpdaState::Unwinding,
+                                                    action_kind:
+                                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
+                                                            next_pos: np,
+                                                        },
+                                                },
+                                            );
+                                        }
                                     }
                                     if let Some(element_src_idx) = redirect_src_idx {
                                         __branches.push(
@@ -928,8 +969,26 @@ pub(crate) fn emit_engine_impl_full(
                                         #collection_close_sep_lookup
                                     };
                                     if let Some((close, sep)) = close_sep {
+                                        // #307 ROOT-F G2 site-3 (2026-06-11):
+                                        // close/sep DETECTION is edge
+                                        // MEMBERSHIP over the complete
+                                        // alternative set. The reroute stays
+                                        // SINGLE (round-2 D-C: longest-match
+                                        // lexing orders multi-char closes as
+                                        // the primary, so a live close/sep on
+                                        // a secondary alternative with a
+                                        // live primary operand is
+                                        // unrealizable in shipped grammars;
+                                        // if a future grammar realizes it,
+                                        // BOTH routes must be forked).
                                         let token_text = tokens.peek_text(_pos).unwrap_or("");
-                                        if token_text == close || token_text == sep {
+                                        let __hit = token_text == close
+                                            || token_text == sep
+                                            || tokens
+                                                .peek_alternatives(_pos)
+                                                .iter()
+                                                .any(|a| a.text == close || a.text == sep);
+                                        if __hit {
                                             return WpdaStepAction::Advance(WpdaState::Unwinding);
                                         }
                                     }

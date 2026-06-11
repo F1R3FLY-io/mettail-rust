@@ -514,6 +514,13 @@ pub enum WpdaStepAction<W: SemiringRef> {
     /// `CollectionLoop` close arm: consume the close delimiter, pop the
     /// `CollectionMarker`, and fire the finalize action.
     ConsumeAndPop { weight: W, new_state: WpdaState },
+    /// #307 ROOT-F G1 (2026-06-11): membership-checked collection CLOSE —
+    /// pops the CollectionMarker frame (apply_pop_body_to_cursor: splice +
+    /// finalize + Unwinding) AND advances along the MATCHED lattice edge's
+    /// target (`next_pos`), never the alt-0 hardwired advance (FV:
+    /// CollectionForkEvidence.consume_at_and_pop_sound/complete;
+    /// alt0_close_lands_on_wrong_target is the defect this prevents).
+    ConsumeAtAndPop { weight: W, new_state: WpdaState, next_pos: usize },
     /// Phase 4: consume the current token (advance `pos` by 1) without
     /// touching the stack, then transition to `new_state`. Used by the
     /// `CollectionLoop` separator arm: consume the separator and re-enter
@@ -683,6 +690,13 @@ fn project_continuation_record_for_action<W: SemiringRef>(
             0,
         ),
         WpdaStepAction::ConsumeAndPop { .. } => (header + w_size + state_size, 8, 0),
+        // #307 ROOT-F (2026-06-11): close consume carrying the matched
+        // edge's next_pos (usize). Own projection slot 18 (the index space
+        // of `action_variant_counts`, independent of
+        // `apply_action_variant_index`).
+        WpdaStepAction::ConsumeAtAndPop { .. } => {
+            (header + w_size + state_size + size_of::<usize>(), 18, 0)
+        },
         WpdaStepAction::Consume { .. } => (header + w_size + state_size, 9, 0),
         WpdaStepAction::ConsumeIdentAndReplace { .. } => {
             (header + symbol_size + w_size + state_size + 1, 10, 0)
@@ -1236,6 +1250,11 @@ pub enum ForkActionKind {
     /// Used for empty-collection close branches. Mirrors
     /// `WpdaStepAction::ConsumeAndPop`. Fork must emit `consume_trigger: false`.
     ConsumeAndPop,
+    /// #307 ROOT-F G1 (2026-06-11): the membership-checked collection close —
+    /// `ConsumeAndPop` semantics (pop + apply_pop_body_to_cursor finalize)
+    /// but advancing along the MATCHED edge's `next_pos` instead of the
+    /// alt-0 `child_next_pos`. Fork must emit `consume_trigger: false`.
+    ConsumeAtAndPop { next_pos: usize },
 
     /// Stage 3.16 (Cluster 1) — Consume token + replace top-of-GSS, but ALSO
     /// log a builder delta (e.g. `StartBinderScope { names: vec![] }` for
@@ -5091,7 +5110,7 @@ where
     where
         W: StarSemiringRef,
     {
-        match limit {
+        let __res = match limit {
             Some(0) => Vec::new(),
             Some(cap) => match self.try_realize_root_to_terms_with_weights_lazy(root, cap) {
                 Ok(results) => results,
@@ -5100,7 +5119,17 @@ where
                 },
             },
             None => self.realize_root_to_terms_with_weights_eager(root, limit),
+        };
+        // #307 ROOT-F diagnostics (2026-06-11).
+        if trace_actions_enabled() {
+            eprintln!(
+                "[wpds-action] realize-root root={} limit={:?} results={}",
+                root,
+                limit,
+                __res.len(),
+            );
         }
+        __res
     }
 
     fn realize_root_to_terms_with_weights_eager(
@@ -5886,20 +5915,52 @@ where
             // Optional(Some(...)), so scan recursively.
             let collection_ids = Self::collection_ids_in_args(&args);
             Self::preallocate_collection_slots(&mut sb, &collection_ids);
-            for id in &collection_ids {
+            // #307 ROOT-F F-2 (2026-06-11): an item that does not realize
+            // to a Term is DEFINITE evidence this combo's derivation is
+            // invalid (the collection action requires every spliced
+            // element to be a Term of the element category; a cross-cat
+            // wrapper variant whose into_term is None realizes empty).
+            // The shipped code SILENTLY SKIPPED such items, emitting a
+            // SUB-MULTISET realization ({0|1} also realized {0};
+            // {0|1|2} dropped MIDDLE elements per dead variant) — the
+            // F-2 family. Refute the WHOLE combo instead: the symbol's
+            // other (fully-realizable) packings still realize, so
+            // nothing valid is lost.
+            let mut collection_items_ok = true;
+            'collect: for id in &collection_ids {
                 let items = self
                     .collection_items_for_action_children(&action_children, *id)
                     .unwrap_or(&[]);
                 for &item in items {
-                    if let Some(item_realized) = memo.get(&item) {
-                        if let Some((ActionArg::Term { value, .. }, _item_w)) =
-                            item_realized.first()
-                        {
+                    match memo.get(&item).and_then(|r| r.first()) {
+                        Some((ActionArg::Term { value, .. }, _item_w)) => {
                             sb.push_term_arc(Arc::clone(value));
                             sb.push_to_collection(*id);
-                        }
+                        },
+                        _ => {
+                            collection_items_ok = false;
+                            break 'collect;
+                        },
                     }
                 }
+            }
+            if !collection_items_ok {
+                continue;
+            }
+            // #307 ROOT-F diagnostics (2026-06-11): realize-side combo fire.
+            if trace_actions_enabled() && !collection_ids.is_empty() {
+                let item_dump: Vec<Vec<crate::sppf::SppfId>> = collection_ids
+                    .iter()
+                    .map(|id| {
+                        self.collection_items_for_action_children(&action_children, *id)
+                            .unwrap_or(&[])
+                            .to_vec()
+                    })
+                    .collect();
+                eprintln!(
+                    "[wpds-action] realize-fire rule={:#x} ids={:?} items={:?}",
+                    rule_idx, collection_ids, item_dump,
+                );
             }
             // Push args one-by-one. The push semantics must match what
             // the walker's emit-helpers would have done so the action's
@@ -7328,6 +7389,28 @@ where
                 );
                 self.cursor_resolution_check(cursor)
             },
+            WpdaStepAction::ConsumeAtAndPop { weight, new_state, next_pos } => {
+                // #307 ROOT-F G1 (2026-06-11): pop + finalize like
+                // ConsumeAndPop, but the consume advances along the MATCHED
+                // close edge's target carried by the engine (R2-1: the
+                // post-close position feeds the four downstream cursor.pos
+                // reads inside apply_pop_body_to_cursor — splice probe,
+                // CrossCatLhs re-entry, cross-cat Return replace,
+                // GroupingClose resolve).
+                let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
+                let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
+                cursor.pos = next_pos;
+                self.apply_pop_body_to_cursor(
+                    cursor,
+                    pred_id,
+                    popped_edge_kind.as_ref(),
+                    popped_symbol,
+                    &weight,
+                    new_state,
+                    tokens,
+                );
+                self.cursor_resolution_check(cursor)
+            },
             WpdaStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
                 let _ =
                     self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
@@ -7449,6 +7532,7 @@ where
                             | ForkActionKind::ConsumeAndReplace { .. }
                             | ForkActionKind::ConsumeIdentAndReplace { .. }
                             | ForkActionKind::ConsumeAndPop { .. }
+                            | ForkActionKind::ConsumeAtAndPop { .. }
                             | ForkActionKind::ConsumeAndReplaceWithEffect { .. }
                             | ForkActionKind::ConsumeAndCaptureAndPush { .. }
                             | ForkActionKind::ConsumeIdentAndPop { .. } => {
@@ -8446,6 +8530,95 @@ where
                             let (pred_id, popped_edge_kind) =
                                 self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
+                            self.apply_pop_body_to_cursor(
+                                &mut child,
+                                pred_id,
+                                popped_edge_kind.as_ref(),
+                                popped_symbol,
+                                &branch.weight,
+                                branch.new_state.clone(),
+                                tokens,
+                            );
+                            children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        },
+
+                        ForkActionKind::ConsumeAtAndPop { next_pos } => {
+                            let mut child = BranchCursor {
+                                node: cursor.node,
+                                pos: pos_after,
+                                weight: cursor.weight.times_ref(&branch.weight),
+                                inner_state: branch.new_state.clone(),
+                                recovery_deltas: cursor.recovery_deltas.clone(),
+                                source_priority: child_source_priority,
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
+                                // Bounded recovery (Stage 3.20 / L12,
+                                // 2026-05-06): inherit parent's recovery
+                                // book-keeping. The Fork-arm prologue
+                                // (when this is a recovery Fork) bumps
+                                // depth + extends visited_recovery on
+                                // each child after allocation; for
+                                // non-recovery Forks (Push, OptGroupAbsent,
+                                // lex-alt, etc.) the inherited values
+                                // pass through unchanged.
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
+                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
+                                // Child shares parent's `SemanticBuilder`
+                                // until a 5.3+ mutator triggers
+                                // `Arc::make_mut` copy-on-write.
+                                // Option C / C2: Fork-children inherit parent SPPF stack.
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
+                                optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                            };
+                            let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
+                            let (pred_id, popped_edge_kind) =
+                                self.cursor_gss_pop_via_edge(&mut child);
+                            // #307 ROOT-F G1 (2026-06-11): advance along the MATCHED close
+                            // edge's target, never alt-0 (R2-1).
+                            child.pos = next_pos;
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
@@ -12928,11 +13101,15 @@ where
                 .collection_items_for_action_children(&action_children, *id)
                 .unwrap_or(&[]);
             for &item_sid in items {
-                if let Some(ActionArg::Term { value, .. }) =
-                    self.reconstruct_action_arg_inner(cursor, item_sid, visiting)
-                {
-                    sb.push_term_arc(value);
-                    sb.push_to_collection(*id);
+                // #307 ROOT-F F-2 (2026-06-11): refute-don't-skip — an
+                // unreconstructable item invalidates this witness (see
+                // realize_packing_call).
+                match self.reconstruct_action_arg_inner(cursor, item_sid, visiting) {
+                    Some(ActionArg::Term { value, .. }) => {
+                        sb.push_term_arc(value);
+                        sb.push_to_collection(*id);
+                    },
+                    _ => return None,
                 }
             }
         }
@@ -13244,14 +13421,26 @@ where
         let mut sb = SemanticBuilder::new();
         let collection_ids = Self::collection_ids_in_args(&args);
         Self::preallocate_collection_slots(&mut sb, &collection_ids);
+        // #307 ROOT-F diagnostics (2026-06-11): fire-time arena contents.
+        if trace_actions_enabled() && !collection_ids.is_empty() {
+            eprintln!(
+                "[wpds-action] fire-arena pos={} ids={:?} arena={:?}",
+                cursor.pos, collection_ids, cursor.sppf_collection_arena,
+            );
+        }
         for id in &collection_ids {
-            if let Some(items) = cursor.sppf_collection_arena.get(*id as usize) {
-                for &item_sid in items {
-                    if let Some(ActionArg::Term { value, .. }) =
-                        self.reconstruct_action_arg(cursor, item_sid)
-                    {
-                        sb.push_term_arc(value);
-                        sb.push_to_collection(*id);
+            if let Some(items) = cursor.sppf_collection_arena.get(*id as usize).cloned() {
+                for &item_sid in &items {
+                    // #307 ROOT-F F-2 (2026-06-11): refute-don't-skip — an
+                    // unreconstructable spliced element fails the FIRE (the
+                    // elide/arity path surfaces the Error; the no-loss
+                    // direction is identical to realize_packing_call's).
+                    match self.reconstruct_action_arg(cursor, item_sid) {
+                        Some(ActionArg::Term { value, .. }) => {
+                            sb.push_term_arc(value);
+                            sb.push_to_collection(*id);
+                        },
+                        _ => return None,
                     }
                 }
             }
@@ -13725,6 +13914,17 @@ where
             if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                 cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                 Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
+                // #307 ROOT-F diagnostics (2026-06-11): actions-trace the
+                // splice so arena divergence across lineages is observable.
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] splice slot={} pos={} item={:?} arena_now={:?}",
+                        id,
+                        cursor.pos,
+                        top,
+                        cursor.sppf_collection_arena.get(id as usize),
+                    );
+                }
             }
         }
         // push_to_collection silently no-ops on out-of-bounds id.
@@ -14026,7 +14226,25 @@ where
                         // `sppf_collection_arena[acc_id].len()`, which
                         // grows in lockstep with builder.collection_stack
                         // via emit_splice_into_collection.
-                        let acc_id_usize = *accumulator_id as usize;
+                        //
+                        // #307 ROOT-F Map-nesting fix (2026-06-11): the
+                        // state's `accumulator_id` is the CODEGEN-STAMPED
+                        // slot id (Phase 4 #1: static per rule-slot, NOT
+                        // the runtime allocation) — for a Map NESTED
+                        // inside another collection (`{get(map(1:10),1)}`)
+                        // it reads 0 while the live slot is 1, so the
+                        // parity consulted the OUTER collection's (empty)
+                        // slot and kv_phase stuck at 0. The pseudo-close +
+                        // bare-element defect branches used to paper over
+                        // this (consuming `:` as a fake close and
+                        // dispatching the value as a bare element); with
+                        // the evidence-gated fork the stuck parity
+                        // surfaces as a definite refutation. Recover the
+                        // RUNTIME innermost active slot the same way
+                        // emit_splice_into_collection does: LIFO top =
+                        // collection_stack_depth - 1.
+                        let acc_id_usize =
+                            (cursor.collection_stack_depth as usize).saturating_sub(1);
                         let slot_len = self.cursor_collection_slot_len(cursor, acc_id_usize);
                         let new_kv_phase: u8 = if slot_len % 2 == 1 { 1 } else { 0 };
                         WpdaState::CollectionLoop {
@@ -15674,21 +15892,40 @@ where
                         // SelfCollectionElementProgress.{fixed_splices_iff_complete,
                         // shipped_splices_incomplete_element,
                         // fixed_keeps_complete_splice}): CategoryEntry pops
-                        // stay UNCONDITIONAL (they are the cross-cat redirect
-                        // close, where the element's whole Pratt parse —
-                        // including infix extension — happened INSIDE the
-                        // frame). RuleAt pops were also unconditional under
-                        // the stale premise "these only top a CollectionMarker
-                        // at element completion" — FALSE since in-collection
-                        // infix extension: a literal-led PREFIX rule (rhocalc
-                        // PDrop `*(z)`) completes its RULE while the element
-                        // may continue with an infix (`{*(z) + 2}`); the
-                        // premature splice stole the infix LHS and Add fired
-                        // against the CollectionId (expected-cat reject, the
-                        // whole family dead). RuleAt pops now take the SAME
-                        // one-step probe as every other pop kind: splice iff
+                        // were UNCONDITIONAL under the premise "the element's
+                        // whole Pratt parse — including infix extension —
+                        // happened INSIDE the frame" (true for the cross-cat
+                        // redirect close). RuleAt pops were also unconditional
+                        // under the stale premise "these only top a
+                        // CollectionMarker at element completion" — FALSE
+                        // since in-collection infix extension: a literal-led
+                        // PREFIX rule (rhocalc PDrop `*(z)`) completes its
+                        // RULE while the element may continue with an infix
+                        // (`{*(z) + 2}`); the premature splice stole the
+                        // infix LHS and Add fired against the CollectionId
+                        // (expected-cat reject, the whole family dead).
+                        // RuleAt pops take the one-step probe: splice iff
                         // the element has NO Pratt continuation.
-                        Some(SymbolKind::CategoryEntry) => true,
+                        //
+                        // #307 ROOT-F F-1 (2026-06-11): the CategoryEntry
+                        // premise is ALSO false for one case — a pop along a
+                        // CrossCatLhs edge RE-ENTERS for one infix pass (the
+                        // cross-cat-LHS mixfix host, e.g. rhocalc POutput
+                        // `n "!" "(" q ")"` inside `{c!(p)}`): the element
+                        // CONTINUES past this pop, and the unconditional
+                        // splice stole the mixfix LHS atom — the later
+                        // POutput fire then drained the CollectionId off the
+                        // sppf_stack and the PPar close died with "expected 1
+                        // args but cursor.sppf_stack held 0" (the F-1 family:
+                        // the junk split-parses were the only finishers,
+                        // masking this). Splice iff the pop is NOT a
+                        // CrossCatLhs reentry; the reentry block below
+                        // re-pushes the source CategoryEntry and the splice
+                        // fires at the element's REAL completion pop instead.
+                        Some(SymbolKind::CategoryEntry) => !matches!(
+                            popped_edge_kind,
+                            Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                        ),
                         Some(SymbolKind::RuleAt(_)) | Some(_) => {
                             // Pratt element-close: simulate one
                             // InfixLoop{cur_bp:0} step. Splice iff
