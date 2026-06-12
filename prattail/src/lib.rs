@@ -135,6 +135,13 @@ pub mod tomita_frontier;
 pub mod visited_set_arena;
 /// Phase F.13 walker statistics counters (gated by `walker-stats` feature).
 pub mod walker_stats;
+/// EP-P2 (Stage B) Step-0 substrate: per-position forward suffix-class
+/// Parikh masks (`SuffixClassMasks`). Grammar-agnostic (the class
+/// function is injected); two builders — a linear backward pass and a
+/// lattice backward DP over `LexDag` edges. Consumed by the walker's
+/// shadow obligation gate. See `ParikhObligationGate.v` (Part 2) and
+/// `docs/design/evidence-pruning/02-staged-implementation-plan.md` §P2.
+pub mod suffix_classes;
 // Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
 // The Walker (WPDS) is the surviving parser backend. All recovery infrastructure
 // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,

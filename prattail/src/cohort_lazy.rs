@@ -701,6 +701,12 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         cohort_origin: shell.cohort_origin.clone(),
         cohort_revive_depth: state.cohort_revive_depth,
         lex_fork_path: std::sync::Arc::clone(&state.lex_fork_path),
+        // EP-P2 (Stage B) D-4: a cohort-revived member is reconstructed
+        // from the shared shell (which carries no shadow-refuted bit), so
+        // it starts `false`; the shadow gate re-evaluates it at the next
+        // check site if it is still refutable (no soundness loss — the
+        // bit is "observed-refuted", not "is-refutable").
+        ep_shadow_refuted: false,
     }
 }
 

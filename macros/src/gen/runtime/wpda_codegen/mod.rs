@@ -60,6 +60,12 @@ pub mod infix;
 /// Used by the lex-Fork emitter to bind alternative tokens to prefix-site
 /// token-consuming rules before forking.
 pub mod kind_dispatch;
+/// EP-P2 (Stage B) Parikh obligation tables: emits
+/// `WPDA_PARIKH_CLASS_OF` (token-class function) and `WPDA_MUST_MASK`
+/// (per-`RuleAt`-frame suffix-`must` masks) consumed by the walker's
+/// shadow obligation gate. See `ParikhObligationGate.v` and
+/// `docs/design/evidence-pruning/02-staged-implementation-plan.md` §P2.
+pub mod parikh_tables;
 pub mod prefix;
 pub mod recovery;
 pub mod refinement;
@@ -121,6 +127,24 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
     // lexer reads before each scan.
     let lexer_config = emit_lexer_config(language);
 
+    // EP-P2 (Stage B): the Parikh obligation tables — WPDA_PARIKH_CLASS_OF
+    // (token-class function) + WPDA_MUST_MASK (per-RuleAt-frame suffix-must
+    // masks). Class inventory = one bit per cross-cat infix trigger
+    // terminal + one coarse class; must = the greatest-fixpoint
+    // intersection-of-productions, suffix-projected per rule position.
+    let parikh = parikh_tables::build_parikh_model(language, &categories, &per_cat);
+    let parikh_tokens = parikh.tokens;
+    // Inventory sizes as a generated doc comment so the diagnostic build
+    // can confirm the alphabet/table dimensions by inspecting wpds.rs.
+    let parikh_trigger_count = parikh.trigger_class_count;
+    let parikh_alphabet_size = parikh.alphabet_size;
+    let parikh_must_entries = parikh.must_entry_count;
+    let parikh_inventory_doc = format!(
+        " EP-P2 Parikh inventory for `{}`: {} trigger class(es), {} total class(es) \
+(incl. 1 coarse), {} non-zero must entr(y/ies).",
+        lang_name, parikh_trigger_count, parikh_alphabet_size, parikh_must_entries
+    );
+
     quote! {
         // ══════════════════════════════════════════════════════════════════
         // WPDS-runtime engine for `#lang_name`
@@ -148,6 +172,10 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
         pub const WPDA_RULES: &[&[(&str, u16)]] = &[
             #rule_table
         ];
+
+        // EP-P2 (Stage B): Parikh obligation tables.
+        #[doc = #parikh_inventory_doc]
+        #parikh_tokens
 
         /// WPDS step engine for `#lang_name`.
         ///

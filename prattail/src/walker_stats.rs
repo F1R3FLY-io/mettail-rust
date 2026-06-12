@@ -649,6 +649,36 @@ pub struct WalkerStats {
     /// live frontier already held an accepting configuration (the
     /// budget-divergence fix; recovery is unnecessary when an accept exists).
     pub dbg_ccl_accept_present_skip: u64,
+
+    // ── Evidence-pruning P2 Step-0 diagnostics (plan §P2 commit 2;
+    //    ledger 02-program-ledger.md) — the Parikh/suffix obligation gate
+    //    in SHADOW. All four are PARTITIONED `[state_class * 2 +
+    //    recovery_enabled]` per the I4 convention (a single hit in a rare
+    //    state must never be statistically buried). Display prints only
+    //    non-zero slots (round-3 m-3). ───────────────────────────────────
+    /// EP-P2: cursors the shadow obligation gate WOULD-REFUTE — the
+    /// top-`RuleAt` frame's `must` demands a class the suffix mask cannot
+    /// supply (`must != 0 ∧ (must & S[pos]) != must`), AND (I8) `must`
+    /// is disjoint from the recovery-synthesizable classes. NOTHING is
+    /// dropped (shadow). The gate consults the RECOVERY-OFF partition for
+    /// its accept/STOP verdict (I8: under recovery-ON, sync tokens
+    /// supply almost any obligation, so refutation is suppressed there).
+    pub parikh_shadow_would_refute_total: [u64; WPDA_STATE_CLASS_COUNT * 2],
+    /// EP-P2: the HARD-STOP TRIPWIRE — a would-refuted cursor (its sticky
+    /// `ep_shadow_refuted` bit set) that STILL participates in an accepted
+    /// parse at the EOI accept-snapshot. MUST stay all-zero everywhere
+    /// (I4); any non-zero slot = the model or the transcription is wrong
+    /// (deep-dive the mechanism; do NOT tune it away).
+    pub parikh_shadow_refuted_then_accepted: [u64; WPDA_STATE_CLASS_COUNT * 2],
+    /// EP-P2: `apply_action` calls spent on cursors AFTER the shadow gate
+    /// would-refuted them (the flag is set) — the direct waste
+    /// quantification. The accept gate: `≥ 20%` of `apply_action_calls`
+    /// (recovery-off world) ⇒ recommend enforcement; `< 5%` ⇒ STOP.
+    pub parikh_shadow_steps_after_would_refute: [u64; WPDA_STATE_CLASS_COUNT * 2],
+    /// EP-P2: cursors dying at the EOI premature-Accepted / non-accepting
+    /// filter that were SHADOW-REFUTABLE earlier — how many late deaths
+    /// the gate could have caught at the obligation-creating transition.
+    pub eoi_dead_cursors_parikh_refutable: [u64; WPDA_STATE_CLASS_COUNT * 2],
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2334,6 +2364,62 @@ impl fmt::Display for WalkerStats {
                 )?;
             }
         }
+        // EP-P2 Step-0 SHADOW (plan §P2 commit 2): the Parikh/suffix
+        // obligation gate. Non-zero-slot printing (round-3 m-3); each slot
+        // is `class*2 + recovery_enabled`. The accept/STOP gate reads the
+        // RECOVERY-OFF partition (even slots) against apply_action_calls.
+        {
+            let would_refute: u64 = self.parikh_shadow_would_refute_total.iter().sum();
+            let refuted_accepted: u64 = self.parikh_shadow_refuted_then_accepted.iter().sum();
+            let steps_after: u64 = self.parikh_shadow_steps_after_would_refute.iter().sum();
+            let eoi_refutable: u64 = self.eoi_dead_cursors_parikh_refutable.iter().sum();
+            if would_refute > 0 || refuted_accepted > 0 || steps_after > 0 || eoi_refutable > 0 {
+                let nz = |arr: &[u64; WPDA_STATE_CLASS_COUNT * 2]| -> Vec<(usize, u64)> {
+                    arr.iter()
+                        .copied()
+                        .enumerate()
+                        .filter(|(_, v)| *v > 0)
+                        .collect()
+                };
+                // Recovery-OFF partition = even slots (rec=0); the gate's
+                // accept/STOP basis.
+                let rec_off_steps: u64 = self
+                    .parikh_shadow_steps_after_would_refute
+                    .iter()
+                    .step_by(2)
+                    .sum();
+                writeln!(f, "  ep_p2_parikh_shadow (EP plan §P2 Step-0, PRATTAIL_EP_P2=shadow):")?;
+                writeln!(
+                    f,
+                    "    would_refute_total={}  refuted_then_accepted={} (MUST be 0)  steps_after_would_refute={}  eoi_dead_refutable={}",
+                    would_refute, refuted_accepted, steps_after, eoi_refutable,
+                )?;
+                writeln!(
+                    f,
+                    "    [class*2+rec → n] would_refute={:?}  steps_after={:?}  eoi_refutable={:?}",
+                    nz(&self.parikh_shadow_would_refute_total),
+                    nz(&self.parikh_shadow_steps_after_would_refute),
+                    nz(&self.eoi_dead_cursors_parikh_refutable),
+                )?;
+                if refuted_accepted > 0 {
+                    writeln!(
+                        f,
+                        "    ⚠ HARD-STOP TRIPWIRE: refuted_then_accepted slots {:?} — model/transcription is WRONG",
+                        nz(&self.parikh_shadow_refuted_then_accepted),
+                    )?;
+                }
+                if self.apply_action_calls > 0 {
+                    let pct = (steps_after as f64) * 100.0 / (self.apply_action_calls as f64);
+                    let pct_off =
+                        (rec_off_steps as f64) * 100.0 / (self.apply_action_calls as f64);
+                    writeln!(
+                        f,
+                        "    steps_after_would_refute = {:.2}% of apply_action_calls ({:.2}% recovery-off) — gate ≥ 20% to proceed, < 5% STOP",
+                        pct, pct_off,
+                    )?;
+                }
+            }
+        }
         // led_chain ROOT-CAUSE DIAGNOSTIC (TEMPORARY).
         {
             let dbg_total: u64 = self.dbg_ccl_reg_outcome.iter().sum::<u64>()
@@ -2860,6 +2946,11 @@ mod tests {
             dbg_ccl_stale_proceed: 0,
             dbg_ccl_dead_worker_released: 0,
             dbg_ccl_accept_present_skip: 0,
+            // EP-P2 Step-0 shadow counters.
+            parikh_shadow_would_refute_total: [0; WPDA_STATE_CLASS_COUNT * 2],
+            parikh_shadow_refuted_then_accepted: [0; WPDA_STATE_CLASS_COUNT * 2],
+            parikh_shadow_steps_after_would_refute: [0; WPDA_STATE_CLASS_COUNT * 2],
+            eoi_dead_cursors_parikh_refutable: [0; WPDA_STATE_CLASS_COUNT * 2],
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

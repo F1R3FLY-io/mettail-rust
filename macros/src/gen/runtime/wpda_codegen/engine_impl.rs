@@ -1890,6 +1890,19 @@ pub(crate) fn emit_engine_impl_full(
                 #action_for_body
             }
 
+            // EP-P2 (Stage B): delegate the obligation-gate functions to the
+            // generated module-level tables (beside WPDA_RULES).
+            fn parikh_class_of(
+                &self,
+                kind: &mettail_prattail::automata::TokenKind,
+            ) -> Option<u8> {
+                Some(WPDA_PARIKH_CLASS_OF(kind))
+            }
+
+            fn parikh_must_mask(&self, cat: u16, rule: u16, pos: u8) -> u128 {
+                WPDA_MUST_MASK(cat, rule, pos)
+            }
+
             fn is_binder_internal_collection(
                 &self,
                 result_src_idx: u16,

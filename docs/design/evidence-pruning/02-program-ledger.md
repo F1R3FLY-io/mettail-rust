@@ -214,6 +214,31 @@ flippable sub-commit) → L (Welch). Corpus: the cast probes (incl. the idx4 ON 
 INSERT/SUBSTITUTE/Optional-skip/multi-length-lex probes. Kill switch PRATTAIL_EP_P2
 (off|shadow|on per the P0 convention).
 
+### P2 Step-0 verdict (2026-06-12): **STOP — recorded, first-class (H13/CD06 precedent)**
+
+D-commit SHIPPED (diagnostic substrate retained; enforcement NOT implemented per the gate):
+`suffix_classes.rs` (linear + lattice-DAG backward DP, 8/0 tests both cfgs, injected class fn);
+`parikh_tables.rs` codegen (calculator: 6 trigger classes + coarse = 7; 492 must entries;
+**hand-checked**: EqInt (7,0,0)=72/(7,0,1)=72/(7,0,2)=64 == must(Int) ∪ {==} exactly);
+EpP2Mode{Off,Shadow} + the three check sites + the D-4 lineage tripwire
+(`BranchCursor::ep_shadow_refuted`, OR-merged, FrontierArc round-trip).
+
+**MEASURED: would_refute = 0 across the ENTIRE corpus** (cast probes both ep_p1 states,
+rhocalc_tests, ledtest_op, rhocalc_op); refuted_then_accepted = 0 (the tripwire never fired).
+**The zero deep-dived to mechanism (D-5, not a bug):** the only trigger-bearing must entries
+belong to INFIX comparison rules consumed via InfixLoop/InfixContinuation — the runtime never
+pushes a RuleAt frame at the operator position; every frame that DOES surface carries ∅ or
+always-satisfiable coarse obligations. The model's top-RuleAt-frame restriction (red-team F4 —
+the SOUND O(1) choice) has zero empirical bite at this granularity on these grammars. Gate
+capability proven LIVE (`ep_p2_gate_fires_iff_obligated_class_absent_from_suffix`: fires on
+absent ==, silent on present ==, ∅ on non-RuleAt) — the zero is real, not vacuous.
+
+**Verdict: 0% ≪ 5% ⇒ STOP** per the plan's own gate ("record; proceed to P3 diagnostics
+anyway — A and B kill different classes"). Battery at baseline (SENTINEL 220/0; prattail-lib
+3989/0 both cfgs incl. the 9 new tests; macros 367/0; shadow inert: =shadow edge 229/0 ==
+default). Full record: /tmp/p2_step0/findings.md (transcribed into this repo's history via
+this commit message).
+
 ## Stage log
 
 - 2026-06-11 P0 opened.

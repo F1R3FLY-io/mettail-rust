@@ -146,6 +146,38 @@ impl EpP1Mode {
     }
 }
 
+/// EP-P2 (Stage B) per-walker mode, read once from `PRATTAIL_EP_P2` at
+/// construction (P-series convention: never per step). Step-0 ships ONLY
+/// the no-behavior-change shadow gate (count would-refutes; refute
+/// nothing). Enforcement (`on`) is NOT part of the Step-0 D-commit — it
+/// lands with the P2 I-commit after the accept/STOP gate; until then the
+/// only modes are `Off` (default) and `Shadow`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EpP2Mode {
+    /// No Parikh substrate built; zero overhead (the default).
+    Off,
+    /// Build the per-parse `SuffixClassMasks` and run the obligation gate
+    /// in SHADOW: count would-refutes (partitioned by WpdaState-class ×
+    /// recovery_enabled) and the soundness tripwire
+    /// (`parikh_shadow_refuted_then_accepted`), but NEVER drop a cursor.
+    Shadow,
+}
+
+impl EpP2Mode {
+    /// Read `PRATTAIL_EP_P2` ONCE per walker construction. `off` (or
+    /// unset) = no substrate; `shadow` = build masks + shadow-gate. Any
+    /// other value (incl. `on`, reserved for the future I-commit) maps to
+    /// `Off` here — the Step-0 D-commit ships no enforcement path.
+    fn from_env() -> Self {
+        match std::env::var("PRATTAIL_EP_P2").ok().as_deref() {
+            Some("shadow") => EpP2Mode::Shadow,
+            // `off`, unset, and (reserved) `on` all fall to Off in the
+            // Step-0 D-commit: enforcement is not wired here.
+            _ => EpP2Mode::Off,
+        }
+    }
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -215,6 +247,29 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
         let _ = (src_idx, rule_idx);
         None
+    }
+
+    /// EP-P2 (Stage B): the token-class bit-index of `kind` for the Parikh
+    /// suffix-obligation gate (`WPDA_PARIKH_CLASS_OF`). One class per
+    /// grammar-declared cross-cat infix-trigger terminal + one coarse
+    /// class. `None` ⇒ this engine emits no Parikh tables (the gate then
+    /// never refutes — sound default for `ScriptedEngine`/`IdleEngine`).
+    /// Codegen overrides this to call the generated function.
+    fn parikh_class_of(&self, kind: &TokenKind) -> Option<u8> {
+        let _ = kind;
+        None
+    }
+
+    /// EP-P2 (Stage B): the suffix-`must` obligation mask of a
+    /// `RuleAt(pos)` frame `(category_src_idx, rule_index_in_category,
+    /// position)` (`WPDA_MUST_MASK`). `0` (∅, never-refute) by default and
+    /// for any key not in the generated table — TOTAL over the keys per
+    /// the round-2 m-2 convention; non-`RuleAt` frames are handled
+    /// walker-side as ∅. Codegen overrides this to call the generated
+    /// function.
+    fn parikh_must_mask(&self, cat: u16, rule: u16, pos: u8) -> u128 {
+        let _ = (cat, rule, pos);
+        0
     }
 
     /// B9 / Class 2 (2026-05-08): predicate identifying CollectionMarker
@@ -979,6 +1034,19 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// + drains before reaching the orphan fixpoint, e.g. the whole
     /// calculator cast corpus). Reset at the parse boundary.
     ep_p1_eoi_release: bool,
+    /// EP-P2 (Stage B) Step-0: the per-walker kill-switch mode, read once
+    /// from `PRATTAIL_EP_P2` at construction. `Off` (default) builds no
+    /// substrate; `Shadow` builds `ep_p2_suffix_masks` and runs the
+    /// obligation gate in shadow (count-only, never drops).
+    ep_p2_mode: EpP2Mode,
+    /// EP-P2 (Stage B) Step-0: per-parse forward suffix-class Parikh masks
+    /// `S[pos]`, built ONCE at walker setup (`run_to_end_of_input`) under
+    /// `EpP2Mode::Shadow` for the active token source (linear OR lattice).
+    /// `None` when EP-P2 is `Off` or before setup. Token-source-dependent,
+    /// so cleared at every parse boundary AND on any token-source change.
+    /// Read O(1) by the shadow gate at the three check sites
+    /// (`ParikhObligationGate.v` `S` relation).
+    ep_p2_suffix_masks: Option<crate::suffix_classes::SuffixClassMasks>,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -2084,6 +2152,17 @@ pub struct BranchCursor<W: SemiringRef> {
     /// falsification — `cursor.weight.lex_alt_idx` is always 0 at
     /// merge time, see commit `7c628d0`).
     pub lex_fork_path: std::sync::Arc<Vec<LexForkStamp>>,
+    /// EP-P2 (Stage B) Step-0 D-4 instrument: sticky bit set the moment
+    /// the SHADOW obligation gate would-refute this cursor (NON-cfg so the
+    /// soundness tripwire is observable in any build; default `false`).
+    /// Rides the actual cursor through Fork-child inheritance and Tomita
+    /// absorption (OR-merged in `merge_equivalent_cursors`), so a refuted
+    /// lineage stays flagged. At the EOI accept-snapshot, `flag ∧ accept`
+    /// increments `parikh_shadow_refuted_then_accepted` — the HARD-STOP
+    /// tripwire (a would-refuted cursor that still participates in an
+    /// accepted parse = soundness bug; the model/transcription is wrong).
+    /// Lineage-faithful: no config-keying, no vacuity risk.
+    pub ep_shadow_refuted: bool,
 }
 
 /// Phase F.13 Stage 2.1 (2026-05-22): a single lex-Fork branch
@@ -2199,6 +2278,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             cohort_origin: self.cohort_origin.clone(),
             cohort_revive_depth: self.cohort_revive_depth,
             lex_fork_path: std::sync::Arc::clone(&self.lex_fork_path),
+            // EP-P2 (Stage B) D-4: the shadow-refuted sticky bit rides the
+            // clone (a cloned cursor IS the same lineage).
+            ep_shadow_refuted: self.ep_shadow_refuted,
             // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
             // memo is walker-global now.
         }
@@ -2307,6 +2389,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             cohort_origin: None,
             cohort_revive_depth: 0,
             lex_fork_path: std::sync::Arc::new(Vec::new()),
+            // EP-P2 (Stage B) D-4: a fresh seed cursor has never been
+            // shadow-refuted.
+            ep_shadow_refuted: false,
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
         }
     }
@@ -2393,6 +2478,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             cohort_origin: parent.cohort_origin.clone(),
             cohort_revive_depth: parent.cohort_revive_depth,
             lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
+            // EP-P2 (Stage B) D-4: a Fork-child IS the parent's lineage —
+            // inherit the shadow-refuted bit so a refuted ancestor's
+            // descendants stay flagged.
+            ep_shadow_refuted: parent.ep_shadow_refuted,
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
         }
     }
@@ -2949,6 +3038,19 @@ struct EoiResolutionSnapshot<W: SemiringRef> {
     logical_count: usize,
     surviving_after_premature_filter: usize,
     max_dead_pos: usize,
+    /// EP-P2 (Stage B) Step-0 — accumulated in the `&self`
+    /// `push_eoi_resolution_candidate` and FLUSHED into `self.stats` by the
+    /// `&mut self` `resolve_at_end_of_input`. Partitioned `state_class * 2 +
+    /// recovery_enabled`.
+    /// Cursors that DIED at the EOI `!is_accepting_config` filter and were
+    /// SHADOW-REFUTABLE (would-refute true at their `(node, pos)`) — late
+    /// deaths the gate could have caught at the obligation transition.
+    ep_p2_eoi_dead_refutable: [u64; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
+    /// The HARD-STOP TRIPWIRE: cursors that REACHED the EOI accept path
+    /// (`is_accepting_config` true) whose sticky `ep_shadow_refuted` bit was
+    /// set — a would-refuted cursor in an accepted parse = soundness bug.
+    /// MUST stay all-zero.
+    ep_p2_refuted_then_accepted: [u64; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
 }
 
 impl<W: SemiringRef> LazyContinuationQueue<W> {
@@ -3579,6 +3681,8 @@ where
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
+            ep_p2_mode: EpP2Mode::from_env(),
+            ep_p2_suffix_masks: None,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3670,6 +3774,8 @@ where
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
+            ep_p2_mode: EpP2Mode::from_env(),
+            ep_p2_suffix_masks: None,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3760,6 +3866,8 @@ where
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
+            ep_p2_mode: EpP2Mode::from_env(),
+            ep_p2_suffix_masks: None,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3872,6 +3980,10 @@ where
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
         self.ep_p1_eoi_release = false;
+        // EP-P2 (Stage B): the per-parse suffix-class masks are
+        // token-source-dependent — drop them at the parse boundary AND on
+        // any token-source change so a stale-source mask is never read.
+        self.ep_p2_suffix_masks = None;
         // Cohort-revive-rework M1 (2026-05-29): reset the orphan
         // re-drive counter at the parse boundary so each parse gets a
         // fresh `MAX_REVIVAL_ROUNDS` budget.
@@ -3977,6 +4089,10 @@ where
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
         self.ep_p1_eoi_release = false;
+        // EP-P2 (Stage B): the per-parse suffix-class masks are
+        // token-source-dependent — drop them at the parse boundary AND on
+        // any token-source change so a stale-source mask is never read.
+        self.ep_p2_suffix_masks = None;
         self.recovery_cohort_cache.clear();
         self.chain_earley_cache.clear();
         self.chain_absorbed_intervals.clear();
@@ -4380,6 +4496,10 @@ where
                     cohort_origin: None,
                     cohort_revive_depth: 0,
                     lex_fork_path: std::sync::Arc::new(Vec::new()),
+                    // EP-P2 (Stage B) D-4: fresh post-collapse singleton —
+                    // a new logical cursor at the resolved config (any
+                    // refute history was already counted at the gate site).
+                    ep_shadow_refuted: false,
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
                 })];
                 self.state = new_state.clone();
@@ -4544,6 +4664,20 @@ where
         // engine.step ABI.
         let _recovery_cache_guard = self.pin_recovery_cache();
         let _recovery_config_guard = self.pin_recovery_config();
+        // EP-P2 (Stage B) Step-0: build the per-parse forward suffix-class
+        // Parikh masks ONCE at walker setup under Shadow, for the ACTIVE
+        // token source (the source-agnostic builder covers BOTH linear and
+        // lattice — the cast corpus's `LatticeTokenSource` is the critical
+        // path, plan §P2 round-2 M-1). The class function is injected from
+        // the engine's generated `WPDA_PARIKH_CLASS_OF`; `None` ⇒ the
+        // engine emits no Parikh tables ⇒ no masks (gate never fires).
+        if self.ep_p2_mode == EpP2Mode::Shadow && self.ep_p2_suffix_masks.is_none() {
+            let engine = &self.engine;
+            let class_of = |kind: &TokenKind| -> Option<u8> { engine.parikh_class_of(kind) };
+            let masks =
+                crate::suffix_classes::SuffixClassMasks::from_token_source(tokens, &class_of);
+            self.ep_p2_suffix_masks = Some(masks);
+        }
         for _ in 0..max_steps {
             // T4 SIGUSR1 hang-dump (2026-05-12): publish a fresh snapshot
             // so an out-of-band SIGUSR1 / watchdog dump sees current walker
@@ -4782,7 +4916,37 @@ where
                 snapshot.surviving_after_premature_filter.saturating_add(1);
         }
         if !self.is_accepting_config(&cursor, tokens) {
+            // EP-P2 (Stage B) Step-0 — check site (iii.a): this cursor
+            // dies at the EOI premature-Accepted / non-accepting filter.
+            // If it was shadow-refutable, the gate could have caught it at
+            // the obligation-creating transition instead of carrying it to
+            // EOI. Shadow-only; accumulate (flushed by the &mut caller).
+            if self.ep_p2_mode == EpP2Mode::Shadow
+                && self.ep_p2_would_refute_at(cursor.node, cursor.pos)
+            {
+                let recovery_enabled = (self.recovery_config.max_recovery_depth > 0) as usize;
+                let idx = crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
+                    + recovery_enabled;
+                if idx < snapshot.ep_p2_eoi_dead_refutable.len() {
+                    snapshot.ep_p2_eoi_dead_refutable[idx] =
+                        snapshot.ep_p2_eoi_dead_refutable[idx].saturating_add(1);
+                }
+            }
             return;
+        }
+        // EP-P2 (Stage B) Step-0 — check site (iii.b): the HARD-STOP
+        // TRIPWIRE. This cursor REACHED the EOI accept path. If its sticky
+        // `ep_shadow_refuted` bit is set, a would-refuted cursor is
+        // participating in an accepted parse — a soundness bug (the model
+        // or transcription is wrong). MUST stay zero everywhere.
+        if self.ep_p2_mode == EpP2Mode::Shadow && cursor.ep_shadow_refuted {
+            let recovery_enabled = (self.recovery_config.max_recovery_depth > 0) as usize;
+            let idx =
+                crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2 + recovery_enabled;
+            if idx < snapshot.ep_p2_refuted_then_accepted.len() {
+                snapshot.ep_p2_refuted_then_accepted[idx] =
+                    snapshot.ep_p2_refuted_then_accepted[idx].saturating_add(1);
+            }
         }
         let root = self.cursor_sppf_root(&cursor);
         if at_logical_eoi {
@@ -4808,6 +4972,8 @@ where
             logical_count: 0,
             surviving_after_premature_filter: 0,
             max_dead_pos: 0,
+            ep_p2_eoi_dead_refutable: [0; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
+            ep_p2_refuted_then_accepted: [0; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
         };
         for frame in &self.branch_cursors {
             match frame {
@@ -5041,6 +5207,23 @@ where
         // only the root id (reads the SPPF arena, not the cursor), so the
         // captured root id survives any later cursor mutation.
         let snapshot = self.eoi_resolution_snapshot(tokens);
+        // EP-P2 (Stage B) Step-0: flush the EOI shadow accumulators
+        // (gathered in the `&self` snapshot pass) into `self.stats` now
+        // that we hold `&mut self`. Per-slot OR-add preserves the
+        // `state_class * 2 + recovery_enabled` partition.
+        #[cfg(feature = "walker-stats")]
+        if self.ep_p2_mode == EpP2Mode::Shadow {
+            for i in 0..crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2 {
+                self.stats.eoi_dead_cursors_parikh_refutable[i] = self
+                    .stats
+                    .eoi_dead_cursors_parikh_refutable[i]
+                    .saturating_add(snapshot.ep_p2_eoi_dead_refutable[i]);
+                self.stats.parikh_shadow_refuted_then_accepted[i] = self
+                    .stats
+                    .parikh_shadow_refuted_then_accepted[i]
+                    .saturating_add(snapshot.ep_p2_refuted_then_accepted[i]);
+            }
+        }
         // No further work if every logical cursor would have been removed
         // by the premature-Accepted filter. This mirrors the old
         // materialize-then-retain path without expanding lazy cohorts or
@@ -6327,6 +6510,81 @@ where
     /// In practice, cursors that reach EOI via `apply_action_to_cursor`'s
     /// Idle parking branch satisfy the first two conditions; the third
     /// is reached when the engine pops Returns up to the bottom.
+    /// EP-P2 (Stage B) Step-0: the SHADOW obligation-gate predicate.
+    ///
+    /// Returns `true` iff the cursor at GSS node `node_id` / input position
+    /// `pos` WOULD-REFUTE under the Parikh suffix-class gate: its TOP frame
+    /// is a `RuleAt(p)` whose `must` obligation demands a token class the
+    /// remaining input cannot supply — `must != 0 ∧ (must & S[pos]) != must`
+    /// (`must ⊄ S[pos]`). Non-`RuleAt` frames carry `must = ∅` (the m-2
+    /// totality convention) and never refute. `false` whenever EP-P2 is not
+    /// in Shadow, no masks are built, or the engine emits no Parikh tables.
+    ///
+    /// SOUNDNESS (no drop): this is shadow-only — it counts, never removes.
+    /// The model theorem `top_frame_refutation_sound` (ParikhObligationGate.v)
+    /// licenses the top-frame test as a sound weakening of the full-stack
+    /// refutation. The I8 recovery composition is handled by the COUNTER
+    /// PARTITION (recovery-on vs -off): the accept/STOP verdict reads the
+    /// recovery-OFF partition, where `repair_synthesizable = ∅` and the gate
+    /// is unconditionally applicable (the D-commit conservative form).
+    #[inline]
+    fn ep_p2_would_refute_at(&self, node_id: crate::gss::GssNodeId, pos: usize) -> bool {
+        // Only meaningful under Shadow with masks built.
+        let Some(masks) = self.ep_p2_suffix_masks.as_ref() else {
+            return false;
+        };
+        // The TOP frame's obligation. `must = ∅` for any non-RuleAt frame
+        // (Return / CategoryEntry / markers) — never refute.
+        let Some(node) = self.gss.node(node_id) else {
+            return false;
+        };
+        let must: u128 = match node.symbol.kind {
+            SymbolKind::RuleAt(p) => self.engine.parikh_must_mask(
+                node.symbol.category_src_idx,
+                node.symbol.rule_index_in_category,
+                p,
+            ),
+            _ => 0,
+        };
+        if must == 0 {
+            return false;
+        }
+        // S[pos]: the union of classes reachable forward from this position.
+        let suffix = masks.mask_at(pos);
+        // would-refute ⟺ some obligated class is NOT in the suffix.
+        (must & suffix) != must
+    }
+
+    /// EP-P2 (Stage B) Step-0: run the SHADOW gate on one cursor at a check
+    /// site. If it would-refute, set its sticky `ep_shadow_refuted` bit and
+    /// increment `parikh_shadow_would_refute_total` (partitioned `state_class
+    /// * 2 + recovery_enabled`). NEVER drops the cursor. No-op unless EP-P2
+    /// is Shadow with masks. Idempotent: an already-flagged cursor is not
+    /// re-counted (the would-refute event is counted once per cursor).
+    #[inline]
+    fn ep_p2_shadow_check_cursor(&mut self, cursor: &mut BranchCursor<W>) {
+        if self.ep_p2_mode != EpP2Mode::Shadow {
+            return;
+        }
+        if cursor.ep_shadow_refuted {
+            // Already counted; the sticky bit persists for the tripwire.
+            return;
+        }
+        if self.ep_p2_would_refute_at(cursor.node, cursor.pos) {
+            // The sticky bit is set in BOTH cfgs (the D-4 tripwire must be
+            // observable in any build). The counter is walker-stats-only;
+            // the partition index is computed inline so it never goes
+            // unused in the default build.
+            cursor.ep_shadow_refuted = true;
+            crate::stats_inc_idx!(
+                self,
+                parikh_shadow_would_refute_total,
+                crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
+                    + (self.recovery_config.max_recovery_depth > 0) as usize
+            );
+        }
+    }
+
     fn is_accepting_config(&self, cursor: &BranchCursor<W>, tokens: &dyn WpdaTokenSource) -> bool {
         // Phase 5.6-tail-A (2026-05-12): replaces the pre-tail
         // `cursor_will_produce_term` dry-run over `recovery_deltas`
@@ -6682,6 +6940,9 @@ where
                         cohort_origin: None,
                         cohort_revive_depth: 0,
                         lex_fork_path: std::sync::Arc::new(Vec::new()),
+                        // EP-P2 (Stage B) D-4: seed/commit-winner write-back —
+                        // fresh cursor, not yet shadow-refuted.
+                        ep_shadow_refuted: false,
                         // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
                     }));
             },
@@ -6999,6 +7260,19 @@ where
                 self.stats.cast_then_infix_steps =
                     self.stats.cast_then_infix_steps.saturating_add(1);
             }
+        }
+        // EP-P2 (Stage B) Step-0: count this apply_action call as WASTE if
+        // the cursor was already shadow-refuted (the would-refute fired at
+        // an earlier check site and set the sticky bit). This is the direct
+        // waste quantification — `steps_after_would_refute` — the P1
+        // memo-pattern shape. Partitioned `state_class * 2 + recovery`.
+        if self.ep_p2_mode == EpP2Mode::Shadow && cursor.ep_shadow_refuted {
+            crate::stats_inc_idx!(
+                self,
+                parikh_shadow_steps_after_would_refute,
+                crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
+                    + (self.recovery_config.max_recovery_depth > 0) as usize
+            );
         }
         // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): every
         // entry into `apply_action_to_cursor` corresponds to a thunk
@@ -8615,6 +8889,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -8722,6 +8999,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -8805,6 +9085,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -8881,6 +9164,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -8968,6 +9254,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9071,6 +9360,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9158,6 +9450,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9246,6 +9541,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9336,6 +9634,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9472,6 +9773,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9601,6 +9905,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9797,6 +10104,9 @@ where
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
                                 lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
+                                // EP-P2 (Stage B) D-4: Fork-child inherits
+                                // the parent cursor's shadow-refuted bit.
+                                ep_shadow_refuted: cursor.ep_shadow_refuted,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -10467,6 +10777,16 @@ where
                 // children created. Batched here (vs 21 individual sites)
                 // so the count reflects post-gating survivors.
                 crate::stats_add!(self, cursors_created_via_fork, children.len() as u64);
+                // EP-P2 (Stage B) Step-0 — check site (ii): the single Fork
+                // chokepoint. Run the shadow gate on each freshly-forked
+                // child (its `(node, pos)` may newly satisfy a refuting
+                // obligation; inherited-flag children are skipped as
+                // idempotent). Shadow-only; never drops.
+                if self.ep_p2_mode == EpP2Mode::Shadow {
+                    for child in children.iter_mut() {
+                        self.ep_p2_shadow_check_cursor(child);
+                    }
+                }
                 CursorOutcome::ForkInto(children)
             },
             WpdaStepAction::Accept => {
@@ -11076,6 +11396,30 @@ where
         let mut drained: Vec<(BranchCursor<W>, WpdaStepAction<W>)> =
             Vec::with_capacity(drained_nodes.len());
         for (_key, mut node) in drained_nodes {
+            // EP-P2 (Stage B) Step-0 — check site (i): the merged-frontier
+            // (TomitaKey) drain. Evaluate the obligation gate ONCE per
+            // merged class on the shell's `(node, pos)` (the Candidate-F
+            // amortization for free), then flag every NOT-yet-flagged arc
+            // and count once per newly-flagged arc (the per-cursor
+            // would-refute event). Shadow-only; never drops.
+            if self.ep_p2_mode == EpP2Mode::Shadow
+                && self.ep_p2_would_refute_at(node.shell.node, node.shell.pos)
+            {
+                for arc in &mut node.arcs {
+                    if !arc.ep_shadow_refuted {
+                        // The sticky bit rides each arc into its
+                        // materialized cursor (both cfgs); the counter is
+                        // walker-stats-only with an inline partition index.
+                        arc.ep_shadow_refuted = true;
+                        crate::stats_inc_idx!(
+                            self,
+                            parikh_shadow_would_refute_total,
+                            crate::walker_stats::wpda_state_class(&node.shell.inner_state) * 2
+                                + (self.recovery_config.max_recovery_depth > 0) as usize
+                        );
+                    }
+                }
+            }
             // ONE engine.step call per frontier.
             let frontier_top = self.gss.node(node.shell.node).cloned();
             let action = self.engine.step(
@@ -13024,6 +13368,9 @@ where
             cohort_origin: winner.cohort_origin.clone(),
             cohort_revive_depth: winner.cohort_revive_depth,
             lex_fork_path: winner.lex_fork_path,
+            // EP-P2 (Stage B) D-4: the post-commit singleton inherits the
+            // winning cursor's shadow-refuted bit (same lineage).
+            ep_shadow_refuted: winner.ep_shadow_refuted,
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
@@ -16540,6 +16887,9 @@ where
             cohort_origin: parent.cohort_origin.clone(),
             cohort_revive_depth: parent.cohort_revive_depth,
             lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
+            // EP-P2 (Stage B) D-4: cross-cat projection child inherits the
+            // parent cursor's shadow-refuted bit (same lineage).
+            ep_shadow_refuted: parent.ep_shadow_refuted,
         };
         if let Some(stamp) = lex_fork_stamp {
             std::sync::Arc::make_mut(&mut child.lex_fork_path).push(stamp);
@@ -18645,6 +18995,105 @@ mod tests {
 
         assert_eq!(cursor.pos, 3);
         assert_eq!(walker.position(), 3);
+    }
+
+    /// EP-P2 (Stage B) Step-0: a probe engine that emits a non-trivial
+    /// Parikh model so the obligation gate can actually FIRE in a unit
+    /// test. Class 0 = the `==` trigger; class 1 = coarse. The single
+    /// obligated RuleAt key `(7, 0, 1)` demands class 0 (the `==`), like
+    /// the calculator's `EqInt` at the operator position.
+    struct ParikhProbeEngine;
+    impl WpdaEngine<LexicographicWeight> for ParikhProbeEngine {
+        fn step(
+            &self,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
+            _pos: usize,
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            WpdaStepAction::Idle
+        }
+        fn parikh_class_of(&self, kind: &TokenKind) -> Option<u8> {
+            match kind {
+                TokenKind::Fixed(s) if s == "==" => Some(0),
+                _ => Some(1),
+            }
+        }
+        fn parikh_must_mask(&self, cat: u16, rule: u16, pos: u8) -> u128 {
+            // The EqInt-shaped obligation: at (7,0,1) demand class 0 (`==`)
+            // plus the coarse class 1. Everything else ∅.
+            if (cat, rule, pos) == (7, 0, 1) {
+                (1u128 << 0) | (1u128 << 1)
+            } else {
+                0
+            }
+        }
+    }
+
+    #[test]
+    fn ep_p2_gate_fires_iff_obligated_class_absent_from_suffix() {
+        use crate::suffix_classes::SuffixClassMasks;
+        // A walker with the probe engine and EP-P2 forced to Shadow.
+        let mut walker = WpdaWalker::new(ParikhProbeEngine, 0);
+        walker.ep_p2_mode = EpP2Mode::Shadow;
+        // A GSS node whose top frame is RuleAt(1) for key (7, 0) — the
+        // obligated EqInt-at-`==` frame. cursor.pos = 0.
+        let node_id = walker.gss.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::rule_at(7, 0, 1, None),
+        });
+        let class_of =
+            |kind: &TokenKind| -> Option<u8> { walker.engine.parikh_class_of(kind) };
+
+        // CASE A — suffix HAS `==`: ident "==" ident Eof. The obligation
+        // {==, coarse} ⊆ S[0]; the gate does NOT refute.
+        let kinds_with_eq = [
+            TokenKind::Ident,
+            TokenKind::Fixed("==".to_string()),
+            TokenKind::Ident,
+            TokenKind::Eof,
+        ];
+        walker.ep_p2_suffix_masks =
+            Some(SuffixClassMasks::from_linear(&kinds_with_eq, &class_of));
+        assert!(
+            !walker.ep_p2_would_refute_at(node_id, 0),
+            "obligated `==` IS in the suffix → must NOT refute",
+        );
+
+        // CASE B — suffix LACKS `==`: ident "+" ident Eof (only coarse
+        // ahead). The obligation demands class 0 (`==`) which is absent →
+        // must ⊄ S[0] → the gate WOULD refute. This proves the gate is
+        // LIVE and capable of firing (the corpus would_refute=0 is a real
+        // structural property, not a dead path).
+        let kinds_no_eq = [
+            TokenKind::Ident,
+            TokenKind::Fixed("+".to_string()),
+            TokenKind::Ident,
+            TokenKind::Eof,
+        ];
+        walker.ep_p2_suffix_masks =
+            Some(SuffixClassMasks::from_linear(&kinds_no_eq, &class_of));
+        assert!(
+            walker.ep_p2_would_refute_at(node_id, 0),
+            "obligated `==` is ABSENT from the suffix → MUST would-refute",
+        );
+
+        // CASE C — a non-RuleAt top frame (Return) carries must=∅ → never
+        // refutes regardless of suffix (the m-2 totality convention).
+        let return_node = walker.gss.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2 {
+                category_src_idx: 7,
+                rule_index_in_category: 0,
+                bp: None,
+                kind: SymbolKind::Return,
+            },
+        });
+        assert!(
+            !walker.ep_p2_would_refute_at(return_node, 0),
+            "non-RuleAt frame has ∅ obligation → never refutes",
+        );
     }
 
     fn cursor_with_symbol_root(
