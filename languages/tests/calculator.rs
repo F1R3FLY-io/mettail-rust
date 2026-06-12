@@ -1308,6 +1308,55 @@ fn calculator_cast_syntax_stays_within_lazy_frontier_budget() {
 }
 
 #[test]
+fn calculator_cast_then_compare_budget_parity_across_ep_p1_modes() {
+    // EP-P1 v3.1 R7-10 (red-team Round 7; ledger §P1): the mid-park
+    // budget gate. Under PRATTAIL_EP_P1=on, parked members leave the
+    // frontier (uncounted while parked) — this test pins the OBSERVED
+    // contract on the cast-then-compare class so any budget-semantics
+    // drift between OFF and ON fails the two-state battery: the
+    // explicit-budget overflow fires at the lex fan (position 1,
+    // BEFORE any parking engages), so both modes report the IDENTICAL
+    // overflow at small k and the identical single parse at viable k
+    // (probe-verified byte-identical at k ∈ {1, 4, 16, 64}).
+    use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
+
+    let input = "int(float(int(3.14))) == 3";
+
+    // Small k: the overflow is reported (never silently pruned), with
+    // the same frontier count in both EP-P1 modes.
+    let dag = calc::lex_dag(input).expect("calculator lex DAG should accept cast-then-compare");
+    let source = LatticeTokenSource::new(dag);
+    let mut bounded_pos = 0usize;
+    let err = calc::parse_Bool_via_wpda_all_with_source_and_bounding_mode(
+        &source,
+        &mut bounded_pos,
+        0,
+        CursorBoundingMode::AmbiguityBudget(4),
+    )
+    .expect_err("k=4 must overflow at the lex fan in every EP-P1 mode");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("ambiguity budget 4 exceeded by frontier of 5 cursors"),
+        "the overflow shape must be mode-independent (got: {msg})"
+    );
+
+    // Viable k: exactly one parse, EOI reached, in every EP-P1 mode.
+    let dag = calc::lex_dag(input).expect("lex");
+    let source = LatticeTokenSource::new(dag);
+    let mut pos = 0usize;
+    let (terms, weights) = calc::parse_Bool_via_wpda_all_with_source_and_bounding_mode(
+        &source,
+        &mut pos,
+        0,
+        CursorBoundingMode::AmbiguityBudget(16),
+    )
+    .expect("k=16 must parse in every EP-P1 mode");
+    assert_eq!(pos, source.eof_node());
+    assert_eq!(terms.len(), 1, "one surviving parse in every EP-P1 mode");
+    assert_eq!(terms.len(), weights.len());
+}
+
+#[test]
 fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
     use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
 

@@ -7163,12 +7163,6 @@ where
                 // `cursor.node`. Host = the predecessor (pre-push top)
                 // frame's category (R5-7: NEVER the pushed symbol's —
                 // that is the SOURCE).
-                // EP-P1 v3.1 (led_chain root fix): a Proceed decision
-                // defers its lineage-open to the post-push site so the
-                // increment can be keyed ONCE PER EDGE (symmetric to
-                // the decrement; coalesced pushes count once).
-                let mut __ep_p1_open_lineage: Option<crate::dispatch_cohort::DispatchKey> =
-                    None;
                 // EP-P1 v3.1 ON (Round-7 converged; 06-p1-sync-consume-
                 // v3-design.md §3): the synchronous-consume / bounded-
                 // park decision, BEFORE any push. Worker / FailedHit /
@@ -7239,7 +7233,6 @@ where
                                 // site (led_chain root fix; R7-7 still
                                 // holds: every proceeding push reaches
                                 // that site).
-                                __ep_p1_open_lineage = Some(__key);
                             },
                             crate::dispatch_cohort::RegisterOutcome::ResolvedHit {
                                 bodies,
@@ -7322,7 +7315,6 @@ where
                                 // cleanup (`ep_p1_eoi_release`); the mid-parse
                                 // fast path still parks (sharing preserved).
                                 // Resolved-non-quiescent still parks.
-                                __ep_p1_open_lineage = Some(__key);
                             },
                             crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. }
                             | crate::dispatch_cohort::RegisterOutcome::InflightCollision => {
@@ -7355,7 +7347,6 @@ where
                                         .entry((__key.pos, __key.source_src_idx, __key.wrap_cat))
                                         .or_insert(0) += 1;
                                 }
-                                __ep_p1_open_lineage = Some(__key);
                             },
                         }
                     }
@@ -7399,27 +7390,9 @@ where
                         self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id)
                     {
                         self.crosscat_lhs_wrap.insert(__eid, (__host, u16::MAX));
-                        // led_chain root fix: open the lineage ONCE PER
-                        // EDGE — two same-context pushes coalesce to one
-                        // edge and must count once (the decrement is
-                        // per-edge too; exact balance).
-                        if let Some(__lineage_key) = __ep_p1_open_lineage.take() {
-                            // led_chain root fix (2026-06-12): record the
-                            // edge under the key so the per-step dead-worker
-                            // scan can tell whether ANY live cursor still
-                            // carries a body-producing lineage for this key.
-                            self.crosscat_lhs_key_edges
-                                .entry(__lineage_key.clone())
-                                .or_default()
-                                .push(__eid);
-                            if self.pushed_crosscat_lhs_edges.insert(__eid) {
-                                crate::stats_inc!(self, dbg_ccl_lineage_inc);
-                                *self
-                                    .crosscat_lhs_live_lineages
-                                    .entry(__lineage_key)
-                                    .or_insert(0) += 1;
-                            }
-                        }
+                        // (On-mode key-edges/lineage bookkeeping lives in
+                        // cursor_gss_push_with_kind — the consolidated
+                        // chokepoint shared by both producers.)
                     }
                 }
                 if let Some((__source, __host)) = __ep_p1_measure_ccl
@@ -15334,7 +15307,44 @@ where
         // use it. Cost gated by `walker-stats` feature.
         #[cfg(feature = "walker-stats")]
         let kind_for_projection = kind.clone();
+        // EP-P1 v3.1 (consolidated; fork-path completeness): under On,
+        // EVERY CrossCatLhs push is by construction a PROCEEDING
+        // dispatch (consume and park never push; reentries use the
+        // Reentry kind), so the per-edge bookkeeping lives at this ONE
+        // chokepoint for BOTH producers — the wrap side table (the
+        // pop-side resolve's key reconstruction), the key→edges map
+        // (the dead-worker scan), and the once-per-edge lineage open
+        // (coalesced same-context pushes count once; the decrement is
+        // per-edge too — exact balance).
+        let ep_p1_ccl_push: Option<(u16, u16)> = if self.ep_p1_mode == EpP1Mode::On {
+            if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &kind {
+                let host = self
+                    .gss
+                    .node(predecessor)
+                    .map(|n| n.symbol.category_src_idx)
+                    .unwrap_or(u16::MAX);
+                Some((*source_src_idx, host))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
+        if let Some((ccl_source, ccl_host)) = ep_p1_ccl_push {
+            self.crosscat_lhs_wrap.insert(edge_id, (ccl_host, u16::MAX));
+            let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                pos, ccl_source, 0, ccl_host, u16::MAX,
+            );
+            self.crosscat_lhs_key_edges
+                .entry(key.clone())
+                .or_default()
+                .push(edge_id);
+            if self.pushed_crosscat_lhs_edges.insert(edge_id) {
+                crate::stats_inc!(self, dbg_ccl_lineage_inc);
+                *self.crosscat_lhs_live_lineages.entry(key).or_insert(0) += 1;
+            }
+        }
         cursor.node = new_id;
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut incoming_edge_stack).push.
@@ -16024,6 +16034,123 @@ where
         lex_fork_stamp: Option<LexForkStamp>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
+        // EP-P1 v3.1 §3 (the FORK-path producer; corpus-cold — zero fork
+        // spawns measured on the acceptance corpus — but implemented for
+        // completeness): the same synchronous-consume / bounded-park
+        // decision as the singleton action arm, with the FORK-metadata
+        // member shape (R7-5/R5-5). A consumed child is built WITHOUT
+        // the CrossCatLhs push and returned in the children Vec (the
+        // proven-tolerated empty/partial-return shape). Proceed paths
+        // fall through to normal allocation — the per-edge bookkeeping
+        // happens inside cursor_gss_push_with_kind (the consolidated
+        // chokepoint), so workers here need no extra wiring.
+        if self.ep_p1_mode == EpP1Mode::On {
+            if let Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) = &push_edge_kind
+            {
+                let ccl_source = *source_src_idx;
+                // R5-7: the HOST is the parent's GSS-top category — NEVER
+                // branch.symbol.category_src_idx (that is the SOURCE: the
+                // pushed symbol is category_entry(source)).
+                let ccl_host = self
+                    .gss
+                    .node(parent.node)
+                    .map(|n| n.symbol.category_src_idx)
+                    .unwrap_or(u16::MAX);
+                let ccl_key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                    pos_after, ccl_source, 0, ccl_host, u16::MAX,
+                );
+                let ccl_quiescent = self
+                    .crosscat_lhs_live_lineages
+                    .get(&ccl_key)
+                    .copied()
+                    .unwrap_or(0)
+                    == 0;
+                let ccl_weight_at_dispatch = parent.weight.times_ref(&branch.weight);
+                match self
+                    .dispatch_cohort_cache
+                    .register(ccl_key.clone(), ccl_weight_at_dispatch.clone())
+                {
+                    crate::dispatch_cohort::RegisterOutcome::WorkerInserted
+                    | crate::dispatch_cohort::RegisterOutcome::FailedHit => {
+                        // Proceed: fall through to normal allocation (the
+                        // worker, or the preserved per-cursor failure path).
+                    },
+                    crate::dispatch_cohort::RegisterOutcome::ResolvedHit { bodies, .. }
+                        if ccl_quiescent && !bodies.is_empty() =>
+                    {
+                        // SYNCHRONOUS CONSUME: one child per body, built
+                        // from the fork-metadata frame WITHOUT the push.
+                        crate::stats_inc!(self, ep_p1_consumed_in_place);
+                        let mut children: Vec<BranchCursor<W>> =
+                            Vec::with_capacity(bodies.len());
+                        for b in &bodies {
+                            let mut child = self.parent_frame_with_fork_metadata(
+                                parent,
+                                lex_fork_stamp.clone(),
+                                trigger_terminal.as_ref(),
+                                branch.symbol.category_src_idx,
+                                branch.symbol.rule_index_in_category,
+                            );
+                            child.weight = ccl_weight_at_dispatch.clone();
+                            let (cat, ppw) = b
+                                .worker_snapshots
+                                .first()
+                                .map(|sn| {
+                                    (
+                                        sn.worker_last_action_output_cat,
+                                        sn.worker_pending_packing_weight.clone(),
+                                    )
+                                })
+                                .unwrap_or((None, W::one_ref()));
+                            self.consume_crosscat_lhs_body(
+                                &mut child,
+                                ccl_source,
+                                b.symbol_id,
+                                b.hi_pos,
+                                cat,
+                                ppw,
+                            );
+                            children.push(child);
+                        }
+                        return children;
+                    },
+                    crate::dispatch_cohort::RegisterOutcome::InflightCollision
+                        if self.ep_p1_eoi_release =>
+                    {
+                        // Post-fixpoint cleanup: PROCEED (own lineage)
+                        // rather than re-park behind a possibly-dead
+                        // worker — mirrors the singleton arm.
+                    },
+                    crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. }
+                    | crate::dispatch_cohort::RegisterOutcome::InflightCollision => {
+                        // In-flight or pre-quiescent arrival: PARK with the
+                        // FORK-metadata member shape; cap overflow →
+                        // Proceed (fall through).
+                        let member_frame = self.parent_frame_with_fork_metadata(
+                            parent,
+                            lex_fork_stamp.clone(),
+                            trigger_terminal.as_ref(),
+                            branch.symbol.category_src_idx,
+                            branch.symbol.rule_index_in_category,
+                        );
+                        let ccl_member = crate::dispatch_cohort::CohortMember {
+                            member_id: 0,
+                            return_frame: member_frame,
+                            weight_at_dispatch: ccl_weight_at_dispatch,
+                        };
+                        if self
+                            .dispatch_cohort_cache
+                            .pause_cohort_member(ccl_key.clone(), ccl_member)
+                        {
+                            crate::stats_inc!(self, dbg_ccl_parked_ok);
+                            self.parked_crosscat_lhs_keys.insert(ccl_key);
+                            return Vec::new();
+                        }
+                        crate::stats_inc!(self, ep_p1_park_overflow_fallbacks);
+                    },
+                }
+            }
+        }
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache
         // consultation for CrossCatDelegate branches. Resolved/Failed/
         // InflightCollision outcomes short-circuit normal allocation.
