@@ -80,7 +80,11 @@ where
 {
     /// A new in-memory space with the given matcher.
     pub fn new(matcher: M) -> Self {
-        InMemSpace { data: HashMap::new(), conts: HashMap::new(), matcher }
+        InMemSpace {
+            data: HashMap::new(),
+            conts: HashMap::new(),
+            matcher,
+        }
     }
 
     /// Number of parked data items on a channel.
@@ -124,12 +128,15 @@ where
     fn consume(&mut self, chan: C, pat: P, k: K) -> Option<Fired<A, M::Bindings>> {
         // First-fit against parked data on this channel.
         if let Some(waiting) = self.data.get_mut(&chan) {
-            if let Some(idx) =
-                waiting.iter().position(|d| self.matcher.matches(&pat, d).is_some())
+            if let Some(idx) = waiting
+                .iter()
+                .position(|d| self.matcher.matches(&pat, d).is_some())
             {
                 let data = waiting.remove(idx);
-                let bindings =
-                    self.matcher.matches(&pat, &data).expect("match re-confirmed at fire");
+                let bindings = self
+                    .matcher
+                    .matches(&pat, &data)
+                    .expect("match re-confirmed at fire");
                 return Some(Fired { partner: data, bindings });
             }
         }

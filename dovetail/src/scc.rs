@@ -16,7 +16,9 @@ use crate::egraph::{EClassId, EGraph};
 /// A singleton SCC is non-trivial (cyclic) iff this is true.
 pub(crate) fn has_self_loop<L: Clone + Eq + std::hash::Hash>(eg: &EGraph<L>, q: EClassId) -> bool {
     let q = eg.find(q);
-    eg.nodes(q).iter().any(|n| n.children.iter().any(|&c| eg.find(c) == q))
+    eg.nodes(q)
+        .iter()
+        .any(|n| n.children.iter().any(|&c| eg.find(c) == q))
 }
 
 /// Strongly-connected components of the class-dependency graph, in

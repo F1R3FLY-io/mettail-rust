@@ -232,7 +232,10 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         }
 
         let id = self.union_find.make_set();
-        let eclass = EClass { nodes: vec![canonical.clone()], parents: Vec::new() };
+        let eclass = EClass {
+            nodes: vec![canonical.clone()],
+            parents: Vec::new(),
+        };
 
         // Register parent pointers for congruence closure.
         for &child in &canonical.children {
@@ -316,8 +319,11 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                         if existing_canon != canon_id {
                             self.pending.push((existing_canon, canon_id));
                             let winner = self.union_find.union(existing_canon, canon_id);
-                            let loser =
-                                if winner == existing_canon { canon_id } else { existing_canon };
+                            let loser = if winner == existing_canon {
+                                canon_id
+                            } else {
+                                existing_canon
+                            };
                             if let Some(loser_class) = self.classes.remove(&loser) {
                                 if let Some(winner_class) = self.classes.get_mut(&winner) {
                                     winner_class.nodes.extend(loser_class.nodes);
@@ -344,8 +350,11 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                         if existing_canon != canon_id {
                             self.pending.push((existing_canon, canon_id));
                             let winner = self.union_find.union(existing_canon, canon_id);
-                            let loser =
-                                if winner == existing_canon { canon_id } else { existing_canon };
+                            let loser = if winner == existing_canon {
+                                canon_id
+                            } else {
+                                existing_canon
+                            };
                             if let Some(loser_class) = self.classes.remove(&loser) {
                                 if let Some(winner_class) = self.classes.get_mut(&winner) {
                                     winner_class.nodes.extend(loser_class.nodes);
