@@ -161,6 +161,12 @@ re-spawns of IDENTICAL delegates; `gated_off` is non-zero exactly on the trigger
 3. **Waste-gate baseline PINNED:** `cast_then_infix_steps` on idx 4 = **149,645**. The P1
    I-commit (enforcement on) must show ≤ 59,858 (≥ 60% drop) on this input, else the residue
    passes to P2/P3 with the diagnostic attribution recorded.
+   **R7-8 Step-0 RE-PIN (2026-06-12, widened memo incl. `CrossCatLhsReentry`):** idx 4 OFF =
+   **149,645 — unchanged** (the +cmp flows' reentry-window work was already attributed under
+   outer tower frames), so the **≤ 59,858 target stands** under the widened predicate. Bare
+   towers gained as expected (idx 3: 96 → 144; idx 5: 856 → 1,284 — EOI unwind under Reentry
+   frames now counted); idx 0/7 unchanged (388/776). The ON arm now measures the same
+   semantic class — the rename-artifact trap is closed.
 
 ### Round-5 red-team + §P1 AMENDMENT (2026-06-11, user-approved)
 

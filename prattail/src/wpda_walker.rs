@@ -6836,6 +6836,16 @@ where
             let under_crosscat_lhs = match self.stats.crosscat_lhs_stack_memo.get(&sid).copied() {
                 Some(cached) => cached,
                 None => {
+                    // R7-8 (Round 7, 2026-06-12): the predicate ALSO
+                    // matches CrossCatLhsReentry — under v3.1's =on the
+                    // consumed arrivals carry Reentry frames (never the
+                    // CrossCatLhs frame they no longer push), so a
+                    // CrossCatLhs-only memo would under-count the ON arm
+                    // and manufacture the waste-gate drop as a RENAME
+                    // ARTIFACT. Both kinds = one semantic class
+                    // (under-a-cast-delegate work); the OFF baseline is
+                    // RE-PINNED under this widened predicate (ledger
+                    // §P1 Step-0 row).
                     let contains = self
                         .incoming_edge_stack_arena
                         .to_vec(sid)
@@ -6844,6 +6854,7 @@ where
                             matches!(
                                 self.gss.edge_kind(*edge_id),
                                 Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                                    | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
                             )
                         });
                     self.stats.crosscat_lhs_stack_memo.insert(sid, contains);
