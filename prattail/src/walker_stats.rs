@@ -593,6 +593,14 @@ pub struct WalkerStats {
     /// (a worker-broadcast revive would have corrupted these members;
     /// the v3 member-tail revive is REQUIRED, not optional).
     pub ep_p1_measure_tail_divergent: u64,
+    /// EP-P1 v3.1 ON: arrivals that consumed a resolved body
+    /// synchronously in place (the flip experiment's effectiveness
+    /// counter — expected ≈ the Measure resolved_hits population).
+    pub ep_p1_consumed_in_place: u64,
+    /// EP-P1 v3.1 ON: park attempts refused by the 16/key cap that
+    /// fell back to Proceed (sound — less sharing only; expected ~0 on
+    /// the corpus: in-flight population 24 across ~4 keys).
+    pub ep_p1_park_overflow_fallbacks: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2268,6 +2276,16 @@ impl fmt::Display for WalkerStats {
                 )?;
             }
         }
+        // EP-P1 v3.1 ON counters (non-zero only under enforcement).
+        {
+            if self.ep_p1_consumed_in_place > 0 || self.ep_p1_park_overflow_fallbacks > 0 {
+                writeln!(
+                    f,
+                    "  ep_p1_on (v3.1): consumed_in_place={}  park_overflow_fallbacks={}",
+                    self.ep_p1_consumed_in_place, self.ep_p1_park_overflow_fallbacks,
+                )?;
+            }
+        }
         Ok(())
     }
 }
@@ -2717,6 +2735,8 @@ mod tests {
             ep_p1_measure_failed_hits: 0,
             ep_p1_measure_first_tail: FxHashMap::default(),
             ep_p1_measure_tail_divergent: 0,
+            ep_p1_consumed_in_place: 0,
+            ep_p1_park_overflow_fallbacks: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

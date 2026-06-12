@@ -120,6 +120,11 @@ enum EpP1Mode {
     /// split (in-flight vs resolved hits) that decides v3's mechanism,
     /// plus the R6-6/B1 first-resolver tail-divergence witness.
     Measure,
+    /// EP-P1 v3.1 ENFORCEMENT (Round-7 converged, 06-p1-sync-consume-
+    /// v3-design.md): synchronous resolved-body consumption + bounded
+    /// in-flight parking. Default stays Off until the L-commit Welch
+    /// acceptance flips it.
+    On,
 }
 
 impl EpP1Mode {
@@ -130,16 +135,7 @@ impl EpP1Mode {
         match std::env::var("PRATTAIL_EP_P1").ok().as_deref() {
             Some("shadow") => EpP1Mode::Shadow,
             Some("measure") => EpP1Mode::Measure,
-            Some("on") => {
-                static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-                WARNED.get_or_init(|| {
-                    eprintln!(
-                        "PRATTAIL_EP_P1=on: enforcement is not yet shipped \
-                         (lands with the v2 parking design); running shadow"
-                    );
-                });
-                EpP1Mode::Shadow
-            },
+            Some("on") => EpP1Mode::On,
             _ => EpP1Mode::Off,
         }
     }
@@ -905,6 +901,31 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// to reconstruct the full DispatchKey. Reset at the parse boundary
     /// (edge ids restart with the GSS).
     crosscat_lhs_wrap: rustc_hash::FxHashMap<crate::gss::GssEdgeId, (u16, u16)>,
+    /// EP-P1 v3.1 quiescence (R7-9 EXACT realization): live body-
+    /// producing lineages per CrossCatLhs key. ++ at every PROCEEDING
+    /// CrossCatLhs push (worker + every Proceed fallback — R7-7);
+    /// decremented ONCE PER EDGE at the pop-resolve (via
+    /// `popped_crosscat_lhs_edges`, killing the fork-above-push sign
+    /// hazard: N sibling pops of one shared edge decrement once). A
+    /// lineage that dies without popping never decrements — the key
+    /// then never quiesces and arrivals park→timeout→Proceed (sound;
+    /// the EOI orphan re-drive covers parked members).
+    crosscat_lhs_live_lineages: rustc_hash::FxHashMap<crate::dispatch_cohort::DispatchKey, u32>,
+    /// EP-P1 v3.1: CrossCatLhs edges whose pop already decremented
+    /// `crosscat_lhs_live_lineages` (decrement-once-per-edge).
+    popped_crosscat_lhs_edges: rustc_hash::FxHashSet<crate::gss::GssEdgeId>,
+    /// EP-P1 v3.1: keys whose parked members are ready to revive at the
+    /// end-of-step drain (inserted at the pop-resolve when the key is
+    /// quiescent and parked members exist). OWN set — never mixed with
+    /// the CrossCatProjection drain (R6-7/R7-11).
+    pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// EP-P1 v3.1 (flip-run fix B): every key that ever parked a
+    /// CrossCatLhs member. The EOI/no-progress backstop force-drains
+    /// these (EOI IS quiescence — no live lineage can produce another
+    /// body), guaranteeing no parked member is silently lost even when
+    /// mid-parse quiescence never fires (e.g. lineages that die
+    /// without popping keep the live count > 0).
+    parked_crosscat_lhs_keys: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -3485,6 +3506,10 @@ where
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
+            popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
+            pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
+            parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3568,6 +3593,10 @@ where
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
+            popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
+            pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
+            parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3650,6 +3679,10 @@ where
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
+            popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
+            pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
+            parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3754,6 +3787,10 @@ where
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
+        self.crosscat_lhs_live_lineages.clear();
+        self.popped_crosscat_lhs_edges.clear();
+        self.pending_crosscat_lhs_drain_keys.clear();
+        self.parked_crosscat_lhs_keys.clear();
         // Cohort-revive-rework M1 (2026-05-29): reset the orphan
         // re-drive counter at the parse boundary so each parse gets a
         // fresh `MAX_REVIVAL_ROUNDS` budget.
@@ -3851,6 +3888,10 @@ where
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
+        self.crosscat_lhs_live_lineages.clear();
+        self.popped_crosscat_lhs_edges.clear();
+        self.pending_crosscat_lhs_drain_keys.clear();
+        self.parked_crosscat_lhs_keys.clear();
         self.recovery_cohort_cache.clear();
         self.chain_earley_cache.clear();
         self.chain_absorbed_intervals.clear();
@@ -7049,8 +7090,153 @@ where
                 // `cursor.node`. Host = the predecessor (pre-push top)
                 // frame's category (R5-7: NEVER the pushed symbol's —
                 // that is the SOURCE).
+                // EP-P1 v3.1 ON (Round-7 converged; 06-p1-sync-consume-
+                // v3-design.md §3): the synchronous-consume / bounded-
+                // park decision, BEFORE any push. Worker / FailedHit /
+                // park-overflow fall through to the normal push
+                // (Proceed); consume and park return early (no push,
+                // zero materialization).
+                if self.ep_p1_mode == EpP1Mode::On {
+                    if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
+                        let __source = *source_src_idx;
+                        let __host = self
+                            .gss
+                            .node(cursor.node)
+                            .map(|n| n.symbol.category_src_idx)
+                            .unwrap_or(u16::MAX);
+                        let __key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                            cursor.pos,
+                            __source,
+                            0,
+                            __host,
+                            u16::MAX,
+                        );
+                        let __quiescent = self
+                            .crosscat_lhs_live_lineages
+                            .get(&__key)
+                            .copied()
+                            .unwrap_or(0)
+                            == 0;
+                        // R7-3: the push weight made explicit — the
+                        // weight the per-cursor flow would have
+                        // multiplied at this push.
+                        let __weight_at_dispatch = cursor.weight.times_ref(&weight);
+                        match self
+                            .dispatch_cohort_cache
+                            .register(__key.clone(), __weight_at_dispatch.clone())
+                        {
+                            crate::dispatch_cohort::RegisterOutcome::WorkerInserted
+                            | crate::dispatch_cohort::RegisterOutcome::FailedHit => {
+                                // Proceed: the worker (or the preserved
+                                // per-cursor failure path). The push
+                                // below opens a body-producing lineage
+                                // (R7-7: EVERY proceeding push counts).
+                                *self
+                                    .crosscat_lhs_live_lineages
+                                    .entry(__key)
+                                    .or_insert(0) += 1;
+                            },
+                            crate::dispatch_cohort::RegisterOutcome::ResolvedHit {
+                                bodies,
+                                ..
+                            } if __quiescent && !bodies.is_empty() => {
+                                // SYNCHRONOUS CONSUME. Weight contract
+                                // (R7-3): cursor.weight becomes
+                                // weight_at_dispatch before the consume
+                                // multiplies the body aggregate.
+                                cursor.weight = __weight_at_dispatch;
+                                crate::stats_inc!(self, ep_p1_consumed_in_place);
+                                if bodies.len() == 1 {
+                                    let b = &bodies[0];
+                                    let (__cat, __ppw) = b
+                                        .worker_snapshots
+                                        .first()
+                                        .map(|sn| {
+                                            (
+                                                sn.worker_last_action_output_cat,
+                                                sn.worker_pending_packing_weight.clone(),
+                                            )
+                                        })
+                                        .unwrap_or((None, W::one_ref()));
+                                    self.consume_crosscat_lhs_body(
+                                        cursor,
+                                        __source,
+                                        b.symbol_id,
+                                        b.hi_pos,
+                                        __cat,
+                                        __ppw,
+                                    );
+                                    // R7-4: the per-cursor arm's outcome.
+                                    return self.cursor_resolution_check(cursor);
+                                }
+                                // Multi-body: one continuation per body
+                                // (T5); ForkInto successors-replace.
+                                let __base = cursor.clone();
+                                let mut __children: Vec<BranchCursor<W>> =
+                                    Vec::with_capacity(bodies.len());
+                                for b in &bodies {
+                                    let mut __child = __base.clone();
+                                    let (__cat, __ppw) = b
+                                        .worker_snapshots
+                                        .first()
+                                        .map(|sn| {
+                                            (
+                                                sn.worker_last_action_output_cat,
+                                                sn.worker_pending_packing_weight.clone(),
+                                            )
+                                        })
+                                        .unwrap_or((None, W::one_ref()));
+                                    self.consume_crosscat_lhs_body(
+                                        &mut __child,
+                                        __source,
+                                        b.symbol_id,
+                                        b.hi_pos,
+                                        __cat,
+                                        __ppw,
+                                    );
+                                    __children.push(__child);
+                                }
+                                if self.deterministic {
+                                    // R7-5: the deterministic ForkInto
+                                    // consumer assumes the emitting arm
+                                    // flipped this (the Fork-arm
+                                    // precedent).
+                                    self.deterministic = false;
+                                }
+                                return CursorOutcome::ForkInto(__children);
+                            },
+                            crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. }
+                            | crate::dispatch_cohort::RegisterOutcome::InflightCollision => {
+                                // In-flight or pre-quiescent arrival:
+                                // PARK (cap-checked; works on InFlight
+                                // AND Resolved entries); overflow →
+                                // Proceed (sound — less sharing only).
+                                let __member = crate::dispatch_cohort::CohortMember {
+                                    member_id: 0,
+                                    return_frame: cursor.clone(),
+                                    weight_at_dispatch: __weight_at_dispatch,
+                                };
+                                if self
+                                    .dispatch_cohort_cache
+                                    .pause_cohort_member(__key.clone(), __member)
+                                {
+                                    // Fix B: remember the key so the EOI
+                                    // backstop can force-drain it even if
+                                    // mid-parse quiescence never fires.
+                                    self.parked_crosscat_lhs_keys.insert(__key);
+                                    return CursorOutcome::Drop;
+                                }
+                                crate::stats_inc!(self, ep_p1_park_overflow_fallbacks);
+                                *self
+                                    .crosscat_lhs_live_lineages
+                                    .entry(__key)
+                                    .or_insert(0) += 1;
+                            },
+                        }
+                    }
+                }
                 let __ep_p1_measure_ccl: Option<(u16, u16)> =
-                    if self.ep_p1_mode == EpP1Mode::Measure {
+                    if matches!(self.ep_p1_mode, EpP1Mode::Measure | EpP1Mode::On) {
                         if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
                             let host_cat = self
                                 .gss
@@ -7079,11 +7265,20 @@ where
                 // (zero behavioral change). The wrap side table is keyed
                 // by the just-pushed edge (the cursor's new top edge).
                 if let Some((__source, __host)) = __ep_p1_measure_ccl {
+                    // The wrap side table feeds the pop-side resolve's
+                    // key reconstruction — required in BOTH Measure and
+                    // On (flip-run root cause: a Measure-only table left
+                    // On's resolve keys mismatched, so entries never
+                    // resolved and every arrival parked/overflowed).
                     if let Some(__eid) =
                         self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id)
                     {
                         self.crosscat_lhs_wrap.insert(__eid, (__host, u16::MAX));
                     }
+                }
+                if let Some((__source, __host)) = __ep_p1_measure_ccl
+                    .filter(|_| self.ep_p1_mode == EpP1Mode::Measure)
+                {
                     let __key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                         __ep_p1_dispatch_pos,
                         __source,
@@ -10330,6 +10525,57 @@ where
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
+        // EP-P1 v3.1 EOI backstop (flip-run fix B; the T6/T7 drain): at
+        // the no-progress fixpoint NO live lineage can produce another
+        // body — EOI IS quiescence — so force-drain every CrossCatLhs
+        // key that ever parked a member. Resolved entries yield their
+        // per-body jobs (consumed per member via the single shared
+        // consume fn); InFlight-parked members yield nothing here and
+        // fall through to the existing InFlight orphan re-injection
+        // below (their return_frame re-launches the dispatch).
+        if self.ep_p1_mode == EpP1Mode::On && !self.parked_crosscat_lhs_keys.is_empty() {
+            let parked_keys: Vec<crate::dispatch_cohort::DispatchKey> =
+                self.parked_crosscat_lhs_keys.drain().collect();
+            let mut injected_consumed = 0usize;
+            for key in parked_keys {
+                for drain_job in self.dispatch_cohort_cache.take_pending_for_drain_all(&key) {
+                    let crate::dispatch_cohort::CohortDrainJob {
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch: _,
+                        snapshots,
+                        members,
+                    } = drain_job;
+                    let (cat, ppw) = snapshots
+                        .first()
+                        .map(|sn| {
+                            (
+                                sn.worker_last_action_output_cat,
+                                sn.worker_pending_packing_weight.clone(),
+                            )
+                        })
+                        .unwrap_or((None, W::one_ref()));
+                    for member in &members {
+                        let mut revived = member.return_frame.clone();
+                        revived.weight = member.weight_at_dispatch.clone();
+                        self.consume_crosscat_lhs_body(
+                            &mut revived,
+                            key.source_src_idx,
+                            symbol_id,
+                            hi_pos,
+                            cat,
+                            ppw.clone(),
+                        );
+                        self.branch_cursors
+                            .push(crate::cohort_lazy::Frame::Concrete(revived));
+                        injected_consumed += 1;
+                    }
+                }
+            }
+            if injected_consumed > 0 {
+                return OrphanRevivalOutcome::Injected(injected_consumed);
+            }
+        }
         // Bounded re-drive: stop reviving once the per-parse budget is
         // exhausted. Benign — the walker parks and resolves normally.
         if self.revival_rounds >= MAX_REVIVAL_ROUNDS {
@@ -11103,6 +11349,55 @@ where
                             job.wrap_cat,
                             job.wrap_rule,
                             &job.snap,
+                        );
+                        new_cursors.push(crate::cohort_lazy::Frame::Concrete(revived));
+                    }
+                }
+            }
+        }
+        // EP-P1 v3.1 drain (06 §4; R6-4/R7-11): revive CrossCatLhs-
+        // parked members at quiescence — OWN set; ONE revive per
+        // (body-job, member); NO ×snapshot axis (the consume is
+        // snapshot-independent — snapshots only supply the two
+        // body-owned data fields). Pushed into the SAME new_cursors the
+        // projection drain feeds (pre-replacement) so prune+merge see
+        // them like every other revived cursor. Empty on cast-free
+        // inputs → byte-identical hot path.
+        if self.ep_p1_mode == EpP1Mode::On
+            && !self.pending_crosscat_lhs_drain_keys.is_empty()
+        {
+            let ccl_keys = std::mem::take(&mut self.pending_crosscat_lhs_drain_keys);
+            for key in ccl_keys {
+                for drain_job in self.dispatch_cohort_cache.take_pending_for_drain_all(&key) {
+                    let crate::dispatch_cohort::CohortDrainJob {
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch: _,
+                        snapshots,
+                        members,
+                    } = drain_job;
+                    let (cat, ppw) = snapshots
+                        .first()
+                        .map(|sn| {
+                            (
+                                sn.worker_last_action_output_cat,
+                                sn.worker_pending_packing_weight.clone(),
+                            )
+                        })
+                        .unwrap_or((None, W::one_ref()));
+                    for member in &members {
+                        let mut revived = member.return_frame.clone();
+                        // Weight contract (R7-3): the member's
+                        // weight_at_dispatch already includes its push
+                        // weight (captured at park time).
+                        revived.weight = member.weight_at_dispatch.clone();
+                        self.consume_crosscat_lhs_body(
+                            &mut revived,
+                            key.source_src_idx,
+                            symbol_id,
+                            hi_pos,
+                            cat,
+                            ppw.clone(),
                         );
                         new_cursors.push(crate::cohort_lazy::Frame::Concrete(revived));
                     }
@@ -14598,6 +14893,88 @@ where
     /// that records a specific `EdgeKind` on the new edge. Default
     /// `cursor_gss_push` uses the default `EdgeKind::Generic`.
     #[inline(always)]
+    /// EP-P1 v3.1 (Round-7 converged; 06-p1-sync-consume-v3-design.md
+    /// §1): apply one resolved source body to a cursor sitting AT its
+    /// CrossCatLhs dispatch decision (the pre-push configuration).
+    /// Realizes the amended CrossCatLhsParking.v member_tail_config as
+    /// a FUNCTION (T2): the final state is InfixLoop (constant —
+    /// final_state_constant); the member-varying axis is the REENTRY
+    /// bit; nothing of the worker's CONTROL state is read (T3) — the
+    /// two DATA fields the body's sub-parse owns are supplied from the
+    /// worker snapshot (R7-1 last_action_output_cat / R7-2
+    /// pending_packing_weight).
+    ///
+    /// WEIGHT CONTRACT (R7-3, explicit at the CALLER): on entry
+    /// `cursor.weight` MUST already be `weight_at_dispatch` — the
+    /// in-place consumer pre-multiplies the push weight
+    /// (`cursor.weight ⊗ push_w`); the drain consumer sets
+    /// `cursor.weight = member.weight_at_dispatch`. This function
+    /// multiplies ONLY the body aggregate (`⊗ symbol_weight_sum`),
+    /// exactly like the proven projection revive.
+    ///
+    /// TAIL FIDELITY: mirrors apply_pop_body_to_cursor's
+    /// effective_new_state table + reentry block verbatim (the
+    /// GroupingClosePreservingInner preserve-arm is unreachable for
+    /// CrossCatLhs CategoryEntry pops — Round-7 critic A verified GCPI
+    /// is emitted only on the paren-close GroupingMarker path — so the
+    /// GroupingMarker arm maps to Unwinding unconditionally here).
+    /// NO dstrings_resync (that block is Return-pop-gated and never
+    /// runs at a CrossCatLhs pop — R7-1's finding; the LATER Return
+    /// pop reads the last_action_output_cat set here).
+    fn consume_crosscat_lhs_body(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        source_src_idx: u16,
+        symbol_id: crate::sppf::SppfId,
+        hi_pos: usize,
+        worker_last_action_output_cat: Option<u16>,
+        worker_pending_packing_weight: W,
+    ) {
+        // (1) weight: weight_at_dispatch (pre-set by the caller) ⊗ the
+        //     body aggregate.
+        let body_w = self.sppf.symbol_weight_sum(symbol_id);
+        cursor.weight = cursor.weight.times_ref(&body_w);
+        // (2) the body onto the cursor's OWN sppf stack; position to hi.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, symbol_id);
+        cursor.pos = hi_pos;
+        // (3) the body-owned data fields (R7-1/R7-2).
+        cursor.last_action_output_cat = worker_last_action_output_cat;
+        cursor.pending_packing_weight = worker_pending_packing_weight;
+        // (4) the member tail from the cursor's OWN node (== the pred
+        //     the per-cursor pop would have seen; the cursor is
+        //     pre-push so cursor.node IS pred_id).
+        let pred = cursor.node;
+        let effective = match self.gss.node(pred).map(|n| n.symbol.kind) {
+            Some(SymbolKind::CategoryEntry) => WpdaState::InfixLoop { cur_bp: 0 },
+            Some(SymbolKind::GroupingMarker) => WpdaState::Unwinding,
+            Some(_) => WpdaState::Unwinding,
+            None if pred == crate::gss::GSS_NODE_NONE => WpdaState::InfixLoop { cur_bp: 0 },
+            None => WpdaState::Unwinding,
+        };
+        let reentry_fires = pred != crate::gss::GSS_NODE_NONE
+            && matches!(
+                effective,
+                WpdaState::InfixLoop { .. } | WpdaState::Unwinding
+            );
+        if reentry_fires {
+            // The reentry (mirrors the pop path verbatim):
+            // category_entry(source) at the body end, weight one,
+            // identity-strict CrossCatLhsReentry edge, InfixLoop{0}.
+            let source_entry = StackSymbolV2::category_entry(source_src_idx);
+            let _ = self.cursor_gss_push_with_kind(
+                cursor,
+                source_entry,
+                cursor.pos,
+                W::one_ref(),
+                crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx },
+            );
+            self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: 0 });
+        } else {
+            self.set_cursor_inner_state(cursor, effective);
+        }
+    }
+
     fn cursor_gss_push_with_kind(
         &mut self,
         cursor: &mut BranchCursor<W>,
@@ -16644,10 +17021,47 @@ where
         // splice-skip preserves it through CrossCatLhs pops). Measure
         // mode records the resolution + the R6-6/B1 tail-divergence
         // witness and NEVER schedules a drain.
-        if self.ep_p1_mode == EpP1Mode::Measure {
+        if matches!(self.ep_p1_mode, EpP1Mode::Measure | EpP1Mode::On) {
             if let (Some(eid), Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx })) =
                 (edge_id, popped_edge_kind.clone())
             {
+                // EP-P1 v3.1 quiescence bookkeeping (06 §2; R7-9 +
+                // flip-run fix): the lineage ends on its FIRST pop of
+                // this edge REGARDLESS of body validity (an
+                // invalid-body pop still closes the producer), so the
+                // decrement lives OUTSIDE the symbol-cat guard below.
+                // Decrement-once-per-edge kills the fork-above-push
+                // sign hazard (N sibling pops of one shared edge
+                // decrement once). At quiescence schedule the drain (a
+                // no-op when nothing is parked).
+                if self.ep_p1_mode == EpP1Mode::On
+                    && self.popped_crosscat_lhs_edges.insert(eid)
+                {
+                    let host_for_key = self
+                        .crosscat_lhs_wrap
+                        .get(&eid)
+                        .copied()
+                        .map(|(h, _)| h)
+                        .unwrap_or(u16::MAX);
+                    if let Some(node) = self.gss.node(cursor.node) {
+                        let quiesce_key =
+                            crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                                node.pos,
+                                source_src_idx,
+                                0,
+                                host_for_key,
+                                u16::MAX,
+                            );
+                        if let Some(n) =
+                            self.crosscat_lhs_live_lineages.get_mut(&quiesce_key)
+                        {
+                            *n = n.saturating_sub(1);
+                            if *n == 0 {
+                                self.pending_crosscat_lhs_drain_keys.insert(quiesce_key);
+                            }
+                        }
+                    }
+                }
                 if let Some(node) = self.gss.node(cursor.node) {
                     let dispatch_pos = node.pos;
                     if let Some(symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
@@ -16684,12 +17098,13 @@ where
                                 worker_pre_dispatch_weight: worker_pre,
                             };
                             let _outcome = self.dispatch_cohort_cache.resolve(
-                                key,
+                                key.clone(),
                                 symbol_id,
                                 cursor.pos,
                                 dispatch_pos,
                                 snap,
                             );
+
                             // R6-6/B1: the first-resolver tail map — each
                             // same-key resolver computes ITS OWN member
                             // tail (the model's effective_state +
