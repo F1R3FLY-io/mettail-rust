@@ -1633,6 +1633,106 @@ Theorem orphan_revival_budget_exceeded_preserves_unresolved_evidence :
     actual_orphans.
 Proof. reflexivity. Qed.
 
+(* ── Budget-divergence fix (2026-06-12) ──────────────────────────────── *)
+(*                                                                         *)
+(* The InFlight-orphan re-injection is a RECOVERY heuristic: it re-drives  *)
+(* never-resolved parked members on the hypothesis that one of them        *)
+(* carries the accepting parse the live frontier LACKS. When the live      *)
+(* frontier already holds an accepting configuration                       *)
+(* (`parse_already_succeeds = true`), that hypothesis is false and revival  *)
+(* is suppressed (returns Idle) — it cannot change a result an accept       *)
+(* already determines, and under EP-P1 On its re-parking amplifies the     *)
+(* InFlight backlog past the frontier budget, converting an available       *)
+(* parse into a (spurious) AmbiguityBudget error. This model captures the   *)
+(* implemented guard:                                                       *)
+(*                                                                          *)
+(*   if parse_already_succeeds then Idle                                    *)
+(*   else bounded_orphan_revival budget actual_orphans                      *)
+(*                                                                          *)
+(* The companion no-accept path (`parse_already_succeeds = false`) is       *)
+(* IDENTICAL to the unguarded `bounded_orphan_revival` — the genuine        *)
+(* over-budget recovery contract (OrphanRevivalBudgetExceeded) is           *)
+(* preserved exactly. Contrast with `old_acceptance_guarded_orphan_revival` *)
+(* above, which reported BudgetExceeded ONLY when a parse already           *)
+(* succeeded — the artifact the two-mode (Off/On) observational-identity    *)
+(* requirement falsifies (whether the gate trips at all depends on the      *)
+(* parking amplification rate, which differs between Off and On on the      *)
+(* same input).                                                             *)
+Definition accept_skipped_orphan_revival
+    (budget actual_orphans : nat)
+    (parse_already_succeeds : bool) : orphan_revival_result :=
+  if parse_already_succeeds
+  then OrphanRevivalIdle
+  else bounded_orphan_revival budget actual_orphans.
+
+(* With a live accept, revival is skipped (Idle) regardless of how far the  *)
+(* orphan count exceeds the budget — no spurious BudgetExceeded.            *)
+Theorem accept_skipped_orphan_revival_skips_when_accept_present :
+  forall budget actual_orphans,
+    accept_skipped_orphan_revival budget actual_orphans true =
+      OrphanRevivalIdle.
+Proof. reflexivity. Qed.
+
+(* The specific regression shape (256 < 257) — with an accept present, the   *)
+(* NEW guard yields Idle where the unguarded gate yields BudgetExceeded.     *)
+Theorem accept_skipped_orphan_revival_no_overflow_over_budget_with_accept :
+  accept_skipped_orphan_revival 256 257 true = OrphanRevivalIdle.
+Proof. reflexivity. Qed.
+
+(* A skip neither accepts on its own nor reports unresolved evidence in the  *)
+(* result: the live accepting cursor is committed by the unchanged EOI       *)
+(* resolution path, and the parked orphans are left untouched in the cache   *)
+(* (Invariant 1 — report/commit, never silently drain). *)
+Theorem accept_skipped_orphan_revival_idle_is_not_acceptance :
+  forall budget actual_orphans,
+    orphan_revival_accepts
+      (accept_skipped_orphan_revival budget actual_orphans true) = false.
+Proof. reflexivity. Qed.
+
+Theorem accept_skipped_orphan_revival_idle_reports_no_evidence :
+  forall budget actual_orphans,
+    orphan_revival_remaining_evidence actual_orphans
+      (accept_skipped_orphan_revival budget actual_orphans true) = 0.
+Proof. reflexivity. Qed.
+
+(* The genuine-recovery path (no live accept) is byte-for-byte the unguarded *)
+(* gate — the over-budget BudgetExceeded contract is fully preserved. *)
+Theorem accept_skipped_orphan_revival_no_accept_matches_unguarded :
+  forall budget actual_orphans,
+    accept_skipped_orphan_revival budget actual_orphans false =
+      bounded_orphan_revival budget actual_orphans.
+Proof. reflexivity. Qed.
+
+Theorem accept_skipped_orphan_revival_no_accept_overflow_reports_budget :
+  forall budget actual_orphans,
+    budget < actual_orphans ->
+    accept_skipped_orphan_revival budget actual_orphans false =
+      OrphanRevivalBudgetExceeded budget actual_orphans.
+Proof.
+  intros budget actual_orphans Hlt.
+  unfold accept_skipped_orphan_revival.
+  apply orphan_revival_overflow_reports_budget.
+  exact Hlt.
+Qed.
+
+(* The behavioral divergence localized: the NEW guard and the unguarded gate *)
+(* differ EXACTLY on the over-budget + accept-present cell (Idle vs           *)
+(* BudgetExceeded); everywhere else they agree. This is the precise locus of  *)
+(* the fix. *)
+Theorem accept_skipped_vs_unguarded_differ_only_over_budget_with_accept :
+  forall budget actual_orphans,
+    budget < actual_orphans ->
+    accept_skipped_orphan_revival budget actual_orphans true =
+      OrphanRevivalIdle /\
+    bounded_orphan_revival budget actual_orphans =
+      OrphanRevivalBudgetExceeded budget actual_orphans.
+Proof.
+  intros budget actual_orphans Hlt.
+  split.
+  - apply accept_skipped_orphan_revival_skips_when_accept_present.
+  - apply orphan_revival_overflow_reports_budget. exact Hlt.
+Qed.
+
 Inductive cohort_cache_cap_result : Type :=
   | CohortCacheWithinCap
   | CohortCacheBudgetExceeded (budget actual : nat).

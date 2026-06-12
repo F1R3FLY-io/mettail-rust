@@ -10637,6 +10637,23 @@ where
     /// `Ambiguous` alternate; an already-covered one merges (no
     /// double-count). The `-3!` ladder / `wpda_parity_*` /
     /// `h3_chain_correctness` invariants are preserved.
+    /// True iff at least one LIVE concrete frontier cursor is an accepting
+    /// configuration at EOI (`is_accepting_config`). Used to suppress the
+    /// InFlight-orphan re-injection recovery (below): that recovery exists to
+    /// surface an accept when NONE is live; when one is already present, the
+    /// stranded InFlight members cannot be the sole source of an accept, so
+    /// re-driving them is pure (and — under EP-P1 On — actively harmful)
+    /// churn. Cohort frames are skipped: a `Frame::Cohort` is a lazy
+    /// compression of parked members whose worker has not resolved, so it is
+    /// never itself an EOI accept (consistent with `eoi_resolution_snapshot`,
+    /// which only reads accepts from concrete cursors).
+    fn live_frontier_has_accepting_config(&self, tokens: &dyn WpdaTokenSource) -> bool {
+        self.branch_cursors.iter().any(|frame| match frame {
+            crate::cohort_lazy::Frame::Concrete(c) => self.is_accepting_config(c, tokens),
+            crate::cohort_lazy::Frame::Cohort(_) => false,
+        })
+    }
+
     fn revive_orphaned_cohort_members_once(
         &mut self,
         _tokens: &dyn WpdaTokenSource,
@@ -10700,6 +10717,40 @@ where
                 return OrphanRevivalOutcome::Injected(injected_consumed);
             }
         }
+        // Budget-divergence fix (2026-06-12): the InFlight-orphan re-injection
+        // below is a RECOVERY heuristic — it re-drives members stranded behind
+        // never-resolving workers on the hypothesis that one of them carries
+        // THE accepting parse the live frontier lacks. When the live frontier
+        // ALREADY holds an accepting configuration, that hypothesis is false:
+        // an accept is present, so the stranded members cannot be its sole
+        // source. Re-driving them is then pure churn — and under EP-P1 On it is
+        // actively harmful: each round re-parks the re-injected cursors into
+        // InFlight entries faster than they drain (the EP-P1 park-at-every-
+        // collision rate), AMPLIFYING `revivable_inflight_member_count()` round
+        // over round until it crosses ORPHAN_REVIVAL_FRONTIER_BUDGET and aborts
+        // the parse whose accept was already committable. (Empirically on
+        // `int(..) ^ int(c) ? .. : int(..)`: the SAME accepting SPPF root is
+        // live at every fixpoint round in BOTH modes; Off's slower amplification
+        // stays < budget through the round cap and commits it, On's crosses the
+        // budget on round 2 and errors.) Suppressing revival when an accept is
+        // live makes the outcome the accepting commit in BOTH modes — the Off
+        // result, reached without the spurious rounds. Genuine-recovery inputs
+        // (no live accept; the accept is ONLY inside a parked member) are
+        // unaffected: this guard does not fire for them. NOT a prune (Invariant
+        // 1): the full live accepting set is committed by the unchanged
+        // `resolve_at_end_of_input` lex-min path; the suppressed members are
+        // un-driven potential-parses the budget gate was going to discard anyway
+        // (it never drains them — it only errors). The Resolved-body EOI drain
+        // above ALREADY ran before this point, so alternates whose bodies
+        // RESOLVED are surfaced as live accepting cursors and preserved; only
+        // the never-resolved InFlight re-drive is skipped. Placed BEFORE the
+        // `ep_p1_eoi_release` engage so the uniform-Proceed prep (which exists
+        // solely for the re-drive below) is not engaged when the re-drive is
+        // skipped.
+        if self.live_frontier_has_accepting_config(_tokens) {
+            crate::stats_inc!(self, dbg_ccl_accept_present_skip);
+            return OrphanRevivalOutcome::Idle;
+        }
         // EP-P1 v3.1 led_chain root fix (2026-06-12): we are at the
         // terminal fixpoint. Any CrossCatLhs member still parked on an
         // InFlight key is stranded — its worker died without resolving
@@ -10730,6 +10781,28 @@ where
         {
             self.stats.dbg_ccl_m1_orphan_count =
                 self.stats.dbg_ccl_m1_orphan_count.max(orphan_count as u64);
+        }
+        // BUDGET-DIVERGENCE PROBE (observation-only; walker-stats + env gated;
+        // NO behavior change): per-M1-round census of the InFlight backlog. With
+        // the accept-present guard above, this is now reached ONLY when no
+        // accept is live (the genuine-recovery path).
+        #[cfg(feature = "walker-stats")]
+        {
+            if std::env::var_os("BUDGET_DIVERGENCE_PROBE").is_some() {
+                let (inflight_keys, inflight_with, resolved_keys, resolved_with) =
+                    self.dispatch_cohort_cache.dbg_entry_state_census();
+                eprintln!(
+                    "[BD-PROBE] M1 round={} orphan_count={} pos={} | inflight_keys={} (with_members={}) resolved_keys={} (with_members={}) | live_frontier={} (no live accept — genuine recovery)",
+                    self.revival_rounds,
+                    orphan_count,
+                    self.pos,
+                    inflight_keys,
+                    inflight_with,
+                    resolved_keys,
+                    resolved_with,
+                    self.logical_frontier_len(),
+                );
+            }
         }
         if orphan_count == 0 {
             return OrphanRevivalOutcome::Idle;
@@ -20125,8 +20198,31 @@ mod tests {
         assert_eq!(weights, vec![lex(1.0, 0, 0), lex(2.0, 0, 0)]);
     }
 
+    /// Budget-divergence fix (2026-06-12): when an accepting configuration is
+    /// ALREADY live, the InFlight-orphan re-injection (and its frontier-budget
+    /// gate) is SUPPRESSED — revival is a recovery heuristic for when NO accept
+    /// exists, and re-driving never-resolved orphans cannot change a result an
+    /// accept already determines.
+    ///
+    /// This test previously pinned the OPPOSITE — that over-budget revival
+    /// reports `BudgetExceeded` even with an accept present (commit 44702709,
+    /// "overflow is unresolved evidence whether or not another accepting cursor
+    /// is already available"). That contract was an artifact, not a sound
+    /// disambiguation rule: the over-budget path NEVER drains the orphans (so it
+    /// surfaces no alternate either way), and whether the gate trips at all
+    /// depends on the InFlight-parking amplification RATE — which differs
+    /// between EP-P1 Off and On on the SAME input (the cast-then-ternary
+    /// `int(..) ^ int(c) ? .. : int(..)` regression: Off stays under budget and
+    /// commits the parse, On amplifies past it and errors). A correctness
+    /// contract cannot hinge on an artifact that makes two
+    /// observationally-identical modes diverge. The principled outcome is the
+    /// same in both: with a live accept, commit it (Off already did; this makes
+    /// On agree). The companion test
+    /// `orphan_revival_over_budget_reports_before_accepting_cursor_exists`
+    /// (NO live accept — the genuine recovery path) is unchanged and still
+    /// reports `BudgetExceeded`.
     #[test]
-    fn orphan_revival_over_budget_reports_unresolved_evidence_without_draining() {
+    fn orphan_revival_with_live_accept_skips_revival_without_draining() {
         let tokens = [TokenKind::Integer, TokenKind::Eof];
         let texts = ["42", ""];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
@@ -20148,22 +20244,26 @@ mod tests {
         walker.pos = 1;
         seed_revivable_orphans(&mut walker, 257);
 
+        // An accept is live, so revival is skipped (Idle) rather than reporting
+        // a (spurious) frontier-budget overflow.
         match walker.revive_orphaned_cohort_members_once(&token_src) {
-            OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
-                assert_eq!(budget, 256);
-                assert_eq!(actual, 257);
-                assert_eq!(position, 1);
-            },
-            other => panic!("expected orphan revival budget overflow, got {other:?}"),
+            OrphanRevivalOutcome::Idle => {},
+            other => panic!("expected Idle (accept present -> revival skipped), got {other:?}"),
         }
+        // Invariant 1 preserved: nothing is drained or materialized — the
+        // orphans remain exactly as seeded, the live frontier is unchanged.
         assert_eq!(
             walker
                 .dispatch_cohort_cache
                 .revivable_inflight_member_count(),
             257,
-            "over-budget revival must report unresolved evidence without draining it"
+            "accept-present skip must not drain the parked orphan evidence"
         );
-        assert_eq!(walker.branch_cursors.len(), 1);
+        assert_eq!(
+            walker.branch_cursors.len(),
+            1,
+            "accept-present skip must not materialize orphan cursors"
+        );
     }
 
     #[test]

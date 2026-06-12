@@ -645,6 +645,10 @@ pub struct WalkerStats {
     /// Mid-parse dead-worker release: members re-injected because their
     /// CrossCatLhs worker died (no live body-producing lineage).
     pub dbg_ccl_dead_worker_released: u64,
+    /// EOI: times the InFlight-orphan re-injection was SKIPPED because the
+    /// live frontier already held an accepting configuration (the
+    /// budget-divergence fix; recovery is unnecessary when an accept exists).
+    pub dbg_ccl_accept_present_skip: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2361,7 +2365,7 @@ impl fmt::Display for WalkerStats {
                 )?;
                 writeln!(
                     f,
-                    "  DBG-CCL M1 reached={} orphan_count={} injected={} rounds_capped={} eoi_release_set={} stale_proceed={} dead_released={}",
+                    "  DBG-CCL M1 reached={} orphan_count={} injected={} rounds_capped={} eoi_release_set={} stale_proceed={} dead_released={} accept_present_skip={}",
                     self.dbg_ccl_m1_reached,
                     self.dbg_ccl_m1_orphan_count,
                     self.dbg_ccl_m1_injected,
@@ -2369,6 +2373,7 @@ impl fmt::Display for WalkerStats {
                     self.dbg_ccl_eoi_release_set,
                     self.dbg_ccl_stale_proceed,
                     self.dbg_ccl_dead_worker_released,
+                    self.dbg_ccl_accept_present_skip,
                 )?;
                 let mut keys: Vec<_> = self.dbg_ccl_reg_by_key.iter().collect();
                 keys.sort_by_key(|(k, _)| **k);
@@ -2854,6 +2859,7 @@ mod tests {
             dbg_ccl_eoi_release_set: 0,
             dbg_ccl_stale_proceed: 0,
             dbg_ccl_dead_worker_released: 0,
+            dbg_ccl_accept_present_skip: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
