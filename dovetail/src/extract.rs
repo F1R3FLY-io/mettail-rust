@@ -52,12 +52,19 @@ impl<W: Semiring + Ord> BestOrder for W {
     }
 }
 
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for rigail::TropicalWeight {}
+    impl Sealed for rigail::LexicographicWeight {}
+}
+
 /// Marker for weights whose `times` is monotone with respect to [`BestOrder`].
 ///
 /// The lazy frontier proof depends on this property: increasing a child rank must
 /// not produce a strictly better parent candidate. Implement this only for weight
 /// types whose algebra has been checked against the extractor's ordering.
-pub trait MonotoneBestOrder: BestOrder {}
+pub trait MonotoneBestOrder: BestOrder + sealed::Sealed {}
 
 impl MonotoneBestOrder for rigail::TropicalWeight {}
 impl MonotoneBestOrder for rigail::LexicographicWeight {}
@@ -80,10 +87,23 @@ pub struct Extraction<T> {
     pub completeness: ExtractionCompleteness,
 }
 
+/// Backward-compatible spelling for checked extraction results.
+pub type ExtractionResult<T> = Extraction<T>;
+
 impl<T> Extraction<T> {
     fn new(value: T, completeness: ExtractionCompleteness) -> Self {
         Extraction { value, completeness }
     }
+}
+
+/// One checked step from a lazy derivation stream.
+#[must_use = "the terminal step carries completeness; handle `Done` before treating the stream as exhaustive"]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtractionStep<T> {
+    /// A concrete derivation is available.
+    Item(T),
+    /// The stream is exhausted under this completeness status.
+    Done(ExtractionCompleteness),
 }
 
 /// A fully-chosen derivation tree of an e-class: the root operator, the chosen
@@ -325,8 +345,8 @@ where
 
     /// A lazy, best-first derivation stream over `root`.
     ///
-    /// Use [`Derivations::collect_checked`] when the caller needs a vector and a
-    /// checked completeness status.
+    /// Use [`Derivations::next_checked`] or [`Derivations::collect_checked`] so
+    /// the terminal completeness status is observed.
     pub fn derivations(&mut self, root: EClassId) -> Derivations<'_, 'g, L, W, F> {
         Derivations {
             extractor: self,
@@ -420,8 +440,8 @@ where
     }
 }
 
-/// Lazy derivation stream with an explicit checked collection method.
-#[must_use = "derivation streams carry terminal completeness; call `collect_checked` or inspect the extractor status"]
+/// Lazy derivation stream with explicit checked stepping.
+#[must_use = "derivation streams carry terminal completeness; call `next_checked` or `collect_checked`"]
 pub struct Derivations<'a, 'g, L, W, F>
 where
     L: Clone + Eq + std::hash::Hash + SemanticHash,
@@ -440,35 +460,33 @@ where
     W: MonotoneBestOrder,
     F: Fn(&ENode<L>) -> W,
 {
+    /// Return the next stream item or the terminal completeness status.
+    pub fn next_checked(&mut self) -> ExtractionStep<Rc<Derivation<L, W>>> {
+        if self.done {
+            return ExtractionStep::Done(self.extractor.completeness());
+        }
+        match self.extractor.kth_raw(self.root, self.next_k) {
+            Some(derivation) => {
+                self.next_k += 1;
+                ExtractionStep::Item(derivation)
+            },
+            None => {
+                self.done = true;
+                ExtractionStep::Done(self.extractor.completeness())
+            },
+        }
+    }
+
     /// Collect every derivation reachable under this stream and return the
     /// terminal completeness status alongside the vector.
     pub fn collect_checked(mut self) -> Extraction<Vec<Rc<Derivation<L, W>>>> {
         let mut value = Vec::new();
-        for derivation in self.by_ref() {
-            value.push(derivation);
+        loop {
+            match self.next_checked() {
+                ExtractionStep::Item(derivation) => value.push(derivation),
+                ExtractionStep::Done(completeness) => return Extraction::new(value, completeness),
+            }
         }
-        Extraction::new(value, self.extractor.completeness())
-    }
-}
-
-impl<'a, 'g, L, W, F> Iterator for Derivations<'a, 'g, L, W, F>
-where
-    L: Clone + Eq + std::hash::Hash + SemanticHash,
-    W: MonotoneBestOrder,
-    F: Fn(&ENode<L>) -> W,
-{
-    type Item = Rc<Derivation<L, W>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-        let d = self.extractor.kth_raw(self.root, self.next_k);
-        self.next_k += 1;
-        if d.is_none() {
-            self.done = true;
-        }
-        d
     }
 }
 
@@ -512,6 +530,27 @@ mod tests {
         let all = ex2.derivations(l).collect_checked();
         assert_eq!(all.completeness, ExtractionCompleteness::Complete);
         assert_eq!(all.value.len(), 1);
+    }
+
+    #[test]
+    fn checked_stream_reports_terminal_completeness() {
+        let mut eg = EGraph::<String>::new();
+        let l = eg.add(ENode::leaf("b".into()));
+        let mut ex = Extractor::new(&eg, weigh);
+        let mut stream = ex.derivations(l);
+
+        match stream.next_checked() {
+            ExtractionStep::Item(d) => assert_eq!(prim(d.weight), 3.0),
+            ExtractionStep::Done(status) => panic!("unexpected terminal status {status:?}"),
+        }
+        assert!(matches!(
+            stream.next_checked(),
+            ExtractionStep::Done(ExtractionCompleteness::Complete)
+        ));
+        assert!(
+            matches!(stream.next_checked(), ExtractionStep::Done(ExtractionCompleteness::Complete)),
+            "terminal status remains available after exhaustion"
+        );
     }
 
     #[test]

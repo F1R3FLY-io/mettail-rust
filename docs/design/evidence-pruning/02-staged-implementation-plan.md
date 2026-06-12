@@ -580,12 +580,13 @@ distinctive class — include those probes.
 
 ## P6a — Dovetail engine (saturation + extraction): explicit stages and non-goals
 
-Ground truth: the extractor (`dovetail/src/extract.rs`) already ships Huang–Chiang exact lazy k-best
-(`kth` :188) with an **admissible 0̄-inside reachability skip** (`with_heuristic` :171, backed by
+Ground truth: the extractor (`dovetail/src/extract.rs`) already ships Huang–Chiang exact lazy
+k-best with an **admissible 0̄-inside reachability skip** (`with_heuristic`, backed by
 `compute_inside_closed`/Newton-SCC — proofs `NBestExtraction.v`, `EnumerationCompleteness.v`,
-`InsideWeightSccClosure.v`). That IS this program's Stage-C analog, already done. Saturation
-(`dovetail/src/rules.rs`) already reports budget overflow (`node_limit_reached`,
-`ExactKeyDedup.v`) and prunes nothing.
+`LazyFrontierOrder.v`, `OrderPreservingFraming.v`, `ExtractionOutcome.v`, and
+`InsideWeightSccClosure.v`). That IS this program's Stage-C analog, already done.
+Saturation (`dovetail/src/rules.rs`) reports `Converged`, `NodeLimit`, or `IterationLimit`
+explicitly (`DovetailSaturation.v`) and prunes nothing.
 
 - **DV-0 (probe, 1 commit):** counters `enodes_added_total` vs `enodes_in_extracted_derivations`
   (mark during extraction over the rhocalc eval corpus) + saturation share of eval wall-time.

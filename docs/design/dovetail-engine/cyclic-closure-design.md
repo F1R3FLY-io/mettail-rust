@@ -15,7 +15,13 @@
 out-of-SCC child factors into `outside_product`, which preserves the source recurrence only
 when `⊗` commutes. Today only `TropicalWeight` implements this marker. `LexicographicWeight`
 can still be extracted without the heuristic, but it must not use cyclic Newton closure until
-its multiplication is proved commutative for the intended semantics. `max_iters = 64`
+its multiplication is proved commutative for the intended semantics. The marker is sealed in
+Rust so downstream crates cannot opt into cyclic closure without adding the corresponding
+Dovetail proof/test obligation. Closed cyclic tropical weights are also validated before
+Newton where star closure is actually applied: every recursive cyclic transition product
+must be semiring zero or finite non-negative; negative and NaN recursive transition weights
+are rejected because they fall outside the closed-weight domain used by the proof and solver.
+Acyclic/exit alternatives may still carry negative tropical weights. `max_iters = 64`
 (matches prattail; idempotent semirings converge in O(scc_size)).
 
 ## scc.rs (NEW, crate-private) — deterministic iterative Tarjan
@@ -77,6 +83,8 @@ increment."
 - **D (extract):** heuristic invariance on a cyclic graph (plain vs `with_heuristic`
   identical stream).
 - **E (scc):** Tarjan SCC partition reproducible across two builds (determinism).
+- **F (wta):** closed cyclic tropical closure allows negative acyclic exits but rejects
+  negative and NaN recursive transition weights.
 
 ## FV obligation (implemented; zero-admission)
 Record in a `wta.rs` doc block: the SCC→`PackingFactored` lowering is a syntactic
@@ -88,7 +96,7 @@ exact `⊕`-aggregate. The lowering-equivalence lemma is the one dovetail-specif
 obligation and is proven in
 `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`.
 The commutativity precondition from that proof is enforced in Rust by
-`CommutativeStarSemiring`, not left as a caller-side comment.
+sealed `CommutativeStarSemiring`, not left as a caller-side comment.
 
 ## Files
 Implemented in `dovetail/src/scc.rs`, `dovetail/src/wta.rs`, and

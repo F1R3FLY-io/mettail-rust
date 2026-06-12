@@ -135,6 +135,13 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         }
     }
 
+    fn rhs_vars_bound(pattern: &Pattern<L>, subst: &Subst) -> bool {
+        match pattern {
+            Pattern::Var(name) => subst.contains_key(name),
+            Pattern::App { args, .. } => args.iter().all(|arg| Self::rhs_vars_bound(arg, subst)),
+        }
+    }
+
     /// Instantiate a RHS pattern under a substitution, adding nodes within the
     /// node budget. Returns `None` if a variable is unbound (ill-formed rule) or
     /// the budget refused a fresh node (then `node_limit_reached()` is set).
@@ -164,6 +171,11 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                 let mut rule_merges = 0usize;
                 let mut budget_hit = false;
                 for (root, subst) in matches {
+                    if !Self::rhs_vars_bound(&rule.rhs, &subst) {
+                        // Ill-formed rule for this match: reject before adding
+                        // any partial RHS nodes.
+                        continue;
+                    }
                     if let Some(rhs_id) = self.instantiate(&rule.rhs, &subst) {
                         if self.find(root) != self.find(rhs_id) {
                             self.merge(root, rhs_id);
@@ -173,7 +185,8 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                         budget_hit = true;
                         break;
                     }
-                    // else: ill-formed rule (unbound RHS var) — skip this match.
+                    // else: a budgeted add refused a fresh node without setting
+                    // the sticky flag; skip defensively.
                 }
                 if rule_merges > 0 {
                     self.rebuild();
@@ -533,5 +546,33 @@ mod tests {
         assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
         assert_eq!(rep.stats.iterations, 1);
         assert!(rep.stats.total_merges > 0);
+    }
+
+    #[test]
+    fn unbound_rhs_variable_does_not_leave_partial_nodes() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let _fa = eg.add(ENode::new("f".into(), vec![a]));
+        let before = eg.node_count();
+        let rule = RewriteRule {
+            lhs: Pattern::app("f".to_string(), vec![Pattern::var("x")]),
+            rhs: Pattern::app(
+                "pair".to_string(),
+                vec![
+                    Pattern::app("g".to_string(), vec![Pattern::var("x")]),
+                    Pattern::var("missing"),
+                ],
+            ),
+            label: Some("ill_formed_rhs".into()),
+        };
+
+        let rep = eg.saturate(&[rule], 10);
+
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        assert_eq!(
+            eg.node_count(),
+            before,
+            "unbound RHS variable must reject before adding partial RHS nodes"
+        );
     }
 }

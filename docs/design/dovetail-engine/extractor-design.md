@@ -24,7 +24,7 @@ derivations of `q` (= `⨆ₑ ℕ^arity(e)`) are eventually produced — exhaust
 non-decreasing in each argument w.r.t. the order. Tropical (`⊗=+`) satisfies MON; for
 `LexicographicWeight`, `times` left-projects the tiebreak fields so only the primary varies
 with child rank — MON holds on the varied axis. The Rust API exposes this as
-`MonotoneBestOrder`, implemented only for checked weight types.
+`MonotoneBestOrder`, a sealed marker implemented only for checked weight types.
 
 ## Weight order — `BestOrder` trait (NOT changing the semiring crate)
 `Semiring` is `Copy + PartialEq` but NOT `Ord`. Both production weights already impl `Ord`
@@ -79,11 +79,17 @@ where L: Clone+Eq+Hash+SemanticHash, W: MonotoneBestOrder, F: Fn(&ENode<L>)->W {
     pub fn completeness(&self) -> ExtractionCompleteness;
     pub fn had_cycle_cut(&self) -> bool;
 }
+
+impl<'a,'g,L,W,F> Derivations<'a,'g,L,W,F> {
+    pub fn next_checked(&mut self) -> ExtractionStep<Rc<Derivation<L,W>>>;
+    pub fn collect_checked(self) -> Extraction<Vec<Rc<Derivation<L,W>>>>;
+}
 ```
-`Derivations::collect_checked()` returns `Extraction<Vec<Rc<Derivation<L,W>>>>` so a caller
-cannot collect a vector while silently dropping the cycle-cut completeness status. Heuristic is
-OPTIONAL: baseline is provably exact without it; it only reorders exploration (verified by a
-heuristic-invariance test). No beam/cutoff anywhere.
+`Derivations` intentionally does **not** implement `Iterator`: completeness is terminal
+metadata, not item-level fallibility. Callers step with `next_checked()` or collect with
+`collect_checked()`, so the `ExtractionCompleteness` status cannot be silently dropped.
+Heuristic is OPTIONAL: baseline is provably exact without it; it only reorders exploration
+(verified by a heuristic-invariance test). No beam/cutoff anywhere.
 
 ## No-miss test suite (the empirical verification)
 T1 single leaf; **T2 hand-built ambiguous (THE gating test):** merge a(5),b(3),c(3) into one
@@ -98,15 +104,21 @@ T7 determinism (run twice, identical key sequence); T8 cycle safety (terminates,
 `NBestExtraction.v` proves the selection/order layer: only `0̄` candidates are removed,
 every non-`0̄` candidate survives, equal-weight distinct alternatives both survive,
 demand prefixes are monotone, the stream exhausts on demand, and the ordered output is a
-sorted permutation of the kept candidates. `EnumerationCompleteness.v` proves the
-hypergraph-recursion layer: every hyperedge/rank-vector product point is enumerated.
-`CycleCutBoundary.v` models the Rust `Extraction<T> { value, completeness }` wrapper and
-proves a cycle cut maps to `BoundedByCycleCut`, never a silent `Complete` claim.
-`ExactKeyDedup.v` also proves the length-framed and ordered child-key framing contracts used
-by `SemanticHash`/`write_ordered_framed`.
+sorted permutation of the kept candidates. `LazyFrontierOrder.v` proves the lazy heap
+frontier emits a sorted stream when successor rank bumps cannot improve the candidate, and
+that emitted elements plus the final frontier are a permutation of the initial frontier plus
+generated successors.
+`EnumerationCompleteness.v` proves the hypergraph-recursion layer: every
+hyperedge/rank-vector product point is enumerated. `OrderPreservingFraming.v` proves the
+ordered child-key framing is prefix-free, injective, and lex-order-preserving.
+`ExtractionOutcome.v` and `CycleCutBoundary.v` model the Rust
+`Extraction<T> { value, completeness }` / `ExtractionStep::Done` boundary and prove a cycle
+cut maps to `BoundedByCycleCut`, never a silent `Complete` claim. `ExactKeyDedup.v` proves
+the exact-key dedup contracts used by `SemanticHash`.
 
 ## Implementation order
 Implemented: BestOrder+OrdKey, Derivation+tree-key, ClassState/Candidate initialization,
 candidate construction, `kth` loop (`0̄` filter + exact-key dup skip + cycle guard),
-`derivations`, `collect_checked`, `with_heuristic`, `completeness`, `had_cycle_cut`, tests
-T1-T9, and the Rocq proof suite under `dovetail/formal/rocq/theories/Extraction/`.
+checked `derivations` stream (`next_checked`, `collect_checked`, no plain `Iterator`),
+`with_heuristic`, `completeness`, `had_cycle_cut`, tests T1-T9, and the Rocq proof suite
+under `dovetail/formal/rocq/theories/Extraction/`.

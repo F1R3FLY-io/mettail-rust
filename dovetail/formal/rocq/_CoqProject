@@ -15,9 +15,12 @@
 -Q theories Dovetail
 
 theories/ExactKeys/ExactKeyDedup.v
+theories/Extraction/OrderPreservingFraming.v
 theories/Extraction/NBestExtraction.v
 theories/Extraction/EnumerationCompleteness.v
 theories/Extraction/CycleCutBoundary.v
+theories/Extraction/LazyFrontierOrder.v
+theories/Extraction/ExtractionOutcome.v
 theories/InsideWeights/InsideWeightSccClosure.v
 theories/Rigail/NewtonSccAdequacy.v
 theories/Saturation/DovetailSaturation.v

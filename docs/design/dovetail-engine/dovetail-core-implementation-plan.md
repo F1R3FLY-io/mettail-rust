@@ -99,11 +99,13 @@ pub unsafe trait SemanticHash {
 encoding that agrees with `Eq`/`Hash`; composite encodings must frame their parts.
 **N-best extractor (HARD: ORDER not PRUNE; equal-weight distinct alts BOTH survive; refute only at `0̄`):**
 `Extractor<L,W,F>` requires `W: MonotoneBestOrder`; `kth` returns
-`Extraction<Option<Rc<Derivation<L,W>>>>`, and `Derivations::collect_checked()` returns
-`Extraction<Vec<Rc<Derivation<L,W>>>>` —
-ordered by `(W, ContentKey)`; distinct `ContentKey`s never merge even at equal `W`; a
-candidate is discarded only when its composed weight `is_zero()`. Cyclic enumeration
-boundedness is explicit through `ExtractionCompleteness`.
+`Extraction<Option<Rc<Derivation<L,W>>>>`; `derivations(root)` returns a checked
+`Derivations` stream with `next_checked() -> ExtractionStep<_>` and
+`collect_checked() -> Extraction<Vec<Rc<Derivation<L,W>>>>`. It intentionally does not
+implement plain `Iterator`, because completeness is terminal metadata. Output is ordered by
+`(W, ContentKey)`; distinct `ContentKey`s never merge even at equal `W`; a candidate is
+discarded only when its composed weight `is_zero()`. Cyclic enumeration boundedness is
+explicit through `ExtractionCompleteness`.
 
 Tuplespace trait `TupleSpace<C,P,A,K>` + `Match<P,A>` seam (in-mem default only; the future
 Reified-RSpace mapping inner=PriorityQueue/outer=PathMap/seam=Match is a documented seam, no
@@ -125,8 +127,8 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 
 ## 4. FV obligations (zero-Admitted/zero-Axiom; `rocq-dovetail` target in `formal/Makefile`)
 1. **`ExactKeys/ExactKeyDedup.v`** — exact-key dedup preserves every key, distinct keys are never conflated, add-with-budget never overshoots, and overflow reports refusal. Certifies Increment 3.
-2. **`Extraction/NBestExtraction.v` + `Extraction/EnumerationCompleteness.v`** — k-best/set-valued extraction keeps every distinct non-`0̄` derivation, orders by `(W,key)`, is monotone under demand, and enumerates the full hyperedge rank-vector product. Certifies Increment 5.
-3. **`InsideWeights/InsideWeightSccClosure.v`** — SCC→`PackingFactored` lowering preserves the e-graph inside equations; scalar/self-loop closure is the least fixpoint; trivial SCC skipping is sound. Certifies Increment 6.
+2. **`Extraction/NBestExtraction.v` + `Extraction/EnumerationCompleteness.v` + `Extraction/LazyFrontierOrder.v` + `Extraction/OrderPreservingFraming.v` + `Extraction/ExtractionOutcome.v`** — k-best/set-valued extraction keeps every distinct non-`0̄` derivation, orders by `(W,key)`, is monotone under demand, enumerates the full hyperedge rank-vector product, proves lazy frontier sortedness/permutation preservation, proves ordered child-key framing, and proves checked terminal completeness cannot silently hide a cycle cut. Certifies Increment 5.
+3. **`InsideWeights/InsideWeightSccClosure.v`** — SCC→`PackingFactored` lowering preserves the e-graph inside equations; scalar/self-loop closure is the least fixpoint; trivial SCC skipping is sound. The Rust cyclic path is restricted by sealed `CommutativeStarSemiring` and validates recursive tropical closed weights before Newton. Certifies Increment 6.
 4. **`Saturation/DovetailSaturation.v`** — rules-as-data saturation is monotone and sound when generated facts are sound; bounded execution reports `Converged`, `NodeLimit`, or `IterationLimit` explicitly. Certifies Increment 7.
 5. **`Requirements/MeTTaILRewriteCoverage.v`** — every current MeTTaIL rewrite requirement is covered by a Dovetail capability or an explicit native/Rho handler contract.
 

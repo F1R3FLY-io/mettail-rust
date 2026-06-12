@@ -22,14 +22,28 @@ use rigail::{solve_scc_weights_newton, PackingFactored, Semiring, StarSemiring};
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::scc;
 
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for rigail::TropicalWeight {}
+}
+
 /// Marker for star semirings whose multiplication is commutative.
 ///
 /// The SCC lowering groups out-of-SCC child weights into an `outside_product`.
 /// That regrouping is value-preserving only when `times` commutes. Keep this
 /// bound narrow: adding a new implementation is a proof/test obligation.
-pub trait CommutativeStarSemiring: StarSemiring {}
+pub trait CommutativeStarSemiring: StarSemiring + sealed::Sealed {
+    /// Whether an edge weight is in the domain where cyclic star closure is sound.
+    fn valid_closed_weight(&self) -> bool;
+}
 
-impl CommutativeStarSemiring for rigail::TropicalWeight {}
+impl CommutativeStarSemiring for rigail::TropicalWeight {
+    #[inline]
+    fn valid_closed_weight(&self) -> bool {
+        self.is_zero() || (self.0.is_finite() && self.0 >= 0.0)
+    }
+}
 
 /// A weighted-tree-automaton view of an e-graph, weighted by `weigh`.
 pub struct EGraphDfta<'g, L, W, F> {
@@ -198,6 +212,12 @@ where
                     outside_product = outside_product.times(&w_c);
                 }
             }
+            if !in_scc_children.is_empty() {
+                assert!(
+                    outside_product.valid_closed_weight(),
+                    "cyclic inside closure requires non-negative, non-NaN recursive transition weights or semiring zero"
+                );
+            }
             packings.push(PackingFactored {
                 target_i: i,
                 outside_product,
@@ -311,5 +331,65 @@ mod tests {
         let inside = dfta.inside_weights_closed();
         assert_eq!(inside[&u], TropicalWeight(10.0));
         assert_eq!(inside[&v], TropicalWeight(11.0));
+    }
+
+    #[test]
+    fn closed_inside_allows_negative_acyclic_exit_weights() {
+        fn weigh_negative_exit(n: &ENode<String>) -> TropicalWeight {
+            match n.op.as_str() {
+                "bad" => TropicalWeight(-1.0),
+                _ => TropicalWeight(0.0),
+            }
+        }
+
+        let mut eg = EGraph::<String>::new();
+        let bad = eg.add(ENode::leaf("bad".into()));
+        let dfta = EGraphDfta::new(&eg, weigh_negative_exit);
+        let inside = dfta.inside_weights_closed();
+        assert_eq!(inside[&eg.find(bad)], TropicalWeight(-1.0));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "cyclic inside closure requires non-negative, non-NaN recursive transition weights"
+    )]
+    fn closed_inside_rejects_negative_recursive_tropical_weights() {
+        fn weigh_negative_recursive(n: &ENode<String>) -> TropicalWeight {
+            match n.op.as_str() {
+                "f" => TropicalWeight(-1.0),
+                "base" => TropicalWeight(5.0),
+                _ => TropicalWeight(0.0),
+            }
+        }
+
+        let mut eg = EGraph::<String>::new();
+        let base = eg.add(ENode::leaf("base".into()));
+        let f = eg.add(ENode::new("f".into(), vec![base]));
+        eg.merge(base, f);
+        eg.rebuild();
+        let dfta = EGraphDfta::new(&eg, weigh_negative_recursive);
+        let _ = dfta.inside_weights_closed();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "cyclic inside closure requires non-negative, non-NaN recursive transition weights"
+    )]
+    fn closed_inside_rejects_nan_recursive_tropical_weights() {
+        fn weigh_nan_recursive(n: &ENode<String>) -> TropicalWeight {
+            match n.op.as_str() {
+                "f" => TropicalWeight(f64::NAN),
+                "base" => TropicalWeight(5.0),
+                _ => TropicalWeight(0.0),
+            }
+        }
+
+        let mut eg = EGraph::<String>::new();
+        let base = eg.add(ENode::leaf("base".into()));
+        let f = eg.add(ENode::new("f".into(), vec![base]));
+        eg.merge(base, f);
+        eg.rebuild();
+        let dfta = EGraphDfta::new(&eg, weigh_nan_recursive);
+        let _ = dfta.inside_weights_closed();
     }
 }

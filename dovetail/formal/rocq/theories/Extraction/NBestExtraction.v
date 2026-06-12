@@ -22,7 +22,9 @@
  *     k (exhaustive-on-demand).
  *
  * Companion obligations:
- *   - the best-first ORDERING of the output is proven below in this file; and
+ *   - the best-first ORDERING of a selected candidate set is proven below in
+ *     this file, while LazyFrontierOrder.v proves the heap successor frontier
+ *     emits such candidates in sorted order; and
  *   - the hypergraph-recursion COMPLETENESS (the candidate set = ALL
  *     derivations) is proven in Extraction/EnumerationCompleteness.v.
  *   E-graph exact-key dedup no-loss is covered by ExactKeys/ExactKeyDedup.v.
@@ -45,6 +47,8 @@ From Stdlib Require Import Arith.
 From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Lia.
 From Stdlib Require Import Permutation.
+
+From Dovetail.Extraction Require LazyFrontierOrder.
 
 Import ListNotations.
 
@@ -317,6 +321,35 @@ Section NBestExtraction.
     intros w k l H.
     apply (Permutation_in (w, k) (select_ordered_perm l)).
     apply in_keyed. exact H.
+  Qed.
+
+  Theorem lazy_frontier_order_composes : forall steps,
+    LazyFrontierOrder.trace_ok None steps ->
+    LazyFrontierOrder.sorted (LazyFrontierOrder.emitted steps).
+  Proof.
+    intros steps Htrace.
+    apply LazyFrontierOrder.lazy_frontier_trace_sorted.
+    exact Htrace.
+  Qed.
+
+  Theorem lazy_frontier_heap_order_composes : forall frontier steps final_frontier,
+    LazyFrontierOrder.heap_trace_ok frontier steps final_frontier ->
+    LazyFrontierOrder.sorted (LazyFrontierOrder.emitted steps).
+  Proof.
+    intros frontier steps final_frontier Htrace.
+    apply (LazyFrontierOrder.lazy_frontier_heap_trace_sorted frontier steps final_frontier).
+    exact Htrace.
+  Qed.
+
+  Theorem lazy_frontier_heap_permutation_composes : forall frontier steps final_frontier,
+    LazyFrontierOrder.heap_trace_ok frontier steps final_frontier ->
+    Permutation
+      (frontier ++ LazyFrontierOrder.generated_successors steps)
+      (LazyFrontierOrder.emitted steps ++ final_frontier).
+  Proof.
+    intros frontier steps final_frontier Htrace.
+    apply (LazyFrontierOrder.lazy_frontier_heap_trace_permutation frontier steps final_frontier).
+    exact Htrace.
   Qed.
 
 End NBestExtraction.

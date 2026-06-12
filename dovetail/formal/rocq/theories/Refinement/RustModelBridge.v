@@ -13,11 +13,15 @@
 From Stdlib Require Import List.
 From Stdlib Require Import Arith.
 From Stdlib Require Import Lia.
+From Stdlib Require Import Permutation.
 
 From Dovetail.ExactKeys Require Import ExactKeyDedup.
 From Dovetail.Extraction Require Import NBestExtraction.
 From Dovetail.Extraction Require Import EnumerationCompleteness.
 From Dovetail.Extraction Require Import CycleCutBoundary.
+From Dovetail.Extraction Require OrderPreservingFraming.
+From Dovetail.Extraction Require LazyFrontierOrder.
+From Dovetail.Extraction Require ExtractionOutcome.
 From Dovetail.Saturation Require Import DovetailSaturation.
 
 Import ListNotations.
@@ -194,6 +198,66 @@ Section RustModelBridge.
   Proof.
     intros c edge bounds ranks Hnth Hin.
     eapply class_enum_complete; eauto.
+  Qed.
+
+  Theorem rust_ordered_child_frame_prefix_free : forall a b tail_a tail_b,
+    OrderPreservingFraming.ordered_frame a ++ tail_a =
+      OrderPreservingFraming.ordered_frame b ++ tail_b ->
+    a = b /\ tail_a = tail_b.
+  Proof.
+    intros a b tail_a tail_b H.
+    apply OrderPreservingFraming.ordered_frame_prefix_free.
+    exact H.
+  Qed.
+
+  Theorem rust_lazy_frontier_trace_sorted : forall steps,
+    LazyFrontierOrder.trace_ok None steps ->
+    LazyFrontierOrder.sorted (LazyFrontierOrder.emitted steps).
+  Proof.
+    intros steps H.
+    apply LazyFrontierOrder.lazy_frontier_trace_sorted.
+    exact H.
+  Qed.
+
+  Theorem rust_lazy_frontier_heap_trace_sorted : forall frontier steps final_frontier,
+    LazyFrontierOrder.heap_trace_ok frontier steps final_frontier ->
+    LazyFrontierOrder.sorted (LazyFrontierOrder.emitted steps).
+  Proof.
+    intros frontier steps final_frontier H.
+    apply (LazyFrontierOrder.lazy_frontier_heap_trace_sorted frontier steps final_frontier).
+    exact H.
+  Qed.
+
+  Theorem rust_lazy_frontier_heap_trace_permutation : forall frontier steps final_frontier,
+    LazyFrontierOrder.heap_trace_ok frontier steps final_frontier ->
+    Permutation
+      (frontier ++ LazyFrontierOrder.generated_successors steps)
+      (LazyFrontierOrder.emitted steps ++ final_frontier).
+  Proof.
+    intros frontier steps final_frontier H.
+    apply (LazyFrontierOrder.lazy_frontier_heap_trace_permutation frontier steps final_frontier).
+    exact H.
+  Qed.
+
+  Theorem rust_bumped_successor_not_better : forall weight ranks successor,
+    LazyFrontierOrder.monotone_weight weight ->
+    LazyFrontierOrder.bump_one ranks successor ->
+    LazyFrontierOrder.cleb
+      (LazyFrontierOrder.rank_cand weight ranks)
+      (LazyFrontierOrder.rank_cand weight successor) = true.
+  Proof.
+    intros weight ranks successor Hmono Hbump.
+    apply LazyFrontierOrder.bumped_successor_not_better; assumption.
+  Qed.
+
+  Theorem rust_checked_done_never_loses_cycle_cut : forall r,
+    cycle_guarded r ->
+    report_shape r = Cyclic ->
+    ExtractionOutcome.terminal_status (ExtractionOutcome.done_from_report r) =
+      Some BoundedByCycleCut.
+  Proof.
+    intros r Hguard Hcyclic.
+    apply ExtractionOutcome.checked_done_never_loses_cycle_cut; assumption.
   Qed.
 
 End RustModelBridge.
