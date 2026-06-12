@@ -30,18 +30,18 @@ This directory contains the evidence-pruning mechanism inventory for the pgmcp #
 
 ## Evidence Classes (11 categories)
 
-| Class | Mechanisms | Soundness | Timing Gap |
-|-------|-----------|-----------|-----------|
-| Dispatch (PathMap trie) | 8 | Definite (LL(k) characterization) | ✓ Early |
-| Weight/order (semiring) | 5 | Order signal (no heuristic pruning) | Viterbi beam unused |
-| Token-soundness (spans) | 7 | Definite (span check, EOI gates) | min_terminal_span underused |
-| Cross-cat evidence | 4 | Definite (type mismatch detection) | **LATE** (semantic_root fires post-parse) |
-| Resolution gates | 6 | State/structural evidence | **LATE** (premature-Accepted @ EOI) |
-| Cycle defenses | 4 | Progress evidence (avoid re-visiting) | ✓ Early (342K steps saved) |
-| Budget/bounds | 5 | Report gates (not pruning) | ✓ Working as designed |
-| Eval-side | 3 | Definite/semantic | ✓ Implemented |
-| Lex-side | 6 | Definite (structural dead-ends) | ✓ Sound |
-| Formal verification | 3 | Mathematical proof | ✓ Zero-admission |
+| Class                   | Mechanisms | Soundness                             | Timing Gap                                |
+|-------------------------|------------|---------------------------------------|-------------------------------------------|
+| Dispatch (PathMap trie) | 8          | Definite (LL(k) characterization)     | ✓ Early                                   |
+| Weight/order (semiring) | 5          | Order signal (no heuristic pruning)   | Viterbi beam unused                       |
+| Token-soundness (spans) | 7          | Definite (span check, EOI gates)      | min_terminal_span underused               |
+| Cross-cat evidence      | 4          | Definite (type mismatch detection)    | **LATE** (semantic_root fires post-parse) |
+| Resolution gates        | 6          | State/structural evidence             | **LATE** (premature-Accepted @ EOI)       |
+| Cycle defenses          | 4          | Progress evidence (avoid re-visiting) | ✓ Early (342K steps saved)                |
+| Budget/bounds           | 5          | Report gates (not pruning)            | ✓ Working as designed                     |
+| Eval-side               | 3          | Definite/semantic                     | ✓ Implemented                             |
+| Lex-side                | 6          | Definite (structural dead-ends)       | ✓ Sound                                   |
+| Formal verification     | 3          | Mathematical proof                    | ✓ Zero-admission                          |
 
 ## Top 5 Late-Firing Evidence Gaps
 
