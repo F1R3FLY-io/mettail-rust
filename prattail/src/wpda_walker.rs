@@ -133,10 +133,15 @@ impl EpP1Mode {
     /// `OnceLock`, so one process can run both arms).
     fn from_env() -> Self {
         match std::env::var("PRATTAIL_EP_P1").ok().as_deref() {
+            Some("off") => EpP1Mode::Off,
             Some("shadow") => EpP1Mode::Shadow,
             Some("measure") => EpP1Mode::Measure,
-            Some("on") => EpP1Mode::On,
-            _ => EpP1Mode::Off,
+            // L-commit default flip (plan §P1 commit 4, Welch-accepted
+            // 2026-06-12: idx4 −47.3% p=1e-45, compare class −4.2..−5.3%
+            // wins, bare towers neutral, zero regressions; two-state
+            // battery identical): enforcement is the DEFAULT.
+            // `PRATTAIL_EP_P1=off` is the kill switch.
+            _ => EpP1Mode::On,
         }
     }
 }

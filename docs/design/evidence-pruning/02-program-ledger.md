@@ -239,6 +239,47 @@ slot 0 (dispatch class, recovery-off). Off-mode control: zero shadow lines (iner
   dedicated probe investigation → fix → multi-body seed + orphan probe + mid-park budget +
   CollectionMarker fidelity tests → fork-path completeness branch → L-commit Welch.**
   On stays opt-in; default battery byte-identical.
+- 2026-06-12 **led_chain TRUE-ROOT fix @ 296c2217** (deep-dive per the corrected methodology
+  — flip experiments retired as discovery): parked members strand when the key's WORKER DIES
+  mid-parse + EOI re-drive churn; fix = mid-parse dead-worker release (per-key edge tracking,
+  post-merge frontier scan, take_inflight_members, Proceed re-injection) + ep_p1_eoi_release.
+  Calc structurally unaffected (dead_released=0 corpus-wide).
+- 2026-06-12 consolidation + fork-path + §5 gates @ 5a4b3c80 (bookkeeping into
+  cursor_gss_push_with_kind; fork-path On decision; R7-10 budget-parity test byte-identical
+  k∈{1,4,16,64}; truncation/orphan parity ×3 byte-identical).
+- 2026-06-12 **budget-divergence TRUE-ROOT fix @ 9cc1f38c**: the "frontier of 266" was the
+  ORPHAN_REVIVAL_FRONTIER_BUDGET gate (InFlight-parked member count at the EOI fixpoint),
+  never the live frontier (the lattice path runs Unbounded). An identical accepting config
+  was live at EVERY round in BOTH modes; the revival loop re-parked its own re-injections
+  (On at ~2× Off's amplification) until the gate aborted an available parse. Fix: skip the
+  recovery when a live accept exists (live_frontier_has_accepting_config) — NOT a prune (the
+  gate only ever errored; resolved-body alternates drain first). Contract pinned: +7
+  zero-admission theorems (accept_skipped_orphan_revival*). NOTE: the guard is
+  mode-symmetric and ALSO removed the spurious-revival churn from OFF — re-baselining idx 6:
+  the >580 s debug right-censoring was real AT THE PRE-GUARD BASELINE; post-guard release
+  OFF ≈ 270 ms/parse.
+- 2026-06-12 scan gated on outstanding parks @ 420156b7 (the Welch bare-tower regression
+  +1.9%/+3.0% → NEUTRAL; the release exists only to free parked members).
+- 2026-06-12 ★ **THE L-COMMIT GATE: Welch panel ACCEPT** (release, N=30/arm, CPU-pinned,
+  two-tailed Welch):
+
+  | idx | input class | ctrl ms | treat ms | Δ | p | verdict |
+  |---|---|---|---|---|---|---|
+  | 0 | d1+cmp | 11.65 | 11.15 | −4.3% | 7e-11 | WIN |
+  | 1 | d1+arith | 11.31 | 10.80 | −4.5% | 6e-10 | WIN |
+  | 2 | d1 | 10.68 | 10.12 | −5.3% | 3e-12 | WIN |
+  | 3 | d3 bare | 60.17 | 59.78 | −0.6% | 0.19 | NEUTRAL |
+  | 4 | **d3+cmp** | 6.50 | **3.43** | **−47.3%** | **1e-45** | **WIN** |
+  | 5 | d5 bare | 127.35 | 127.40 | 0.0% | 0.94 | NEUTRAL |
+  | 7 | 2×d1+cmp | 23.41 | 22.40 | −4.3% | 6e-11 | WIN |
+  | 8 | d1 float cmp | 11.99 | 11.49 | −4.2% | 3e-10 | WIN |
+
+  **idx 6 (d5+cmp) release pair: OFF ≈ 270 ms/parse, ON ≈ 7.6 ms/parse — 35×.** Depth
+  scaling d3+cmp → d5+cmp: OFF ×41, ON ×2.2 — the depth-independence contract
+  (CastLookaheadGateBound + the parking model) realized. Chain neutrality: structural (the
+  CrossCatLhs sets are empty on cast-free inputs — the drain/scan paths never run) +
+  prattail-lib 3980/0 both cfgs + the bare-tower NEUTRAL rows. **DEFAULT FLIPPED to On**
+  (PRATTAIL_EP_P1=off = the kill switch; EP_P1_DEADWORKER_DISABLE = the release's A/B arm).
 - 2026-06-12 **the v3 DECIDING MEASUREMENT** (measure-first; EpP1Mode::Measure + the R6-7
   route discriminant making real-cache registration sound + R6-6/B1 first-resolver tail map):
   **idx 4 arrival-phase split = workers 4 / in-flight 24 / RESOLVED 3,476 (99.2%) /
