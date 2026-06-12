@@ -328,3 +328,37 @@ this commit message).
   agree on this corpus (the v3 member-tail recompute stays per the model's general-case
   fence). =measure neutrality: parses byte-identical, timing unchanged (idx4 1.469s vs
   1.468s baseline).
+
+## P3 — Stage A (pre\*-saturation liveness): DEMOTED → inventory + diagnostic-only
+
+> Plan §P3 (round-2 M-3 demotion). Three deliverables: (1) the Step-(-1) transition inventory +
+> entry gate, (2) the recorded STOP (expected), (3) the diagnostic-only shadow measurement
+> `prestar_shadow_incremental_over_parikh`. **NO** enforcement, **NO** allow-list build-out, **NO**
+> `PreStarLiveness.v` unless the gate unexpectedly passes (it does not). Full doc:
+> `07-p3-transition-inventory.md`. Working findings: `/tmp/p3_step/findings.md`.
+
+| Deliverable | Outcome |
+|---|---|
+| 1. Step-(-1) transition inventory | ✅ `07-p3-transition-inventory.md` — every `WpdaState` (18 intrinsic + 2 terminal, `wpda_runtime.rs:303`), `SymbolKind` frame (5 beyond the model's 3, :53), and `WpdaStepAction` (22, `wpda_walker.rs:508`) tagged {in-model / restricts-only (proof sketch) / must-add} against the `(category, rule_label, position)` skeleton (`build_wpds`, `wpds.rs:425`). |
+| Entry gate (`K = 3`) | ❌ **FAIL.** must-add = **17** distinct classes (conservative floor 11). `17 > 3` ⇒ ≈ 5.7×K; floor ≈ 3.7×K. The plan's up-front prediction (FAIL ~5×, ≥15 must-add) is **CONFIRMED**. |
+| 2. Recorded STOP | ✅ Inventory is the recorded negative. No model commit, no enforcement, no allow-list. |
+| 3. `prestar_shadow_incremental_over_parikh` | ⏹ **honesty STOP** (plan §P3 deliverable-3 final clause + §9 risk 1). The runtime per-cursor liveness query is NOT reuse of the existing analysis surface: every prestar consumer (`check_safety` `verify.rs:60`, `accepts_initial_config` `cegar.rs:447`) queries the SINGLE-symbol start config `symbol_weight(initial_symbol)`; the cursor query needs (a) a runtime→model stack abstraction map, (b) a multi-symbol P-automaton word-acceptance routine (none exists; all helpers are single-symbol), (c) the `stack_fully_modeled` per-cursor guard. The plan FORBIDS building new saturation machinery. The shadow plumbing is therefore NOT added; the predicted/derived incremental **0% < 3%** stands by the same mechanism as the P2 zero (the only obligation-bearing classes live in the must-add `InfixLoop`/`InfixContinuation` configs). |
+
+**The gate-fail (§6) and the deliverable-3 honesty STOP (§7) are the SAME finding by two
+independent routes:** the skeleton is too coarse for the runtime configurations, so neither the
+offline model nor the runtime probe is admissible without the ≥15 must-add extensions.
+
+**Battery:** P3 ships NO `=shadow` runtime mode (deliverable 3 stops before wiring), so there is no
+behavioral surface to validate — the change is doc-only (`07-p3-transition-inventory.md`) + this
+ledger entry. Verification is the unchanged-tree confirmation: SENTINEL `gen_ledtest_op` 220/0,
+prattail-lib 3989/0 both cfgs, `edge_case_tests` 229/0 (no shadow mode to be inert against — the
+inertness is structural: zero code change to the walker/codegen).
+
+### P3 stage log
+
+- 2026-06-12 P3 executed (inventory + entry gate + honesty determination). Source recon: `build_wpds`
+  models `(cat, rule_label, position)` with Replace/Push/Pop, single control loc; Sep/Map/Zip/Optional
+  loops summarized to one traversal (`wpds.rs:617`); Pratt LHS elided (`skipped_pratt_lhs`, :535);
+  `CrossCatLhs`/`Reentry` wrap injection is a live runtime `EdgeKind` (`wpda_walker.rs:7042/7145`).
+  Gate FAILS 17 > 3 (floor 11 > 3). Deliverable-3 prestar reuse refuted (multi-symbol word acceptance
+  + abstraction map + `stack_fully_modeled` all new). STOP recorded. No Rust/Rocq change.
