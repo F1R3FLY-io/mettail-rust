@@ -16688,21 +16688,23 @@ where
                             // would have corrupted this member).
                             #[cfg(feature = "walker-stats")]
                             {
+                                // R7-6 CORRECTION: the tail is the
+                                // POST-REENTRY member tail — the real
+                                // CrossCatLhs final state is InfixLoop
+                                // for EVERY predecessor (the reentry
+                                // fires iff pred != NONE and sets
+                                // InfixLoop unconditionally; pred=NONE's
+                                // pre-reentry state is already
+                                // InfixLoop). The state class is
+                                // constant 0; the information axis is
+                                // the REENTRY bit (model:
+                                // final_state_constant + the restated
+                                // T1/T3).
                                 let pred = self.gss.edge_target(eid);
                                 let tail: (u8, bool) = match pred {
                                     None => (0u8, false),
                                     Some(p) if p == crate::gss::GSS_NODE_NONE => (0u8, false),
-                                    Some(p) => match self.gss.node(p).map(|n| n.symbol.kind) {
-                                        Some(crate::wpda_runtime::SymbolKind::CategoryEntry) => {
-                                            (0u8, true)
-                                        },
-                                        None => (0u8, false),
-                                        // GroupingMarker and every other
-                                        // predecessor kind take the
-                                        // Unwinding tail (16228-16261
-                                        // semantics).
-                                        _ => (1u8, true),
-                                    },
+                                    Some(p) => (0u8, self.gss.node(p).is_some()),
                                 };
                                 let mk = (dispatch_pos, source_src_idx, wrap_cat);
                                 match self.stats.ep_p1_measure_first_tail.get(&mk).copied() {

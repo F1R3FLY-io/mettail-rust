@@ -567,3 +567,76 @@ the sub-parse is short, the fan arrives over many steps), synchronous consumptio
 the class with parking as a small bounded tail; if in-flight dominates, a shared-continuation
 lazy fan-out is needed instead. Multi-body (ambiguous-source) synchronous consume forks per
 body at the consume site — design detail for v3.
+
+---
+
+## Round 7 (2026-06-12) — sync-consume v3 (06-p1-sync-consume-v3-design.md): 2 critics,
+## CONVERGED on IMPLEMENT-WITH-CORRECTIONS (the architecture survives; do NOT implement §1 verbatim)
+
+Both critics independently validated the substrate: synchronous in-place consume genuinely
+dissolves R6-1's materialization problem (critic B reproduced the 99.2% split live); ordering
+(drain-before-resolve_at_end_of_input), park mechanics, clone safety, reentry-node sharing,
+and fork-path plumbing are faithful. The corrections:
+
+### R7-1 (A, load-bearing): consume must set `last_action_output_cat` from the worker
+snapshot (already captured at the resolve site). The LATER Return-pop D-strings re-sync
+(:16421) and GroupingClose resolve read it; a stale pre-dispatch value selects the wrong
+category table (the EqStr-on-Bool silent-fail class). The design's `dstrings_resync` step is
+DELETED — that block is Return-pop-gated and never runs at a CrossCatLhs pop; the real
+obligation is this field.
+### R7-2 (A, load-bearing): consume must restore `pending_packing_weight` from the snapshot
+(the `-3!` per-packing distinction; the body's FireAction consumed the worker's pending
+weight — the arriving cursor's own is stale).
+### R7-3 (A, load-bearing): weight = `weight_at_dispatch ⊗ symbol_weight_sum` with the PUSH
+weight explicit (`pre-dispatch ⊗ push_weight`); `cursor.weight ⊗ sum` is correct on the
+singleton hot path only because lex_one() is identity — wrong on the fork path
+(BP_TIER_CROSSCAT_LHS is non-identity).
+### R7-4 (A): mirror the real reentry guard verbatim (`effective_new_state ∈ {InfixLoop,
+Unwinding}` ∧ pred ≠ NONE) and END the consume with `return cursor_resolution_check(cursor)`
+(InfixLoop → Resolved; a bare Alive re-steps the cursor — a scheduling change).
+### R7-5 (A): multi-body ForkInto in deterministic mode must set `self.deterministic = false`
+first (the real Fork arm does at :7812; the deterministic ForkInto consumer assumes it).
+### R7-6 (A, contract): `CrossCatLhsParking.v` models the WRONG TAIL LAYER — the real
+CrossCatLhs post-reentry final state is ALWAYS InfixLoop (the reentry at :16345-16366 fires
+for every pred ≠ NONE and sets InfixLoop unconditionally); the model's effective_state
+(GroupingMarker→Unwinding) describes the pre-reentry generic tail, so T1's state-axis
+witness is FALSE for the actual path and the state-axis half of T3 dies (the reentry-axis
+half survives). The Measure tail mapping (:16692-16705) inherits the same error —
+`tail_divergent=0` is currently a coarse-and-partly-wrong witness. AMEND the model
+(post-reentry tail; T1/T3 restated on the reentry axis; document the wrong-layer error) +
+fix the Measure tail + RE-RUN the split before trusting it.
+### R7-7 (B, blocking): §6's flip-experiment counters were SELF-CONTRADICTORY — consume
+happens ON register's ResolvedHit, so `resolved_hits` is UNCHANGED under On (≈3,476). The
+"→ ~workers(~4)" counters are `crosscat_lhs_delegates_spawned` / `dup_at_pos_source` (the
+arrivals never reach the PUSH). State the expected shapes before the run or the gate passes
+for the wrong reason.
+### R7-8 (B, blocking): the `cast_then_infix_steps` memo widening (+`CrossCatLhsReentry`) and
+the OFF re-baseline are a §6 STEP-0 PREREQUISITE — without it the On drop is a RENAME
+ARTIFACT (consumed arrivals carry Reentry frames the current memo doesn't match). The
+ledger's pinned 149,645/≤59,858 is STALE (CrossCatLhs-only memo; B measured 149,685 under
+Measure) — re-pin against the widened-memo OFF re-baseline.
+### R7-9 (B, blocking): the quiescence rule as written is mis-stated for On (push−pop counts
+the wrong population) and structurally inverts under fork-above-push (1 push, N sibling
+pops — corpus-masked: pushes==pops measured because every dup is its own push TODAY, but
+that's Off/Measure topology). Re-state as LIVE-BODY-PRODUCING-LINEAGES-UNDER-KEY via the
+existing memoized `crosscat_lhs_stack_memo` edge-membership scan; add `registered_at_step`
+to the cache entry for the age-timeout→Proceed fallback (step_counter exists; the field
+does not). AND: the late-body case the rule defends is ABSENT from the corpus (Off→Measure
+resolved_transitions 50→53, 0 alternate_bodies) — SEED an adversarial multi-body-source
+input or the rule ships unvalidated.
+### R7-10 (B): the R6-8 budget test must target the MID-PARK frontier dip (k near Off's peak
+where On's parking would hide an overflow Off reports), not just byte-identity.
+### R7-11 (B): the CrossCatLhs drain uses its OWN set/loop and drops the ×snapshot axis
+(consume is snapshot-independent per T2/T3; the projection drain fans per (job×snap×member)).
+### R7-12 (B): budget-Error short-circuits quiescence (the frontier freezes with no
+per-cursor decrement site; the terminal-state check makes it moot — state it explicitly).
+### Also (A): the pred=CollectionMarker member (the `{c!(p)}` in-collection family) is the
+sensitive splice-adjacent case — enumerate it in the consume fidelity argument + tests.
+
+### Round-7 verdict
+CONVERGED: IMPLEMENT-WITH-CORRECTIONS. Order of work: (1) model amendment commit (R7-6,
+FV-first); (2) Measure tail fix + quiescence-window counter + re-run the split (R7-6/R7-9);
+(3) design doc v3.1 folding ALL corrections; (4) the I-commit per v3.1 (R7-1..R7-5, R7-9,
+R7-11); (5) gates per the corrected §6 (R7-8 Step-0 memo widening + OFF re-pin FIRST;
+R7-7 corrected counter shapes; R7-10 budget test; the multi-body seed input; the orphan
+probe — B confirmed idx 4 has a REAL unresolved CrossCatLhs worker, so it is load-bearing).

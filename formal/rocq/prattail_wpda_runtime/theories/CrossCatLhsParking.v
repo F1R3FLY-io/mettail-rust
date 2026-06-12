@@ -53,6 +53,26 @@
  *      and refinement can only shrink groups (over-discrimination is
  *      the safe direction).
  *
+ * ── ROUND-7 AMENDMENT (2026-06-12, R7-6 — red-team ledger Round 7) ──
+ * The original T1/T3 modeled the WRONG TAIL LAYER: `effective_state` is
+ * the PRE-reentry generic-CategoryEntry tail (:16313-16344), but for
+ * CrossCatLhs pops the reentry (:16345-16366) fires for EVERY pred ≠
+ * NONE (the pre-reentry state is always in {InfixLoop, Unwinding} over
+ * PredKind — `effective_state_total_in_guard` — so pred-presence is the
+ * guard's live conjunct) and sets the final state to InfixLoop
+ * UNCONDITIONALLY. The REAL member tail is therefore
+ * `(final_state = InfixLoop, reentry = pred ≠ NONE)`: the STATE axis is
+ * CONSTANT (`final_state_constant`) and only the REENTRY axis varies.
+ * Consequences, recorded not hidden: T1 is restated on the reentry axis
+ * (the original state-axis witness was a wrong-layer artifact); the
+ * state-axis half of T3 (`worker_snapshot_broadcast_unsound` via a
+ * GroupingMarker member) is REMOVED — its configurations are EQUAL
+ * post-reentry — and the reentry-axis fence
+ * (`worker_snapshot_forces_refused_reentry`) is THE broadcast fence.
+ * T2/T4/T5/T6/T7/T8 are unchanged (generic over the tail function).
+ * The Measure-mode tail witness in wpda_walker.rs is corrected to the
+ * post-reentry tail in the same commit.
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
@@ -98,10 +118,32 @@ Definition effective_state (p : PredKind) : TailState :=
   | PredOther => TUnwinding
   end.
 
-(* The reentry guard (:16189-16194): the popped CrossCatLhs frame is
-   always a CategoryEntry and the state test is total over
-   effective_state's codomain, so predecessor-presence is the live
+(* R7-6: the reentry guard's state test (`effective_new_state ∈
+   {InfixLoop, Unwinding}`) is TOTAL over PredKind — every pre-reentry
+   state is in the admitted set, so predecessor-presence is the live
    conjunct. *)
+Lemma effective_state_total_in_guard :
+  forall p, effective_state p = TInfixLoop \/ effective_state p = TUnwinding.
+Proof.
+  intro p. destruct p; simpl; auto.
+Qed.
+
+(* R7-6: the POST-reentry final state — the reentry, when it fires,
+   sets InfixLoop unconditionally (:16366); when it does not fire
+   (pred = NONE), the pre-reentry state for NONE is already InfixLoop.
+   The final state is CONSTANT over PredKind. *)
+Definition final_state (_ : PredKind) : TailState := TInfixLoop.
+
+Lemma final_state_constant :
+  forall p q, final_state p = final_state q.
+Proof.
+  intros. reflexivity.
+Qed.
+
+(* The reentry guard (:16189-16194): the popped CrossCatLhs frame is
+   always a CategoryEntry and the state test is total over PredKind
+   (`effective_state_total_in_guard`), so predecessor-presence is the
+   live conjunct. *)
 Definition reentry_fires (p : PredKind) : bool :=
   match p with
   | PredNone => false
@@ -134,25 +176,26 @@ Record Config : Type := MkConfig {
   cfg_reentry : bool
 }.
 
-(* The PER-CURSOR tail: the member's own predecessor decides. *)
+(* The PER-CURSOR tail: the member's own predecessor decides — via the
+   REENTRY axis (R7-6: the post-reentry state is constant InfixLoop;
+   the predecessor's information content is whether the reentry fires). *)
 Definition member_tail_config (m : Member) (b : Body) : Config :=
   MkConfig (member_id m) (body_id b) (body_hi b)
-           (effective_state (member_pred m))
+           (final_state (member_pred m))
            (reentry_fires (member_pred m)).
 
-(* T1 — the tail genuinely depends on the member: two members with
-   CategoryEntry vs GroupingMarker predecessors take different states;
-   CategoryEntry vs NONE differ on the reentry axis. The non-vacuity
-   basis: a "tail" cannot be a per-key constant. *)
+(* T1 (RESTATED, R7-6) — the tail genuinely depends on the member, on
+   the REENTRY axis: CategoryEntry vs NONE predecessors differ on
+   whether the reentry fires. (The ORIGINAL T1 also claimed a state-axis
+   dependence via effective_state — that was the PRE-reentry layer; the
+   post-reentry state is constant (`final_state_constant`), so the
+   state-axis claim was a wrong-layer artifact and is withdrawn.) The
+   non-vacuity basis stands: a "tail" cannot be a per-key constant,
+   because the reentry bit varies per member. *)
 Theorem member_tail_depends_on_member :
-  exists p1 p2,
-    effective_state p1 <> effective_state p2 /\
-    exists p3 p4,
-      reentry_fires p3 <> reentry_fires p4.
+  exists p3 p4, reentry_fires p3 <> reentry_fires p4.
 Proof.
-  exists PredCategoryEntry, PredGroupingMarker. split.
-  - simpl. discriminate.
-  - exists PredCategoryEntry, PredNone. simpl. discriminate.
+  exists PredCategoryEntry, PredNone. simpl. discriminate.
 Qed.
 
 (* ════════════════════════════════════════════════════════════════════
@@ -190,10 +233,13 @@ Section ParkingVsPerCursor.
     flat_map (fun m => map (member_tail_config m) (parse worker)) members.
 
   (* The v1 parking flow (REFUTED design): every member is revived
-     with the WORKER's tail — only the member/body identities vary. *)
+     with the WORKER's tail — only the member/body identities vary.
+     (R7-6: the broadcast tail uses the post-reentry final_state, like
+     the member tail — the broadcast's surviving wrongness is the
+     REENTRY bit.) *)
   Definition v1_broadcast_config (worker m : Member) (b : Body) : Config :=
     MkConfig (member_id m) (body_id b) (body_hi b)
-             (effective_state (member_pred worker))
+             (final_state (member_pred worker))
              (reentry_fires (member_pred worker)).
 
   Definition parking_v1_flow (worker : Member) (members : list Member)
@@ -238,38 +284,17 @@ Section ParkingVsPerCursor.
     rewrite parking_v2_eq_percursor. reflexivity.
   Qed.
 
-  (* T3 — the v1 fence: broadcasting the WORKER's tail produces a
-     configuration the per-cursor flow NEVER produces, on both axes:
-     (a) the state axis — an InfixLoop-tailed worker forces a
-         GroupingMarker-predecessor member (whose own tail is
-         Unwinding) into InfixLoop;
-     (b) the reentry axis — it forces a reentry on a NONE-predecessor
-         member whose own guard refuses it.
-     Concrete witnesses (the strongest non-vacuity form): the only
+  (* T3 (RESTATED, R7-6) — the v1 fence, on the REENTRY axis: the
+     broadcast forces a reentry on a NONE-predecessor member whose own
+     guard refuses it. (The ORIGINAL T3 also carried a state-axis
+     witness via a GroupingMarker member — post-reentry those
+     configurations are EQUAL (`final_state_constant`), so that theorem
+     was a wrong-layer artifact and is WITHDRAWN; this reentry-axis
+     fence is THE broadcast fence.) Concrete witnesses; the only
      premise is that the source category parses at all (≥1 body). *)
   Definition demo_worker : Member := MkMember 0 PredCategoryEntry.
-  Definition demo_grouping_member : Member := MkMember 1 PredGroupingMarker.
   Definition demo_none_member : Member := MkMember 2 PredNone.
 
-  Theorem worker_snapshot_broadcast_unsound :
-    parse demo_worker <> [] ->
-    parking_v1_flow demo_worker [demo_grouping_member]
-      <> percursor_flow [demo_grouping_member].
-  Proof.
-    intros Hne Heq.
-    destruct (parse demo_worker) as [| b bs] eqn:Hparse.
-    - exact (Hne eq_refl).
-    - unfold parking_v1_flow, percursor_flow in Heq.
-      simpl in Heq.
-      rewrite (parse_pure demo_grouping_member demo_worker) in Heq.
-      rewrite Hparse in Heq. simpl in Heq.
-      (* Head configs: state TInfixLoop (broadcast) vs TUnwinding
-         (the member's own tail) — discriminable. *)
-      discriminate Heq.
-  Qed.
-
-  (* The reentry-axis witness, separately (a NONE-predecessor member:
-     its own guard refuses the reentry; the broadcast forces it). *)
   Theorem worker_snapshot_forces_refused_reentry :
     parse demo_worker <> [] ->
     parking_v1_flow demo_worker [demo_none_member]
