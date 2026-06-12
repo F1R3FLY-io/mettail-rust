@@ -937,6 +937,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// mid-parse quiescence never fires (e.g. lineages that die
     /// without popping keep the live count > 0).
     parked_crosscat_lhs_keys: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// EP-P1 v3.1 (Welch refinement, derived): outstanding parked
+    /// CrossCatLhs members. The dead-worker release exists ONLY to free
+    /// parked members — with none outstanding there is nothing to
+    /// release, so the per-step frontier scan is skipped entirely (the
+    /// bare-tower workloads park briefly or never, and paid the scan on
+    /// every step post-first-push: the measured +1.9%/+3.0% idx3/idx5
+    /// regression). Incremented at every successful park; decremented by
+    /// the members actually taken at the mid-parse release, the
+    /// quiescence drain, and the EOI backstop.
+    parked_crosscat_lhs_outstanding: usize,
     /// EP-P1 v3.1 (led_chain root fix, 2026-06-12): the GSS edge(s) a
     /// CrossCatLhs key's body-producing lineages pushed. After each step's
     /// prune+merge, a key with parked members whose edges no longer appear
@@ -3561,6 +3571,7 @@ where
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
+            parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             // Option C / C2: fresh empty SPPF arena.
@@ -3651,6 +3662,7 @@ where
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
+            parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             // Option C / C2: fresh empty SPPF arena.
@@ -3740,6 +3752,7 @@ where
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
+            parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             // Option C / C2: fresh empty SPPF arena.
@@ -3851,6 +3864,7 @@ where
         self.popped_crosscat_lhs_edges.clear();
         self.pending_crosscat_lhs_drain_keys.clear();
         self.parked_crosscat_lhs_keys.clear();
+        self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
         self.ep_p1_eoi_release = false;
         // Cohort-revive-rework M1 (2026-05-29): reset the orphan
@@ -3955,6 +3969,7 @@ where
         self.popped_crosscat_lhs_edges.clear();
         self.pending_crosscat_lhs_drain_keys.clear();
         self.parked_crosscat_lhs_keys.clear();
+        self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
         self.ep_p1_eoi_release = false;
         self.recovery_cohort_cache.clear();
@@ -7336,6 +7351,7 @@ where
                                     // backstop can force-drain it even if
                                     // mid-parse quiescence never fires.
                                     self.parked_crosscat_lhs_keys.insert(__key);
+                                    self.parked_crosscat_lhs_outstanding += 1;
                                     return CursorOutcome::Drop;
                                 }
                                 crate::stats_inc!(self, ep_p1_park_overflow_fallbacks);
@@ -10709,6 +10725,8 @@ where
                         );
                         self.branch_cursors
                             .push(crate::cohort_lazy::Frame::Concrete(revived));
+                        self.parked_crosscat_lhs_outstanding =
+                            self.parked_crosscat_lhs_outstanding.saturating_sub(1);
                         injected_consumed += 1;
                     }
                 }
@@ -11630,6 +11648,8 @@ where
                             cat,
                             ppw.clone(),
                         );
+                        self.parked_crosscat_lhs_outstanding =
+                            self.parked_crosscat_lhs_outstanding.saturating_sub(1);
                         new_cursors.push(crate::cohort_lazy::Frame::Concrete(revived));
                     }
                 }
@@ -11686,7 +11706,10 @@ where
         // RESOLVE (transition InFlight→Resolved), so no key is ever
         // dead-with-parked-members, and this scan releases nothing (the
         // parking-based sharing is fully preserved).
-        if self.ep_p1_mode == EpP1Mode::On && !ep_p1_deadworker_release_disabled() {
+        if self.ep_p1_mode == EpP1Mode::On
+            && self.parked_crosscat_lhs_outstanding > 0
+            && !ep_p1_deadworker_release_disabled()
+        {
             self.release_dead_crosscat_lhs_workers();
         }
 
@@ -15284,6 +15307,8 @@ where
         let mut released: Vec<BranchCursor<W>> = Vec::new();
         for key in &dead_keys {
             let members = self.dispatch_cohort_cache.take_inflight_members(key);
+            self.parked_crosscat_lhs_outstanding =
+                self.parked_crosscat_lhs_outstanding.saturating_sub(members.len());
             // The key's lineage is gone; stop tracking its edges either way
             // (a Resolved key returns no members but is also no longer a
             // body producer for the dead-worker purpose).
@@ -16217,6 +16242,7 @@ where
                         {
                             crate::stats_inc!(self, dbg_ccl_parked_ok);
                             self.parked_crosscat_lhs_keys.insert(ccl_key);
+                            self.parked_crosscat_lhs_outstanding += 1;
                             return Vec::new();
                         }
                         crate::stats_inc!(self, ep_p1_park_overflow_fallbacks);
