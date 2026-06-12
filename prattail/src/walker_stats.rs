@@ -528,6 +528,37 @@ pub struct WalkerStats {
     /// projection). Divide by `chain_earley_succeeded_count` for the
     /// average chain length absorbed per Earley call.
     pub chain_earley_atoms_absorbed_sum: u64,
+
+    // ── Evidence-pruning P1 Step-0 diagnostics (plan §P1 commit 2;
+    //    ledger 02-program-ledger.md) — walker-side counters. The three
+    //    fall-through GATE counters live in `ep_p1` (process-wide
+    //    atomics) because the gate runs in GENERATED code with no
+    //    walker access. ──────────────────────────────────────────────
+    /// EP-P1: `EdgeKind::CrossCatLhs` delegate pushes applied (the
+    /// Pass-0 dispatch-time d-worker spawns). Denominator for the
+    /// cohort-share gate (share iff dup ≥ 10%).
+    pub crosscat_lhs_delegates_spawned: u64,
+    /// EP-P1: spawns BEYOND THE FIRST at the same `(pos,
+    /// source_src_idx)` — the would-share measure (an `EquivKey`-style
+    /// merge would coalesce exactly these at registration; spawn
+    /// multiplicity, not instantaneous liveness, is what sharing
+    /// removes). Numerator for the cohort-share gate.
+    pub crosscat_lhs_delegate_dup_at_pos_source: u64,
+    /// EP-P1: spawn counts per `(pos, source_src_idx)` backing the dup
+    /// counter (diagnostic detail; non-zero entries with count > 1 are
+    /// the share candidates).
+    pub crosscat_lhs_spawns_at_pos_source: FxHashMap<(usize, u16), u64>,
+    /// EP-P1: `apply_action_to_cursor` calls attributed to cursors
+    /// UNDER a `CrossCatLhs` frame (any such edge in the cursor's
+    /// `incoming_edge_stack`). The waste-gate metric: must drop ≥ 60%
+    /// on `int(float(int(3.14))) == 3` when P1 enforcement lands, else
+    /// the residue passes to P2/P3.
+    pub cast_then_infix_steps: u64,
+    /// EP-P1: memo `incoming_edge_stack_id → contains-CrossCatLhs?`.
+    /// Exact forever (arena stacks are interned and immutable per id);
+    /// collapses the attribution scan to one edge-stack walk per
+    /// distinct stack.
+    pub crosscat_lhs_stack_memo: FxHashMap<crate::edge_stack_arena::EdgeStackId, bool>,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2109,6 +2140,47 @@ impl fmt::Display for WalkerStats {
                     .projected_memory_savings_multiplier(),
             )?;
         }
+        // Evidence-pruning P1 Step-0 (plan §P1 commit 2): non-zero-slot
+        // printing only (P-series round-3 m-3). Gate counters are
+        // process-cumulative atomics (ep_p1 module docs); walker-side
+        // counters are per-walker.
+        {
+            let (ep_considered, ep_gated_off, ep_d2_only) = ep_p1::snapshot();
+            if ep_considered > 0
+                || self.crosscat_lhs_delegates_spawned > 0
+                || self.cast_then_infix_steps > 0
+            {
+                writeln!(f, "  ep_p1_crosscat_lhs (EP plan §P1 Step-0):")?;
+                writeln!(
+                    f,
+                    "    fallthrough_considered={}  fallthrough_gated_off={}  d2_only_hits={} [process-cumulative]",
+                    ep_considered, ep_gated_off, ep_d2_only,
+                )?;
+                writeln!(
+                    f,
+                    "    delegates_spawned={}  dup_at_pos_source={}  cast_then_infix_steps={}",
+                    self.crosscat_lhs_delegates_spawned,
+                    self.crosscat_lhs_delegate_dup_at_pos_source,
+                    self.cast_then_infix_steps,
+                )?;
+                let mut dup_keys: Vec<(&(usize, u16), &u64)> = self
+                    .crosscat_lhs_spawns_at_pos_source
+                    .iter()
+                    .filter(|(_, count)| **count > 1)
+                    .collect();
+                if !dup_keys.is_empty() {
+                    dup_keys.sort();
+                    writeln!(
+                        f,
+                        "    dup (pos, source_src_idx) → spawns: {:?}",
+                        dup_keys
+                            .iter()
+                            .map(|((pos, src), count)| ((*pos, *src), **count))
+                            .collect::<Vec<_>>(),
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -2190,6 +2262,83 @@ macro_rules! stats_inc_idx {
             }
         }
     };
+}
+
+/// Evidence-pruning P1 Step-0 (plan §P1 commit 2): the lex-fork
+/// fall-through GATE counters. The gate executes in GENERATED parser
+/// code (`emit_lex_fork_at_prefix_dispatch`'s fragment, forks.rs) which
+/// has no `&mut WalkerStats` in scope, so these are process-wide
+/// atomics behind an always-defined hook fn (no-op body without the
+/// `walker-stats` feature). Counters are MONOTONE process-cumulative
+/// (never drained): with `PRATTAIL_WALKER_STATS=1` every report prints
+/// the running totals, so the LAST report of a run carries the corpus
+/// totals.
+pub mod ep_p1 {
+    #[cfg(feature = "walker-stats")]
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[cfg(feature = "walker-stats")]
+    pub static CROSSCAT_LHS_FALLTHROUGH_CONSIDERED: AtomicU64 = AtomicU64::new(0);
+    #[cfg(feature = "walker-stats")]
+    pub static CROSSCAT_LHS_FALLTHROUGH_GATED_OFF: AtomicU64 = AtomicU64::new(0);
+    #[cfg(feature = "walker-stats")]
+    pub static CROSSCAT_LHS_D2_ONLY_HITS: AtomicU64 = AtomicU64::new(0);
+
+    /// Gate-consultation hook called from the generated fall-through
+    /// fragment (one call per ambiguous-token PrefixDispatch gate
+    /// evaluation).
+    ///
+    /// - `kind_hit`: `prefix_crosscat_lhs_has_dispatch_rule` matched
+    ///   the current token (the d1 kind predicate, BEFORE the trigger
+    ///   gate) → `crosscat_lhs_fallthrough_considered` counts every
+    ///   call; `kind_hit && !gate_open` counts
+    ///   `crosscat_lhs_fallthrough_gated_off` (the trigger-presence
+    ///   gate suppressed an otherwise-eligible crosscat fall-through).
+    /// - `gate_open`: `kind_hit` AND `prefix_crosscat_lhs_trigger_ahead`
+    ///   (the full d1g disjunct as shipped).
+    /// - `crosscat_load_bearing`: the fall-through decided TRUE, would
+    ///   have been FALSE without the crosscat disjunct, AND ≥ 1 lex-alt
+    ///   branch was bypassed — the runtime witness of the FV
+    ///   `d1_d2_delta` (CastLexForkCrossCatLhsGap: the d1-vs-d2 delta
+    ///   is EXACTLY the bypassed secondary interpretation at SourceCtx;
+    ///   d2 = the fork-keeping `LexAltRuleKind::CrossCatLhs` variant).
+    ///   Counted as `crosscat_lhs_d2_only_hits`: if 0 across
+    ///   battery + corpus, d1 suffices and the d2 extension records a
+    ///   STOP (plan §P1 accept/STOP gates).
+    #[inline]
+    #[allow(unused_variables)]
+    pub fn note_crosscat_lhs_fallthrough(
+        kind_hit: bool,
+        gate_open: bool,
+        crosscat_load_bearing: bool,
+    ) {
+        #[cfg(feature = "walker-stats")]
+        {
+            CROSSCAT_LHS_FALLTHROUGH_CONSIDERED.fetch_add(1, Ordering::Relaxed);
+            if kind_hit && !gate_open {
+                CROSSCAT_LHS_FALLTHROUGH_GATED_OFF.fetch_add(1, Ordering::Relaxed);
+            }
+            if crosscat_load_bearing {
+                CROSSCAT_LHS_D2_ONLY_HITS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Snapshot (load) the three gate counters:
+    /// `(considered, gated_off, d2_only)`. All zero without the
+    /// `walker-stats` feature.
+    pub fn snapshot() -> (u64, u64, u64) {
+        #[cfg(feature = "walker-stats")]
+        {
+            (
+                CROSSCAT_LHS_FALLTHROUGH_CONSIDERED.load(Ordering::Relaxed),
+                CROSSCAT_LHS_FALLTHROUGH_GATED_OFF.load(Ordering::Relaxed),
+                CROSSCAT_LHS_D2_ONLY_HITS.load(Ordering::Relaxed),
+            )
+        }
+        #[cfg(not(feature = "walker-stats"))]
+        (0, 0, 0)
+    }
 }
 
 /// Add an arbitrary value to a `u64` counter on `self.stats` (zero-cost
@@ -2465,6 +2614,12 @@ mod tests {
             chain_earley_succeeded_count: 0,
             chain_earley_returned_none_count: 0,
             chain_earley_atoms_absorbed_sum: 0,
+            // Evidence-pruning P1 Step-0 (2026-06-11).
+            crosscat_lhs_delegates_spawned: 0,
+            crosscat_lhs_delegate_dup_at_pos_source: 0,
+            crosscat_lhs_spawns_at_pos_source: FxHashMap::default(),
+            cast_then_infix_steps: 0,
+            crosscat_lhs_stack_memo: FxHashMap::default(),
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

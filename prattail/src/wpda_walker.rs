@@ -6756,6 +6756,36 @@ where
     ) -> CursorOutcome<W> {
         // Phase F.13 walker-stats (2026-05-20): count per-cursor invocations.
         crate::stats_inc!(self, apply_action_calls);
+        // EP-P1 Step-0 (plan §P1 commit 2): attribute this call to the
+        // cast-then-infix waste class when the cursor sits UNDER a
+        // CrossCatLhs frame (any such edge in its incoming_edge_stack).
+        // The arena interns stacks, so the membership scan memoizes
+        // exactly by stack id (one walk per distinct stack, ever).
+        #[cfg(feature = "walker-stats")]
+        {
+            let sid = cursor.incoming_edge_stack_id;
+            let under_crosscat_lhs = match self.stats.crosscat_lhs_stack_memo.get(&sid).copied() {
+                Some(cached) => cached,
+                None => {
+                    let contains = self
+                        .incoming_edge_stack_arena
+                        .to_vec(sid)
+                        .iter()
+                        .any(|edge_id| {
+                            matches!(
+                                self.gss.edge_kind(*edge_id),
+                                Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                            )
+                        });
+                    self.stats.crosscat_lhs_stack_memo.insert(sid, contains);
+                    contains
+                },
+            };
+            if under_crosscat_lhs {
+                self.stats.cast_then_infix_steps =
+                    self.stats.cast_then_infix_steps.saturating_add(1);
+            }
+        }
         // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): every
         // entry into `apply_action_to_cursor` corresponds to a thunk
         // FORCE in the planned lazy walker (the popped head of the
@@ -6893,6 +6923,29 @@ where
                     let bucket = crate::walker_stats::pop_kind_bucket_index(&edge_kind);
                     self.stats.push_kind_histogram[bucket] =
                         self.stats.push_kind_histogram[bucket].saturating_add(1);
+                    // EP-P1 Step-0 (plan §P1 commit 2): count the Pass-0
+                    // dispatch-time CrossCatLhs delegate spawns + their
+                    // (pos, source_src_idx) multiplicity — the
+                    // would-share measure for the cohort-share gate
+                    // (share iff dup ≥ 10% of spawned; EquivKey-only,
+                    // wrap_rule stays a discriminator per the M4
+                    // tombstone).
+                    if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
+                        self.stats.crosscat_lhs_delegates_spawned =
+                            self.stats.crosscat_lhs_delegates_spawned.saturating_add(1);
+                        let spawn_count = self
+                            .stats
+                            .crosscat_lhs_spawns_at_pos_source
+                            .entry((cursor.pos, *source_src_idx))
+                            .or_insert(0);
+                        *spawn_count = spawn_count.saturating_add(1);
+                        if *spawn_count > 1 {
+                            self.stats.crosscat_lhs_delegate_dup_at_pos_source = self
+                                .stats
+                                .crosscat_lhs_delegate_dup_at_pos_source
+                                .saturating_add(1);
+                        }
+                    }
                 }
                 if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
                     if let Some(desc) = extract_proj_descriptor(cursor, &self.gss) {

@@ -441,10 +441,17 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // 18s/30s/>120s-timeout) back to owner-only work, while every
             // input that can actually host a category-changing infix keeps
             // its delegate.
-            let __primary_has_crosscat_lhs = tokens
+            // EP-P1 Step-0 (2026-06-11, plan §P1 commit 2): the kind
+            // predicate and the trigger gate are bound SEPARATELY so the
+            // diagnostic hook below can distinguish "gated off by
+            // trigger absence" from "kind miss" — the `&&` chain is
+            // semantically identical to the original single binding
+            // (short-circuit preserved).
+            let __ccl_kind_hit = tokens
                 .peek_kind(*pos)
                 .map(|pk| prefix_crosscat_lhs_has_dispatch_rule(primary_src, &pk))
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let __primary_has_crosscat_lhs = __ccl_kind_hit
                 && prefix_crosscat_lhs_trigger_ahead(primary_src, tokens, *pos);
             let __primary_next_pos = tokens.next_pos(*pos, 0);
             let __all_alts_same_length = alts
@@ -466,6 +473,22 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                     || (__branches.len() == 1 && __primary_survived)
                     || ((__primary_has_dispatch || __primary_has_crosscat_lhs)
                         && __all_alts_same_length);
+            // EP-P1 Step-0 diagnostic hook (no-op without the
+            // `walker-stats` feature). `crosscat_load_bearing` = the
+            // fall-through decided true, would have been FALSE without
+            // the crosscat disjunct, and ≥ 1 lex-alt branch was
+            // bypassed — the runtime witness of the FV `d1_d2_delta`
+            // (CastLexForkCrossCatLhsGap), counted as
+            // `crosscat_lhs_d2_only_hits`.
+            mettail_prattail::walker_stats::ep_p1::note_crosscat_lhs_fallthrough(
+                __ccl_kind_hit,
+                __primary_has_crosscat_lhs,
+                __fall_through
+                    && (__primary_has_crosscat_lhs && __all_alts_same_length)
+                    && !(__branches.is_empty()
+                        || (__branches.len() == 1 && __primary_survived)
+                        || (__primary_has_dispatch && __all_alts_same_length)),
+            );
             if !__fall_through {
                 return WpdaStepAction::Fork {
                     branches: __branches,
