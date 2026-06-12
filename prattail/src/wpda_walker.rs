@@ -112,6 +112,14 @@ fn b3_disabled() -> bool {
 enum EpP1Mode {
     Off,
     Shadow,
+    /// EP-P1 amended §P1 / Round 6 (2026-06-11): the v3 deciding
+    /// measurement. Registers/resolves CrossCatLhs keys in the REAL
+    /// cohort cache (sound: the R6-7 route discriminant makes the key
+    /// space structurally disjoint from projection cohorts) but ALWAYS
+    /// proceeds — zero behavioral change. Counts the arrival-phase
+    /// split (in-flight vs resolved hits) that decides v3's mechanism,
+    /// plus the R6-6/B1 first-resolver tail-divergence witness.
+    Measure,
 }
 
 impl EpP1Mode {
@@ -121,6 +129,7 @@ impl EpP1Mode {
     fn from_env() -> Self {
         match std::env::var("PRATTAIL_EP_P1").ok().as_deref() {
             Some("shadow") => EpP1Mode::Shadow,
+            Some("measure") => EpP1Mode::Measure,
             Some("on") => {
                 static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
                 WARNED.get_or_init(|| {
@@ -888,6 +897,14 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// EP-P1 amended §P1 (2026-06-11): the per-walker kill-switch mode,
     /// read once from `PRATTAIL_EP_P1` at construction.
     ep_p1_mode: EpP1Mode,
+    /// EP-P1 v2 Part A substrate (R5-2 carrier, landed with the measure
+    /// mode): the CrossCatLhs wrap (host) discriminator keyed by the
+    /// edge's own `GssEdgeId` — READ-NOT-COMPARED (EdgeKind identity and
+    /// GSS dedup are untouched). Written at the CrossCatLhs push (Measure
+    /// mode; the v3 enforcement reuses it), read at the pop-side resolve
+    /// to reconstruct the full DispatchKey. Reset at the parse boundary
+    /// (edge ids restart with the GSS).
+    crosscat_lhs_wrap: rustc_hash::FxHashMap<crate::gss::GssEdgeId, (u16, u16)>,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -3467,6 +3484,7 @@ where
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
+            crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3549,6 +3567,7 @@ where
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
+            crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3630,6 +3649,7 @@ where
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
+            crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3731,6 +3751,9 @@ where
         // SPPF arena and would be unsound to reuse across resets.
         self.dispatch_cohort_cache.clear();
         self.pending_cohort_drain_keys.clear();
+        // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
+        // the parse boundary — the wrap side table must clear with them.
+        self.crosscat_lhs_wrap.clear();
         // Cohort-revive-rework M1 (2026-05-29): reset the orphan
         // re-drive counter at the parse boundary so each parse gets a
         // fresh `MAX_REVIVAL_ROUNDS` budget.
@@ -3825,6 +3848,9 @@ where
         self.dispatch_cohort_cache
             .clear_entries_preserving_diagnostics();
         self.pending_cohort_drain_keys.clear();
+        // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
+        // the parse boundary — the wrap side table must clear with them.
+        self.crosscat_lhs_wrap.clear();
         self.recovery_cohort_cache.clear();
         self.chain_earley_cache.clear();
         self.chain_absorbed_intervals.clear();
@@ -7006,6 +7032,28 @@ where
                         cursor.visited_proj_descriptors.insert(desc);
                     }
                 }
+                // EP-P1 Measure mode (Round 6 / v3 deciding measurement;
+                // NON-cfg per R6-5): capture the CrossCatLhs dispatch
+                // identity BEFORE the push moves `edge_kind` and mutates
+                // `cursor.node`. Host = the predecessor (pre-push top)
+                // frame's category (R5-7: NEVER the pushed symbol's —
+                // that is the SOURCE).
+                let __ep_p1_measure_ccl: Option<(u16, u16)> =
+                    if self.ep_p1_mode == EpP1Mode::Measure {
+                        if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
+                            let host_cat = self
+                                .gss
+                                .node(cursor.node)
+                                .map(|n| n.symbol.category_src_idx)
+                                .unwrap_or(u16::MAX);
+                            Some((*source_src_idx, host_cat))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                let __ep_p1_dispatch_pos = cursor.pos;
                 self.emit_push_side_effects(cursor, &mut symbol);
                 let _ = self.cursor_gss_push_with_kind(
                     cursor,
@@ -7014,6 +7062,39 @@ where
                     weight.clone(),
                     edge_kind,
                 );
+                // EP-P1 Measure mode: register the dispatch in the REAL
+                // cache under the structurally-disjoint CrossCatLhs route
+                // (R6-7) and count the arrival phase; then ALWAYS proceed
+                // (zero behavioral change). The wrap side table is keyed
+                // by the just-pushed edge (the cursor's new top edge).
+                if let Some((__source, __host)) = __ep_p1_measure_ccl {
+                    if let Some(__eid) =
+                        self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id)
+                    {
+                        self.crosscat_lhs_wrap.insert(__eid, (__host, u16::MAX));
+                    }
+                    let __key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                        __ep_p1_dispatch_pos,
+                        __source,
+                        0,
+                        __host,
+                        u16::MAX,
+                    );
+                    match self.dispatch_cohort_cache.register(__key, cursor.weight.clone()) {
+                        crate::dispatch_cohort::RegisterOutcome::WorkerInserted => {
+                            crate::stats_inc!(self, ep_p1_measure_workers);
+                        },
+                        crate::dispatch_cohort::RegisterOutcome::InflightCollision => {
+                            crate::stats_inc!(self, ep_p1_measure_inflight_hits);
+                        },
+                        crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. } => {
+                            crate::stats_inc!(self, ep_p1_measure_resolved_hits);
+                        },
+                        crate::dispatch_cohort::RegisterOutcome::FailedHit => {
+                            crate::stats_inc!(self, ep_p1_measure_failed_hits);
+                        },
+                    }
+                }
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -15773,6 +15854,8 @@ where
             inner_cur_bp,
             wrap_cat,
             wrap_rule,
+            // R6-7: this revive is the CrossCatProjection cohort's.
+            route: crate::dispatch_cohort::CohortRoute::Projection,
         });
         // worker_pre_dispatch_weight retained on schema; reserved for
         // a future per-packing weight delta scheme (Stage 1.5.3
@@ -16534,6 +16617,107 @@ where
                                 | crate::dispatch_cohort::ResolveOutcome::ResolvedBodyOverflow {
                                     ..
                                 } => {},
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // EP-P1 Measure mode (Round 6; NON-cfg core per R6-5): the
+        // CrossCatLhs resolve sibling of the projection resolve above.
+        // Sound placement contra R5-3: the parked payload is BODY-ONLY
+        // (the member tail is recomputed per member — the v3 contract,
+        // CrossCatLhsParking.v T2), so no reentry state is needed and
+        // this site still has the popped node (`cursor.node`, pre-move)
+        // for `dispatch_pos` and the body on the sppf top (the F-1
+        // splice-skip preserves it through CrossCatLhs pops). Measure
+        // mode records the resolution + the R6-6/B1 tail-divergence
+        // witness and NEVER schedules a drain.
+        if self.ep_p1_mode == EpP1Mode::Measure {
+            if let (Some(eid), Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx })) =
+                (edge_id, popped_edge_kind.clone())
+            {
+                if let Some(node) = self.gss.node(cursor.node) {
+                    let dispatch_pos = node.pos;
+                    if let Some(symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+                        let symbol_cat = match self.sppf.node(symbol_id) {
+                            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                                Some(*non_terminal_tag as u16)
+                            },
+                            _ => None,
+                        };
+                        if symbol_cat == Some(source_src_idx) {
+                            let (wrap_cat, wrap_rule) = self
+                                .crosscat_lhs_wrap
+                                .get(&eid)
+                                .copied()
+                                .unwrap_or((u16::MAX, u16::MAX));
+                            let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                                dispatch_pos,
+                                source_src_idx,
+                                0,
+                                wrap_cat,
+                                wrap_rule,
+                            );
+                            let worker_pre = self
+                                .dispatch_cohort_cache
+                                .read_worker_pre(&key)
+                                .unwrap_or_else(W::one_ref);
+                            let snap = crate::dispatch_cohort::WorkerSnapshot {
+                                worker_inner_state: cursor.inner_state.clone(),
+                                worker_last_action_output_cat: cursor.last_action_output_cat,
+                                worker_pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .clone(),
+                                worker_weight: cursor.weight.clone(),
+                                worker_pre_dispatch_weight: worker_pre,
+                            };
+                            let _outcome = self.dispatch_cohort_cache.resolve(
+                                key,
+                                symbol_id,
+                                cursor.pos,
+                                dispatch_pos,
+                                snap,
+                            );
+                            // R6-6/B1: the first-resolver tail map — each
+                            // same-key resolver computes ITS OWN member
+                            // tail (the model's effective_state +
+                            // reentry_fires from ITS predecessor) and a
+                            // divergence from the first resolver's tail is
+                            // the empirical T3 witness (a worker-broadcast
+                            // would have corrupted this member).
+                            #[cfg(feature = "walker-stats")]
+                            {
+                                let pred = self.gss.edge_target(eid);
+                                let tail: (u8, bool) = match pred {
+                                    None => (0u8, false),
+                                    Some(p) if p == crate::gss::GSS_NODE_NONE => (0u8, false),
+                                    Some(p) => match self.gss.node(p).map(|n| n.symbol.kind) {
+                                        Some(crate::wpda_runtime::SymbolKind::CategoryEntry) => {
+                                            (0u8, true)
+                                        },
+                                        None => (0u8, false),
+                                        // GroupingMarker and every other
+                                        // predecessor kind take the
+                                        // Unwinding tail (16228-16261
+                                        // semantics).
+                                        _ => (1u8, true),
+                                    },
+                                };
+                                let mk = (dispatch_pos, source_src_idx, wrap_cat);
+                                match self.stats.ep_p1_measure_first_tail.get(&mk).copied() {
+                                    None => {
+                                        self.stats.ep_p1_measure_first_tail.insert(mk, tail);
+                                    },
+                                    Some(first) => {
+                                        if first != tail {
+                                            self.stats.ep_p1_measure_tail_divergent = self
+                                                .stats
+                                                .ep_p1_measure_tail_divergent
+                                                .saturating_add(1);
+                                        }
+                                    },
+                                }
                             }
                         }
                     }

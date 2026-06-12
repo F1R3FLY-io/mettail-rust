@@ -72,6 +72,26 @@ fn sigb_crosswrap_trace() -> bool {
 /// causing super-linear scaling. ConfigKey now uses
 /// [`EquivKey`] instead, obtained via [`DispatchKey::equiv`]. The
 /// cache itself still keys on full DispatchKey.
+/// EP-P1 amended §P1 / red-team Round 6 R6-7 (2026-06-11): the cohort
+/// cache is shared between the CrossCatProjection cohorts and the (v3)
+/// CrossCatLhs program, and key-space disjointness must be STRUCTURAL,
+/// not grammar-conditional (the R5-2 standard: relying on
+/// `wrap_rule = u16::MAX` never colliding with a real
+/// `rule_index_in_category` is the exact anti-pattern that rejected the
+/// EdgeKind widening). A numeric collision would drain wrong-origin
+/// members through the wrong revive — silent corruption. The route is a
+/// CACHE-key axis only; [`DispatchKey::equiv`] drops it (with
+/// `pos`/`wrap_*`) so the cohort-MERGE quotient and its M4 narrowing
+/// are untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CohortRoute {
+    /// The shipped CrossCatProjection/CrossCatDelegate cohorts.
+    Projection,
+    /// The EP-P1 CrossCatLhs program (measure mode @ this commit; the
+    /// v3 enforcement reuses the same route).
+    CrossCatLhs,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DispatchKey {
     pub pos: usize,
@@ -95,6 +115,9 @@ pub struct DispatchKey {
     /// is provably untouched.
     pub wrap_cat: u16,
     pub wrap_rule: u16,
+    /// R6-7 route discriminant (see [`CohortRoute`]). Cache-key axis
+    /// only — dropped by [`Self::equiv`].
+    pub route: CohortRoute,
 }
 
 impl DispatchKey {
@@ -112,6 +135,28 @@ impl DispatchKey {
             inner_cur_bp,
             wrap_cat,
             wrap_rule,
+            route: CohortRoute::Projection,
+        }
+    }
+
+    /// EP-P1 (R6-7): the CrossCatLhs-route constructor — structurally
+    /// disjoint from every projection key regardless of numeric field
+    /// values.
+    #[inline(always)]
+    pub fn new_crosscat_lhs(
+        pos: usize,
+        source_src_idx: u16,
+        inner_cur_bp: u8,
+        wrap_cat: u16,
+        wrap_rule: u16,
+    ) -> Self {
+        DispatchKey {
+            pos,
+            source_src_idx,
+            inner_cur_bp,
+            wrap_cat,
+            wrap_rule,
+            route: CohortRoute::CrossCatLhs,
         }
     }
 

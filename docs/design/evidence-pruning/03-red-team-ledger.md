@@ -469,3 +469,101 @@ shadow-measurement half now; design v2 with the R5 corrections + a NEW non-vacuo
 implement; win the ≥60% waste gate. The I7 amendment is recorded in
 02-staged-implementation-plan.md §P1 (premise falsified by the Step-0 data — the duplicates
 are redundant-VIABLE work that neither the EquivKey merge nor P2 refutation can remove).
+
+---
+
+## Round 6 (2026-06-11) — parking v2 design (05-p1-parking-v2-design.md): 2 critics, NOT CONVERGED
+## (A: REDESIGN on a fatal substrate fact; B: IMPLEMENT-WITH-CORRECTIONS on the spine) → v3 required
+
+### R6-1 (FATAL, critic A #7 — independent of everything else): the parking capacity ceiling.
+`MAX_PENDING_COHORT_PER_KEY = 16` (dispatch_cohort.rs:1945) with `pause_cohort_member`
+returning `false` past the cap (:1956) — and the design never checks the return. The measured
+class concentrates 3,311 duplicates on ONE key (6,5). Under =on: 16 park, ~3,295 are DROPPED
+(the worst I1 violation — passes the OFF battery, corrupts exactly the heavy cast workloads).
+The cap cannot be raised: cap=256 was empirically REJECTED (chain_10000 → 22 GB, near-OOM).
+If overflow falls back to Proceed instead, the fan is not collapsed → the ≥60% gate fails.
+EITHER BRANCH LOSES. The Rocq model is silent (parking_v2_flow parks an unbounded list).
+**The parked-frames substrate cannot inhabit the measured workload — v3 must collapse the
+3,311 WITHOUT materializing 3,311 parked frames.**
+
+### R6-2 (critic A #1, REFUTED): revive-as-real-pop. No precedent (the existing revive sets a
+post-resolution continuation state, never a pop-driving Unwinding); the re-pushed CrossCatLhs
+edge makes the revived member's pop RE-ENTER the new resolve block (non-idempotent → member
+duplication/non-termination); the push pos argument (`node_pos_or_hi`) does not exist (the
+correct value is the drain job's pos_at_dispatch). CORRECTION: realize the member tail as a
+FUNCTION (the model's member_tail_config IS a function) called directly at revive/consume —
+no GSS re-push, no second pop.
+
+### R6-3 (critic A #2, REFUTED): the resolve placement. The "sibling" CrossCatProjection
+resolve lives in cursor_gss_pop_via_edge (16416/16441), NOT apply_pop_body_to_cursor; and
+apply_pop_body_to_cursor's FIRST line mutates cursor.node (→ pred), so dispatch_pos is
+unrecoverable inside the tail as specified. CORRECTION: capture the popped node's pos + the
+popped GssEdgeId in the Pop arm BEFORE the mutation and thread them as parameters.
+
+### R6-4 (critic A #3, REFUTED): drain injection. The existing drain pushes into a LOCAL
+new_cursors vec (10932/10962/11015) that REPLACES branch_cursors at 11020 (then prune+merge
+11033/11052) — pushing into self.branch_cursors during the drain is clobbered (revived
+members silently lost). Multiset bug: jobs are per-BODY; iterating job.snapshots × members
+over-produces members × snapshots × bodies (violates T5). CORRECTION: inject into new_cursors
+before 11020; one revive per (job, member).
+
+### R6-5 (critic A #6 + critic B F1b, REFUTED): cfg-gating. The design anchors the On-path
+hooks inside `#[cfg(feature="walker-stats")]` blocks (the PushWithEdgeKind CrossCatLhs block
+6964-6992 is stats-only) → the ENTIRE parking mechanism compiles out of production binaries;
+=on would be a silent no-op exactly where the L-commit ships it. CORRECTION: every behavioral
+On path is non-cfg; only counters stay gated.
+
+### R6-6 (critic B B1, REFUTED): the shadow divergence counter is non-computable as designed —
+in shadow there ARE no parked members (the cache is untouched), so "compare the broadcast
+tail to the parked member's tail" has no second operand; the J.1 all-0 HARD gate is vacuous.
+CORRECTION (computable + witnesses T3): shadow-only map DispatchKey → (TailState, reentry)
+recording the FIRST same-key resolver's tail (via the factored tail function); 2nd+ resolvers
+compare their OWN tails against it; divergence increments the counter. No parking needed.
+
+### R6-7 (critic B D1, REFUTED): CrossCatProjection↔CrossCatLhs share the cache with NO route
+discriminant; disjointness rests on wrap_rule=u16::MAX never equaling a real
+rule_index_in_category — grammar-conditional, the EXACT R5-2 anti-pattern the design itself
+invoked to reject EdgeKind widening. A numeric collision drains wrong-origin members through
+the wrong revive (silent corruption). CORRECTION: a route discriminant on DispatchKey
+(dropped by equiv() to preserve the M4 merge-narrowing) — which ALSO makes a measure-mode
+sound (registering CrossCatLhs keys cannot perturb projection cohorts once disjointness is
+structural).
+
+### R6-8 (critic B C1, gap): no AmbiguityBudget test exists in the CrossCatLhs class — parked
+members are uncounted-while-paused (logical_frontier_len counts Frame::Cohort members but NOT
+cache-paused members), so budget decisions CAN flip OFF→ON unobserved. CORRECTION: add a
+cast-then-compare explicit-budget test to the battery; byte-identical or a justified,
+recorded budget-semantics delta.
+
+### R6-9 (critic B A, partially refuted, non-blocking): the purity premise is FALSE on
+visited_proj_descriptors (nested-cast sub-parses take cycle-defense decisions per-cursor) and
+on recovery axes — but the exposure is IDENTICAL to the shipped CrossCatProjection cohort
+(broadcast-by-inheritance, not by proof); recovery-off corpus discharges it empirically.
+RECOMMENDED A1: gate cohort registration on recovery_depth==0 ∧ no pending recovery deltas;
+state the inheritance argument explicitly.
+
+### SOUND (both critics): weight algebra (left-projection tiebreak preserved by
+weight_at_dispatch ⊗ symbol_weight_sum — inherited from the proven projection revive); the
+orphan re-drive (origin-agnostic re-injection re-launches the pre-dispatch frame; engine arm
+guards re-hold; MAX_REVIVAL_ROUNDS bounds re-collisions not sub-parse steps); fork-path
+engagement (push_edge_kind==Some(CrossCatLhs) unique; empty-return tolerated); GssEdgeId
+stability; K6 re-baselining; T8 sentinel safety w.r.t. the source body.
+
+### Round-6 verdict + the v3 direction
+
+v2-as-specified REFUTED by R6-1 (the substrate cannot hold the class). The spine survives
+(member-tail-as-function, side-table wrap, host-sourced wrap_cat, orphan re-drive, two member
+shapes). **v3 direction (critic A's recommendation + synthesis): collapse the class WITHOUT
+materializing parked frames — SYNCHRONOUS RESOLVED-BODY CONSUMPTION:** the worker parses the
+source once; arrivals AFTER resolution consume the interned body IN PLACE (push body onto own
+sppf_stack, pos=hi_pos, compute the member tail DIRECTLY via the factored function, continue
+— zero new materialization; the arriving cursor already exists); only IN-FLIGHT-window
+arrivals park (bounded; overflow falls back to Proceed = sound, just less sharing).
+**DECIDING MEASUREMENT (before any v3 design): the arrival-phase split** — of the 3,311
+arrivals at key (6,5), how many would hit Resolved vs InFlight? Enabled by R6-7's route
+discriminant: a measure-mode that registers/resolves CrossCatLhs keys FOR REAL but always
+Proceeds (behavior-neutral) counts the split exactly. If post-resolution dominates (expected:
+the sub-parse is short, the fan arrives over many steps), synchronous consumption collapses
+the class with parking as a small bounded tail; if in-flight dominates, a shared-continuation
+lazy fan-out is needed instead. Multi-body (ambiguous-source) synchronous consume forks per
+body at the consume site — design detail for v3.

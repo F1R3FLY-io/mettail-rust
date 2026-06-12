@@ -213,3 +213,21 @@ slot 0 (dispatch class, recovery-off). Off-mode control: zero shadow lines (iner
   implement). SHADOW half SHIPPED: PRATTAIL_EP_P1 mode + chokepoint would-share measurement;
   idx 4 would_share_total=3500 == the D dup figure (full-key cross-check PASSES; wrap splits
   nothing on calculator); off-mode inert (control verified); battery green.
+- 2026-06-11 v2 M-commit @ a0fa001d: `CrossCatLhsParking.v` — 10 theorems, all `Closed under
+  the global context` (T2 member-tail revive soundness; T3 worker-broadcast fence ×2 axes;
+  T6/T7 EOI orphan re-drive REQUIRED; T8 wrap refines/cross-host-never-shares). The
+  non-vacuous model R5-8 demanded. v2 design round opened (Plan agent + re-red-team next).
+- 2026-06-11 v2 design → Round 6 red-team (2 critics, NOT CONVERGED → v3): R6-1 FATAL (the
+  16/key parking cap vs 3,311 on one key — the parked-frames substrate cannot hold the class)
+  + R6-2..R6-8 corrections; SOUND spine retained. Full record in 03-red-team-ledger.md.
+- 2026-06-12 **the v3 DECIDING MEASUREMENT** (measure-first; EpP1Mode::Measure + the R6-7
+  route discriminant making real-cache registration sound + R6-6/B1 first-resolver tail map):
+  **idx 4 arrival-phase split = workers 4 / in-flight 24 / RESOLVED 3,476 (99.2%) /
+  tail_divergent 0** (totals = 3,504 = the D-commit spawn count exactly; corpus rows: idx0
+  2/1/7, idx3 1/3/20, idx5 1/5/208, idx7 4/2/14 — all tail_divergent 0). **R6-1 DISSOLVED:
+  v3 = SYNCHRONOUS RESOLVED-BODY CONSUMPTION** (99.2% of arrivals consume the interned body
+  in place, zero materialization) **+ bounded in-flight parking** (24 total across ~4 keys ≤
+  16/key; overflow→Proceed fallback sound). tail_divergent=0 also confirms the member tails
+  agree on this corpus (the v3 member-tail recompute stays per the model's general-case
+  fence). =measure neutrality: parses byte-identical, timing unchanged (idx4 1.469s vs
+  1.468s baseline).

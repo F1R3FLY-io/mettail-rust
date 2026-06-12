@@ -570,6 +570,29 @@ pub struct WalkerStats {
     /// the stats at the per-parse boundary; NEVER feeds the dispatch-
     /// cohort cache.
     pub ep_p1_shadow_seen: FxHashMap<(usize, u16, u16), u32>,
+    /// EP-P1 MEASURE (Round 6, the v3 deciding measurement): first
+    /// arrivals at a CrossCatLhs DispatchKey (the would-be workers).
+    pub ep_p1_measure_workers: u64,
+    /// EP-P1 MEASURE: arrivals during the in-flight window (these are
+    /// the only ones a v3 would PARK — must stay small for the
+    /// synchronous-consumption mechanism; the parking cap is 16).
+    pub ep_p1_measure_inflight_hits: u64,
+    /// EP-P1 MEASURE: arrivals AFTER resolution (a v3 consumes these
+    /// synchronously in place — zero materialization). The deciding
+    /// ratio: resolved_hits ≫ inflight_hits ⇒ synchronous consumption
+    /// collapses the class.
+    pub ep_p1_measure_resolved_hits: u64,
+    /// EP-P1 MEASURE: arrivals at a key whose worker FAILED.
+    pub ep_p1_measure_failed_hits: u64,
+    /// EP-P1 MEASURE (R6-6/B1): first-resolver member tail per key
+    /// `(dispatch_pos, source, host_cat)` → (state class, reentry
+    /// would fire). Same-key resolvers compare their OWN tails.
+    pub ep_p1_measure_first_tail: FxHashMap<(usize, u16, u16), (u8, bool)>,
+    /// EP-P1 MEASURE (R6-6/B1): same-key resolvers whose member tail
+    /// DIVERGED from the first resolver's — the empirical T3 witness
+    /// (a worker-broadcast revive would have corrupted these members;
+    /// the v3 member-tail revive is REQUIRED, not optional).
+    pub ep_p1_measure_tail_divergent: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2225,6 +2248,26 @@ impl fmt::Display for WalkerStats {
                 }
             }
         }
+        // EP-P1 MEASURE (Round 6): the arrival-phase split + the B1
+        // tail-divergence witness. Non-zero printing only.
+        {
+            let measure_total = self.ep_p1_measure_workers
+                + self.ep_p1_measure_inflight_hits
+                + self.ep_p1_measure_resolved_hits
+                + self.ep_p1_measure_failed_hits;
+            if measure_total > 0 {
+                writeln!(f, "  ep_p1_measure (PRATTAIL_EP_P1=measure, v3 deciding split):")?;
+                writeln!(
+                    f,
+                    "    workers={}  inflight_hits={}  resolved_hits={}  failed_hits={}  tail_divergent={}",
+                    self.ep_p1_measure_workers,
+                    self.ep_p1_measure_inflight_hits,
+                    self.ep_p1_measure_resolved_hits,
+                    self.ep_p1_measure_failed_hits,
+                    self.ep_p1_measure_tail_divergent,
+                )?;
+            }
+        }
         Ok(())
     }
 }
@@ -2667,6 +2710,13 @@ mod tests {
             // EP-P1 amended §P1 shadow (2026-06-11).
             ep_p1_shadow_would_share_total: [0; WPDA_STATE_CLASS_COUNT * 2],
             ep_p1_shadow_seen: FxHashMap::default(),
+            // EP-P1 measure (Round 6).
+            ep_p1_measure_workers: 0,
+            ep_p1_measure_inflight_hits: 0,
+            ep_p1_measure_resolved_hits: 0,
+            ep_p1_measure_failed_hits: 0,
+            ep_p1_measure_first_tail: FxHashMap::default(),
+            ep_p1_measure_tail_divergent: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
