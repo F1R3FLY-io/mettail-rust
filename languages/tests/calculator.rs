@@ -1383,7 +1383,7 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
     )
     .expect_err("explicit AmbiguityBudget must report overflow instead of pruning");
     match err {
-        calc::WpdaParseError::AmbiguityBudget { budget, actual, position } => {
+        calc::WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
             assert_eq!(budget, 1);
             assert!(
                 actual > budget,
@@ -1407,7 +1407,7 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
     )
     .expect_err("prefix parser must report explicit AmbiguityBudget instead of pruning");
     match prefix_err {
-        calc::WpdaParseError::AmbiguityBudget { budget, actual, position } => {
+        calc::WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
             assert_eq!(budget, 1);
             assert!(
                 actual > budget,

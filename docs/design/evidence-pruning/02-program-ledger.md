@@ -239,6 +239,30 @@ anyway — A and B kill different classes"). Battery at baseline (SENTINEL 220/0
 default). Full record: /tmp/p2_step0/findings.md (transcribed into this repo's history via
 this commit message).
 
+## P4 — ESS + innovation demotion (CLOSED 2026-06-12: ESS KEEP / demotion STOP)
+
+M `ForwardOrderOnly.v` ✅ (@ 8106ec26, unmodified — the binding scheduler contract; its
+invariants respected: within-step-only reordering, every_member_stepped_before_exit,
+ess_report_no_prune). Implementation shipped:
+- **ESS (KEEP, always-on):** `frontier_ess_x1000` (Kish (Σw)²/Σw² over exp(−primary)
+  likelihood mass), computed LAZILY at the 3 budget-sentinel sites + EOI only (zero hot-path
+  cost), threaded sentinel → `WpdaResolveResult::AmbiguityBudget` → the generated
+  ParseError hint — a budget overflow now reports "frontier ESS≈k of n", distinguishing
+  1-winner+noise from genuine k-way ambiguity.
+- **Demotion (STOP per the plan's own fallback; the switch stays as the documented dormant
+  negative-result arm):** within-step stable-partition behind `PRATTAIL_EP_P4_DEMOTE`
+  (default OFF; battery byte-identical both states; the `demoted_member_unstepped_at_exit`
+  tripwire 0 across 14 reports with up to 472 demotions fired). The Welch panels
+  (cast_tower_bench, recovery_cohort_bench) are ALL NEUTRAL — a complete parse steps every
+  cursor regardless of order; no beam exists to benefit. DEEP-DIVED hazard (proven by AST
+  flip): demote-ON perturbs the equal-weight tiebreak winner (CastBigInt → CastUInt32 on a
+  10-way cast tie) ⇒ a **313× eval-side blowup** on `{get(put(map(),1,10),1)}` (0.5 s →
+  156.9 s) — the parse is identical (apply_action_calls/step_fanout_calls OFF==ON); the
+  receiver-on-merge-equality + EOI lex-min tiebreak is ORDER-SENSITIVE, which the model
+  soundly abstracts by keying all fields. **Cross-reference for the Dovetail flip:** the
+  order-sensitive equal-weight tiebreak is a latent nondeterminism a total content-derived
+  extraction tiebreak dissolves by construction (the plan's own realize-side requirement).
+
 ## Stage log
 
 - 2026-06-11 P0 opened.
@@ -362,3 +386,67 @@ inertness is structural: zero code change to the walker/codegen).
   `CrossCatLhs`/`Reentry` wrap injection is a live runtime `EdgeKind` (`wpda_walker.rs:7042/7145`).
   Gate FAILS 17 > 3 (floor 11 > 3). Deliverable-3 prestar reuse refuted (multi-symbol word acceptance
   + abstraction map + `stack_fully_modeled` all new). STOP recorded. No Rust/Rocq change.
+
+## P4 — Stages C+E (evidence-weighted ORDERING + innovation/ESS reporting): ESS KEEP, DEMOTION STOP
+
+> Plan §P4. ORDER-ONLY by construction. Model `ForwardOrderOnly.v` @ 8106ec26 (pre-landed M-commit;
+> 6 thms incl. T5 `demotion_preserves_accepted_set` + T6 `ess_report_no_prune` — the separate
+> `InnovationDemotionOrderOnly.v` the plan §10 lists is SUBSUMED by the T1-T6 consolidation, no new
+> model needed). This is the I-commit + L-commit. Working findings: `/tmp/p4_step/findings.md`.
+
+### Deliverables (I-commit, this commit)
+
+| Deliverable | Status |
+|---|---|
+| ESS reporting (always-on report, computed LAZILY at budget events + EOI) | ✅ `WpdaWalker::frontier_ess_x1000` (Kish ESS = (Σw)²/Σw² over `exp(-primary)` likelihood mass; `rigail` `Semiring::ess_primary_cost` + `LexicographicWeight` override = `primary.value()`); recorded at the 3 budget-sentinel sites (`maybe_prune_frontier` overflow branch + cohort-overflow + orphan-revival BudgetExceeded) and at EOI (`resolve_at_end_of_input`, walker-stats-gated); threaded through the sentinel (`ess_x1000` token) → `WpdaResolveResult::AmbiguityBudget` → `WpdaParseError::AmbiguityBudget` → `ParseError::AmbiguityBudget` hint. Hot path pays NOTHING (computed only at the event). |
+| Innovation demotion (kill switch `PRATTAIL_EP_P4_DEMOTE=off\|on`, default OFF) | ✅ `EpP4Demote` mode; per-cursor `BranchCursor::consumed_since_last_check` flag (set after `apply_action_to_cursor` iff `pos` strictly advanced — recovery INSERT holds pos fixed per I8, so a recovery-stall is correctly zero-innovation); carried through the Tomita arc round-trip (mirrors `ep_shadow_refuted`); demotion = STABLE-PARTITION the post-Tomita-drain `drained` order innovating-first WITHIN one `step_fanout` pass. |
+| Counters `zero_innovation_demotions` + `demoted_member_unstepped_at_exit` (TRIPWIRE) | ✅ walker_stats.rs; tripwire wired at the runaway-guard early-return AND the normal drain exit. |
+| Verification: battery IDENTICAL both states + tripwire == 0 | ✅ (see below) |
+| Welch experiment (recovery_cohort_bench + cast_tower_bench) | ✅ (see below) |
+
+### Verification (the accept criteria)
+
+**Battery PASS/FAIL byte-identical both demote states** (order-only): SENTINEL `gen_ledtest_op` 220/0,
+`gen_calculator_op` 1330/0, `gen_rhocalc_op` 530/1 (pre-existing `castbigrat`), `edge_case_tests`
+229/0, `rhocalc_tests` 126/0, `gen_ambient_{analytical,rewrite,prop}` 52/0+13/0+17/0, `mettail-prattail
+--lib` 3989/0 (default OFF, default ON, AND `--features walker-stats` OFF — all three), `mettail-macros`
+367/0. `ForwardOrderOnly.v` recompiles clean; the 4 P4 theorems all `Closed under the global context`.
+
+**TRIPWIRE clean:** `demoted_member_unstepped_at_exit == 0` across 14 walker reports on the
+recovery-heavy + cast + eval-ambiguous corpus (demote ON + walker-stats); `zero_innovation_demotions`
+fired up to 472 ⇒ the within-step invariant (T4/T5) holds, never a deferral across passes.
+
+**ESS report works:** `frontier_ess_x1000_last` observed = 1000 (ESS=1.0, single winner) / 4000 / 10000
+(10-way = the cast ambiguity) / 13000; budget-overflow Display surfaces "frontier ESS≈5.000 of 5" +
+structured `frontier_ess_x1000=5000` (end-to-end sentinel → result → error → hint confirmed).
+
+### Welch experiments (governor=performance, `taskset -c 0-7`)
+
+| Panel | Result |
+|---|---|
+| `recovery_cohort_bench` (N=20/arm, interleaved) | off=10.0ms on=10.0ms (sd=0) → **NEUTRAL** (uninformative: 10ms granularity, calc recovery inputs don't trigger the cast equal-weight ambiguity that engages the demotion) |
+| `cast_tower_bench` (N=30 light + N=8 heavy incl idx4) | **ALL NEUTRAL** (deltas ±1%, all p>0.05). PARSE-ONLY ⇒ demotion-neutral (the demotion does NOT change parse WORK: `map_put` probe `apply_action_calls=1422`/`step_fanout_calls=70` IDENTICAL OFF vs ON) |
+| ★ `rhocalc_tests` `native_ops::map::map_put` (parse+EVAL) | OFF 0.5s → ON **156.86s (313×)**. The demotion perturbs the 10-way-ambiguous cast WINNER (`CastBigInt` OFF → `CastUInt32` ON; AST flip proven), and UInt32-keyed map eval is pathological. `native_ops` module OFF 2.66s → ON 159.44s. The parse-only benches cannot see this (they don't eval). |
+
+### Verdict (plan §P4 accept criteria; L-decision input — parent decides)
+
+**ESS: KEEP** (always-on, battery-identical, zero hot-path cost, proven diagnostic value).
+**DEMOTION: RECOMMEND REVERT (recorded STOP)** per the brief's own fallback. NO panel improves (the
+parse-only Welch panels are NEUTRAL — the demotion buys no parse-time win because a complete parse
+steps every cursor regardless of order and this walker has no beam/cutoff), AND the eval-inclusive
+evidence (map_put 313×) shows the demotion is HARMFUL: it perturbs the ambiguous winner because the
+walker's equal-weight tiebreak is order-sensitive (merge `LexicographicWeight::plus` receiver-on-
+equality + EOI lex-min), which `ForwardOrderOnly.v` correctly abstracts away by keying ALL surviving
+fields into the cursor key — the model is sound; the architecture has no order-neutral reorder
+freedom at the continuation-drain surface. Per the brief, the demotion code STAYS (OFF default, kill
+switch `PRATTAIL_EP_P4_DEMOTE=on`) — NOT self-reverted; the default (OFF) is byte-identical to baseline.
+
+### P4 stage log
+
+- 2026-06-12 P4 I-commit: ESS reporting (lazy, budget+EOI) + innovation demotion (OFF default) +
+  tripwire. Battery byte-identical both states; tripwire 0 everywhere; ESS surfacing confirmed
+  end-to-end; `ForwardOrderOnly.v` 4 thms `Closed under the global context`.
+- 2026-06-12 P4 L-commit (Welch + verdict): cast_tower_bench + recovery_cohort_bench parse-only
+  panels NEUTRAL; the DECISIVE eval-inclusive datum (rhocalc map_put 313× under ON, via a perturbed
+  cast winner — AST `CastBigInt`→`CastUInt32` proven by flip) ⇒ **KEEP ESS, RECOMMEND REVERT
+  DEMOTION** (recorded STOP; demotion left OFF-by-default, parent decides the L-flip).

@@ -707,6 +707,11 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // check site if it is still refutable (no soundness loss — the
         // bit is "observed-refuted", not "is-refutable").
         ep_shadow_refuted: false,
+        // EP-P4: a cohort-revived member starts a fresh consume window
+        // (the shell carries no innovation bit). Conservative: revived
+        // members are treated as zero-innovation at their first post-
+        // revive step (demoted, never lost — ForwardOrderOnly.v T5).
+        consumed_since_last_check: false,
     }
 }
 

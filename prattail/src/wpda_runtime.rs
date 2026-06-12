@@ -718,6 +718,14 @@ pub enum WpdaResolveResult<W: SemiringRef> {
         budget: usize,
         actual: usize,
         position: usize,
+        /// EP-P4 (Stage E): the frontier effective-sample-size ×1000 at the
+        /// overflow point (Kish ESS over the live frontier's primary
+        /// likelihood mass; see `WpdaWalker::frontier_ess_x1000`). Lets the
+        /// surfaced error distinguish "1 winner + noise" (ESS≈1000) from
+        /// genuine k-way ambiguity (ESS≈k·1000). `0` marks "not computed at
+        /// the emission site" (e.g. a pre-walker raw-probe cap, or a
+        /// cohort-overflow that carried no live frontier).
+        frontier_ess_x1000: u32,
     },
 }
 

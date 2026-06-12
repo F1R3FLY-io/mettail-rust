@@ -70,6 +70,18 @@ pub trait Semiring: Clone + Copy + fmt::Debug + PartialEq + Send + Sync + 'stati
     fn is_one(&self) -> bool;
     /// Approximate equality for floating-point convergence checks.
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool;
+    /// EP-P4 (Stage E) ESS support: the scalar PRIMARY path cost this
+    /// weight carries, if one is meaningful, as an `f64` where LOWER = more
+    /// likely (a tropical / `-log`-probability cost; the path likelihood
+    /// mass is `exp(-cost)`). Returns `None` for weights with no scalar
+    /// primary (the default — e.g. boolean / counting / free semirings),
+    /// which the ESS fold treats as "no information" and skips. Used ONLY
+    /// to compute the frontier effective-sample-size at a budget/EOI event
+    /// (never on the hot path). Default `None`.
+    #[inline]
+    fn ess_primary_cost(&self) -> Option<f64> {
+        None
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -147,6 +159,15 @@ pub trait SemiringRef: Clone + fmt::Debug + PartialEq + Send + Sync + 'static {
     fn is_zero_ref(&self) -> bool;
     /// Whether this is the multiplicative identity.
     fn is_one_ref(&self) -> bool;
+    /// EP-P4 (Stage E) ESS support — see [`Semiring::ess_primary_cost`].
+    /// Default `None`; the blanket `impl<T: Semiring>` forwards to the
+    /// `Semiring` method so `LexicographicWeight`'s override is visible
+    /// through `SemiringRef` bounds (the walker is generic over
+    /// `SemiringRef`). Never on the hot path.
+    #[inline]
+    fn ess_primary_cost_ref(&self) -> Option<f64> {
+        None
+    }
 }
 
 /// Blanket implementation: every `Semiring` (which requires `Copy`) automatically
@@ -184,6 +205,13 @@ impl<T: Semiring> SemiringRef for T {
     #[inline]
     fn is_one_ref(&self) -> bool {
         self.is_one()
+    }
+
+    #[inline]
+    fn ess_primary_cost_ref(&self) -> Option<f64> {
+        // Forward to the Semiring override (LexicographicWeight provides a
+        // real primary; all others fall to the trait default `None`).
+        Semiring::ess_primary_cost(self)
     }
 }
 

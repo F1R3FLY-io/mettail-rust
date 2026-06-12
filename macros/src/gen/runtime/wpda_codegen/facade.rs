@@ -185,8 +185,8 @@ pub(crate) fn emit_parse_fns(
                         WpdaResolveResult::MaxStepsExceeded { position } => {
                             Err(WpdaParseError::Incomplete { position })
                         }
-                        WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position })
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
                         }
                     },
                     Err(exceeded) => Err(WpdaParseError::Incomplete {
@@ -456,6 +456,9 @@ pub(crate) fn emit_parse_fns(
                                 budget: RAW_PREFIX_CAP,
                                 actual: RAW_PREFIX_CAP + 1,
                                 position,
+                                // EP-P4: pre-walker raw-probe cap — no live
+                                // frontier to fold an ESS from.
+                                frontier_ess_x1000: 0,
                             });
                         }
                         raw_probe_limit =
@@ -505,8 +508,8 @@ pub(crate) fn emit_parse_fns(
                         WpdaResolveResult::MaxStepsExceeded { position } => {
                             Err(WpdaParseError::Incomplete { position })
                         }
-                        WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position })
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
                         }
                     },
                     Err(exceeded) => Err(WpdaParseError::Incomplete {
@@ -716,6 +719,8 @@ pub(crate) fn emit_parse_fns(
                                     budget: RAW_REALIZE_CAP,
                                     actual: RAW_REALIZE_CAP + 1,
                                     position: completion_position,
+                                    // EP-P4: realize-side cap — no frontier ESS.
+                                    frontier_ess_x1000: 0,
                                 });
                             }
                             if overflowed_realization {
@@ -723,6 +728,8 @@ pub(crate) fn emit_parse_fns(
                                     budget: REALIZE_CAP,
                                     actual: REALIZE_CAP + 1,
                                     position: completion_position,
+                                    // EP-P4: realize-side cap — no frontier ESS.
+                                    frontier_ess_x1000: 0,
                                 });
                             }
                             if typed_terms.is_empty() {
@@ -803,6 +810,8 @@ pub(crate) fn emit_parse_fns(
                                     budget: RAW_REALIZE_CAP,
                                     actual: RAW_REALIZE_CAP + 1,
                                     position,
+                                    // EP-P4: realize-side cap — no frontier ESS.
+                                    frontier_ess_x1000: 0,
                                 });
                             }
                             if overflowed_realization {
@@ -810,6 +819,8 @@ pub(crate) fn emit_parse_fns(
                                     budget: REALIZE_CAP,
                                     actual: REALIZE_CAP + 1,
                                     position,
+                                    // EP-P4: realize-side cap — no frontier ESS.
+                                    frontier_ess_x1000: 0,
                                 });
                             }
                             if typed_terms.is_empty() {
@@ -832,8 +843,8 @@ pub(crate) fn emit_parse_fns(
                         WpdaResolveResult::MaxStepsExceeded { position } => {
                             Err(WpdaParseError::Incomplete { position })
                         }
-                        WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position })
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
                         }
                     },
                     Err(exceeded) => Err(WpdaParseError::Incomplete {
@@ -1018,9 +1029,9 @@ pub(crate) fn emit_parse_fns(
                     WpdaResolveResult::MaxStepsExceeded { position } => {
                         (Err(WpdaParseError::Incomplete { position }), attempts)
                     }
-                    WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+                    WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
                         (
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position }),
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }),
                             attempts,
                         )
                     }
@@ -1080,6 +1091,12 @@ pub(crate) fn emit_parse_fns(
                 budget: usize,
                 actual: usize,
                 position: usize,
+                /// EP-P4 (Stage E): frontier effective-sample-size ×1000 at
+                /// the overflow point (Kish ESS over the live frontier's
+                /// primary likelihood mass). Distinguishes "1 winner +
+                /// noise" (≈1000) from genuine k-way ambiguity (≈k·1000).
+                /// `0` = not computed at this emission site.
+                frontier_ess_x1000: u32,
             },
         }
 
@@ -1105,11 +1122,15 @@ pub(crate) fn emit_parse_fns(
                     WpdaParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)
                     }
-                    WpdaParseError::AmbiguityBudget { budget, actual, position } => {
+                    WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
                         write!(
                             f,
-                            "wpds parse aborted at position {}: ambiguity budget {} exceeded by frontier of {} cursors",
-                            position, budget, actual,
+                            "wpds parse aborted at position {}: ambiguity budget {} exceeded by frontier of {} cursors (frontier ESS≈{:.3} of {})",
+                            position,
+                            budget,
+                            actual,
+                            (*frontier_ess_x1000 as f64) / 1000.0,
+                            actual,
                         )
                     }
                 }

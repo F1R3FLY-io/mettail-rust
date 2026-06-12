@@ -236,6 +236,12 @@ pub struct FrontierArc<W: SemiringRef> {
     /// round-trip (the M-1 absorption-path fidelity). `false` for arcs not
     /// built from a refuted cursor.
     pub ep_shadow_refuted: bool,
+    /// EP-P4 (Stages C+E, ORDER-ONLY): per-arc innovation flag, carried
+    /// verbatim through Tomita ingest/materialize so a cursor's consume-
+    /// window evidence (`BranchCursor::consumed_since_last_check`) survives
+    /// the round-trip and is readable at the next pass's stable-partition.
+    /// `false` for arcs whose producing step did not strictly advance `pos`.
+    pub consumed_since_last_check: bool,
 }
 
 impl<W: SemiringRef + Clone> FrontierArc<W> {
@@ -291,6 +297,8 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             // builds from a refuted cursor; `from_cursor` carries the real
             // bit. Defaulting here keeps the (test-only) `new` arity stable.
             ep_shadow_refuted: false,
+            // EP-P4: explicit-args test constructor — no innovation yet.
+            consumed_since_last_check: false,
         }
     }
 
@@ -348,6 +356,8 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             // EP-P2 (Stage B) D-4: capture the cursor's shadow-refuted bit
             // so it rides the Tomita round-trip (ingest → materialize).
             ep_shadow_refuted: cursor.ep_shadow_refuted,
+            // EP-P4: capture the innovation flag for the round-trip.
+            consumed_since_last_check: cursor.consumed_since_last_check,
         }
     }
 }
@@ -398,6 +408,8 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         // EP-P2 (Stage B) D-4: restore the per-arc shadow-refuted bit so
         // an absorbed-then-rematerialized refuted cursor stays flagged.
         ep_shadow_refuted: arc.ep_shadow_refuted,
+        // EP-P4: restore the per-arc innovation flag.
+        consumed_since_last_check: arc.consumed_since_last_check,
     }
 }
 
@@ -895,6 +907,7 @@ mod tests {
             sppf_collection_arena: Arc::new(Vec::new()),
             collection_sep_counts: Arc::new(Vec::new()),
             ep_shadow_refuted: false,
+            consumed_since_last_check: false,
         }
     }
 
@@ -1411,6 +1424,7 @@ mod tests {
             sppf_collection_arena: Arc::new(Vec::new()),
             collection_sep_counts: Arc::new(Vec::new()),
             ep_shadow_refuted: false,
+            consumed_since_last_check: false,
         };
         let shell = TomitaShell::from_cursor(&cursor);
         assert_eq!(shell.node, 42);

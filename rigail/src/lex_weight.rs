@@ -446,6 +446,17 @@ impl Semiring for LexicographicWeight {
             && self.src_idx == other.src_idx
             && self.rule_idx == other.rule_idx
     }
+
+    /// EP-P4 (Stage E) ESS: the PRIMARY tropical cost as an `f64`. This is
+    /// the `-log`-probability path cost (LOWER = more likely; the path
+    /// likelihood mass is `exp(-cost)`, exactly the `parse_with_confidence`
+    /// semantics). `+inf` (the `zero()` additive identity = an unreachable
+    /// path) maps to `Some(inf)`, which the ESS fold reads as likelihood
+    /// mass `exp(-inf) = 0` (contributes nothing) — correct.
+    #[inline]
+    fn ess_primary_cost(&self) -> Option<f64> {
+        Some(self.primary.value())
+    }
 }
 
 impl Default for LexicographicWeight {

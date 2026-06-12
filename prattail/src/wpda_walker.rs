@@ -178,6 +178,42 @@ impl EpP2Mode {
     }
 }
 
+/// EP-P4 (Stages C+E) innovation-demotion switch, read once from
+/// `PRATTAIL_EP_P4_DEMOTE` at construction (P-series convention: never per
+/// step). The demotion is ORDER-ONLY — it STABLE-PARTITIONS the within-
+/// `step_fanout` per-cursor drain order so innovating frontier members
+/// (those that strictly advanced `pos` in their producing step) are stepped
+/// FIRST among equal-weight ties. By ForwardOrderOnly.v T5
+/// (`demotion_preserves_accepted_set`) this is a pure permutation of the
+/// drain and changes NOTHING about the surviving-cursor SET — it can only
+/// change which equal-weight tie is forced first, a scheduling preference.
+/// `Off` is the I-commit DEFAULT (the L-decision flips it per the Welch
+/// verdict); `On` enables the stable-partition. The ESS reporting half of
+/// P4 is ALWAYS-ON regardless of this switch (it is a report, gated only by
+/// the budget/EOI event — see `frontier_ess_x1000`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EpP4Demote {
+    /// No reorder; the drain order is the Tomita-drain insertion order (the
+    /// pre-P4 behavior). The DEFAULT.
+    Off,
+    /// Stable-partition the drain order innovating-first within each
+    /// `step_fanout` pass (a permutation; T5 applies).
+    On,
+}
+
+impl EpP4Demote {
+    /// Read `PRATTAIL_EP_P4_DEMOTE` ONCE per walker construction. `on`
+    /// enables the within-step innovation demotion; `off`, unset, and any
+    /// other value default to `Off` (the I-commit default per plan §P4 —
+    /// the L-decision flips or reverts per the Welch verdict).
+    fn from_env() -> Self {
+        match std::env::var("PRATTAIL_EP_P4_DEMOTE").ok().as_deref() {
+            Some("on") => EpP4Demote::On,
+            _ => EpP4Demote::Off,
+        }
+    }
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -1047,6 +1083,28 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// Read O(1) by the shadow gate at the three check sites
     /// (`ParikhObligationGate.v` `S` relation).
     ep_p2_suffix_masks: Option<crate::suffix_classes::SuffixClassMasks>,
+    /// EP-P4 (Stages C+E) Step-0: the per-walker innovation-demotion switch,
+    /// read once from `PRATTAIL_EP_P4_DEMOTE` at construction. `Off`
+    ///
+    /// ★ P4 DEMOTION STOP (2026-06-12, recorded per plan §P4's own
+    /// fallback; ledger §P4): the Welch panels are ALL NEUTRAL (a
+    /// complete parse steps every cursor regardless of order — no
+    /// beam/cutoff exists to benefit), and enabling demotion PERTURBS
+    /// the equal-weight tiebreak winner (proven by AST flip:
+    /// CastBigInt → CastUInt32 on a 10-way tie ⇒ a 313× eval-side
+    /// blowup on `{get(put(map(),1,10),1)}` — the walker's
+    /// receiver-on-merge-equality + EOI lex-min tiebreak is
+    /// order-sensitive). This switch is therefore a PERMANENT
+    /// dormant negative-result A/B arm (the B2/B3_DISABLE pattern):
+    /// do NOT enable outside falsification runs without re-running
+    /// the full eval corpus. The order-sensitive-tiebreak finding
+    /// transfers to the Dovetail flip (a total content-derived
+    /// tiebreak dissolves it by construction).
+    /// (default) leaves the within-`step_fanout` drain order unchanged;
+    /// `On` stable-partitions it innovating-first (ORDER-ONLY — a pure
+    /// permutation; ForwardOrderOnly.v T5). The ESS reporting half is
+    /// always-on regardless of this switch.
+    ep_p4_demote: EpP4Demote,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -2163,6 +2221,22 @@ pub struct BranchCursor<W: SemiringRef> {
     /// accepted parse = soundness bug; the model/transcription is wrong).
     /// Lineage-faithful: no config-keying, no vacuity risk.
     pub ep_shadow_refuted: bool,
+    /// EP-P4 (Stages C+E, ORDER-ONLY) innovation flag. `true` iff THIS
+    /// cursor strictly advanced its input `pos` during the `step_fanout`
+    /// pass that PRODUCED it (a real token was consumed). `false` ⇒ the
+    /// producing step advanced only via ε / structural (Push/Pop/Replace) /
+    /// recovery edges — recovery INSERT holds `pos` fixed (plan I8), so a
+    /// recovery-stall is correctly zero-innovation. Read at the START of
+    /// the NEXT pass's per-cursor drain (the "consumed-since-last-check"
+    /// window) to STABLE-PARTITION the iteration order innovating-first
+    /// when `PRATTAIL_EP_P4_DEMOTE=on`. This is a pure permutation of the
+    /// drain order (ForwardOrderOnly.v T5 `demotion_preserves_accepted_set`)
+    /// — it changes NOTHING about the surviving-cursor SET; it only affects
+    /// which equal-weight tie is stepped first. Default `false` (a fresh
+    /// seed has consumed nothing yet). Rides each cursor through Fork-child
+    /// inheritance and the Tomita arc round-trip exactly like
+    /// `ep_shadow_refuted`.
+    pub consumed_since_last_check: bool,
 }
 
 /// Phase F.13 Stage 2.1 (2026-05-22): a single lex-Fork branch
@@ -2281,6 +2355,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // EP-P2 (Stage B) D-4: the shadow-refuted sticky bit rides the
             // clone (a cloned cursor IS the same lineage).
             ep_shadow_refuted: self.ep_shadow_refuted,
+            // EP-P4 (Stages C+E): the innovation flag rides the clone — a
+            // clone shares the producing step's consume-window evidence.
+            consumed_since_last_check: self.consumed_since_last_check,
             // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
             // memo is walker-global now.
         }
@@ -2392,6 +2469,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // EP-P2 (Stage B) D-4: a fresh seed cursor has never been
             // shadow-refuted.
             ep_shadow_refuted: false,
+            // EP-P4: a fresh seed cursor has consumed nothing yet.
+            consumed_since_last_check: false,
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
         }
     }
@@ -2482,6 +2561,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             // inherit the shadow-refuted bit so a refuted ancestor's
             // descendants stay flagged.
             ep_shadow_refuted: parent.ep_shadow_refuted,
+            // EP-P4: a Fork-child inherits the parent's consume-window
+            // evidence (it IS the parent's lineage at fork time).
+            consumed_since_last_check: parent.consumed_since_last_check,
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
         }
     }
@@ -3101,11 +3183,25 @@ impl<W: SemiringRef> LazyContinuationQueue<W> {
 /// sentinel shape; `None` otherwise (a regular parse-failed error).
 ///
 /// Sentinel format (set in `maybe_prune_frontier`):
-///   "AMBIGUITY_BUDGET_EXCEEDED: budget={n} actual={k} position={pos}"
-fn format_ambiguity_budget_sentinel(budget: usize, actual: usize, position: usize) -> String {
+///   "AMBIGUITY_BUDGET_EXCEEDED: budget={n} actual={k} position={pos} ess_x1000={e}"
+///
+/// EP-P4 (Stage E): the `ess_x1000` token carries the frontier effective
+/// sample size ×1000 computed at the overflow point (see
+/// `frontier_ess_x1000`). It is APPENDED, so the 3-field decoder
+/// `parse_ambiguity_budget_sentinel` is unaffected (it ignores unknown
+/// tokens) and pre-P4 callers keep working; the ESS is read by the separate
+/// `parse_ambiguity_budget_sentinel_ess` only where the budget report is
+/// surfaced. `ess_x1000 = 0` marks "not computed at this emission site"
+/// (e.g. cohort-overflow evidence that carries no live frontier).
+fn format_ambiguity_budget_sentinel(
+    budget: usize,
+    actual: usize,
+    position: usize,
+    ess_x1000: u32,
+) -> String {
     format!(
-        "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={}",
-        budget, actual, position,
+        "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={} ess_x1000={}",
+        budget, actual, position, ess_x1000,
     )
 }
 
@@ -3124,6 +3220,16 @@ fn parse_ambiguity_budget_sentinel(message: &str) -> Option<(usize, usize, usize
         }
     }
     Some((budget?, actual?, position?))
+}
+
+/// EP-P4 (Stage E): extract the `ess_x1000` token from a budget sentinel.
+/// Returns `None` when the message is not a budget sentinel OR carries no
+/// `ess_x1000` token (a pre-P4 sentinel); `Some(0)` is a valid
+/// "not-computed-at-emission" marker that round-trips faithfully.
+fn parse_ambiguity_budget_sentinel_ess(message: &str) -> Option<u32> {
+    let rest = message.strip_prefix("AMBIGUITY_BUDGET_EXCEEDED: ")?;
+    rest.split_whitespace()
+        .find_map(|tok| tok.strip_prefix("ess_x1000=").and_then(|v| v.parse().ok()))
 }
 
 fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
@@ -3683,6 +3789,7 @@ where
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
+            ep_p4_demote: EpP4Demote::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3776,6 +3883,7 @@ where
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
+            ep_p4_demote: EpP4Demote::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3868,6 +3976,7 @@ where
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
+            ep_p4_demote: EpP4Demote::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -4500,6 +4609,8 @@ where
                     // a new logical cursor at the resolved config (any
                     // refute history was already counted at the gate site).
                     ep_shadow_refuted: false,
+                    // EP-P4: post-collapse singleton starts a fresh window.
+                    consumed_since_last_check: false,
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
                 })];
                 self.state = new_state.clone();
@@ -4685,11 +4796,16 @@ where
             // PRATTAIL_HANG_DUMP env var is unset.
             self.publish_to_hang_dump_slot();
             if let Some(evidence) = self.dispatch_cohort_cache.unresolved_overflow_evidence() {
+                // EP-P4 (Stage E): budget event — compute + record the
+                // frontier ESS for the report (lazy; only at the event).
+                let ess_x1000 = self.frontier_ess_x1000();
+                crate::record_frontier_ess!(self, ess_x1000);
                 self.state = WpdaState::Error {
                     message: format_ambiguity_budget_sentinel(
                         evidence.budget,
                         evidence.actual,
                         evidence.position,
+                        ess_x1000,
                     ),
                 };
                 return Ok(());
@@ -4806,8 +4922,14 @@ where
                     match self.revive_orphaned_cohort_members_once(tokens) {
                         OrphanRevivalOutcome::Injected(_) => continue,
                         OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
+                            // EP-P4 (Stage E): budget event at the orphan
+                            // fixpoint — compute + record the frontier ESS.
+                            let ess_x1000 = self.frontier_ess_x1000();
+                            crate::record_frontier_ess!(self, ess_x1000);
                             self.state = WpdaState::Error {
-                                message: format_ambiguity_budget_sentinel(budget, actual, position),
+                                message: format_ambiguity_budget_sentinel(
+                                    budget, actual, position, ess_x1000,
+                                ),
                             };
                             return Ok(());
                         },
@@ -5001,6 +5123,21 @@ where
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
+        // EP-P4 (Stage E): record the frontier ESS at EOI (plan §P4
+        // deliverable 1 — "at EOI"). This is the parse-boundary diagnostic
+        // value of the report: the ESS of whatever frontier is parked when
+        // input is exhausted. The ONLY consumer of the no-overflow EOI ESS
+        // is the stats dump (a successful EOI raises no error to surface it
+        // in), so the WHOLE computation is `walker-stats`-gated — production
+        // pays NOTHING at EOI either. Recorded BEFORE the stats summary
+        // below so a `PRATTAIL_WALKER_STATS=1` run sees the EOI ESS. (A
+        // budget overflow that already returned earlier carries ITS ess in
+        // the sentinel and is surfaced in the error report regardless.)
+        #[cfg(feature = "walker-stats")]
+        {
+            let ess_x1000 = self.frontier_ess_x1000();
+            self.stats.frontier_ess_x1000_last = ess_x1000;
+        }
         // Phase F.13 walker-stats (2026-05-20): at parse boundary, emit
         // stats summary if env var PRATTAIL_WALKER_STATS=1 is set.
         // Mirrors PRATTAIL_HANG_DUMP precedent in hang_dump.rs.
@@ -5068,7 +5205,14 @@ where
         // explosion the budget was meant to avoid.
         if let WpdaState::Error { ref message } = self.state {
             if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
-                return WpdaResolveResult::AmbiguityBudget { budget, actual, position };
+                let frontier_ess_x1000 =
+                    parse_ambiguity_budget_sentinel_ess(message).unwrap_or(0);
+                return WpdaResolveResult::AmbiguityBudget {
+                    budget,
+                    actual,
+                    position,
+                    frontier_ess_x1000,
+                };
             }
         }
         // Lazy EOI (2026-06-08): do not force-materialize cohorts at the
@@ -5146,7 +5290,14 @@ where
                     if let Some((budget, actual, position)) =
                         parse_ambiguity_budget_sentinel(&message)
                     {
-                        WpdaResolveResult::AmbiguityBudget { budget, actual, position }
+                        let frontier_ess_x1000 =
+                            parse_ambiguity_budget_sentinel_ess(&message).unwrap_or(0);
+                        WpdaResolveResult::AmbiguityBudget {
+                            budget,
+                            actual,
+                            position,
+                            frontier_ess_x1000,
+                        }
                     } else {
                         WpdaResolveResult::ParseError { message, position: self.pos }
                     }
@@ -5163,7 +5314,14 @@ where
         // retained as a defensive backstop for future control-flow changes.
         if let WpdaState::Error { ref message } = self.state {
             if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
-                return WpdaResolveResult::AmbiguityBudget { budget, actual, position };
+                let frontier_ess_x1000 =
+                    parse_ambiguity_budget_sentinel_ess(message).unwrap_or(0);
+                return WpdaResolveResult::AmbiguityBudget {
+                    budget,
+                    actual,
+                    position,
+                    frontier_ess_x1000,
+                };
             }
         }
         // Phase E Fix A (2026-05-16): Premature-Accepted cursor filter.
@@ -6943,6 +7101,8 @@ where
                         // EP-P2 (Stage B) D-4: seed/commit-winner write-back —
                         // fresh cursor, not yet shadow-refuted.
                         ep_shadow_refuted: false,
+                        // EP-P4: commit-winner write-back starts a fresh window.
+                        consumed_since_last_check: false,
                         // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
                     }));
             },
@@ -8892,6 +9052,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9002,6 +9165,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9088,6 +9254,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9167,6 +9336,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9257,6 +9429,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9363,6 +9538,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9453,6 +9631,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9544,6 +9725,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9637,6 +9821,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9776,6 +9963,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9908,6 +10098,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -10107,6 +10300,9 @@ where
                                 // EP-P2 (Stage B) D-4: Fork-child inherits
                                 // the parent cursor's shadow-refuted bit.
                                 ep_shadow_refuted: cursor.ep_shadow_refuted,
+                                // EP-P4: Fork-arm / projection child inherits
+                                // the parent cursor's consume-window evidence.
+                                consumed_since_last_check: cursor.consumed_since_last_check,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -11661,6 +11857,53 @@ where
         // at the next step_fanout boundary. The queue therefore implements
         // demand-driven traversal over the weighted DAG without acting as
         // a beam or heuristic disambiguator.
+        // EP-P4 (Stages C+E, ORDER-ONLY): innovation demotion. STABLE-
+        // PARTITION the post-Tomita-drain iteration order so innovating
+        // frontier members (those whose producing step strictly advanced
+        // `pos` — `consumed_since_last_check == true`) precede zero-
+        // innovation members (advanced only via ε / structural / recovery
+        // edges; a recovery INSERT holds `pos` fixed per plan I8). Because
+        // the continuation_queue is a weight-min heap with FIFO push-order
+        // tiebreak (`LazyContinuationWork::cmp`: lower `sequence` wins on
+        // equal weight), placing innovating members FIRST gives them lower
+        // sequence numbers ⇒ they are stepped first AMONG EQUAL-WEIGHT TIES
+        // only. This is a pure PERMUTATION of `drained`
+        // (ForwardOrderOnly.v T5 `demotion_preserves_accepted_set`): the
+        // surviving-cursor SET after the full step is invariant (T3), every
+        // member is still stepped (T4, the while-loop below drains the whole
+        // heap unconditionally), and the post-step ⊕-merge is a set op.
+        // WITHIN-STEP ONLY: this never defers a member to a LATER
+        // `step_fanout` pass — doing so would make it invisible to
+        // `run_to_end_of_input`'s whole-frontier progress fingerprint and
+        // `!progress_made` could exit early (the model's load-bearing
+        // invariant). `Off` (the default) leaves `drained` untouched.
+        //
+        // `demoted_count`: the number of zero-innovation members that ended
+        // up BEHIND ≥1 innovating member (the genuinely-demoted set) — the
+        // basis for `zero_innovation_demotions` and the
+        // `demoted_member_unstepped_at_exit` tripwire (any of these still
+        // unstepped at pass exit = the within-step invariant was violated).
+        let mut ep_p4_demoted_pending: u64 = 0;
+        if self.ep_p4_demote == EpP4Demote::On && drained.len() > 1 {
+            let innovating_before = drained
+                .iter()
+                .filter(|(c, _)| c.consumed_since_last_check)
+                .count();
+            let zero_innovation = drained.len() - innovating_before;
+            // A demotion only OCCURS when both classes are non-empty (an
+            // all-innovating or all-stalled frontier is already partitioned;
+            // the stable sort is then the identity). `sort_by_key` is STABLE
+            // (Rust's slice sort) so equal-class members keep their relative
+            // Tomita-drain order — only the cross-class boundary moves; the
+            // dangling-else / source-order tiebreaks inside each class are
+            // preserved (no interaction with the load-bearing Fork order).
+            if innovating_before > 0 && zero_innovation > 0 {
+                // false (innovating) sorts before true (zero-innovation).
+                drained.sort_by_key(|(c, _)| !c.consumed_since_last_check);
+                ep_p4_demoted_pending = zero_innovation as u64;
+                crate::stats_add!(self, zero_innovation_demotions, zero_innovation as u64);
+            }
+        }
         let mut continuation_queue: LazyContinuationQueue<W> =
             LazyContinuationQueue::with_capacity(drained.len());
         for entry in drained {
@@ -11668,6 +11911,15 @@ where
             continuation_queue.push(cursor, action);
         }
         while let Some((cursor, action)) = continuation_queue.pop() {
+            // EP-P4: this popped member is about to be stepped. If it is a
+            // zero-innovation (demoted) member, decrement the pending count
+            // — the tripwire `demoted_member_unstepped_at_exit` checks that
+            // NONE remain pending when the pass exits (every demoted member
+            // is stepped within THIS pass; ForwardOrderOnly.v T4/T5). Read
+            // the flag BEFORE `apply_action_to_cursor` overwrites it below.
+            if ep_p4_demoted_pending > 0 && !cursor.consumed_since_last_check {
+                ep_p4_demoted_pending = ep_p4_demoted_pending.saturating_sub(1);
+            }
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
             // observe the projected `Continuation::ApplyAction` record
             // size for this action, plus the per-Fork child-count that
@@ -11751,7 +12003,19 @@ where
                 );
             }
             let mut cursor = cursor;
+            // EP-P4 (Stages C+E): snapshot `pos` so the post-step innovation
+            // flag records whether THIS step strictly advanced the cursor
+            // (a real token was consumed). Recovery INSERT holds `pos` fixed
+            // (plan I8), so a recovery-stall is correctly zero-innovation.
+            let ep_p4_pos_before = cursor.pos;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
+            // EP-P4: set the innovation flag for the NEXT pass's window. The
+            // flag is ORDER-ONLY metadata (read by the demotion partition);
+            // it never gates a drop. Set on every cursor regardless of the
+            // `ep_p4_demote` switch so the signal is available the moment it
+            // is flipped on (and so `=off` vs `=on` differ ONLY in the drain
+            // order, never in cursor identity).
+            cursor.consumed_since_last_check = cursor.pos > ep_p4_pos_before;
             // Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard. Any
             // cursor whose recovery_deltas exceeds the limit is
             // marked Error and returned immediately. The fanout bails
@@ -11766,6 +12030,18 @@ where
                         STRICT_PENDING_OPS_LIMIT,
                     ),
                 };
+                // EP-P4: the runaway guard aborts the pass mid-drain (parse
+                // failure). Any demoted members still queued are now
+                // unstepped within this pass — flush them to the tripwire so
+                // the invariant accounting stays exact even on the abort
+                // path (this is a parse-Error path, not a silent early exit).
+                if ep_p4_demoted_pending > 0 {
+                    crate::stats_add!(
+                        self,
+                        demoted_member_unstepped_at_exit,
+                        ep_p4_demoted_pending
+                    );
+                }
                 self.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(cursor)];
                 return self.state.clone();
             }
@@ -11797,6 +12073,21 @@ where
                     new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
                 },
             }
+        }
+        // EP-P4 (Stages C+E) TRIPWIRE: the continuation_queue drains the
+        // WHOLE heap unconditionally above, so on the normal pass exit every
+        // demoted member has been stepped and `ep_p4_demoted_pending` is 0.
+        // A non-zero residual here means a demoted member was somehow not
+        // stepped within this pass — the within-step invariant
+        // (ForwardOrderOnly.v T4 `every_member_stepped` / T5) was violated.
+        // MUST stay 0 (the model's load-bearing tripwire; deep-dive, never
+        // tune away). Cheap: one comparison per `step_fanout`.
+        if ep_p4_demoted_pending > 0 {
+            crate::stats_add!(
+                self,
+                demoted_member_unstepped_at_exit,
+                ep_p4_demoted_pending
+            );
         }
         // Phase F.13 H12 Stage 1.5 (2026-05-21): end-of-step cohort
         // drain. For each dispatch key whose worker resolved during
@@ -13371,6 +13662,9 @@ where
             // EP-P2 (Stage B) D-4: the post-commit singleton inherits the
             // winning cursor's shadow-refuted bit (same lineage).
             ep_shadow_refuted: winner.ep_shadow_refuted,
+            // EP-P4: the post-commit singleton inherits the winner's
+            // consume-window evidence (same lineage).
+            consumed_since_last_check: winner.consumed_since_last_check,
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
@@ -13401,6 +13695,13 @@ where
                 if actual <= n {
                     return;
                 }
+                // EP-P4 (Stage E): the budget event FIRED — compute the
+                // frontier ESS NOW (lazily, only here; the hot path pays
+                // nothing). Record it to stats and carry it in the sentinel
+                // so the surfaced budget report distinguishes "1 winner +
+                // noise" (ESS≈1000) from genuine k-way ambiguity (ESS≈k·1000).
+                let ess_x1000 = self.frontier_ess_x1000();
+                crate::record_frontier_ess!(self, ess_x1000);
                 // Mandate-compliant overflow: preserve the full frontier and
                 // transition the walker to an Error state encoding the budget
                 // violation in the sentinel-prefixed message.
@@ -13408,7 +13709,7 @@ where
                 // `WpdaResolveResult::AmbiguityBudget { budget, actual,
                 // position }`.
                 self.state = WpdaState::Error {
-                    message: format_ambiguity_budget_sentinel(n, actual, self.pos),
+                    message: format_ambiguity_budget_sentinel(n, actual, self.pos, ess_x1000),
                 };
             },
         }
@@ -13423,6 +13724,87 @@ where
         self.branch_cursors
             .iter()
             .fold(0usize, |acc, frame| acc.saturating_add(frame.logical_cursor_count()))
+    }
+
+    /// EP-P4 (Stage E): the frontier EFFECTIVE SAMPLE SIZE ×1000 — a Kish
+    /// ESS over the live frontier's primary likelihood mass. This is the
+    /// always-on ESS REPORT (plan §P4 deliverable 1); it is computed LAZILY,
+    /// ONLY at a budget-sentinel emission and at EOI, so the hot path pays
+    /// NOTHING when no budget event fires.
+    ///
+    /// Derivation (documented per the brief): the walker's
+    /// `LexicographicWeight` PRIMARY is a tropical / `-log`-probability path
+    /// cost `cᵢ` (LOWER = more likely; the path likelihood mass is
+    /// `exp(-cᵢ)`, exactly the `parse_with_confidence` semantics). Treating
+    /// each live frontier member's primary as an unnormalized weight
+    /// `wᵢ = exp(-cᵢ)`, the standard Kish effective sample size is
+    /// `ESS = (Σwᵢ)² / Σwᵢ² = 1 / Σpᵢ²` for `pᵢ = wᵢ/Σwⱼ`. With one
+    /// dominant winner + noise, `ESS ≈ 1`; with `k` equal-weight
+    /// alternatives, `ESS ≈ k`. The report scales by 1000 so the integer
+    /// `frontier_ess_x1000` distinguishes ESS≈1000 ("1 winner + noise")
+    /// from ESS≈k·1000 (genuine k-way ambiguity).
+    ///
+    /// Numerical stability: masses are computed relative to the MINIMUM cost
+    /// (`mᵢ = exp(-(cᵢ - c_min))`, so the dominant member has mass 1.0). The
+    /// ratio `(Σm)²/Σm²` is invariant under the common factor `exp(c_min)`,
+    /// so the shift does not change the ESS — it only avoids underflow.
+    ///
+    /// Fallback: members whose weight carries no scalar primary
+    /// (`ess_primary_cost_ref() == None` — non-tropical semirings) are
+    /// skipped; if NO member has a primary (or the frontier is empty), the
+    /// ESS degrades to the logical frontier count (the uniform-weight ESS).
+    fn frontier_ess_x1000(&self) -> u32 {
+        // Gather per-logical-cursor primary costs (Concrete: the cursor
+        // weight; Cohort: each member's dispatch weight).
+        let mut costs: Vec<f64> = Vec::with_capacity(self.branch_cursors.len());
+        for frame in &self.branch_cursors {
+            match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => {
+                    if let Some(cost) = c.weight.ess_primary_cost_ref() {
+                        if cost.is_finite() {
+                            costs.push(cost);
+                        }
+                    }
+                },
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    for member in &cf.members {
+                        if let Some(cost) = member.weight_at_dispatch.ess_primary_cost_ref() {
+                            if cost.is_finite() {
+                                costs.push(cost);
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        let logical = self.logical_frontier_len();
+        if costs.is_empty() {
+            // No scalar primaries available — uniform-weight ESS = count.
+            return (logical as u64).saturating_mul(1000).min(u32::MAX as u64) as u32;
+        }
+        let c_min = costs.iter().copied().fold(f64::INFINITY, f64::min);
+        let mut sum_w = 0.0f64;
+        let mut sum_w2 = 0.0f64;
+        for c in &costs {
+            // Shift by c_min for stability (ratio-invariant). exp(-(c-c_min))
+            // ∈ (0, 1]; the dominant member contributes exactly 1.0.
+            let w = (-(c - c_min)).exp();
+            sum_w += w;
+            sum_w2 += w * w;
+        }
+        if sum_w2 <= 0.0 {
+            return (logical as u64).saturating_mul(1000).min(u32::MAX as u64) as u32;
+        }
+        let ess = (sum_w * sum_w) / sum_w2;
+        // ESS ∈ [1, costs.len()]; ×1000 and saturate into u32.
+        let scaled = (ess * 1000.0).round();
+        if scaled <= 0.0 {
+            0
+        } else if scaled >= u32::MAX as f64 {
+            u32::MAX
+        } else {
+            scaled as u32
+        }
     }
 
     // Phase 5.6-tail follow-up (2026-05-12): two more orphaned methods
@@ -16890,6 +17272,9 @@ where
             // EP-P2 (Stage B) D-4: cross-cat projection child inherits the
             // parent cursor's shadow-refuted bit (same lineage).
             ep_shadow_refuted: parent.ep_shadow_refuted,
+            // EP-P4: cross-cat projection child inherits the parent's
+            // consume-window evidence (same lineage).
+            consumed_since_last_check: parent.consumed_since_last_check,
         };
         if let Some(stamp) = lex_fork_stamp {
             std::sync::Arc::make_mut(&mut child.lex_fork_path).push(stamp);
@@ -19447,7 +19832,7 @@ mod tests {
             "legacy BeamSize must preserve the full frontier and report overflow"
         );
         match w.resolve_at_end_of_input(&empty_tokens()) {
-            WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+            WpdaResolveResult::AmbiguityBudget { budget, actual, position, .. } => {
                 assert_eq!(budget, 1);
                 assert_eq!(actual, 2);
                 assert_eq!(position, 7);
@@ -19495,7 +19880,7 @@ mod tests {
             "overflow reporting must preserve the lazy cohort frame"
         );
         match w.resolve_at_end_of_input(&empty_tokens()) {
-            WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+            WpdaResolveResult::AmbiguityBudget { budget, actual, position, .. } => {
                 assert_eq!(budget, 2);
                 assert_eq!(actual, 3);
                 assert_eq!(position, 7);
@@ -20843,7 +21228,7 @@ mod tests {
             .run_to_end_of_input(4, &token_src)
             .expect("overflow is reported through the resolve result");
         match walker.resolve_at_end_of_input(&token_src) {
-            WpdaResolveResult::AmbiguityBudget { budget, actual, position } => {
+            WpdaResolveResult::AmbiguityBudget { budget, actual, position, .. } => {
                 assert_eq!(budget, crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY);
                 assert_eq!(actual, crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY + 1);
                 assert_eq!(position, 1);

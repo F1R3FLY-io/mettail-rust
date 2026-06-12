@@ -679,6 +679,43 @@ pub struct WalkerStats {
     /// filter that were SHADOW-REFUTABLE earlier — how many late deaths
     /// the gate could have caught at the obligation-creating transition.
     pub eoi_dead_cursors_parikh_refutable: [u64; WPDA_STATE_CLASS_COUNT * 2],
+
+    // ── Evidence-pruning P4 (Stages C+E: ORDER-ONLY) diagnostics (plan
+    //    §P4; ledger 02-program-ledger.md). The demotion is a PERMUTATION
+    //    of the within-`step_fanout` iteration order (ForwardOrderOnly.v
+    //    T5 `demotion_preserves_accepted_set`): it kills NOTHING. These
+    //    counters are NOT partitioned (the demotion is frontier-global, not
+    //    per-WpdaState); plain scalars. Display prints only when non-zero. ──
+    /// EP-P4: the count of zero-innovation members that were stable-
+    /// partitioned BEHIND ≥1 innovating member within a `step_fanout`
+    /// pass (`PRATTAIL_EP_P4_DEMOTE=on`). A member is "zero-innovation"
+    /// when its `consumed_since_last_check` flag is false (it advanced in
+    /// the producing step only via ε / structural / recovery edges — its
+    /// `pos` did not strictly advance). Effectiveness signal only; the
+    /// surviving-cursor SET is invariant under the reorder (T3/T5).
+    pub zero_innovation_demotions: u64,
+    /// EP-P4: THE MODEL TRIPWIRE — a demoted (zero-innovation) member that
+    /// was enqueued into the within-step continuation drain but NOT stepped
+    /// before the pass exited. MUST stay 0 everywhere: ForwardOrderOnly.v
+    /// T4 `every_member_stepped` + the InnovationDemotion invariant
+    /// (`demoted_member_unstepped_at_exit == 0`) require demotion to
+    /// permute WITHIN one pass and never defer a live member to a later
+    /// pass (a deferred member is invisible to `run_to_end_of_input`'s
+    /// whole-frontier progress fingerprint and `!progress_made` could exit
+    /// early). Wired so any residual demoted-but-unstepped member at the
+    /// end of the `step_fanout` drain increments it; non-zero = the
+    /// transcription violated the within-step invariant (deep-dive; do NOT
+    /// tune away).
+    pub demoted_member_unstepped_at_exit: u64,
+    /// EP-P4 (Stage E): the last computed frontier effective-sample-size
+    /// ×1000 (Kish ESS over the live frontier's primary likelihood mass —
+    /// see `frontier_ess_x1000` in wpda_walker.rs). Recorded at every
+    /// `AmbiguityBudget` sentinel emission and at EOI; surfaced in the
+    /// budget error report's hint so "1 winner + noise" (ESS≈1000) is
+    /// distinguishable from genuine k-way ambiguity (ESS≈k·1000). 0 until
+    /// the first budget/EOI event (the hot path computes it lazily at the
+    /// event — it pays NOTHING when no budget event fires).
+    pub frontier_ess_x1000_last: u32,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2420,6 +2457,30 @@ impl fmt::Display for WalkerStats {
                 }
             }
         }
+        // EP-P4 (Stages C+E: ORDER-ONLY) — innovation demotion + ESS report
+        // (plan §P4; ForwardOrderOnly.v T3/T4/T5/T6). Non-zero / nontrivial
+        // printing only. The tripwire line is ALWAYS shown once any demotion
+        // fired, so a regression is loud.
+        {
+            if self.zero_innovation_demotions > 0
+                || self.demoted_member_unstepped_at_exit > 0
+                || self.frontier_ess_x1000_last > 0
+            {
+                writeln!(
+                    f,
+                    "  ep_p4_order_only (PRATTAIL_EP_P4_DEMOTE=on): zero_innovation_demotions={}  demoted_member_unstepped_at_exit={} (MUST be 0)  frontier_ess_x1000_last={}",
+                    self.zero_innovation_demotions,
+                    self.demoted_member_unstepped_at_exit,
+                    self.frontier_ess_x1000_last,
+                )?;
+                if self.demoted_member_unstepped_at_exit > 0 {
+                    writeln!(
+                        f,
+                        "    ⚠ TRIPWIRE: demoted_member_unstepped_at_exit > 0 — demotion deferred a live member out of its step_fanout pass (ForwardOrderOnly.v T4/T5 violated); deep-dive the within-step invariant",
+                    )?;
+                }
+            }
+        }
         // led_chain ROOT-CAUSE DIAGNOSTIC (TEMPORARY).
         {
             let dbg_total: u64 = self.dbg_ccl_reg_outcome.iter().sum::<u64>()
@@ -2644,6 +2705,22 @@ macro_rules! stats_add {
         {
             let v: u64 = ($value) as u64;
             $walker.stats.$field = $walker.stats.$field.saturating_add(v);
+        }
+    };
+}
+
+/// EP-P4 (Stage E): record the LAST-computed frontier ESS ×1000 (an
+/// ASSIGNMENT, not an accumulation — `frontier_ess_x1000_last` reflects the
+/// most recent budget/EOI event). Zero-cost when the feature is off. The
+/// value is also carried in the budget sentinel / surfaced in the error
+/// report independently of this counter — this is the stats-side mirror so
+/// `PRATTAIL_WALKER_STATS=1` runs see the ESS even when no error propagates.
+#[macro_export]
+macro_rules! record_frontier_ess {
+    ($walker:expr, $value:expr) => {
+        #[cfg(feature = "walker-stats")]
+        {
+            $walker.stats.frontier_ess_x1000_last = ($value) as u32;
         }
     };
 }
@@ -2951,6 +3028,10 @@ mod tests {
             parikh_shadow_refuted_then_accepted: [0; WPDA_STATE_CLASS_COUNT * 2],
             parikh_shadow_steps_after_would_refute: [0; WPDA_STATE_CLASS_COUNT * 2],
             eoi_dead_cursors_parikh_refutable: [0; WPDA_STATE_CLASS_COUNT * 2],
+            // EP-P4 Step-0 order-only counters.
+            zero_innovation_demotions: 0,
+            demoted_member_unstepped_at_exit: 0,
+            frontier_ess_x1000_last: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
