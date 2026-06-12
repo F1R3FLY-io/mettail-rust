@@ -226,6 +226,19 @@ slot 0 (dispatch class, recovery-off). Off-mode control: zero shadow lines (iner
 - 2026-06-11 v2 design → Round 6 red-team (2 critics, NOT CONVERGED → v3): R6-1 FATAL (the
   16/key parking cap vs 3,311 on one key — the parked-frames substrate cannot hold the class)
   + R6-2..R6-8 corrections; SOUND spine retained. Full record in 03-red-team-ledger.md.
+- 2026-06-12 **v3.1 I-COMMIT @ 06e8da4d** (the implementation per 06 v3.1; Step-0 @ 29899972;
+  model amendment @ f51ecb74). **FLIP EXPERIMENT (corrected attribution): idx 4 waste
+  149,645 → 11,962 = 92% drop (gate ≤59,858 DEMOLISHED); spawns 3,504 → 207;
+  consumed_in_place=187; overflow=0; 1.47s → 132ms (11×); outputs identical. ★ idx 6
+  (right-censored > 580 s OFF) COMPLETES: 2.67 s ON, consumed=6,949 — THE depth-independence
+  acceptance evidence.** Two-state battery: OFF fully at baseline; ON identical EXCEPT ONE
+  test — `led_chain_num_to_pred` ("1 + 2 == 3 and 4 == 4" → no result; counters:
+  park_overflow_fallbacks=8, inflight_orphan_members=43 — hypothesis: worker-merge starves
+  the lineage accounting on MULTI-TOKEN source sub-parses, the in-flight window LedTest's
+  `1 + 2` operand opens). **OPEN ITEM (no default flip until fixed + the §5 test set lands):
+  dedicated probe investigation → fix → multi-body seed + orphan probe + mid-park budget +
+  CollectionMarker fidelity tests → fork-path completeness branch → L-commit Welch.**
+  On stays opt-in; default battery byte-identical.
 - 2026-06-12 **the v3 DECIDING MEASUREMENT** (measure-first; EpP1Mode::Measure + the R6-7
   route discriminant making real-cache registration sound + R6-6/B1 first-resolver tail map):
   **idx 4 arrival-phase split = workers 4 / in-flight 24 / RESOLVED 3,476 (99.2%) /
