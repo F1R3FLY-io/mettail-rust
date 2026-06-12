@@ -369,3 +369,103 @@ effectiveness MAJORs; round 3 found text-consistency residue only ("no design-le
 remains"); round 4 confirmed the fold and swept clean. Next: user review → FV models (model
 commit precedes any Rust) → measure-first staged implementation per §10.
 
+
+---
+
+## Round 5 (2026-06-11) — P1 I-commit design v1 (04-p1-icommit-design.md): 2 critics, CONVERGED on REDESIGN
+
+Design v1 (Plan-agent): share CrossCatLhs delegates by wiring three hooks into the EXISTING
+DispatchCohortCache (register at the PushWithEdgeKind arm; resolve at the pop; revive via a
+parallel drain set), with EdgeKind::CrossCatLhs widened to carry (wrap_cat, wrap_rule).
+
+### Convergent refutations (both critics, independently)
+
+- **R5-1 (BLOCKER) Revive is not reusable as-is.** The CrossCatLhs post-pop continuation is the
+  member-specific tail of `apply_pop_body_to_cursor`: predecessor-dependent
+  `effective_new_state` (16152-16184: CategoryEntry→InfixLoop, GroupingMarker→Unwinding,
+  NONE→InfixLoop, else→Unwinding), the GUARDED reentry pushed at `hi_pos` (NOT
+  pos_at_dispatch) with CrossCatLhsReentry (16186-16208), the ROOT-F F-1 splice-skip
+  (16117-16120), and the D-strings re-sync (16211+). `revive_cohort_member_with_snapshot`
+  (15665-15758) reproduces NONE of that — it does frame-push (CrossCatProjection kind, at
+  pos_at_dispatch) + inner_state set + weight, and injects cohort_origin/cohort_revive_depth/
+  graduation machinery the in-place reentry worker never receives (different ConfigKey buckets,
+  different graduation timing). A member whose predecessor is a GroupingMarker must go to
+  Unwinding with NO reentry — the worker-snapshot broadcast applies the worker's reentry
+  uniformly = wrong configuration per member. Correction: a DEDICATED `revive_crosscat_lhs_member`
+  that re-derives effective_new_state/reentry/splice/re-sync from each member's OWN return frame.
+- **R5-2 (BLOCKER) EdgeKind widening is not structurally inert under =off.** EdgeKind derives
+  PartialEq/Eq/Hash (gss.rs:392); CrossCatLhs is identity-strict (is_convergent excludes it,
+  gss.rs:540-550) and DOES coalesce in add_edge_kind (gss.rs:649; proven by
+  test_wpds_gss_edge_identity_includes_edge_kind gss.rs:1144-1152). Widening the COMPARED
+  payload can split previously-coalesced edges with the switch OFF. It happens to be inert on
+  the SHIPPED grammars (every CrossCatLhs source has exactly one host: calc host=7, rhocalc
+  host=0 — verified in target/generated/*/wpda.rs) but that is grammar-conditional, not
+  structural. Correction: carry wrap as a READ-NOT-COMPARED side payload (GssEdgeId-keyed side
+  table, or manual Eq/Hash ignoring wrap fields). Also 3 exact-bind compile sites misclassified
+  (wpda_walker.rs:6578, 6933, 16186 bind {source_src_idx} with no `..`).
+- **R5-3 (BLOCKER) Hook-B capture-point ordering flaw.** The Pop arm calls
+  cursor_gss_pop_via_edge (6994) BEFORE apply_pop_body_to_cursor (7001); the reentry state
+  InfixLoop{cur_bp:0} is set at 16207 INSIDE the latter. A resolve hook in the former cannot
+  snapshot a state not yet computed; synthesizing it uniformly contradicts the
+  predecessor-dependent branch (R5-1).
+- **R5-4 (MAJOR) Measurement validity under =on.** cast_then_infix_steps' memo matches
+  EdgeKind::CrossCatLhs ONLY (wpda_walker.rs:6777) — revived members carry CrossCatLhsReentry
+  → the ON arm mechanically under-counts → the ≥60% gate inflates. The spawned counter keys
+  (pos,source) but the cache keys the FULL DispatchKey — "3504→~4" conflates key spaces.
+  Correction: extend attribution to CrossCatLhsReentry + restate the criterion in the counter's
+  own key space + compute the shadow cross-check on the FULL key.
+- **R5-5 (MAJOR) Singleton vs Fork member-shape divergence.** Fork members are built via
+  parent_frame_with_fork_metadata (15507: lex-fork stamp + trigger terminal + wrap); the
+  singleton in-place push has none of that in scope — the two producers cannot share one
+  crosscat_lhs_cohort_decision helper / one member shape. ResolvedHit at the singleton arm also
+  lacks allocate_fork_push_child's richer handling (immediate synth 15323-15354, future_member
+  15360-15374, spawn_worker overflow 15375-15398).
+- **R5-6 (MAJOR) EOI orphan parity unresolved.** drain_orphaned_inflight_members
+  (dispatch_cohort.rs:1801) re-drives an InFlight member from shell.inner_state so one becomes
+  the worker — for CrossCatLhs the shell state cannot re-launch the source sub-parse (it would
+  carry a post-reentry state). A worker whose source parse reaches EOI without popping = paused
+  members silently lost ONLY under =on (Invariant-1 violation). Needs a constructed probe + a
+  designed orphan path before any enforcement.
+- **R5-7 (MAJOR) wrap_cat sourcing trap.** Mirroring the CrossCatDelegate pattern
+  (branch.symbol.category_src_idx) reads the SOURCE for CrossCatLhs (the pushed symbol is
+  category_entry(source), prefix.rs:1313/1366) — silently under-discriminating = the M4
+  re-conflation. The host must come from the arm's own #category_src_idx
+  (emit_unified_arm parameter, prefix.rs:1293) / frontier-top category (engine_impl.rs:387-389).
+- **R5-8 (finding) The M-commit is vacuous w.r.t. the real risk.** EvidenceGatedDelegates.v
+  models presence-gating + dedup_keys over nats; it proves NOTHING about reentry-state
+  reconstruction, predecessor-dependent revive, or EdgeKind-comparison splits. T5b
+  (equiv_dedup_identity_when_singleton) is orthogonal to per-member reentry fidelity. A v2
+  design needs a NEW model commit covering the parking/revive semantics (per-member
+  predecessor-dependence as a hypothesis, broadcast soundness as the theorem).
+- **R5-9 (structural, critic B) I7 tension.** Plan §P1 commit 3 says "P1 builds NO new merge
+  machinery — gate + EquivKey + d2 predicate only", premised on round-2's
+  gating_subsumes_per_position_merge (the gate alone realizes the linear bound). The Step-0
+  DATA falsifies that premise for trigger-PRESENT inputs: the gate is open by design
+  (gated_off=0 on compare inputs) and the fan persists (3504 spawns WITH the gate active).
+  The duplicates are REDUNDANT-VIABLE cursors (same valid sub-parse, distinct return frames):
+  the plain ConfigKey/EquivKey merge CANNOT collapse them (they differ in genuine ConfigKey
+  axes — node/incoming_edge_stack), and P2's zero-posterior refutation does not apply to
+  VIABLE cursors. The only mechanism that removes the measured class is cohort-style parking
+  (parse once, park N return frames, broadcast) — i.e. machinery beyond the current I7 wording.
+
+### Decomposition note (critic-B angle H, resolved by inspection)
+
+The 149,645 baseline counts steps with a CrossCatLhs frame somewhere in the stack — i.e. the
+BETWEEN-push-and-pop sub-parse work (post-pop frames are CrossCatLhsReentry, not matched;
+pre-dispatch bookkeeping has no such frame). The baseline therefore measures exactly the
+shareable re-parse class, and the ≥60% drop is mechanically plausible under a sound parking
+design (one worker re-parses once; 3500 duplicate re-parses vanish).
+
+### Round-5 verdict
+
+v1 REFUTED (R5-1..R5-7). The salvage path (critic A) is concrete: dedicated CrossCatLhs revive
+re-deriving the member tail; wrap as read-not-compared side payload; host-sourced wrap_cat;
+full-key shadow cross-check; attribution extension; EOI orphan design; singleton/Fork member
+shapes separated; plus a NEW non-vacuous model commit (R5-8). Critic B's plan-conformant
+alternative (EquivKey merge only) is sound-but-inert against the measured class (R5-9).
+USER DECISION (2026-06-11, AskUserQuestion): **"Amend §P1 → parking v2"** — ship the sound
+shadow-measurement half now; design v2 with the R5 corrections + a NEW non-vacuous Rocq model
+(M-commit FIRST, per the program's FV-first invariant); re-red-team v2 to convergence;
+implement; win the ≥60% waste gate. The I7 amendment is recorded in
+02-staged-implementation-plan.md §P1 (premise falsified by the Step-0 data — the duplicates
+are redundant-VIABLE work that neither the EquivKey merge nor P2 refutation can remove).

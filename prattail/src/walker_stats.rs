@@ -559,6 +559,17 @@ pub struct WalkerStats {
     /// collapses the attribution scan to one edge-stack walk per
     /// distinct stack.
     pub crosscat_lhs_stack_memo: FxHashMap<crate::edge_stack_arena::EdgeStackId, bool>,
+    /// EP-P1 amended §P1 SHADOW (2026-06-11, Round 5): would-share
+    /// decisions a v2 parking enforcement would have coalesced — a 2nd+
+    /// CrossCatLhs dispatch push at the same full key. Partitioned
+    /// `[state_class * 2 + recovery_enabled]` per the I4 convention.
+    pub ep_p1_shadow_would_share_total: [u64; WPDA_STATE_CLASS_COUNT * 2],
+    /// EP-P1 amended §P1 SHADOW: observation-only spawn counts keyed
+    /// `(push pos, source_src_idx, host_cat)` — the full DispatchKey
+    /// modulo the per-arm-constant wrap_rule. Reset with the rest of
+    /// the stats at the per-parse boundary; NEVER feeds the dispatch-
+    /// cohort cache.
+    pub ep_p1_shadow_seen: FxHashMap<(usize, u16, u16), u32>,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2181,6 +2192,39 @@ impl fmt::Display for WalkerStats {
                 }
             }
         }
+        // EP-P1 amended §P1 SHADOW (2026-06-11): non-zero-slot printing.
+        {
+            let shadow_total: u64 = self.ep_p1_shadow_would_share_total.iter().sum();
+            if shadow_total > 0 {
+                writeln!(f, "  ep_p1_shadow (amended §P1, PRATTAIL_EP_P1=shadow):")?;
+                let slots: Vec<(usize, u64)> = self
+                    .ep_p1_shadow_would_share_total
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(_, v)| *v > 0)
+                    .collect();
+                writeln!(
+                    f,
+                    "    would_share_total={} non-zero slots [class*2+rec → n]: {:?}",
+                    shadow_total, slots,
+                )?;
+                let mut shadow_dups: Vec<((usize, u16, u16), u32)> = self
+                    .ep_p1_shadow_seen
+                    .iter()
+                    .filter(|(_, count)| **count > 1)
+                    .map(|(key, count)| (*key, *count))
+                    .collect();
+                if !shadow_dups.is_empty() {
+                    shadow_dups.sort();
+                    writeln!(
+                        f,
+                        "    full-key dups (pos, source, host_cat) → spawns: {:?}",
+                        shadow_dups,
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -2620,6 +2664,9 @@ mod tests {
             crosscat_lhs_spawns_at_pos_source: FxHashMap::default(),
             cast_then_infix_steps: 0,
             crosscat_lhs_stack_memo: FxHashMap::default(),
+            // EP-P1 amended §P1 shadow (2026-06-11).
+            ep_p1_shadow_would_share_total: [0; WPDA_STATE_CLASS_COUNT * 2],
+            ep_p1_shadow_seen: FxHashMap::default(),
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

@@ -162,6 +162,40 @@ re-spawns of IDENTICAL delegates; `gated_off` is non-zero exactly on the trigger
    I-commit (enforcement on) must show ≤ 59,858 (≥ 60% drop) on this input, else the residue
    passes to P2/P3 with the diagnostic attribution recorded.
 
+### Round-5 red-team + §P1 AMENDMENT (2026-06-11, user-approved)
+
+The I-commit design v1 (04-p1-icommit-design.md, cohort-cache producer) was red-teamed by 2
+independent critics → **CONVERGED on REDESIGN** (full record: 03-red-team-ledger.md Round 5,
+R5-1..R5-9). Headline refutations: the CrossCatProjection revive cannot be parameter-tweaked
+into a CrossCatLhs revive (the member tail is predecessor-dependent: effective_new_state +
+guarded reentry at hi_pos + F-1 splice-skip + D-strings re-sync); widening the COMPARED
+`EdgeKind` can split GSS dedup with the switch OFF (grammar-conditionally inert only); the
+=on measurement as specified was not apples-to-apples. Round 5 also exposed the deeper fact:
+**the I7 "no new merge machinery" premise (gate alone bounds the fan) is FALSIFIED by the
+Step-0 data** — the duplicates are redundant-VIABLE cursors that neither the EquivKey merge
+nor P2 refutation can remove; only cohort-style PARKING removes the measured class.
+**USER DECISION: amend §P1 → parking v2** (recorded in 02-staged-implementation-plan.md §P1
+amendment block): shadow half first → NEW Rocq model (M-commit, parking/revive semantics,
+non-vacuous per R5-8) → design v2 with ALL R5 corrections → re-red-team to convergence →
+implement → ≥60% waste gate with R5-4-corrected attribution.
+
+### SHADOW half SHIPPED (this commit)
+
+`PRATTAIL_EP_P1=off|shadow` (per-walker, read once at construction; `on` warns + runs shadow
+until v2 lands). Observation-only would-share measurement at the `cursor_gss_push_with_kind`
+chokepoint — catches BOTH producers (the Pass-0 singleton arm AND the lex-fork
+PushCrossCatLhs route; **the D-commit's 3504 figure is singleton-arm-only by site** — on idx 4
+the chokepoint total equals the arm total, i.e. ZERO fork-path spawns on that input). Key =
+`(push pos, source, host_cat)` = the full DispatchKey modulo the per-arm-constant wrap_rule.
+NEVER touches the dispatch-cohort cache (the Round-5 shadow-inertness contract); counters
+`ep_p1_shadow_would_share_total` partitioned [state_class × recovery_enabled].
+
+**Shadow measurements (idx 4, debug+walker-stats):** `would_share_total = 3500` — EXACTLY the
+D-commit dup figure (the full-key cross-check critic A demanded: host_cat=7 is constant on
+calculator, so the wrap discriminator splits nothing → v2 sharing can collapse the full
+3,500). Full-key dups `[((2,5,7),9), ((4,2,7),183), ((6,5,7),3311)]`. All hits in partition
+slot 0 (dispatch class, recovery-off). Off-mode control: zero shadow lines (inert ✓).
+
 ## Stage log
 
 - 2026-06-11 P0 opened.
@@ -174,3 +208,8 @@ re-spawns of IDENTICAL delegates; `gated_off` is non-zero exactly on the trigger
   watch item); waste baseline pinned 149,645 attributed steps on idx 4 (I-commit target
   ≤ 59,858). Battery green at baseline incl. prattail-lib 3980/0 BOTH cfgs (the battery caught
   a test-cfg struct-literal break — fixed in-commit).
+- 2026-06-11 P1 I-commit design v1 red-teamed (Round 5, 2 critics) → REDESIGN; **§P1 AMENDED
+  (user-approved): parking v2 program** (shadow → new Rocq model → v2 design → re-red-team →
+  implement). SHADOW half SHIPPED: PRATTAIL_EP_P1 mode + chokepoint would-share measurement;
+  idx 4 would_share_total=3500 == the D dup figure (full-key cross-check PASSES; wrap splits
+  nothing on calculator); off-mode inert (control verified); battery green.

@@ -263,6 +263,30 @@ Kill switch `PRATTAIL_EP_P1`. I7 discharge: P1 builds NO new merge machinery —
 example mirroring `b2_chain_bench.rs`); R4 neutrality on chain_50/100/200; full battery; record
 experiment + gate decisions in the ledger.
 
+> **★ AMENDED 2026-06-11 (user-approved via AskUserQuestion; red-team ledger Round 5).** The
+> Step-0 D-commit measurements FALSIFIED commit-3's premise: `gating_subsumes_per_position_merge`
+> claimed the gate alone realizes the linear bound, but with the gate correctly OPEN
+> (trigger present, `gated_off=0`) the fan persists — 3,504 spawns / 3,500 duplicates on
+> `int(float(int(3.14))) == 3`. The duplicates are REDUNDANT-VIABLE cursors (same valid
+> sub-parse, genuinely distinct return frames): the EquivKey/ConfigKey merge cannot collapse
+> them (they differ in real ConfigKey axes) and P2's zero-posterior refutation does not apply
+> to viable cursors. The I7 wording ("NO new merge machinery") is therefore AMENDED for the
+> trigger-present case: P1's implementation is a **cohort-style PARKING design** (parse the
+> source once, park N return frames, broadcast), delivered as:
+> (1) the sound SHADOW-measurement half first (observation-only full-key map + would-share
+>     counters; never mutates the real cohort cache);
+> (2) a NEW non-vacuous Rocq model commit (the parking/revive semantics: per-member
+>     predecessor-dependent reentry as hypothesis, broadcast soundness as theorem — R5-8;
+>     `EvidenceGatedDelegates.v` stays but is vacuous w.r.t. reentry fidelity);
+> (3) design v2 with ALL Round-5 corrections (R5-1 dedicated member-tail revive; R5-2 wrap as
+>     read-not-compared side payload; R5-3 capture-point inside `apply_pop_body_to_cursor`;
+>     R5-4 attribution extended to `CrossCatLhsReentry` + full-key criteria; R5-5 singleton/
+>     Fork member shapes separated; R5-6 EOI orphan design; R5-7 host-sourced wrap_cat),
+>     re-red-teamed to convergence BEFORE implementation;
+> (4) the flip experiment + ≥60% waste gate (commit 4) unchanged, with the R5-4-corrected
+>     attribution.
+> v1 of the parking design is REFUTED and fenced (04-p1-icommit-design.md; do not implement).
+
 ---
 
 ## P2 — Stage B: Parikh/suffix-obligation gate (zero-posterior refutation, token-class level)

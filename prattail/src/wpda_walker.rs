@@ -99,6 +99,43 @@ fn b3_disabled() -> bool {
     *GATE.get_or_init(|| std::env::var_os("B3_DISABLE").is_some())
 }
 
+/// EP-P1 amended §P1 (2026-06-11; red-team ledger Round 5 + user
+/// decision "Amend §P1 → parking v2"): kill-switch mode for the
+/// CrossCatLhs cohort-parking program. `Off` = shipped behavior (the
+/// default). `Shadow` = observation-only would-share measurement at the
+/// `cursor_gss_push_with_kind` chokepoint (never mutates the dispatch-
+/// cohort cache; counters live under the `walker-stats` feature).
+/// Enforcement (`on`) is NOT yet shipped — it lands with the
+/// re-red-teamed v2 parking design (04-p1-icommit-design.md is v1,
+/// REFUTED, fenced); requesting `on` runs Shadow and warns once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EpP1Mode {
+    Off,
+    Shadow,
+}
+
+impl EpP1Mode {
+    /// Read `PRATTAIL_EP_P1` ONCE per walker construction (P-series
+    /// convention: never per step; a per-walker field, not a process
+    /// `OnceLock`, so one process can run both arms).
+    fn from_env() -> Self {
+        match std::env::var("PRATTAIL_EP_P1").ok().as_deref() {
+            Some("shadow") => EpP1Mode::Shadow,
+            Some("on") => {
+                static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+                WARNED.get_or_init(|| {
+                    eprintln!(
+                        "PRATTAIL_EP_P1=on: enforcement is not yet shipped \
+                         (lands with the v2 parking design); running shadow"
+                    );
+                });
+                EpP1Mode::Shadow
+            },
+            _ => EpP1Mode::Off,
+        }
+    }
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -848,6 +885,9 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `RecoveryConfig::default()`; callers may override via
     /// `with_recovery_config` for per-grammar tuning.
     recovery_config: RecoveryConfig,
+    /// EP-P1 amended §P1 (2026-06-11): the per-walker kill-switch mode,
+    /// read once from `PRATTAIL_EP_P1` at construction.
+    ep_p1_mode: EpP1Mode,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -3426,6 +3466,7 @@ where
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
+            ep_p1_mode: EpP1Mode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3507,6 +3548,7 @@ where
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
+            ep_p1_mode: EpP1Mode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3587,6 +3629,7 @@ where
             mutable_token_source: None,
             _mutable_source_lifetime: PhantomData,
             recovery_config: RecoveryConfig::default(),
+            ep_p1_mode: EpP1Mode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -14491,6 +14534,39 @@ where
         let new_id = self
             .gss
             .get_or_create_node(WpdaGssNode { pos, symbol: sym });
+        // EP-P1 amended §P1 SHADOW (2026-06-11, red-team Round 5 + user
+        // decision): observation-only would-share measurement at the ONE
+        // chokepoint every CrossCatLhs dispatch push flows through (both
+        // the Pass-0 singleton action arm AND the lex-fork
+        // PushCrossCatLhs route — the D-commit arm counter sees only the
+        // former; ledger notes the 3504 figure is singleton-arm-only).
+        // Key = (push pos, source, host_cat from the predecessor frame)
+        // — the full DispatchKey modulo the per-arm-constant wrap_rule
+        // (Round-5 surface 3/4: host_cat subsumes it on a
+        // single-arm-per-(host,source) grammar). NEVER touches the
+        // dispatch-cohort cache (Round-5 shadow-inertness contract).
+        #[cfg(feature = "walker-stats")]
+        if self.ep_p1_mode == EpP1Mode::Shadow {
+            if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &kind {
+                let host_cat = self
+                    .gss
+                    .node(predecessor)
+                    .map(|n| n.symbol.category_src_idx)
+                    .unwrap_or(u16::MAX);
+                let seen = self
+                    .stats
+                    .ep_p1_shadow_seen
+                    .entry((pos, *source_src_idx, host_cat))
+                    .or_insert(0u32);
+                *seen += 1;
+                if *seen > 1 {
+                    let part_idx =
+                        crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
+                            + (self.recovery_config.max_recovery_depth > 0) as usize;
+                    crate::stats_inc_idx!(self, ep_p1_shadow_would_share_total, part_idx);
+                }
+            }
+        }
         // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
         // clone the EdgeKind before move so the projection observer can
         // use it. Cost gated by `walker-stats` feature.
