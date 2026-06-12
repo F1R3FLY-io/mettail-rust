@@ -202,6 +202,18 @@ calculator, so the wrap discriminator splits nothing → v2 sharing can collapse
 3,500). Full-key dups `[((2,5,7),9), ((4,2,7),183), ((6,5,7),3311)]`. All hits in partition
 slot 0 (dispatch class, recovery-off). Off-mode control: zero shadow lines (inert ✓).
 
+## P2 — Parikh/suffix-obligation gate (OPENED 2026-06-12)
+
+M `ParikhObligationGate.v` ✅ (landed @ 288bcb42) → D Step-0 (suffix_classes.rs +
+codegen must-tables + shadow counters + the two check sites; **lattice DAG-node masks ARE the
+critical path** — M-1) → gates (refuted_then_accepted == 0 HARD everywhere;
+steps-after-would-refute ≥ 20% of apply_action_calls ⇒ enforce, < 5% ⇒ STOP) → I (enforcement
+at the two sites + the O(1) mask test replacing the trigger-ahead rescan as a separately
+flippable sub-commit) → L (Welch). Corpus: the cast probes (incl. the idx4 ON residue of
+11,962 attributed steps), ProcX root-fan, post-ROOT-A rhocalc send/receive, + the adversarial
+INSERT/SUBSTITUTE/Optional-skip/multi-length-lex probes. Kill switch PRATTAIL_EP_P2
+(off|shadow|on per the P0 convention).
+
 ## Stage log
 
 - 2026-06-11 P0 opened.
