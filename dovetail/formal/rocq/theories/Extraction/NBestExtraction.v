@@ -21,11 +21,11 @@
  *   - select_exhausts_on_demand : every non-0̄ alternative appears at some demand
  *     k (exhaustive-on-demand).
  *
- * Companion obligations (NOT proven here; see the extractor design):
- *   - the best-first ORDERING of the output (Huang-Chiang Alg.3 sortedness), and
- *   - the hypergraph-recursion COMPLETENESS (the candidate set = ALL derivations).
- *   The latter is currently the 9 Rust no-miss tests (extract.rs T1-T9). The
- *   e-graph exact-key dedup no-loss is covered by EGraphBudgetDedup.v.
+ * Companion obligations:
+ *   - the best-first ORDERING of the output is proven below in this file; and
+ *   - the hypergraph-recursion COMPLETENESS (the candidate set = ALL
+ *     derivations) is proven in Extraction/EnumerationCompleteness.v.
+ *   E-graph exact-key dedup no-loss is covered by ExactKeys/ExactKeyDedup.v.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)

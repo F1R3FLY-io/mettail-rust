@@ -74,19 +74,16 @@ k-best ENUMERATION across back-edges remains cut and is reported by
   identical stream).
 - **E (scc):** Tarjan SCC partition reproducible across two builds (determinism).
 
-## FV obligation (note now; full zero-admission proof later — there is NO existing
-Newton-SCC Rocq to reuse, verified)
+## FV obligation (implemented; zero-admission)
 Record in a `wta.rs` doc block: the SCC→`PackingFactored` lowering is a syntactic
 re-indexing of the e-graph inside-weight recurrence (in-SCC unknowns named by
 SCC-local index; out-of-SCC terms pre-evaluated constants); given that equality,
 the Esparza–Kiefer–Luttenberger correctness of `solve_scc_weights_newton` (Newton
 computes the least fixpoint of `Y=f(Y)` on an ω-continuous semiring) yields the
 exact `⊕`-aggregate. The lowering-equivalence lemma is the one dovetail-specific
-obligation → future `formal/rocq/dovetail/theories/InsideWeightSccClosure.v`
-(do NOT create in Inc 6).
+obligation and is proven in
+`dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`.
 
 ## Files
-Create `dovetail/src/scc.rs`; modify `dovetail/src/lib.rs` (`mod scc;`),
-`dovetail/src/wta.rs` (closed inside + solve_scc + no-double-star comment + FV
-note), `dovetail/src/extract.rs` (heuristic re-route + doc). No rigail/Cargo
-change.
+Implemented in `dovetail/src/scc.rs`, `dovetail/src/wta.rs`, and
+`dovetail/src/extract.rs`. No rigail/Cargo change was required.

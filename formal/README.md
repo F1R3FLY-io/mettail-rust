@@ -44,6 +44,11 @@ The capped entry point runs:
   `egraph`, `lattice`, `logict`, `mathematical_analyses`,
   `prattail_wpda_runtime`, `predicate_dispatch`, `presburger`,
   `rule_consolidation`, `sft`, `trampoline`, and `unification`
+- the relocated Dovetail Rocq proof suite under `dovetail/formal/rocq`
+  (`FORMAL_CAPPED_TARGET=rocq-dovetail`)
+- focused Dovetail enrichment targets:
+  `rocq-dovetail-refinement`, `rocq-dovetail-requirements`,
+  `why3-dovetail-pilot`, and `creusot-dovetail-pilot`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests

@@ -18,16 +18,23 @@ FORMAL_CAPPED_TARGET ?= check-inner
 FORMAL_CARGO_BUILD_JOBS ?= 1
 FORMAL_CARGO_TARGET_DIR ?= $(FORMAL_TMPDIR)/cargo-target
 FORMAL_CAPPED_RUN ?= 0
+CREUSOT_TOOLCHAIN ?= nightly-2026-04-21
+CREUSOT_CARGO ?= $(HOME)/.local/opt/creusot/target/release/cargo-creusot
+CREUSOT_RUSTC ?= $(HOME)/.local/bin/creusot-rustc
+CREUSOT_PACKAGE_SRC ?= $(HOME)/.local/opt/creusot/target/creusot/packages
+CREUSOT_DATA_HOME ?= $(FORMAL_TMPDIR)/creusot-data
+CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 
 .PHONY: check check-inner check-uncapped check-capped check-memory-cap require-capped clean prepare-tmp
 .PHONY: prattail-wpda rocq-support
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-rho-bridge
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-rho-bridge
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
+.PHONY: why3-dovetail-pilot creusot-dovetail-pilot prepare-creusot-data
 
 check: check-capped
 
@@ -106,10 +113,50 @@ rocq-egraph: require-capped
 	$(MAKE) -C rocq/egraph
 
 rocq-dovetail: require-capped
-	$(MAKE) -C rocq/dovetail
+	$(MAKE) -C ../dovetail/formal/rocq
+
+rocq-dovetail-refinement: require-capped
+	$(MAKE) -C ../dovetail/formal/rocq theories/Refinement/RustModelBridge.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Rigail/NewtonSccAdequacy.vo
+
+rocq-dovetail-requirements: require-capped
+	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/MeTTaILRewriteCoverage.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/LanguageDefInventory.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/PatternLoweringSoundness.vo
 
 rocq-rho-bridge: require-capped
 	$(MAKE) -C rocq/rho_bridge
+
+why3-dovetail-pilot: require-capped
+	why3 prove -P "Alt-Ergo,2.6.0" -t 5 ../dovetail/formal/why3/key_budget_pilot.mlw
+
+prepare-creusot-data: require-capped prepare-tmp
+	CREUSOT_DATA_HOME="$(abspath $(CREUSOT_DATA_HOME))" \
+	CREUSOT_PACKAGE_SRC="$(CREUSOT_PACKAGE_SRC)" \
+	sh ../dovetail/formal/creusot/prepare-creusot-data.sh
+
+creusot-dovetail-pilot: require-capped prepare-creusot-data
+	cd ../dovetail/formal/creusot && \
+		CREUSOT_DATA_HOME="$(abspath $(CREUSOT_DATA_HOME))" \
+		XDG_CONFIG_HOME="$(abspath $(CREUSOT_XDG_CONFIG_HOME))" \
+		CARGO_TARGET_DIR="$(abspath $(FORMAL_CARGO_TARGET_DIR))/creusot-dovetail" \
+		rustup run "$(CREUSOT_TOOLCHAIN)" "$(CREUSOT_CARGO)" creusot why3-conf
+	cd ../dovetail/formal/creusot && \
+		CREUSOT_DATA_HOME="$(abspath $(CREUSOT_DATA_HOME))" \
+		XDG_CONFIG_HOME="$(abspath $(CREUSOT_XDG_CONFIG_HOME))" \
+		CARGO_TARGET_DIR="$(abspath $(FORMAL_CARGO_TARGET_DIR))/creusot-dovetail" \
+		rustup run "$(CREUSOT_TOOLCHAIN)" "$(CREUSOT_CARGO)" creusot --only=coma --span-mode=off --creusot-rustc "$(CREUSOT_RUSTC)"
+	cd ../dovetail/formal/creusot && \
+		PATH="$(abspath $(CREUSOT_DATA_HOME))/bin:$(PATH)" \
+		DUNE_DIR_LOCATIONS="why3find:lib:$(abspath $(CREUSOT_DATA_HOME))/share/why3find" \
+		WHY3CONFIG="$(abspath $(CREUSOT_XDG_CONFIG_HOME))/creusot/why3.conf" \
+		why3find prove --no-autodetect-provers --package creusot --fast 0.2 --time 1 --depth 6 \
+			--prover alt-ergo,z3,cvc4 --tactic compute_specified,split_vc \
+			--why3-warn-off unused_variable,axiom_abstract \
+			verif/dovetail_creusot_formal_rlib/try_add_with_budget.coma \
+			verif/dovetail_creusot_formal_rlib/added_never_overshoots_budget.coma \
+			verif/dovetail_creusot_formal_rlib/overflow_preserves_state_at_limit.coma \
+			verif/dovetail_creusot_formal_rlib/add_succeeds_below_limit.coma
 
 rocq-lattice: require-capped
 	$(MAKE) -C rocq/lattice
@@ -159,6 +206,7 @@ clean:
 	$(MAKE) -C rocq/ascent_optimizations clean
 	$(MAKE) -C rocq/codegen_optimizations clean
 	$(MAKE) -C rocq/egraph clean
+	$(MAKE) -C ../dovetail/formal/rocq clean
 	$(MAKE) -C rocq/rho_bridge clean
 	$(MAKE) -C rocq/lattice clean
 	$(MAKE) -C rocq/logict clean

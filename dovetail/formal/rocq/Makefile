@@ -4,7 +4,7 @@
 #   make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-dovetail
 
 FORMAL_CAPPED_TARGET_HINT := rocq-dovetail
-include ../../capped.mk
+include ../../../formal/capped.mk
 
 CoqMakefile: _CoqProject
 	coq_makefile -f $< -o $@

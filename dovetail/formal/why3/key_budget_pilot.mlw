@@ -1,0 +1,28 @@
+module DovetailBudgetPilot
+  use int.Int
+
+  type add_result = Added int | Overflow int
+
+  let try_add_with_budget (budget used: int) : add_result
+    requires { 0 <= used <= budget }
+    ensures {
+      match result with
+      | Added used' -> used < budget /\ used' = used + 1 /\ used' <= budget
+      | Overflow used' -> budget <= used /\ used' = used
+      end
+    }
+  =
+    if used < budget then Added (used + 1) else Overflow used
+
+  let budget_refuses_at_limit (budget: int) : add_result
+    requires { 0 <= budget }
+    ensures { result = Overflow budget }
+  =
+    try_add_with_budget budget budget
+
+  let budget_adds_below_limit (budget used: int) : add_result
+    requires { 0 <= used < budget }
+    ensures { result = Added (used + 1) }
+  =
+    try_add_with_budget budget used
+end

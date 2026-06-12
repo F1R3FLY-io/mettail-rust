@@ -3,7 +3,7 @@
 //! `dovetail` is the standalone, extractable core of an off-Ascent reduction
 //! engine: a generic-`W` weighted tree automaton (WTA) over a runtime e-graph
 //! treated as a deterministic finite tree automaton (DFTA), with N-best /
-//! set-valued cube-pruning extraction.
+//! set-valued exact lazy best-first extraction.
 //!
 //! Design of record:
 //! `docs/design/dovetail-engine/dovetail-core-implementation-plan.md`.
@@ -22,9 +22,10 @@
 //!
 //! ## Status
 //!
-//! Milestone **M-E.0 (inert)** is under construction: the engine is gated off by
-//! default (`default = []`) and nothing in the existing workspace build path
-//! depends on it. See the implementation plan for the increment sequence.
+//! Milestone **M-E.0 (inert)** is implemented: the core engine and formal
+//! obligations are present, the crate remains gated off by default
+//! (`default = []`), and nothing in the existing workspace build path depends on
+//! it. See the implementation plan for the increment sequence.
 
 pub mod egraph;
 pub mod extract;

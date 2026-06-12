@@ -34,7 +34,7 @@ use std::rc::Rc;
 use rigail::{Semiring, StarSemiring};
 
 use crate::egraph::{EClassId, EGraph, ENode};
-use crate::key::{write_framed, ContentKey, SemanticHash};
+use crate::key::{write_ordered_framed, ContentKey, SemanticHash};
 
 /// The best-first order on weights: `cmp_best(a, b) == Less` means `a` is the
 /// BETTER (preferred-earlier) derivation weight — "smaller = better". Named
@@ -221,7 +221,10 @@ where
             let cand = match popped {
                 Some(Reverse(c)) => c,
                 None => {
-                    self.state.get_mut(&q).expect("class state present").exhausted = true;
+                    self.state
+                        .get_mut(&q)
+                        .expect("class state present")
+                        .exhausted = true;
                     break;
                 },
             };
@@ -262,7 +265,10 @@ where
             }
         }
 
-        self.state.get_mut(&q).expect("class state present").on_stack = false;
+        self.state
+            .get_mut(&q)
+            .expect("class state present")
+            .on_stack = false;
         self.state.get(&q).and_then(|s| s.built.get(k).cloned())
     }
 
@@ -338,13 +344,18 @@ where
         for (i, &ci) in child_classes.iter().enumerate() {
             let cd = self.kth(ci, ranks[i])?; // recurse; None ⟹ combination absent
             w = w.times(&cd.weight);
-            write_framed(&mut key_bytes, cd.key.as_bytes());
+            write_ordered_framed(&mut key_bytes, cd.key.as_bytes());
             children.push(cd);
         }
         Some((op, w, ContentKey::from_bytes(key_bytes), children))
     }
 
-    fn make_candidate(&mut self, q: EClassId, edge_idx: usize, ranks: Vec<usize>) -> Option<Candidate<W>> {
+    fn make_candidate(
+        &mut self,
+        q: EClassId,
+        edge_idx: usize,
+        ranks: Vec<usize>,
+    ) -> Option<Candidate<W>> {
         let (_op, w, key, _children) = self.compose(q, edge_idx, &ranks)?;
         Some(Candidate { ord: OrdKey { w, key }, edge_idx, ranks })
     }
@@ -358,7 +369,6 @@ where
         let (op, w, key, children) = self.compose(q, edge_idx, ranks)?;
         Some(Rc::new(Derivation { op, class: q, children, weight: w, key }))
     }
-
 }
 
 #[cfg(test)]
@@ -520,10 +530,16 @@ mod tests {
         };
         let (eg1, add1) = build();
         let mut plain = Extractor::new(&eg1, weigh);
-        let a: Vec<_> = plain.derivations(eg1.find(add1)).map(|d| (prim(d.weight), d.key.clone())).collect();
+        let a: Vec<_> = plain
+            .derivations(eg1.find(add1))
+            .map(|d| (prim(d.weight), d.key.clone()))
+            .collect();
         let (eg2, add2) = build();
         let mut heur = Extractor::new(&eg2, weigh).with_heuristic();
-        let b: Vec<_> = heur.derivations(eg2.find(add2)).map(|d| (prim(d.weight), d.key.clone())).collect();
+        let b: Vec<_> = heur
+            .derivations(eg2.find(add2))
+            .map(|d| (prim(d.weight), d.key.clone()))
+            .collect();
         assert_eq!(a, b, "heuristic must not change result set or order");
     }
 
@@ -598,10 +614,16 @@ mod tests {
         };
         let (eg1, p1) = build();
         let mut plain = Extractor::new(&eg1, weigh);
-        let av: Vec<_> = plain.derivations(p1).map(|d| (prim(d.weight), d.key.clone())).collect();
+        let av: Vec<_> = plain
+            .derivations(p1)
+            .map(|d| (prim(d.weight), d.key.clone()))
+            .collect();
         let (eg2, p2) = build();
         let mut heur = Extractor::new(&eg2, weigh).with_heuristic();
-        let bv: Vec<_> = heur.derivations(p2).map(|d| (prim(d.weight), d.key.clone())).collect();
+        let bv: Vec<_> = heur
+            .derivations(p2)
+            .map(|d| (prim(d.weight), d.key.clone()))
+            .collect();
         assert_eq!(av, bv, "cyclic heuristic invariance (closed inside doesn't change results)");
     }
 }

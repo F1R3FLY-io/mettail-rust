@@ -1,0 +1,4 @@
+/target/
+/verif/
+/.why3find/
+!/Cargo.lock

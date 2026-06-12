@@ -88,16 +88,17 @@ resumability/random-access/idempotent-past-exhaustion; T6 `LexicographicWeight` 
 T7 determinism (run twice, identical key sequence); T8 cycle safety (terminates, no panic,
 `had_cycle_cut`); T9 heuristic invariance (with/without `with_heuristic` ⇒ identical output).
 
-## FV — `formal/rocq/dovetail/theories/NBestExtraction.v` (new `rocq-dovetail` target)
-Acyclic hypergraph model (well-founded `rank`); `Derivation` inductive; `dweight`/`dkey`
-(injective); total `(weight,key)` order. Theorems: `times_monotone` (MON, the precondition);
-`enum_sorted` (non-decreasing); `enum_complete` (every non-`0̄` derivation appears — the
-no-miss core, runtime analogue of `parser_preserves_ambiguous_alternatives`); `enum_sound`;
-`enum_no_dup`; capstone `prefix_is_k_minimal`; `zero_excluded`; `equal_weight_both_survive`.
-Reuse `SemiringLaws.v` algebra. Statements first; proofs are a follow-on obligation.
+## FV — `dovetail/formal/rocq/theories/Extraction/`
+`NBestExtraction.v` proves the selection/order layer: only `0̄` candidates are removed,
+every non-`0̄` candidate survives, equal-weight distinct alternatives both survive,
+demand prefixes are monotone, the stream exhausts on demand, and the ordered output is a
+sorted permutation of the kept candidates. `EnumerationCompleteness.v` proves the
+hypergraph-recursion layer: every hyperedge/rank-vector product point is enumerated.
+`CycleCutBoundary.v` proves cyclic k>=2 enumeration is explicitly reported as bounded
+when a cycle guard cuts a back-edge.
 
 ## Implementation order
-BestOrder+OrdKey → Derivation+tree-key → ClassState/Candidate/Extractor::new+init →
-make_candidate/build_derivation (borrow discipline) → kth loop (+0̄ filter +dup skip +cycle
-guard) → derivations/with_heuristic/had_cycle_cut → tests T1–T9 (land T2 first) → `pub mod
-extract;` → `formal/rocq/dovetail/` skeleton + NBestExtraction.v statements.
+Implemented: BestOrder+OrdKey, Derivation+tree-key, ClassState/Candidate initialization,
+candidate construction, `kth` loop (`0̄` filter + exact-key dup skip + cycle guard),
+`derivations`, `with_heuristic`, `had_cycle_cut`, tests T1-T9, and the Rocq proof suite
+under `dovetail/formal/rocq/theories/Extraction/`.

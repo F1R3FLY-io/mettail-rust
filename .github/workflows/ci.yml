@@ -71,6 +71,57 @@ jobs:
       - name: Run tests
         run: cargo test --all-features --workspace
 
+  dovetail-exhaustive:
+    name: Dovetail Exhaustive Runtime Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-codegen-cranelift-preview
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-dovetail-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-dovetail-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-dovetail-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Dovetail unit and integration tests
+        run: cargo test -p dovetail --all-targets
+
+      - name: Dovetail high-case property tests
+        run: PROPTEST_CASES=2048 cargo test -p dovetail --test properties
+
+      - name: Dovetail rewrite inventory audits
+        run: cargo test -p mettail-ast --test dovetail_rewrite_coverage --test dovetail_language_inventory
+
+      - name: MeTTaIL-shaped Dovetail parity harness
+        run: DOVETAIL_PARITY_CASES=512 cargo test -p dovetail --test language_shape_parity
+
+      - name: Dovetail coverage threshold
+        run: cargo llvm-cov -p dovetail --fail-under-lines 90
+        env:
+          CARGO_PROFILE_DEV_CODEGEN_BACKEND: llvm
+
   fmt:
     name: Formatting
     runs-on: ubuntu-latest

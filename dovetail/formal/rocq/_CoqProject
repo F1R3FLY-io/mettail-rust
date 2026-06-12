@@ -1,0 +1,27 @@
+# Rocq project for the Dovetail engine's formal obligations.
+#
+# Source tree:
+#   ExactKeys      - exact ContentKey dedup and explicit budget overflow
+#   Extraction     - exact lazy k-best enumeration and cycle-cut boundary
+#   InsideWeights  - cyclic SCC inside-weight closure
+#   Rigail         - Newton-SCC solver adequacy boundary
+#   Saturation     - rules-as-data monotone/sound saturation model
+#   Requirements   - MeTTaIL rewrite-requirements coverage taxonomy
+#   Lowering       - pattern/premise lowering coverage model
+#   Refinement     - Rust-facing trace/model bridge lemmas
+#
+# Zero-Admitted / zero-Axiom (the project gate).
+
+-Q theories Dovetail
+
+theories/ExactKeys/ExactKeyDedup.v
+theories/Extraction/NBestExtraction.v
+theories/Extraction/EnumerationCompleteness.v
+theories/Extraction/CycleCutBoundary.v
+theories/InsideWeights/InsideWeightSccClosure.v
+theories/Rigail/NewtonSccAdequacy.v
+theories/Saturation/DovetailSaturation.v
+theories/Requirements/MeTTaILRewriteCoverage.v
+theories/Requirements/LanguageDefInventory.v
+theories/Lowering/PatternLoweringSoundness.v
+theories/Refinement/RustModelBridge.v

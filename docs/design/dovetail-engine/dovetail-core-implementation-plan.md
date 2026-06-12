@@ -83,7 +83,7 @@ dovetail/           src/lib.rs                             # crate root + featur
                     src/extract/{mod,nbest,closure}.rs     # N-best/set-valued demand-driven best-first enumeration (research-grade core)
                     src/rules/{mod,driver}.rs              # rules-as-data + saturation driver
                     src/space/{mod,inmem}.rs               # tuplespace-shaped trait (C,P,A,K)+Match seam
-formal/rocq/dovetail/theories/{ExactKeyDedup,NBestExtraction}.v   # new rocq-dovetail target
+dovetail/formal/rocq/theories/{ExactKeys,Extraction,InsideWeights,Saturation,Requirements}/
 ```
 
 **Exact-key linchpin (HARD constraint — NOT 64-bit hash, NOT String):**
@@ -118,20 +118,22 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 8. **tuplespace trait + in-mem impl.**
 9. **convergence pass** (prattail `tree_automaton.rs` generic core → `pub use dovetail::wta::*`) — DEFER if it risks the baseline.
 
-## 4. FV obligations (zero-Admitted/zero-Axiom; new `rocq-dovetail` target in `formal/Makefile` mirroring `rocq-egraph`)
-1. **`ExactKeyDedup.v`** — generalize `exact_key_pair_dedup_preserves_distinct_keys` (RuntimeModel.v:2639) + `weighted_…` (2843) from 2-element to n-element exact-`ContentKey` lists; carry the negative `hash_only_pair_dedup_can_drop_distinct_keys` (2937) forward. Certifies Increment 3.
-2. **`NBestExtraction.v`** — k-best set = k weight-minimal DISTINCT derivations by `(W,key)`; **no distinct alternative dropped except at `0̄`** (runtime analogue of `parser_preserves_ambiguous_alternatives`). Reuse `SemiringLaws.v` monoid/distributivity + `WpdsCorrectness.v` monotonicity pattern. + a lemma that SCC→`PackingFactored` lowering preserves the weight equations (so the existing Newton-SCC proof carries over). Certifies Increments 5-6.
-3. **Congruence/rebuild (reuse)** `EGraphCongruence/EGraphSaturation/EGraphBudgetDedup.v` — confirm generic `EGraph<P>` preserves the same invariants.
+## 4. FV obligations (zero-Admitted/zero-Axiom; `rocq-dovetail` target in `formal/Makefile`)
+1. **`ExactKeys/ExactKeyDedup.v`** — exact-key dedup preserves every key, distinct keys are never conflated, add-with-budget never overshoots, and overflow reports refusal. Certifies Increment 3.
+2. **`Extraction/NBestExtraction.v` + `Extraction/EnumerationCompleteness.v`** — k-best/set-valued extraction keeps every distinct non-`0̄` derivation, orders by `(W,key)`, is monotone under demand, and enumerates the full hyperedge rank-vector product. Certifies Increment 5.
+3. **`InsideWeights/InsideWeightSccClosure.v`** — SCC→`PackingFactored` lowering preserves the e-graph inside equations; scalar/self-loop closure is the least fixpoint; trivial SCC skipping is sound. Certifies Increment 6.
+4. **`Saturation/DovetailSaturation.v`** — rules-as-data saturation is monotone and sound when generated facts are sound; bounded execution reports overflow. Certifies Increment 7.
+5. **`Requirements/MeTTaILRewriteCoverage.v`** — every current MeTTaIL rewrite requirement is covered by a Dovetail capability or an explicit native/Rho handler contract.
 
 ## 5. Honest scope
 - **Quick wins:** Inc 1 (mechanical move; 1 coupling point), Inc 2 (key), Inc 4 (WTA view), Inc 8 (trait).
 - **Moderate:** Inc 3 (payload-generic exact-keyed e-graph), Inc 7 (driver).
-- **Research-grade (budget generously):** Inc 5+6 + FV §2 — lazy k-best over a *cyclic* hypergraph interleaved with Newton-SCC closure, with set-valued/refute-only-at-`0̄` semantics that FORBID the usual keep-argmin pruning; the no-drop-except-at-zero proof is real, not reuse.
+- **Research-grade boundary:** full cyclic k>=2 enumeration remains bounded-by-design and surfaced by `had_cycle_cut`; cyclic inside weights and acyclic/bounded extraction correctness are proven.
 - **Out of scope here:** any f1r3node/RSpace binding; the Reified-RSpace concrete impl; flipping any evaluator off Ascent (M-RHO.4 / task #20); the prattail-egraph→dovetail convergence (Inc 9).
 
 ## 6. Critical files
 Create: `rigail/src/{lib,traits,weights,closure}.rs`; `dovetail/src/{lib,key}.rs`,
 `dovetail/src/egraph/*`, `dovetail/src/wta/*`, `dovetail/src/extract/*` (esp. `nbest.rs` — the
-research core), `dovetail/src/{rules,space}/*`; `formal/rocq/dovetail/{_CoqProject,theories/*}`.
+research core), `dovetail/src/{rules,space}/*`; `dovetail/formal/rocq/{_CoqProject,theories/*}`.
 Modify (small): workspace `Cargo.toml` members; `prattail/Cargo.toml` dep; `prattail/src/automata/semiring.rs`
 → facade; `prattail/src/sppf.rs` re-export; `formal/Makefile` `rocq-dovetail` target.

@@ -23,6 +23,25 @@ pub fn write_framed(out: &mut Vec<u8>, segment: &[u8]) {
     out.extend_from_slice(segment);
 }
 
+/// Write an order-preserving, prefix-free byte segment.
+///
+/// This is used for derivation-tree tiebreak keys. Unlike [`write_framed`], the
+/// payload bytes are compared before the segment terminator, so lexicographic
+/// order of child keys is preserved when child keys are embedded in parent keys.
+/// Byte `0x00` is escaped as `0x00 0xff`; the segment terminator is
+/// `0x00 0x00`.
+#[inline]
+pub fn write_ordered_framed(out: &mut Vec<u8>, segment: &[u8]) {
+    for &byte in segment {
+        if byte == 0 {
+            out.extend_from_slice(&[0, 0xff]);
+        } else {
+            out.push(byte);
+        }
+    }
+    out.extend_from_slice(&[0, 0]);
+}
+
 /// An exact, content-derived key: the canonical byte serialization of a value.
 ///
 /// Equality and ordering are over the exact bytes, so distinct content always
@@ -179,17 +198,43 @@ mod tests {
     }
 
     #[test]
+    fn ordered_framing_preserves_segment_order() {
+        let segments: [&[u8]; 7] = [b"", b"\0", b"\0\0", b"\0a", b"a", b"a\0", b"aa"];
+
+        for left in segments {
+            for right in segments {
+                let mut left_encoded = Vec::new();
+                let mut right_encoded = Vec::new();
+                write_ordered_framed(&mut left_encoded, left);
+                write_ordered_framed(&mut right_encoded, right);
+
+                assert_eq!(
+                    left.cmp(right),
+                    left_encoded.cmp(&right_encoded),
+                    "ordered framing must preserve segment order for {left:?} vs {right:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_framing_prevents_prefix_collision() {
+        let mut k1 = Vec::new();
+        write_ordered_framed(&mut k1, b"ab");
+        write_ordered_framed(&mut k1, b"c");
+
+        let mut k2 = Vec::new();
+        write_ordered_framed(&mut k2, b"a");
+        write_ordered_framed(&mut k2, b"bc");
+
+        assert_ne!(ContentKey::from_bytes(k1), ContentKey::from_bytes(k2));
+    }
+
+    #[test]
     fn ord_is_a_total_content_order() {
-        let mut keys = vec![
-            "b".content_key(),
-            "a".content_key(),
-            "c".content_key(),
-        ];
+        let mut keys = vec!["b".content_key(), "a".content_key(), "c".content_key()];
         keys.sort();
-        assert_eq!(
-            keys,
-            vec!["a".content_key(), "b".content_key(), "c".content_key()]
-        );
+        assert_eq!(keys, vec!["a".content_key(), "b".content_key(), "c".content_key()]);
     }
 
     #[test]

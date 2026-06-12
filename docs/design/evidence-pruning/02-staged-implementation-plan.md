@@ -56,7 +56,7 @@ inspiration is realized in exactly two legal forms:
   `monotone_under_continuation`, `no_loss` (w.r.t. the actual input), and `frontier_shrink` or
   `set_preservation`.
 - **I2 (FV-first):** the Rocq model lands as its own commit BEFORE any Rust, in
-  `formal/rocq/prattail_wpda_runtime/theories/` (or `formal/rocq/dovetail/theories/` for P6a),
+  `formal/rocq/prattail_wpda_runtime/theories/` (or `dovetail/formal/rocq/theories/` for P6a),
   registered in `_CoqProject`, Rocq 9.1 (`From Stdlib Require ...`), zero `Admitted`/`Axiom`
   confirmed by `Print Assumptions` on every exported theorem.
 - **I3 (measure-first):** every stage opens with a Step-0 diagnostic commit (counters only,
@@ -585,7 +585,7 @@ Ground truth: the extractor (`dovetail/src/extract.rs`) already ships Huang–Ch
 `compute_inside_closed`/Newton-SCC — proofs `NBestExtraction.v`, `EnumerationCompleteness.v`,
 `InsideWeightSccClosure.v`). That IS this program's Stage-C analog, already done. Saturation
 (`dovetail/src/rules.rs`) already reports budget overflow (`node_limit_reached`,
-`EGraphBudgetDedup.v`) and prunes nothing.
+`ExactKeyDedup.v`) and prunes nothing.
 
 - **DV-0 (probe, 1 commit):** counters `enodes_added_total` vs `enodes_in_extracted_derivations`
   (mark during extraction over the rhocalc eval corpus) + saturation share of eval wall-time.
@@ -594,7 +594,7 @@ Ground truth: the extractor (`dovetail/src/extract.rs`) already ships Huang–Ch
 - **DV-1 (only on gate pass):** demand-gated rule application — the magic-sets/demand
   transformation for e-graphs: apply a rule only when its LHS root class is in the demanded set
   (backward closure from extraction roots). Model
-  `formal/rocq/dovetail/theories/SaturationDemandGate.v`: `demand_closure_complete` (every e-class
+  `dovetail/formal/rocq/theories/Saturation/SaturationDemandGate.v`: `demand_closure_complete` (every e-class
   appearing in any derivation of any demanded root is in the demanded set — extraction-equivalence,
   the query-equivalence theorem shape of BMSU86), `demand_monotone`. This is a quotient-of-work, not
   a drop: undemanded classes are never extracted, so omitting their saturation changes no observable

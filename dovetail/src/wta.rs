@@ -5,15 +5,14 @@
 //! Computes per-class **inside weights** — `inside(q) = ⊕_{node ∈ q} weigh(node)
 //! ⊗ ⊗_c inside(child)` — the `⊕`-aggregate over ALL derivations of `q`. With a
 //! tropical (min,+) weight the inside is the 1-best derivation cost, which is the
-//! **admissible heuristic** the best-first extractor (next increment) uses.
+//! **admissible heuristic** the best-first extractor uses.
 //!
 //! Weight ORDERS, never PRUNES: every e-node contributes via `⊕`; a derivation
 //! drops out only if its weight is the semiring zero (`0̄`).
 //!
-//! This increment handles ACYCLIC e-graphs via fixpoint iteration. Cyclic
-//! e-class weight closure (via rigail's Newton-SCC solver) is a later
-//! increment; the iteration cap bounds cyclic inputs to a partial estimate
-//! rather than looping.
+//! This module provides both the acyclic fixpoint and the closed cyclic
+//! inside-weight computation. Cyclic e-class weight closure uses rigail's
+//! Newton-SCC solver after deterministic SCC decomposition.
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -123,7 +122,8 @@ where
 /// Multiplying by star here would double-close (a bug, caught by the 2-node SCC
 /// test).
 ///
-/// FV (PROVEN, zero-admission — `formal/rocq/dovetail/theories/InsideWeightSccClosure.v`):
+/// FV (PROVEN, zero-admission —
+/// `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`):
 /// the SCC→`PackingFactored` lowering is a syntactic re-indexing of the e-graph
 /// inside recurrence (in-SCC unknowns by SCC-local index; out-of-SCC terms as
 /// solved constants) — `lowering_factor_faithful` + `lowered_eq_recurrence` +

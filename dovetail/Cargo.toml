@@ -20,3 +20,7 @@ engine = []
 # — the single source of truth, shared with prattail. dovetail stays
 # substrate-agnostic: this is its ONLY workspace dependency.
 rigail = { path = "../rigail" }
+
+[dev-dependencies]
+proptest = "1"
+rand = { workspace = true }

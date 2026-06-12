@@ -27,7 +27,7 @@ Base verified; three corrections that reshape the plan text (none block .0):
    upstream corpus as clean.
 
 The inert milestone mirrors the already-shipped `dovetail` crate +
-`formal/rocq/dovetail/` pattern exactly (gated `[features] engine = []`,
+`dovetail/formal/rocq/` pattern exactly (gated `[features] engine = []`,
 substrate-isolated, capped Rocq target).
 
 ## API findings (f1r3node-rust @ feature/cost-accounted-rho)
@@ -78,7 +78,8 @@ substrate-isolated, capped Rocq target).
 - Oracle hook: `languages/tests/gen_calculator_op.rs`;
   `Language::run_ascent` + `AscentResults::normal_forms()` (`runtime/src/language.rs:229`).
 - Inert template: `dovetail/Cargo.toml` (`[features] engine=[]`),
-  `formal/rocq/dovetail/{_CoqProject,Makefile}`, `formal/Makefile:108 rocq-dovetail`.
+  `dovetail/formal/rocq/{_CoqProject,Makefile}`, and the `rocq-dovetail`
+  target in `formal/Makefile`.
 
 ## Blockers / user decisions
 
