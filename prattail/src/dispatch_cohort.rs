@@ -1843,6 +1843,39 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///
     /// Returns an empty `Vec` when there is nothing to revive (the
     /// common case — most parses leave no orphans).
+    /// EP-P1 diagnostic (walker-stats consumers): count entries by state
+    /// — (inflight_keys, inflight_keys_with_members, resolved_keys,
+    /// resolved_keys_with_pending_members). Feeds the EOI census counter
+    /// that distinguishes dead-worker stranding from normal resolution.
+    pub fn dbg_entry_state_census(&self) -> (u64, u64, u64, u64) {
+        let mut inflight = 0u64;
+        let mut inflight_with = 0u64;
+        let mut resolved = 0u64;
+        let mut resolved_with = 0u64;
+        for entry in self.entries.values() {
+            match entry {
+                DispatchCacheEntry::InFlight {
+                    pending_members, full_pending_members, ..
+                } => {
+                    inflight += 1;
+                    if has_pending_members(pending_members, full_pending_members) {
+                        inflight_with += 1;
+                    }
+                },
+                DispatchCacheEntry::Resolved {
+                    pending_members, full_pending_members, ..
+                } => {
+                    resolved += 1;
+                    if has_pending_members(pending_members, full_pending_members) {
+                        resolved_with += 1;
+                    }
+                },
+                DispatchCacheEntry::Failed => {},
+            }
+        }
+        (inflight, inflight_with, resolved, resolved_with)
+    }
+
     pub fn drain_orphaned_inflight_members(&mut self) -> Vec<CohortMember<W>> {
         // First pass: identify InFlight keys that carry revivable
         // orphans. We collect keys then remove, because `FxHashMap`
@@ -1967,6 +2000,37 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             },
             DispatchCacheEntry::Failed => None,
         }
+    }
+
+    /// EP-P1 v3.1 (led_chain root fix, 2026-06-12): take + REMOVE the parked
+    /// members of a SPECIFIC `InFlight` key whose worker died (the walker's
+    /// per-step dead-worker scan found no live body-producing lineage for
+    /// it). Returns the materialized members so the walker can re-inject
+    /// them as independent Proceed-lineages. Removing the entry means their
+    /// re-emitted dispatch registers fresh (`WorkerInserted`) rather than
+    /// colliding with the dead InFlight entry. A `Resolved` entry is NOT
+    /// touched (its members are served by the normal drain). Returns empty
+    /// when the key is absent / Resolved / has no parked members.
+    pub fn take_inflight_members(&mut self, key: &DispatchKey) -> Vec<CohortMember<W>>
+    where
+        W: crate::automata::semiring::LexProvenance,
+    {
+        match self.entries.get(key) {
+            Some(DispatchCacheEntry::InFlight {
+                pending_members, full_pending_members, ..
+            }) if has_pending_members(pending_members, full_pending_members) => {},
+            _ => return Vec::new(),
+        }
+        let Some(DispatchCacheEntry::InFlight {
+            cohort_shell,
+            pending_members,
+            full_pending_members,
+            ..
+        }) = self.entries.remove(key)
+        else {
+            return Vec::new();
+        };
+        materialize_owned_pending_members(cohort_shell, pending_members, full_pending_members)
     }
 
     /// Phase F.13 H12 Stage 1.5 — append a cohort member to the

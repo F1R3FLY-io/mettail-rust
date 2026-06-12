@@ -601,6 +601,50 @@ pub struct WalkerStats {
     /// fell back to Proceed (sound — less sharing only; expected ~0 on
     /// the corpus: in-flight population 24 across ~4 keys).
     pub ep_p1_park_overflow_fallbacks: u64,
+    // ── led_chain ROOT-CAUSE DIAGNOSTIC (TEMPORARY; walker-stats only) ──
+    /// Consume-decision register() outcome histogram at the On arm
+    /// (7146): [WorkerInserted, InflightCollision, ResolvedHit, FailedHit].
+    pub dbg_ccl_reg_outcome: [u64; 4],
+    /// ResolvedHit at the consume arm but NOT quiescent (so it PARKED
+    /// instead of consuming) — the "resolved-but-not-quiescent" stall.
+    pub dbg_ccl_resolved_not_quiescent: u64,
+    /// pause_cohort_member returned true (parked) at the consume arm.
+    pub dbg_ccl_parked_ok: u64,
+    /// Per-key consume-decision register count: how concentrated the
+    /// registrations are. Key = (pos, source, host, route-implicit).
+    pub dbg_ccl_reg_by_key: FxHashMap<(usize, u16, u16), u64>,
+    /// Per-key park-overflow count.
+    pub dbg_ccl_overflow_by_key: FxHashMap<(usize, u16, u16), u64>,
+    /// Number of distinct cache keys still InFlight at EOI (orphan keys).
+    pub dbg_ccl_inflight_keys_at_eoi: u64,
+    /// In-step drain: jobs produced + members revived.
+    pub dbg_ccl_drain_jobs: u64,
+    pub dbg_ccl_drain_members: u64,
+    /// EOI backstop: jobs + members revived.
+    pub dbg_ccl_eoi_jobs: u64,
+    pub dbg_ccl_eoi_members: u64,
+    /// Quiescence decrements that reached zero (scheduled a drain).
+    pub dbg_ccl_quiesce_to_zero: u64,
+    /// Live-lineage increments (per-edge).
+    pub dbg_ccl_lineage_inc: u64,
+    /// Live-lineage decrements (per-edge).
+    pub dbg_ccl_lineage_dec: u64,
+    /// EOI: times revive_orphaned reached the M1 InFlight drain.
+    pub dbg_ccl_m1_reached: u64,
+    /// EOI: orphan_count observed at the M1 drain.
+    pub dbg_ccl_m1_orphan_count: u64,
+    /// EOI: members re-injected by M1 InFlight drain.
+    pub dbg_ccl_m1_injected: u64,
+    /// EOI: times the revival-rounds cap short-circuited before M1.
+    pub dbg_ccl_rounds_capped: u64,
+    /// EOI: times eoi_release was engaged.
+    pub dbg_ccl_eoi_release_set: u64,
+    /// §2 age-timeout: InFlightCollision arrivals that PROCEEDED because
+    /// their worker was stale (> K steps without resolving).
+    pub dbg_ccl_stale_proceed: u64,
+    /// Mid-parse dead-worker release: members re-injected because their
+    /// CrossCatLhs worker died (no live body-producing lineage).
+    pub dbg_ccl_dead_worker_released: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2286,6 +2330,58 @@ impl fmt::Display for WalkerStats {
                 )?;
             }
         }
+        // led_chain ROOT-CAUSE DIAGNOSTIC (TEMPORARY).
+        {
+            let dbg_total: u64 = self.dbg_ccl_reg_outcome.iter().sum::<u64>()
+                + self.dbg_ccl_drain_jobs
+                + self.dbg_ccl_eoi_jobs;
+            if dbg_total > 0 {
+                writeln!(
+                    f,
+                    "  DBG-CCL reg_outcome[Worker,Inflight,Resolved,Failed]={:?} resolved_not_quiescent={} parked_ok={}",
+                    self.dbg_ccl_reg_outcome,
+                    self.dbg_ccl_resolved_not_quiescent,
+                    self.dbg_ccl_parked_ok,
+                )?;
+                writeln!(
+                    f,
+                    "  DBG-CCL lineage inc={} dec={} quiesce_to_zero={} inflight_keys_at_eoi={}",
+                    self.dbg_ccl_lineage_inc,
+                    self.dbg_ccl_lineage_dec,
+                    self.dbg_ccl_quiesce_to_zero,
+                    self.dbg_ccl_inflight_keys_at_eoi,
+                )?;
+                writeln!(
+                    f,
+                    "  DBG-CCL drain jobs={} members={}  eoi jobs={} members={}",
+                    self.dbg_ccl_drain_jobs,
+                    self.dbg_ccl_drain_members,
+                    self.dbg_ccl_eoi_jobs,
+                    self.dbg_ccl_eoi_members,
+                )?;
+                writeln!(
+                    f,
+                    "  DBG-CCL M1 reached={} orphan_count={} injected={} rounds_capped={} eoi_release_set={} stale_proceed={} dead_released={}",
+                    self.dbg_ccl_m1_reached,
+                    self.dbg_ccl_m1_orphan_count,
+                    self.dbg_ccl_m1_injected,
+                    self.dbg_ccl_rounds_capped,
+                    self.dbg_ccl_eoi_release_set,
+                    self.dbg_ccl_stale_proceed,
+                    self.dbg_ccl_dead_worker_released,
+                )?;
+                let mut keys: Vec<_> = self.dbg_ccl_reg_by_key.iter().collect();
+                keys.sort_by_key(|(k, _)| **k);
+                for (k, n) in keys {
+                    let ovf = self.dbg_ccl_overflow_by_key.get(k).copied().unwrap_or(0);
+                    writeln!(
+                        f,
+                        "    DBG-CCL key(pos={},src={},host={}) regs={} overflow={}",
+                        k.0, k.1, k.2, n, ovf,
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -2737,6 +2833,27 @@ mod tests {
             ep_p1_measure_tail_divergent: 0,
             ep_p1_consumed_in_place: 0,
             ep_p1_park_overflow_fallbacks: 0,
+            // led_chain diagnostic (TEMPORARY).
+            dbg_ccl_reg_outcome: [0; 4],
+            dbg_ccl_resolved_not_quiescent: 0,
+            dbg_ccl_parked_ok: 0,
+            dbg_ccl_reg_by_key: FxHashMap::default(),
+            dbg_ccl_overflow_by_key: FxHashMap::default(),
+            dbg_ccl_inflight_keys_at_eoi: 0,
+            dbg_ccl_drain_jobs: 0,
+            dbg_ccl_drain_members: 0,
+            dbg_ccl_eoi_jobs: 0,
+            dbg_ccl_eoi_members: 0,
+            dbg_ccl_quiesce_to_zero: 0,
+            dbg_ccl_lineage_inc: 0,
+            dbg_ccl_lineage_dec: 0,
+            dbg_ccl_m1_reached: 0,
+            dbg_ccl_m1_orphan_count: 0,
+            dbg_ccl_m1_injected: 0,
+            dbg_ccl_rounds_capped: 0,
+            dbg_ccl_eoi_release_set: 0,
+            dbg_ccl_stale_proceed: 0,
+            dbg_ccl_dead_worker_released: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

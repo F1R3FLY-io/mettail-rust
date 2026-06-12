@@ -911,6 +911,17 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// then never quiesces and arrivals park→timeout→Proceed (sound;
     /// the EOI orphan re-drive covers parked members).
     crosscat_lhs_live_lineages: rustc_hash::FxHashMap<crate::dispatch_cohort::DispatchKey, u32>,
+    /// EP-P1 v3.1 (led_chain root fix): CrossCatLhs edges whose push
+    /// already incremented `crosscat_lhs_live_lineages`
+    /// (increment-once-per-edge, SYMMETRIC to the decrement). Two
+    /// same-context pushes COALESCE to one GSS edge (`add_edge_kind`
+    /// dedups identical (target, kind) edges) — counting per-PUSH
+    /// double-increments such keys, the decrement-per-edge fires once,
+    /// and the live count never reaches zero: quiescence starves,
+    /// parks pile to the cap, the orphan rounds exhaust, and the parse
+    /// is lost (led_chain_num_to_pred). Per-edge symmetry restores the
+    /// exact balance.
+    pushed_crosscat_lhs_edges: rustc_hash::FxHashSet<crate::gss::GssEdgeId>,
     /// EP-P1 v3.1: CrossCatLhs edges whose pop already decremented
     /// `crosscat_lhs_live_lineages` (decrement-once-per-edge).
     popped_crosscat_lhs_edges: rustc_hash::FxHashSet<crate::gss::GssEdgeId>,
@@ -926,6 +937,33 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// mid-parse quiescence never fires (e.g. lineages that die
     /// without popping keep the live count > 0).
     parked_crosscat_lhs_keys: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// EP-P1 v3.1 (led_chain root fix, 2026-06-12): the GSS edge(s) a
+    /// CrossCatLhs key's body-producing lineages pushed. After each step's
+    /// prune+merge, a key with parked members whose edges no longer appear
+    /// in ANY live frontier cursor's `incoming_edge_stack` has lost its
+    /// worker (it died without resolving — the quiescence-starvation hole),
+    /// so its parked members are released mid-parse as independent
+    /// Proceed-lineages. Keyed so the scan is per-key; cleared at the
+    /// parse boundary.
+    crosscat_lhs_key_edges: rustc_hash::FxHashMap<
+        crate::dispatch_cohort::DispatchKey,
+        Vec<crate::gss::GssEdgeId>,
+    >,
+    /// EP-P1 v3.1 (led_chain root fix, 2026-06-12): once the EOI/no-progress
+    /// backstop has begun releasing CrossCatLhs members stranded on
+    /// never-resolved InFlight keys, further CrossCatLhs InFlightCollision
+    /// arrivals PROCEED (become their own lineage) instead of re-parking.
+    /// Parking on an InFlight worker is only a sharing optimization and is
+    /// UNSOUND when that worker dies without resolving (a forked-prefix
+    /// loser lineage becomes the worker and never pops its body — the
+    /// `inc>dec` quiescence-starvation hole documented at
+    /// `crosscat_lhs_live_lineages`). At the terminal fixpoint there is no
+    /// sharing left to win, so releasing the survivors as independent
+    /// Proceed-lineages recovers the lost derivation with zero risk to the
+    /// mid-parse fast path (this flag is false for every parse that resolves
+    /// + drains before reaching the orphan fixpoint, e.g. the whole
+    /// calculator cast corpus). Reset at the parse boundary.
+    ep_p1_eoi_release: bool,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -1155,6 +1193,18 @@ pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 /// unbounded batch. 4 mirrors the conservative bound style used elsewhere
 /// in this walker while preventing livelock.
 const MAX_REVIVAL_ROUNDS: u32 = 4;
+
+// ── led_chain FLIP EXPERIMENT harness (TEMPORARY) ──────────────────────
+/// EP-P1 v3.1 A/B control (the B2_DISABLE/B3_DISABLE pattern): set
+/// `EP_P1_DEADWORKER_DISABLE` to skip the mid-parse dead-worker release
+/// — the control arm for the L-commit Welch panels and falsification
+/// runs isolating the release. Off by default (one memoized OnceLock
+/// read; zero effect on the production path).
+#[inline]
+fn ep_p1_deadworker_release_disabled() -> bool {
+    static G: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *G.get_or_init(|| std::env::var_os("EP_P1_DEADWORKER_DISABLE").is_some())
+}
 
 /// Cohort orphan revival is a bounded, evidence-preserving search step.
 /// Over-budget alternatives must be surfaced as unresolved ambiguity, not
@@ -3507,9 +3557,12 @@ where
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
+            pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
+            crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
+            ep_p1_eoi_release: false,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3594,9 +3647,12 @@ where
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
+            pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
+            crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
+            ep_p1_eoi_release: false,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3680,9 +3736,12 @@ where
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
+            pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
+            crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
+            ep_p1_eoi_release: false,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -3788,9 +3847,12 @@ where
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
         self.crosscat_lhs_live_lineages.clear();
+        self.pushed_crosscat_lhs_edges.clear();
         self.popped_crosscat_lhs_edges.clear();
         self.pending_crosscat_lhs_drain_keys.clear();
         self.parked_crosscat_lhs_keys.clear();
+        self.crosscat_lhs_key_edges.clear();
+        self.ep_p1_eoi_release = false;
         // Cohort-revive-rework M1 (2026-05-29): reset the orphan
         // re-drive counter at the parse boundary so each parse gets a
         // fresh `MAX_REVIVAL_ROUNDS` budget.
@@ -3889,9 +3951,12 @@ where
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
         self.crosscat_lhs_live_lineages.clear();
+        self.pushed_crosscat_lhs_edges.clear();
         self.popped_crosscat_lhs_edges.clear();
         self.pending_crosscat_lhs_drain_keys.clear();
         self.parked_crosscat_lhs_keys.clear();
+        self.crosscat_lhs_key_edges.clear();
+        self.ep_p1_eoi_release = false;
         self.recovery_cohort_cache.clear();
         self.chain_earley_cache.clear();
         self.chain_absorbed_intervals.clear();
@@ -4780,6 +4845,14 @@ where
                     self.dispatch_cohort_cache.orphaned_pending_members_count();
                 self.dispatch_cohort_cache.inflight_orphan_members_total += inflight_orphans;
                 self.dispatch_cohort_cache.failed_orphan_members_total += failed_orphans;
+                // EP-P1 diagnostic: inflight-key census at EOI (dead-worker
+                // stranding vs normal resolution).
+                #[cfg(feature = "walker-stats")]
+                {
+                    let (inflight_keys, _iw, _r, _rw) =
+                        self.dispatch_cohort_cache.dbg_entry_state_census();
+                    self.stats.dbg_ccl_inflight_keys_at_eoi += inflight_keys;
+                }
             }
         }
         // Phase F.13 H12 Stage 1.2 (2026-05-21): emit dispatch-cohort
@@ -7090,6 +7163,12 @@ where
                 // `cursor.node`. Host = the predecessor (pre-push top)
                 // frame's category (R5-7: NEVER the pushed symbol's —
                 // that is the SOURCE).
+                // EP-P1 v3.1 (led_chain root fix): a Proceed decision
+                // defers its lineage-open to the post-push site so the
+                // increment can be keyed ONCE PER EDGE (symmetric to
+                // the decrement; coalesced pushes count once).
+                let mut __ep_p1_open_lineage: Option<crate::dispatch_cohort::DispatchKey> =
+                    None;
                 // EP-P1 v3.1 ON (Round-7 converged; 06-p1-sync-consume-
                 // v3-design.md §3): the synchronous-consume / bounded-
                 // park decision, BEFORE any push. Worker / FailedHit /
@@ -7121,20 +7200,46 @@ where
                         // weight the per-cursor flow would have
                         // multiplied at this push.
                         let __weight_at_dispatch = cursor.weight.times_ref(&weight);
-                        match self
-                            .dispatch_cohort_cache
-                            .register(__key.clone(), __weight_at_dispatch.clone())
+                        // led_chain DIAGNOSTIC (TEMPORARY): per-key register count.
+                        #[cfg(feature = "walker-stats")]
                         {
+                            *self
+                                .stats
+                                .dbg_ccl_reg_by_key
+                                .entry((cursor.pos, __source, __host))
+                                .or_insert(0) += 1;
+                        }
+                        let __reg_outcome = self
+                            .dispatch_cohort_cache
+                            .register(__key.clone(), __weight_at_dispatch.clone());
+                        #[cfg(feature = "walker-stats")]
+                        {
+                            let __oi = match &__reg_outcome {
+                                crate::dispatch_cohort::RegisterOutcome::WorkerInserted => 0,
+                                crate::dispatch_cohort::RegisterOutcome::InflightCollision => 1,
+                                crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. } => 2,
+                                crate::dispatch_cohort::RegisterOutcome::FailedHit => 3,
+                            };
+                            self.stats.dbg_ccl_reg_outcome[__oi] += 1;
+                            if matches!(
+                                &__reg_outcome,
+                                crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. }
+                            ) && !__quiescent
+                            {
+                                self.stats.dbg_ccl_resolved_not_quiescent += 1;
+                            }
+                        }
+                        match __reg_outcome {
                             crate::dispatch_cohort::RegisterOutcome::WorkerInserted
                             | crate::dispatch_cohort::RegisterOutcome::FailedHit => {
                                 // Proceed: the worker (or the preserved
                                 // per-cursor failure path). The push
-                                // below opens a body-producing lineage
-                                // (R7-7: EVERY proceeding push counts).
-                                *self
-                                    .crosscat_lhs_live_lineages
-                                    .entry(__key)
-                                    .or_insert(0) += 1;
+                                // below opens a body-producing lineage —
+                                // counted ONCE PER EDGE at the post-push
+                                // site (led_chain root fix; R7-7 still
+                                // holds: every proceeding push reaches
+                                // that site).
+                                __ep_p1_open_lineage = Some(__key);
                             },
                             crate::dispatch_cohort::RegisterOutcome::ResolvedHit {
                                 bodies,
@@ -7205,6 +7310,20 @@ where
                                 }
                                 return CursorOutcome::ForkInto(__children);
                             },
+                            crate::dispatch_cohort::RegisterOutcome::InflightCollision
+                                if self.ep_p1_eoi_release =>
+                            {
+                                // led_chain root fix (2026-06-12): once the
+                                // EOI backstop is releasing stranded
+                                // InFlight-parked members, InFlightCollision
+                                // arrivals PROCEED (own lineage) rather than
+                                // re-park behind a worker that may never
+                                // resolve. Confined to the post-fixpoint
+                                // cleanup (`ep_p1_eoi_release`); the mid-parse
+                                // fast path still parks (sharing preserved).
+                                // Resolved-non-quiescent still parks.
+                                __ep_p1_open_lineage = Some(__key);
+                            },
                             crate::dispatch_cohort::RegisterOutcome::ResolvedHit { .. }
                             | crate::dispatch_cohort::RegisterOutcome::InflightCollision => {
                                 // In-flight or pre-quiescent arrival:
@@ -7220,6 +7339,7 @@ where
                                     .dispatch_cohort_cache
                                     .pause_cohort_member(__key.clone(), __member)
                                 {
+                                    crate::stats_inc!(self, dbg_ccl_parked_ok);
                                     // Fix B: remember the key so the EOI
                                     // backstop can force-drain it even if
                                     // mid-parse quiescence never fires.
@@ -7227,10 +7347,15 @@ where
                                     return CursorOutcome::Drop;
                                 }
                                 crate::stats_inc!(self, ep_p1_park_overflow_fallbacks);
-                                *self
-                                    .crosscat_lhs_live_lineages
-                                    .entry(__key)
-                                    .or_insert(0) += 1;
+                                #[cfg(feature = "walker-stats")]
+                                {
+                                    *self
+                                        .stats
+                                        .dbg_ccl_overflow_by_key
+                                        .entry((__key.pos, __key.source_src_idx, __key.wrap_cat))
+                                        .or_insert(0) += 1;
+                                }
+                                __ep_p1_open_lineage = Some(__key);
                             },
                         }
                     }
@@ -7274,6 +7399,27 @@ where
                         self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id)
                     {
                         self.crosscat_lhs_wrap.insert(__eid, (__host, u16::MAX));
+                        // led_chain root fix: open the lineage ONCE PER
+                        // EDGE — two same-context pushes coalesce to one
+                        // edge and must count once (the decrement is
+                        // per-edge too; exact balance).
+                        if let Some(__lineage_key) = __ep_p1_open_lineage.take() {
+                            // led_chain root fix (2026-06-12): record the
+                            // edge under the key so the per-step dead-worker
+                            // scan can tell whether ANY live cursor still
+                            // carries a body-producing lineage for this key.
+                            self.crosscat_lhs_key_edges
+                                .entry(__lineage_key.clone())
+                                .or_default()
+                                .push(__eid);
+                            if self.pushed_crosscat_lhs_edges.insert(__eid) {
+                                crate::stats_inc!(self, dbg_ccl_lineage_inc);
+                                *self
+                                    .crosscat_lhs_live_lineages
+                                    .entry(__lineage_key)
+                                    .or_insert(0) += 1;
+                            }
+                        }
                     }
                 }
                 if let Some((__source, __host)) = __ep_p1_measure_ccl
@@ -10546,6 +10692,11 @@ where
                         snapshots,
                         members,
                     } = drain_job;
+                    crate::stats_inc!(self, dbg_ccl_eoi_jobs);
+                    #[cfg(feature = "walker-stats")]
+                    {
+                        self.stats.dbg_ccl_eoi_members += members.len() as u64;
+                    }
                     let (cat, ppw) = snapshots
                         .first()
                         .map(|sn| {
@@ -10576,12 +10727,37 @@ where
                 return OrphanRevivalOutcome::Injected(injected_consumed);
             }
         }
+        // EP-P1 v3.1 led_chain root fix (2026-06-12): we are at the
+        // terminal fixpoint. Any CrossCatLhs member still parked on an
+        // InFlight key is stranded — its worker died without resolving
+        // (the `inc>dec` quiescence-starvation hole) so neither the
+        // mid-parse drain nor the Resolved EOI drain above could reach it,
+        // and `take_pending_for_drain_all` only drains Resolved entries.
+        // The existing M1 re-drive below (`drain_orphaned_inflight_members`)
+        // re-injects these members as their pre-push dispatch cursors;
+        // engaging EOI-release mode first ensures their re-emitted dispatch
+        // PROCEEDS (own lineage) instead of re-parking behind another dead
+        // worker (the churn that exhausted the revival rounds — raising the
+        // revival cap alone did NOT recover the parse; releasing the park
+        // did). Sharing is irrelevant past the fixpoint, so this only ADDS
+        // sound cursors; correctness-preserving.
+        if self.ep_p1_mode == EpP1Mode::On {
+            crate::stats_inc!(self, dbg_ccl_eoi_release_set);
+            self.ep_p1_eoi_release = true;
+        }
         // Bounded re-drive: stop reviving once the per-parse budget is
         // exhausted. Benign — the walker parks and resolves normally.
         if self.revival_rounds >= MAX_REVIVAL_ROUNDS {
+            crate::stats_inc!(self, dbg_ccl_rounds_capped);
             return OrphanRevivalOutcome::Idle;
         }
         let orphan_count = self.dispatch_cohort_cache.revivable_inflight_member_count();
+        crate::stats_inc!(self, dbg_ccl_m1_reached);
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats.dbg_ccl_m1_orphan_count =
+                self.stats.dbg_ccl_m1_orphan_count.max(orphan_count as u64);
+        }
         if orphan_count == 0 {
             return OrphanRevivalOutcome::Idle;
         }
@@ -10603,6 +10779,10 @@ where
             return OrphanRevivalOutcome::Idle;
         }
         let injected = orphans.len();
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats.dbg_ccl_m1_injected += injected as u64;
+        }
         // Preallocate for the cursors we are about to push.
         self.branch_cursors.reserve(injected);
         for member in orphans {
@@ -11376,6 +11556,11 @@ where
                         snapshots,
                         members,
                     } = drain_job;
+                    crate::stats_inc!(self, dbg_ccl_drain_jobs);
+                    #[cfg(feature = "walker-stats")]
+                    {
+                        self.stats.dbg_ccl_drain_members += members.len() as u64;
+                    }
                     let (cat, ppw) = snapshots
                         .first()
                         .map(|sn| {
@@ -11439,6 +11624,25 @@ where
         self.merge_equivalent_cursors();
         // Phase F.13 walker-stats (2026-05-20): capture post-merge peak.
         crate::stats_max!(self, branch_cursors_peak_post_merge, self.branch_cursors.len() as u64);
+
+        // EP-P1 v3.1 led_chain root fix (2026-06-12): mid-parse dead-worker
+        // release. After prune+merge has settled the frontier, a CrossCatLhs
+        // key may have lost EVERY live body-producing lineage (its worker —
+        // possibly a forked-prefix loser — was dropped/merged away without
+        // resolving) while STILL holding parked members. Those members are
+        // stranded: the worker will never resolve a body for them to consume,
+        // and neither the resolved-quiescent drain nor the EOI drain can
+        // reach an InFlight entry. Release them HERE, mid-parse, as
+        // independent Proceed-lineages so the surviving derivation is built
+        // during the main parse (preserving the correct lex-min tree and the
+        // symmetric weight competition — unlike a selective dispatch-time
+        // gate). The whole calculator cast corpus is unaffected: its workers
+        // RESOLVE (transition InFlight→Resolved), so no key is ever
+        // dead-with-parked-members, and this scan releases nothing (the
+        // parking-based sharing is fully preserved).
+        if self.ep_p1_mode == EpP1Mode::On && !ep_p1_deadworker_release_disabled() {
+            self.release_dead_crosscat_lhs_workers();
+        }
 
         // B10 / Option κ Part 3 (2026-05-07): lex-dominated cursor
         // subsumption. After strict-key merge, group remaining cursors
@@ -14975,6 +15179,95 @@ where
         }
     }
 
+    /// EP-P1 v3.1 led_chain root fix (2026-06-12): mid-parse dead-worker
+    /// release. Called after each step's prune+merge. A CrossCatLhs key
+    /// whose body-producing edges no longer appear in ANY live frontier
+    /// cursor's `incoming_edge_stack` has lost its worker (dropped/merged
+    /// without resolving — the quiescence-starvation hole). Its still-parked
+    /// members are stranded (no body will resolve for them; the
+    /// resolved/EOI drains only touch `Resolved` entries). Re-inject them as
+    /// independent Proceed-lineages so the surviving derivation completes
+    /// during the main parse. Engaging `ep_p1_eoi_release` makes their
+    /// re-emitted CrossCatLhs dispatch PROCEED (own lineage) rather than
+    /// re-park behind the next worker (which may also be a fork-loser) —
+    /// from this point the parse explores cross-cat dispatches uniformly,
+    /// preserving the symmetric weight competition (the correct lex-min
+    /// tree), exactly as the all-Proceed reference does. SOUND + additive:
+    /// only ADDS cursors; never drops a derivation. The calculator cast
+    /// corpus never reaches here — its workers resolve, so no key is ever
+    /// dead-with-parked-members and `ep_p1_eoi_release` stays false (full
+    /// parking-based sharing preserved).
+    fn release_dead_crosscat_lhs_workers(&mut self)
+    where
+        W: crate::automata::semiring::LexProvenance,
+    {
+        if self.crosscat_lhs_key_edges.is_empty() {
+            return;
+        }
+        // The set of incoming-edge ids carried by SOME live frontier cursor.
+        // One membership scan per distinct interned stack (cheap; the arena
+        // dedups). A key whose edges are all ABSENT here has no live
+        // body-producing lineage.
+        let mut live_edges: rustc_hash::FxHashSet<crate::gss::GssEdgeId> =
+            rustc_hash::FxHashSet::default();
+        let mut scanned_stacks: rustc_hash::FxHashSet<crate::edge_stack_arena::EdgeStackId> =
+            rustc_hash::FxHashSet::default();
+        for frame in &self.branch_cursors {
+            let sid = match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => c.incoming_edge_stack_id,
+                crate::cohort_lazy::Frame::Cohort(cf) => cf.shell.incoming_edge_stack_id,
+            };
+            if scanned_stacks.insert(sid) {
+                for edge_id in self.incoming_edge_stack_arena.to_vec(sid) {
+                    live_edges.insert(edge_id);
+                }
+            }
+        }
+        // Identify dead keys: every recorded edge absent from the live set.
+        // (Resolved keys are skipped by `take_inflight_members` — only a
+        // still-InFlight worker that vanished is a dead worker.)
+        let dead_keys: Vec<crate::dispatch_cohort::DispatchKey> = self
+            .crosscat_lhs_key_edges
+            .iter()
+            .filter(|(_, edges)| edges.iter().all(|e| !live_edges.contains(e)))
+            .map(|(k, _)| k.clone())
+            .collect();
+        if dead_keys.is_empty() {
+            return;
+        }
+        let mut released: Vec<BranchCursor<W>> = Vec::new();
+        for key in &dead_keys {
+            let members = self.dispatch_cohort_cache.take_inflight_members(key);
+            // The key's lineage is gone; stop tracking its edges either way
+            // (a Resolved key returns no members but is also no longer a
+            // body producer for the dead-worker purpose).
+            self.crosscat_lhs_key_edges.remove(key);
+            self.parked_crosscat_lhs_keys.remove(key);
+            for member in members {
+                let mut revived = member.return_frame;
+                revived.weight = member.weight_at_dispatch;
+                released.push(revived);
+            }
+        }
+        if released.is_empty() {
+            return;
+        }
+        // Engage uniform-Proceed for the remainder of the parse so the
+        // released members (and future cross-cat arrivals on the surviving
+        // lineages) build their derivations independently rather than
+        // re-stranding behind another transient worker.
+        self.ep_p1_eoi_release = true;
+        crate::stats_inc!(self, dbg_ccl_eoi_release_set);
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats.dbg_ccl_dead_worker_released += released.len() as u64;
+        }
+        for cursor in released {
+            self.branch_cursors
+                .push(crate::cohort_lazy::Frame::Concrete(cursor));
+        }
+    }
+
     fn cursor_gss_push_with_kind(
         &mut self,
         cursor: &mut BranchCursor<W>,
@@ -17055,8 +17348,10 @@ where
                         if let Some(n) =
                             self.crosscat_lhs_live_lineages.get_mut(&quiesce_key)
                         {
+                            crate::stats_inc!(self, dbg_ccl_lineage_dec);
                             *n = n.saturating_sub(1);
                             if *n == 0 {
+                                crate::stats_inc!(self, dbg_ccl_quiesce_to_zero);
                                 self.pending_crosscat_lhs_drain_keys.insert(quiesce_key);
                             }
                         }
