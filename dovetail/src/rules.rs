@@ -174,6 +174,245 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// EP-P6a DV-0 PROBE (measurement-only; 2026-06-12)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Binding contract: docs/design/evidence-pruning/02-staged-implementation-plan.md
+// §P6a. This is a MEASUREMENT-ONLY probe deciding the DV-1 gate; it implements
+// NOTHING beyond the counters. It does not alter any production code path (the
+// 39 baseline tests are untouched).
+//
+// Counters required by the contract:
+//   - `enodes_added_total`            : e-nodes created DURING saturation
+//                                       (post-saturation live node_count minus
+//                                       the pre-saturation seed node_count).
+//   - `enodes_in_extracted_derivations`: distinct e-nodes (by exact ContentKey of
+//                                       the canonical (op, child-classes) node)
+//                                       that appear in the chosen best derivation
+//                                       trees of the demanded roots — MARKED by
+//                                       walking those derivations.
+//   - saturation share of eval wall-time (saturation ns / (saturation+extraction) ns).
+//
+// GATE: untouched-share = 1 - (in_extracted / added_total) ≥ 50% AND
+//       saturation ≥ 20% of eval wall-time  →  recommend DV-1; else record the non-goal.
+//
+// CORPUS CAVEAT (recorded in findings.md): the rhocalc eval corpus does NOT route
+// through dovetail today — `mettail-rho-runtime` runs f1r3node's RhoRuntime
+// directly (run.rs) and the `dovetail` reference in its lib.rs is a doc comment;
+// dovetail is M-E.0 (inert), no live caller. So this probe measures the LARGEST
+// EXISTING dovetail workload: a saturate→extract arithmetic-rewrite system that
+// mirrors the equality-saturation shape the flip would create. The
+// corpus-representativeness caveat carries to the flip epic.
+#[cfg(test)]
+mod dv0_probe {
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    use rigail::TropicalWeight;
+
+    use crate::egraph::{EClassId, EGraph, ENode};
+    use crate::extract::{Derivation, Extractor};
+    use crate::key::ContentKey;
+    use crate::rules::{Pattern, RewriteRule};
+
+    /// Cost model: leaf digits cost their value, structural ops a flat 1, and the
+    /// `h`-nesting "expander" (an unbounded-growth rule, mirroring the saturation
+    /// blow-up the budget guards) costs 1 so the cheaper non-expanded form wins.
+    fn weigh(n: &ENode<String>) -> TropicalWeight {
+        match n.op.as_str() {
+            "add" | "mul" => TropicalWeight(1.0),
+            "h" => TropicalWeight(1.0),
+            s => match s.parse::<f64>() {
+                Ok(v) => TropicalWeight(v.max(1.0)),
+                Err(_) => TropicalWeight(1.0),
+            },
+        }
+    }
+
+    /// The exact ContentKey of a node's CANONICAL (op, child-classes) identity —
+    /// the same identity the e-graph hashconses on. Used to MARK e-nodes reached
+    /// by the extracted derivations.
+    fn node_key(op: &str, child_classes: &[EClassId]) -> ContentKey {
+        let mut bytes = Vec::new();
+        crate::key::SemanticHash::write_content(&op.to_string(), &mut bytes);
+        for c in child_classes {
+            crate::key::write_framed(&mut bytes, &c.0.to_le_bytes());
+        }
+        ContentKey::from_bytes(bytes)
+    }
+
+    /// Walk a chosen derivation tree, inserting each node's canonical key into
+    /// `marked`. A derivation node carries `class` (its e-class) and `children`
+    /// (the chosen child derivations), so the canonical (op, child-class) key is
+    /// reconstructable and matches the e-graph's hashcons identity.
+    fn mark_derivation(
+        eg: &EGraph<String>,
+        d: &Derivation<String, TropicalWeight>,
+        marked: &mut HashSet<ContentKey>,
+    ) {
+        let child_classes: Vec<EClassId> =
+            d.children.iter().map(|c| eg.find(c.class)).collect();
+        marked.insert(node_key(&d.op, &child_classes));
+        for c in &d.children {
+            mark_derivation(eg, c, marked);
+        }
+    }
+
+    /// Build a saturate→extract workload, returning
+    /// (enodes_added_total, enodes_in_extracted_derivations, sat_ns, extract_ns,
+    ///  total_live_nodes, demanded_roots, nf_count).
+    #[allow(clippy::type_complexity)]
+    fn run_workload(
+        seed: &str,
+        depth_terms: usize,
+        kbest: usize,
+    ) -> (usize, usize, u128, u128, usize, usize, usize) {
+        // ── Build the e-graph + seed a small batch of distinct arithmetic terms.
+        let mut eg = EGraph::<String>::new();
+        let mut roots: Vec<EClassId> = Vec::new();
+        // A pool of leaves shared across the seeded terms (so saturation/congruence
+        // has cross-term structure to grow, like a real reduction corpus).
+        let leaves: Vec<EClassId> = (0..6)
+            .map(|i| eg.add(ENode::leaf(format!("{}", i + 1))))
+            .collect();
+        for t in 0..depth_terms {
+            // add(mul(a,b), c)  with a/b/c rotating through the leaf pool.
+            let a = leaves[t % leaves.len()];
+            let b = leaves[(t + 1) % leaves.len()];
+            let c = leaves[(t + 2) % leaves.len()];
+            let m = eg.add(ENode::new("mul".into(), vec![a, b]));
+            let r = eg.add(ENode::new("add".into(), vec![m, c]));
+            roots.push(r);
+        }
+        let _ = seed; // (seed label reserved for diagnostic naming)
+        eg.rebuild();
+        let seed_nodes = eg.node_count();
+
+        // ── Rewrite system that GROWS the e-graph with equivalent-but-costlier
+        //    forms (the off-Ascent reduction analog: every rule adds an equality,
+        //    nothing is pruned). `x -> add(x, h(x))`-style expanders plus
+        //    commutativity create many materialized e-nodes that extraction will
+        //    NOT choose (the cheaper original wins), which is exactly the
+        //    "added but untouched" share DV-0 quantifies.
+        let rules = vec![
+            // commutativity of mul: mul(x,y) ~ mul(y,x)
+            RewriteRule {
+                lhs: Pattern::app("mul".into(), vec![Pattern::var("x"), Pattern::var("y")]),
+                rhs: Pattern::app("mul".into(), vec![Pattern::var("y"), Pattern::var("x")]),
+                label: Some("mul_comm".into()),
+            },
+            // commutativity of add
+            RewriteRule {
+                lhs: Pattern::app("add".into(), vec![Pattern::var("x"), Pattern::var("y")]),
+                rhs: Pattern::app("add".into(), vec![Pattern::var("y"), Pattern::var("x")]),
+                label: Some("add_comm".into()),
+            },
+            // an expander that introduces costlier equivalent structure:
+            //   add(x,y) ~ add(x, mul(1, y))   (identity-via-mul, costlier ⇒ unchosen)
+            RewriteRule {
+                lhs: Pattern::app("add".into(), vec![Pattern::var("x"), Pattern::var("y")]),
+                rhs: Pattern::app(
+                    "add".into(),
+                    vec![
+                        Pattern::var("x"),
+                        Pattern::app("mul".into(), vec![Pattern::leaf("1".into()), Pattern::var("y")]),
+                    ],
+                ),
+                label: Some("add_mul_ident".into()),
+            },
+        ];
+
+        // ── SATURATION (timed). Bounded iters so commutativity doesn't ping-pong
+        //    forever; the expander grows structure each pass.
+        let t0 = Instant::now();
+        let _report = eg.saturate(&rules, 6);
+        let sat_ns = t0.elapsed().as_nanos();
+        let total_live_nodes = eg.node_count();
+        let enodes_added_total = total_live_nodes.saturating_sub(seed_nodes);
+
+        // ── EXTRACTION (timed): exact lazy k-best with the admissible 0̄-inside
+        //    skip, over EVERY demanded root. MARK the touched e-nodes.
+        let t1 = Instant::now();
+        let mut marked: HashSet<ContentKey> = HashSet::new();
+        let mut nf_count = 0usize;
+        {
+            let mut ex = Extractor::new(&eg, weigh).with_heuristic();
+            for &root in &roots {
+                for k in 0..kbest {
+                    match ex.kth(root, k) {
+                        Some(d) => {
+                            mark_derivation(&eg, &d, &mut marked);
+                            nf_count += 1;
+                        },
+                        None => break,
+                    }
+                }
+            }
+        }
+        let extract_ns = t1.elapsed().as_nanos();
+        let enodes_in_extracted = marked.len();
+
+        (
+            enodes_added_total,
+            enodes_in_extracted,
+            sat_ns,
+            extract_ns,
+            total_live_nodes,
+            roots.len(),
+            nf_count,
+        )
+    }
+
+    #[test]
+    fn dv0_saturation_vs_extraction_reach_report() {
+        // Three workload sizes so the share is observed across scale, not a single
+        // point. Printed for the ledger; the test ASSERTS only the invariants the
+        // measurement relies on (it refutes nothing — DV-0 is measurement-only).
+        println!("\n=== EP-P6a DV-0 PROBE (dovetail saturate→extract) ===");
+        println!(
+            "{:<10} {:>10} {:>12} {:>14} {:>10} {:>10} {:>9} {:>10} {:>11}",
+            "workload", "live_nodes", "added(sat)", "in_extracted",
+            "untouched%", "sat_ns", "ext_ns", "sat%wall", "roots/nf"
+        );
+        // 1-best (k=1) is the normal-form extraction the flip would use.
+        for (name, depth, kbest) in [
+            ("small_k1", 4usize, 1usize),
+            ("med_k1", 12, 1),
+            ("large_k1", 32, 1),
+            // a k=3 variant: pulling more alternatives touches MORE nodes, the
+            // honest upper bound on extraction reach.
+            ("large_k3", 32, 3),
+        ] {
+            let (added, in_ex, sat_ns, ext_ns, live, roots, nf) =
+                run_workload(name, depth, kbest);
+            let untouched_pct = if added == 0 {
+                0.0
+            } else {
+                100.0 * (added.saturating_sub(in_ex.min(added)) as f64) / (added as f64)
+            };
+            let total_ns = sat_ns + ext_ns;
+            let sat_pct = if total_ns == 0 {
+                0.0
+            } else {
+                100.0 * (sat_ns as f64) / (total_ns as f64)
+            };
+            println!(
+                "{:<10} {:>10} {:>12} {:>14} {:>9.1}% {:>10} {:>10} {:>8.1}% {:>5}/{:<5}",
+                name, live, added, in_ex, untouched_pct, sat_ns, ext_ns, sat_pct, roots, nf
+            );
+
+            // Measurement-soundness invariants (NOT pruning assertions):
+            assert!(live >= added, "live nodes ≥ saturation-added (sanity)");
+            assert!(in_ex >= 1, "extraction touched at least one e-node");
+        }
+        println!(
+            "GATE: DV-1 iff untouched-share ≥ 50% AND sat ≥ 20% of eval wall-time.\n\
+             (See /tmp/p6_probes/findings.md for the verdict + corpus caveat.)\n"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

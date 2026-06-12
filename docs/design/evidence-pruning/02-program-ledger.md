@@ -263,6 +263,37 @@ ess_report_no_prune). Implementation shipped:
   order-sensitive equal-weight tiebreak is a latent nondeterminism a total content-derived
   extraction tiebreak dissolves by construction (the plan's own realize-side requirement).
 
+## P6a/P6b — probes (CLOSED 2026-06-12)
+
+- **P6a DV-0: GATE PASSES** — untouched-e-node share 93.1–95.8% (≥50% ✓); saturation
+  82.2–84.1% of eval wall (≥20% ✓). Deep-dived ground truth: dovetail has NO live eval
+  caller yet (M-E.0 inert; mettail-rho-runtime runs RhoRuntime directly — dovetail is not
+  even a Cargo dep there), so the corpus is the largest existing saturate→extract workload;
+  the mechanism is robust (saturation materializes hundreds of equivalent e-nodes; exact
+  1-best extraction touches ~14–18). **Disposition: DV-1 (demand-gated saturation,
+  SaturationDemandGate.v) is RECOMMENDED and FLIP-ALIGNED — scheduled within the M-RHO
+  epic; re-measure on the real corpus post-flip.** Probe: dovetail/src/rules.rs::dv0_probe
+  (dovetail 40/0).
+- **P6b EV-0: GATE FAILS on the merits AND superseded** — undemanded facts 0.0% (terms) /
+  3.2% (rewrites) ≪ 50% (eval wall-share 47.8% ≥20% is moot): the #307 semantic-key dedup +
+  canon-pair quotient already collapse the undemanded class before it surfaces, and the
+  reduction-DAG shape makes every surviving term NF-reachable ("the parse→eval seam is
+  sound today" — the contract's own anticipation). **EV-1 = NON-GOAL, doubly: the gate
+  fails, and the user directive supersedes Ascent-side investment.** Probe:
+  languages/examples/ev0_probe.rs. Caveat recorded: measured at the post-quotient surface
+  (a conservative bound; the raw layer is precisely what the quotient collapses).
+
+## ★ THE P-SERIES LADDER IS CLOSED (2026-06-12, 26 commits, P0 → P6)
+
+P0 ✅ scaffold · P1 ✅ THE WIN (idx4 −47.3% p=1e-45; idx6 35×; default On; two deep-dive
+true-root fixes) · P2 ⏹ STOP (mechanism: no RuleAt at operator positions) · P3 ⏹ STOP
+(gate-fail 5.7× as predicted; the transition census = Dovetail substrate) · P4 ✅ ESS / ⏹
+demotion STOP (the 313× tiebreak hazard = a Dovetail cross-reference) · P5 ⏹ STOP (0.0000%;
+the work is consumed mid-parse by P1's parking) · P6a ✅ gate-pass → DV-1 flip-aligned ·
+P6b ⏹ non-goal. Every verdict mechanism-derived; every STOP first-class. **The program's
+residual waste classes live in the architecture the Dovetail/Rho flip replaces — the
+strategic frame's prediction, now measured. NEXT: M-RHO.1.**
+
 ## Stage log
 
 - 2026-06-11 P0 opened.
