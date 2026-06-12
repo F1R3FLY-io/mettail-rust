@@ -1,8 +1,8 @@
 mod support;
 
 use dovetail::egraph::{EGraph, ENode};
-use dovetail::extract::Extractor;
-use dovetail::rules::{Pattern, RewriteRule};
+use dovetail::extract::{ExtractionCompleteness, Extractor};
+use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
 use rigail::TropicalWeight;
 
 use support::semantic_weight;
@@ -26,24 +26,32 @@ fn replay_calculator_step_native_handler_shape() {
         let l = leaf(&mut eg, format!("Int({left})"));
         let r = leaf(&mut eg, format!("Int({right})"));
         let root = app(&mut eg, "AddInt", vec![l, r]);
-        let expected = leaf(&mut eg, format!("Int({})", left + right));
+        let expected_value = left + right;
+        let expected = leaf(&mut eg, format!("Int({expected_value})"));
 
         let rule = RewriteRule {
             lhs: Pattern::app(
                 "AddInt".into(),
                 vec![Pattern::leaf(format!("Int({left})")), Pattern::leaf(format!("Int({right})"))],
             ),
-            rhs: Pattern::leaf(format!("Int({})", left + right)),
+            rhs: Pattern::leaf(format!("Int({expected_value})")),
             label: Some("calculator_addint_native_result".into()),
         };
         let report = eg.saturate(&[rule], 4);
 
-        assert!(report.converged);
+        assert_eq!(report.outcome, SaturationOutcome::Converged);
         assert!(eg.equiv(root, expected));
 
         let mut extractor = Extractor::new(&eg, semantic_weight);
-        let best = extractor.kth(root, 0).expect("native result derivation");
-        assert_eq!(best.op, format!("Int({})", left + right));
+        let best_result = extractor.kth(root, 0);
+        let expected_completeness = if expected_value == left || expected_value == right {
+            ExtractionCompleteness::BoundedByCycleCut
+        } else {
+            ExtractionCompleteness::Complete
+        };
+        assert_eq!(best_result.completeness, expected_completeness);
+        let best = best_result.value.expect("native result derivation");
+        assert_eq!(best.op, format!("Int({expected_value})"));
         assert_eq!(best.weight, TropicalWeight::new(0.0));
     }
 }
@@ -67,7 +75,7 @@ fn replay_lambda_beta_lowering_shape() {
     };
     let report = eg.saturate(&[beta], 4);
 
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(root, expected));
 }
 
@@ -100,7 +108,7 @@ fn replay_ambient_fixed_arity_collection_lowering_shape() {
     };
     let report = eg.saturate(&[open_rule], 4);
 
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(root, expected));
 }
 
@@ -120,7 +128,7 @@ fn replay_congruence_premise_as_egraph_closure_shape() {
     };
     let report = eg.saturate(&[premise], 4);
 
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(source, target));
     assert!(eg.equiv(source_context, target_context));
 }

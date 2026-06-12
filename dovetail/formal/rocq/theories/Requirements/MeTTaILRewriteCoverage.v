@@ -4,9 +4,9 @@
  *
  * This proof is deliberately a requirements taxonomy, not a claim that every
  * future DSL extension is already covered. The covered surface is the current
- * LanguageDef rewrite/equation/fold/guard/pattern shape plus the documented
- * M-RHO/Rho handler contracts. Adding a new requirement class must extend this
- * file and the Rust exhaustiveness audit.
+ * LanguageDef rewrite/equation/fold/guard/pattern shape plus explicitly
+ * delegated M-RHO/Rho handler contracts. Adding a new requirement class must
+ * extend this file and the Rust exhaustiveness audit.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -42,7 +42,7 @@ Section MeTTaILRewriteCoverage.
     | ReqRhoCommHandlerContract
     | ReqRhoResourceGuardContract.
 
-  Inductive DovetailCapability : Type :=
+  Inductive DovetailOrExternalCapability : Type :=
     | CapExactEGraphEquality
     | CapRulesAsDataSaturation
     | CapExactLazyExtraction
@@ -52,10 +52,10 @@ Section MeTTaILRewriteCoverage.
     | CapGuardEvidence
     | CapPatternLowering
     | CapNativeHandlerContract
-    | CapRhoHandlerContract
+    | CapExternalRhoHandlerContract
     | CapCycleCutReport.
 
-  Definition covering_capability (r : RewriteRequirement) : DovetailCapability :=
+  Definition covering_capability (r : RewriteRequirement) : DovetailOrExternalCapability :=
     match r with
     | ReqEquation => CapExactEGraphEquality
     | ReqDirectionalRewrite => CapRulesAsDataSaturation
@@ -78,11 +78,11 @@ Section MeTTaILRewriteCoverage.
     | ReqAmbiguityPreservation => CapExactLazyExtraction
     | ReqCyclicInsideWeights => CapInsideWeightClosure
     | ReqCyclicEnumerationBoundary => CapCycleCutReport
-    | ReqRhoCommHandlerContract => CapRhoHandlerContract
-    | ReqRhoResourceGuardContract => CapRhoHandlerContract
+    | ReqRhoCommHandlerContract => CapExternalRhoHandlerContract
+    | ReqRhoResourceGuardContract => CapExternalRhoHandlerContract
     end.
 
-  Inductive covers : DovetailCapability -> RewriteRequirement -> Prop :=
+  Inductive covers : DovetailOrExternalCapability -> RewriteRequirement -> Prop :=
     | CoversEquation :
         covers CapExactEGraphEquality ReqEquation
     | CoversDirectionalRewrite :
@@ -126,9 +126,9 @@ Section MeTTaILRewriteCoverage.
     | CoversCyclicEnumerationBoundary :
         covers CapCycleCutReport ReqCyclicEnumerationBoundary
     | CoversRhoCommHandlerContract :
-        covers CapRhoHandlerContract ReqRhoCommHandlerContract
+        covers CapExternalRhoHandlerContract ReqRhoCommHandlerContract
     | CoversRhoResourceGuardContract :
-        covers CapRhoHandlerContract ReqRhoResourceGuardContract.
+        covers CapExternalRhoHandlerContract ReqRhoResourceGuardContract.
 
   Theorem covering_capability_sound : forall r,
     covers (covering_capability r) r.

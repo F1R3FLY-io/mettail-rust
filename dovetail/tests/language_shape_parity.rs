@@ -1,5 +1,5 @@
 use dovetail::egraph::{EGraph, ENode};
-use dovetail::rules::{Pattern, RewriteRule};
+use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
 use dovetail::space::{Fired, InMemSpace, Match, TupleSpace};
 
 fn parity_cases() -> usize {
@@ -54,7 +54,7 @@ fn calculator_step_native_case(left: i32, right: i32) {
     };
 
     let report = eg.saturate(&[lowered_native_rule], 4);
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(root, expected));
 }
 
@@ -79,7 +79,7 @@ fn lambda_beta_case(case_idx: usize) {
     };
 
     let report = eg.saturate(&[beta], 4);
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(root, expected));
 }
 
@@ -111,7 +111,7 @@ fn ambient_open_case(case_idx: usize) {
     };
 
     let report = eg.saturate(&[open_rule], 4);
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(root, expected));
 }
 

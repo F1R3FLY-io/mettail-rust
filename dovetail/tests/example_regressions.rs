@@ -3,9 +3,9 @@ mod support;
 use std::collections::HashSet;
 
 use dovetail::egraph::{EGraph, EGraphConfig, ENode};
-use dovetail::extract::{Derivation, Extractor};
+use dovetail::extract::{Derivation, ExtractionCompleteness, Extractor};
 use dovetail::key::ContentKey;
-use dovetail::rules::{Pattern, RewriteRule};
+use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
 use rigail::TropicalWeight;
 
 use support::{derivation_size, semantic_weight};
@@ -56,7 +56,7 @@ fn saturation_then_extraction_keeps_expanded_forms_but_prefers_normal_form() {
     ];
 
     let report = eg.saturate(&rules, 8);
-    assert!(report.converged);
+    assert_eq!(report.outcome, SaturationOutcome::Converged);
     assert!(eg.equiv(root, a), "normal form must be merged into the root class");
 
     let alternatives = eg.nodes(eg.find(root)).len();
@@ -66,7 +66,9 @@ fn saturation_then_extraction_keeps_expanded_forms_but_prefers_normal_form() {
     );
 
     let mut extractor = Extractor::new(&eg, semantic_weight);
-    let best = extractor.kth(root, 0).expect("normal form derivation");
+    let best_result = extractor.kth(root, 0);
+    assert_eq!(best_result.completeness, ExtractionCompleteness::BoundedByCycleCut);
+    let best = best_result.value.expect("normal form derivation");
     assert_eq!(best.op, "value");
     assert_eq!(best.weight, TropicalWeight::new(0.0));
     assert!(
@@ -92,13 +94,14 @@ fn growth_budget_is_reported_and_extraction_still_returns_seed_derivation() {
     };
 
     let report = eg.saturate(&[grow], 100);
-    assert!(report.node_limit_reached);
+    assert_eq!(report.outcome, SaturationOutcome::NodeLimit);
     assert!(eg.node_limit_reached());
     assert!(eg.node_count() <= 6);
 
     let mut extractor = Extractor::new(&eg, semantic_weight);
-    let best = extractor
-        .kth(root, 0)
+    let best_result = extractor.kth(root, 0);
+    let best = best_result
+        .value
         .expect("seed derivation remains extractable");
     assert_eq!(best.op, "f");
 }
@@ -114,7 +117,9 @@ fn exact_marking_distinguishes_same_operator_with_different_child_choices() {
     let root = app(&mut eg, "pair", vec![q, q]);
 
     let mut extractor = Extractor::new(&eg, semantic_weight);
-    let derivations: Vec<_> = extractor.derivations(root).collect();
+    let extracted = extractor.derivations(root).collect_checked();
+    assert_eq!(extracted.completeness, ExtractionCompleteness::Complete);
+    let derivations = extracted.value;
     assert_eq!(
         derivations.len(),
         4,

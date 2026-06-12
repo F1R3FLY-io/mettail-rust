@@ -3,7 +3,7 @@ mod support;
 use std::collections::HashMap;
 
 use dovetail::egraph::{EGraph, EGraphConfig, ENode};
-use dovetail::rules::{Pattern, RewriteRule};
+use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
 use dovetail::space::{Fired, InMemSpace, Match, TupleSpace};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
@@ -105,10 +105,8 @@ fn prop_budgeted_saturation_never_overshoots_and_reports_refusal() {
                 "node_count {} exceeded budget {budget}",
                 eg.node_count()
             );
-            prop_assert_eq!(report.node_limit_reached, eg.node_limit_reached());
-            if report.node_limit_reached {
-                prop_assert!(!report.converged);
-            }
+            let node_limited = report.outcome == SaturationOutcome::NodeLimit;
+            prop_assert_eq!(node_limited, eg.node_limit_reached());
             Ok(())
         })
         .expect("budgeted saturation property failed");

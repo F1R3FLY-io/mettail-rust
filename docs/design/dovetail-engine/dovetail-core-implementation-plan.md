@@ -90,15 +90,20 @@ dovetail/formal/rocq/theories/{ExactKeys,Extraction,InsideWeights,Saturation,Req
 ```rust
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContentKey(pub Box<[u8]>);          // owned exact bytes; Ord => total tiebreak
-pub trait SemanticHash {
+pub unsafe trait SemanticHash {
     fn write_content(&self, out: &mut Vec<u8>);  // exact buffer, not a 64-bit Hasher
     fn content_key(&self) -> ContentKey { /* write into Vec<u8> -> boxed slice */ }
 }
 ```
+`SemanticHash` is unsafe because implementors must preserve an injective exact-content
+encoding that agrees with `Eq`/`Hash`; composite encodings must frame their parts.
 **N-best extractor (HARD: ORDER not PRUNE; equal-weight distinct alts BOTH survive; refute only at `0̄`):**
-`extract_nbest<P,W: StarSemiringRef + Ord>(eg, dfta, root, cfg) -> Vec<Derivation<W>>` —
+`Extractor<L,W,F>` requires `W: MonotoneBestOrder`; `kth` returns
+`Extraction<Option<Rc<Derivation<L,W>>>>`, and `Derivations::collect_checked()` returns
+`Extraction<Vec<Rc<Derivation<L,W>>>>` —
 ordered by `(W, ContentKey)`; distinct `ContentKey`s never merge even at equal `W`; a
-candidate is discarded only when its composed weight `is_zero()`.
+candidate is discarded only when its composed weight `is_zero()`. Cyclic enumeration
+boundedness is explicit through `ExtractionCompleteness`.
 
 Tuplespace trait `TupleSpace<C,P,A,K>` + `Match<P,A>` seam (in-mem default only; the future
 Reified-RSpace mapping inner=PriorityQueue/outer=PathMap/seam=Match is a documented seam, no
@@ -122,7 +127,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 1. **`ExactKeys/ExactKeyDedup.v`** — exact-key dedup preserves every key, distinct keys are never conflated, add-with-budget never overshoots, and overflow reports refusal. Certifies Increment 3.
 2. **`Extraction/NBestExtraction.v` + `Extraction/EnumerationCompleteness.v`** — k-best/set-valued extraction keeps every distinct non-`0̄` derivation, orders by `(W,key)`, is monotone under demand, and enumerates the full hyperedge rank-vector product. Certifies Increment 5.
 3. **`InsideWeights/InsideWeightSccClosure.v`** — SCC→`PackingFactored` lowering preserves the e-graph inside equations; scalar/self-loop closure is the least fixpoint; trivial SCC skipping is sound. Certifies Increment 6.
-4. **`Saturation/DovetailSaturation.v`** — rules-as-data saturation is monotone and sound when generated facts are sound; bounded execution reports overflow. Certifies Increment 7.
+4. **`Saturation/DovetailSaturation.v`** — rules-as-data saturation is monotone and sound when generated facts are sound; bounded execution reports `Converged`, `NodeLimit`, or `IterationLimit` explicitly. Certifies Increment 7.
 5. **`Requirements/MeTTaILRewriteCoverage.v`** — every current MeTTaIL rewrite requirement is covered by a Dovetail capability or an explicit native/Rho handler contract.
 
 ## 5. Honest scope

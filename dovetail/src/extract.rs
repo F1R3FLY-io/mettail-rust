@@ -4,7 +4,8 @@
 //!
 //! ## Governing invariant — MISSES NOTHING
 //! - Demand only DEFERS: [`Extractor::derivations`] is resumable to exhaustion;
-//!   pulling far enough yields EVERY derivation of the root.
+//!   pulling far enough yields EVERY derivation of the root when the returned
+//!   [`ExtractionCompleteness`] is [`Complete`](ExtractionCompleteness::Complete).
 //! - The ONLY removal is by **evidence**: a derivation whose composed weight is
 //!   the semiring zero (`0̄`) is excluded. Nothing is removed by weight, beam, or
 //!   heuristic.
@@ -15,9 +16,8 @@
 //!
 //! ## Monotonicity precondition (MON)
 //! Best-first order relies on `⊗` being monotone non-decreasing in each argument
-//! w.r.t. the [`BestOrder`]. Tropical (`⊗ = +`) satisfies MON; `LexicographicWeight`
-//! left-projects its tiebreak fields so only the primary varies with child rank,
-//! and MON holds on that axis.
+//! w.r.t. the [`BestOrder`]. Public extraction requires [`MonotoneBestOrder`] so
+//! this precondition is a type-level contract, not just a doc comment.
 //!
 //! ## Cycles
 //! Cyclic INSIDE weights / the 1-best are EXACT (Newton-SCC closed, via
@@ -31,7 +31,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::rc::Rc;
 
-use rigail::{Semiring, StarSemiring};
+use rigail::Semiring;
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::key::{write_ordered_framed, ContentKey, SemanticHash};
@@ -49,6 +49,40 @@ impl<W: Semiring + Ord> BestOrder for W {
     #[inline]
     fn cmp_best(&self, other: &Self) -> Ordering {
         self.cmp(other)
+    }
+}
+
+/// Marker for weights whose `times` is monotone with respect to [`BestOrder`].
+///
+/// The lazy frontier proof depends on this property: increasing a child rank must
+/// not produce a strictly better parent candidate. Implement this only for weight
+/// types whose algebra has been checked against the extractor's ordering.
+pub trait MonotoneBestOrder: BestOrder {}
+
+impl MonotoneBestOrder for rigail::TropicalWeight {}
+impl MonotoneBestOrder for rigail::LexicographicWeight {}
+
+/// Whether an extraction result is exhaustive or bounded by a detected cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExtractionCompleteness {
+    /// No cycle guard fired; exhaustion means complete exhaustion.
+    Complete,
+    /// A back-edge was cut by the recursion guard, so cyclic unrollings were
+    /// intentionally not enumerated.
+    BoundedByCycleCut,
+}
+
+/// A value produced by extraction plus the completeness status of that run.
+#[must_use = "extraction results carry completeness; inspect `completeness` before treating the value as exhaustive"]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Extraction<T> {
+    pub value: T,
+    pub completeness: ExtractionCompleteness,
+}
+
+impl<T> Extraction<T> {
+    fn new(value: T, completeness: ExtractionCompleteness) -> Self {
+        Extraction { value, completeness }
     }
 }
 
@@ -147,7 +181,7 @@ pub struct Extractor<'g, L, W, F> {
 impl<'g, L, W, F> Extractor<'g, L, W, F>
 where
     L: Clone + Eq + std::hash::Hash + SemanticHash,
-    W: BestOrder,
+    W: MonotoneBestOrder,
     F: Fn(&ENode<L>) -> W,
 {
     /// View `egraph` as a WTA weighted by `weigh` and prepare lazy extraction.
@@ -166,11 +200,11 @@ where
     /// closed, cyclic-correct) bottom-up 1-best inside weights and use them ONLY
     /// as a sound reachability skip (a class whose inside is `0̄` has no non-`0̄`
     /// derivation). This reorders/short-cuts exploration; it never changes the
-    /// result set or order. Requires `W: StarSemiring` (for the cyclic closure);
-    /// the production weights `TropicalWeight`/`LexicographicWeight` qualify.
+    /// result set or order. Requires a commutative star semiring for the cyclic
+    /// closure; `TropicalWeight` qualifies.
     pub fn with_heuristic(mut self) -> Self
     where
-        W: StarSemiring,
+        W: crate::wta::CommutativeStarSemiring,
     {
         self.inside = Some(crate::wta::compute_inside_closed(self.egraph, &self.weigh));
         self.use_heuristic = true;
@@ -183,9 +217,26 @@ where
         self.cycle_cut
     }
 
-    /// The k-th best (0-indexed) derivation of `root`, or `None` if `root` has
-    /// fewer than `k+1` distinct non-`0̄` derivations. Lazy, memoized, resumable.
-    pub fn kth(&mut self, root: EClassId, k: usize) -> Option<Rc<Derivation<L, W>>> {
+    /// Current completeness status for this extractor.
+    pub fn completeness(&self) -> ExtractionCompleteness {
+        if self.cycle_cut {
+            ExtractionCompleteness::BoundedByCycleCut
+        } else {
+            ExtractionCompleteness::Complete
+        }
+    }
+
+    /// The k-th best (0-indexed) derivation of `root`, plus the current
+    /// completeness status. `value == None` means no such derivation was found
+    /// under the current completeness status.
+    pub fn kth(&mut self, root: EClassId, k: usize) -> Extraction<Option<Rc<Derivation<L, W>>>> {
+        let value = self.kth_raw(root, k);
+        Extraction::new(value, self.completeness())
+    }
+
+    /// Internal raw k-th lookup used by recursive composition. Public callers use
+    /// [`Extractor::kth`] so cycle-cut boundedness is not silently lost.
+    fn kth_raw(&mut self, root: EClassId, k: usize) -> Option<Rc<Derivation<L, W>>> {
         let q = self.egraph.find(root);
 
         // Cyclic re-entry: this class is already being computed on the stack.
@@ -272,19 +323,17 @@ where
         self.state.get(&q).and_then(|s| s.built.get(k).cloned())
     }
 
-    /// A lazy, best-first, EXHAUSTIVE iterator over the derivations of `root`.
-    /// The caller decides when to stop — there is NO built-in cutoff.
-    pub fn derivations(
-        &mut self,
-        root: EClassId,
-    ) -> impl Iterator<Item = Rc<Derivation<L, W>>> + use<'_, 'g, L, W, F> {
-        let q = self.egraph.find(root);
-        let mut k = 0usize;
-        std::iter::from_fn(move || {
-            let d = self.kth(q, k);
-            k += 1;
-            d
-        })
+    /// A lazy, best-first derivation stream over `root`.
+    ///
+    /// Use [`Derivations::collect_checked`] when the caller needs a vector and a
+    /// checked completeness status.
+    pub fn derivations(&mut self, root: EClassId) -> Derivations<'_, 'g, L, W, F> {
+        Derivations {
+            extractor: self,
+            root,
+            next_k: 0,
+            done: false,
+        }
     }
 
     // --- internals ---------------------------------------------------------
@@ -342,7 +391,7 @@ where
         let mut w = w_edge;
         let mut children: Vec<Rc<Derivation<L, W>>> = Vec::with_capacity(child_classes.len());
         for (i, &ci) in child_classes.iter().enumerate() {
-            let cd = self.kth(ci, ranks[i])?; // recurse; None ⟹ combination absent
+            let cd = self.kth_raw(ci, ranks[i])?; // recurse; None ⟹ combination absent
             w = w.times(&cd.weight);
             write_ordered_framed(&mut key_bytes, cd.key.as_bytes());
             children.push(cd);
@@ -368,6 +417,58 @@ where
     ) -> Option<Rc<Derivation<L, W>>> {
         let (op, w, key, children) = self.compose(q, edge_idx, ranks)?;
         Some(Rc::new(Derivation { op, class: q, children, weight: w, key }))
+    }
+}
+
+/// Lazy derivation stream with an explicit checked collection method.
+#[must_use = "derivation streams carry terminal completeness; call `collect_checked` or inspect the extractor status"]
+pub struct Derivations<'a, 'g, L, W, F>
+where
+    L: Clone + Eq + std::hash::Hash + SemanticHash,
+    W: MonotoneBestOrder,
+    F: Fn(&ENode<L>) -> W,
+{
+    extractor: &'a mut Extractor<'g, L, W, F>,
+    root: EClassId,
+    next_k: usize,
+    done: bool,
+}
+
+impl<'a, 'g, L, W, F> Derivations<'a, 'g, L, W, F>
+where
+    L: Clone + Eq + std::hash::Hash + SemanticHash,
+    W: MonotoneBestOrder,
+    F: Fn(&ENode<L>) -> W,
+{
+    /// Collect every derivation reachable under this stream and return the
+    /// terminal completeness status alongside the vector.
+    pub fn collect_checked(mut self) -> Extraction<Vec<Rc<Derivation<L, W>>>> {
+        let mut value = Vec::new();
+        for derivation in self.by_ref() {
+            value.push(derivation);
+        }
+        Extraction::new(value, self.extractor.completeness())
+    }
+}
+
+impl<'a, 'g, L, W, F> Iterator for Derivations<'a, 'g, L, W, F>
+where
+    L: Clone + Eq + std::hash::Hash + SemanticHash,
+    W: MonotoneBestOrder,
+    F: Fn(&ENode<L>) -> W,
+{
+    type Item = Rc<Derivation<L, W>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let d = self.extractor.kth_raw(self.root, self.next_k);
+        self.next_k += 1;
+        if d.is_none() {
+            self.done = true;
+        }
+        d
     }
 }
 
@@ -404,11 +505,13 @@ mod tests {
         let mut eg = EGraph::<String>::new();
         let l = eg.add(ENode::leaf("b".into()));
         let mut ex = Extractor::new(&eg, weigh);
-        let d0 = ex.kth(l, 0).expect("one derivation");
+        let d0 = ex.kth(l, 0).value.expect("one derivation");
         assert_eq!(prim(d0.weight), 3.0);
-        assert!(ex.kth(l, 1).is_none());
+        assert!(ex.kth(l, 1).value.is_none());
         let mut ex2 = Extractor::new(&eg, weigh);
-        assert_eq!(ex2.derivations(l).count(), 1);
+        let all = ex2.derivations(l).collect_checked();
+        assert_eq!(all.completeness, ExtractionCompleteness::Complete);
+        assert_eq!(all.value.len(), 1);
     }
 
     #[test]
@@ -422,11 +525,13 @@ mod tests {
         eg.merge(b, c);
         eg.rebuild();
         let mut ex = Extractor::new(&eg, weigh);
-        let ds: Vec<_> = ex.derivations(a).collect();
+        let collected = ex.derivations(a).collect_checked();
+        assert_eq!(collected.completeness, ExtractionCompleteness::Complete);
+        let ds = collected.value;
         let ws: Vec<f64> = ds.iter().map(|d| prim(d.weight)).collect();
         assert_eq!(ws, vec![3.0, 3.0, 5.0], "non-decreasing; both w=3 present, then w=5");
         assert_ne!(ds[0].key, ds[1].key, "the two w=3 derivations are distinct (no merge)");
-        assert!(ex.kth(a, 3).is_none(), "exactly 3 — exhaustion terminates");
+        assert!(ex.kth(a, 3).value.is_none(), "exactly 3 — exhaustion terminates");
     }
 
     #[test]
@@ -444,13 +549,15 @@ mod tests {
         eg.merge(add, mul);
         eg.rebuild();
         let mut ex = Extractor::new(&eg, weigh);
-        let ds: Vec<_> = ex.derivations(eg.find(add)).collect();
+        let collected = ex.derivations(eg.find(add)).collect_checked();
+        assert_eq!(collected.completeness, ExtractionCompleteness::Complete);
+        let ds = collected.value;
         let ws: Vec<f64> = ds.iter().map(|d| prim(d.weight)).collect();
         // add/mul (1) ⊗ x(1 or 4) ⊗ y(2): {1+1+2, 1+1+2, 1+4+2, 1+4+2} = [4,4,7,7]
         assert_eq!(ws, vec![4.0, 4.0, 7.0, 7.0]);
         let keys: HashSet<_> = ds.iter().map(|d| d.key.clone()).collect();
         assert_eq!(keys.len(), 4, "all four derivations distinct, none missed");
-        assert!(ex.kth(eg.find(add), 4).is_none());
+        assert!(ex.kth(eg.find(add), 4).value.is_none());
     }
 
     #[test]
@@ -462,7 +569,9 @@ mod tests {
         eg.merge(dead, r);
         eg.rebuild();
         let mut ex = Extractor::new(&eg, weigh);
-        let ds: Vec<_> = ex.derivations(r).collect();
+        let collected = ex.derivations(r).collect_checked();
+        assert_eq!(collected.completeness, ExtractionCompleteness::Complete);
+        let ds = collected.value;
         assert_eq!(ds.len(), 1, "the 0̄ derivation is excluded");
         assert_eq!(prim(ds[0].weight), 2.0);
         // 0̄ child poisons parent: f(dead) composed = 1 + inf = inf = 0̄ ⟹ excluded.
@@ -470,7 +579,7 @@ mod tests {
         let d2 = eg2.add(ENode::leaf("dead".into()));
         let fd = eg2.add(ENode::new("f".into(), vec![d2]));
         let mut ex2 = Extractor::new(&eg2, weigh);
-        assert!(ex2.kth(fd, 0).is_none(), "0̄-child poisons parent ⟹ excluded");
+        assert!(ex2.kth(fd, 0).value.is_none(), "0̄-child poisons parent ⟹ excluded");
     }
 
     #[test]
@@ -482,12 +591,12 @@ mod tests {
         eg.rebuild();
         let mut ex = Extractor::new(&eg, weigh);
         // random-access + memo consistency: pull 1, then 0, then 2(None).
-        let d1 = ex.kth(a, 1).expect("2nd best exists");
+        let d1 = ex.kth(a, 1).value.expect("2nd best exists");
         assert_eq!(prim(d1.weight), 5.0);
-        let d0 = ex.kth(a, 0).expect("memoized 1st best");
+        let d0 = ex.kth(a, 0).value.expect("memoized 1st best");
         assert_eq!(prim(d0.weight), 3.0);
-        assert!(ex.kth(a, 2).is_none());
-        assert!(ex.kth(a, 2).is_none(), "idempotent past exhaustion, no panic");
+        assert!(ex.kth(a, 2).value.is_none());
+        assert!(ex.kth(a, 2).value.is_none(), "idempotent past exhaustion, no panic");
     }
 
     #[test]
@@ -505,10 +614,14 @@ mod tests {
         };
         let (eg1, q1) = build();
         let mut e1 = Extractor::new(&eg1, weigh);
-        let k1: Vec<_> = e1.derivations(q1).map(|d| d.key.clone()).collect();
+        let d1 = e1.derivations(q1).collect_checked();
+        assert_eq!(d1.completeness, ExtractionCompleteness::Complete);
+        let k1: Vec<_> = d1.value.iter().map(|d| d.key.clone()).collect();
         let (eg2, q2) = build();
         let mut e2 = Extractor::new(&eg2, weigh);
-        let k2: Vec<_> = e2.derivations(q2).map(|d| d.key.clone()).collect();
+        let d2 = e2.derivations(q2).collect_checked();
+        assert_eq!(d2.completeness, ExtractionCompleteness::Complete);
+        let k2: Vec<_> = d2.value.iter().map(|d| d.key.clone()).collect();
         assert_eq!(k1, k2, "deterministic key sequence");
     }
 
@@ -530,14 +643,20 @@ mod tests {
         };
         let (eg1, add1) = build();
         let mut plain = Extractor::new(&eg1, weigh);
-        let a: Vec<_> = plain
-            .derivations(eg1.find(add1))
+        let plain_collected = plain.derivations(eg1.find(add1)).collect_checked();
+        assert_eq!(plain_collected.completeness, ExtractionCompleteness::Complete);
+        let a: Vec<_> = plain_collected
+            .value
+            .iter()
             .map(|d| (prim(d.weight), d.key.clone()))
             .collect();
         let (eg2, add2) = build();
         let mut heur = Extractor::new(&eg2, weigh).with_heuristic();
-        let b: Vec<_> = heur
-            .derivations(eg2.find(add2))
+        let heur_collected = heur.derivations(eg2.find(add2)).collect_checked();
+        assert_eq!(heur_collected.completeness, ExtractionCompleteness::Complete);
+        let b: Vec<_> = heur_collected
+            .value
+            .iter()
             .map(|d| (prim(d.weight), d.key.clone()))
             .collect();
         assert_eq!(a, b, "heuristic must not change result set or order");
@@ -560,7 +679,9 @@ mod tests {
         eg.merge(p, q);
         eg.rebuild();
         let mut ex = Extractor::new(&eg, weigh_lex);
-        let ds: Vec<_> = ex.derivations(eg.find(p)).collect();
+        let collected = ex.derivations(eg.find(p)).collect_checked();
+        assert_eq!(collected.completeness, ExtractionCompleteness::Complete);
+        let ds = collected.value;
         assert_eq!(ds.len(), 2, "both equal-primary alternatives survive");
         // Full lex order: equal primary -> equal lex_alt -> src_idx: p(0) before q(1).
         assert_eq!(ds[0].op, "p");
@@ -579,7 +700,9 @@ mod tests {
         eg.merge(base, g); // class P; g's child canonicalizes to P => g(P) in P
         eg.rebuild();
         let mut ex = Extractor::new(&eg, weigh);
-        let ds: Vec<_> = ex.derivations(eg.find(base)).collect(); // must terminate
+        let collected = ex.derivations(eg.find(base)).collect_checked(); // must terminate
+        assert_eq!(collected.completeness, ExtractionCompleteness::BoundedByCycleCut);
+        let ds = collected.value;
         assert!(ds.iter().any(|d| d.op == "base"), "acyclic base derivation present");
         assert!(ex.had_cycle_cut(), "the g(P) back-edge was cut");
     }
@@ -596,7 +719,9 @@ mod tests {
         let p = eg.find(a);
         let inside = crate::wta::compute_inside_closed(&eg, &weigh);
         let mut ex = Extractor::new(&eg, weigh).with_heuristic();
-        let d0 = ex.kth(p, 0).expect("a 1-best exists");
+        let d0_result = ex.kth(p, 0);
+        assert_eq!(d0_result.completeness, ExtractionCompleteness::BoundedByCycleCut);
+        let d0 = d0_result.value.expect("a 1-best exists");
         assert_eq!(prim(d0.weight), 5.0);
         assert_eq!(d0.weight, inside[&p], "extractor 1-best == Newton-closed inside");
     }
@@ -614,14 +739,20 @@ mod tests {
         };
         let (eg1, p1) = build();
         let mut plain = Extractor::new(&eg1, weigh);
-        let av: Vec<_> = plain
-            .derivations(p1)
+        let plain_collected = plain.derivations(p1).collect_checked();
+        assert_eq!(plain_collected.completeness, ExtractionCompleteness::BoundedByCycleCut);
+        let av: Vec<_> = plain_collected
+            .value
+            .iter()
             .map(|d| (prim(d.weight), d.key.clone()))
             .collect();
         let (eg2, p2) = build();
         let mut heur = Extractor::new(&eg2, weigh).with_heuristic();
-        let bv: Vec<_> = heur
-            .derivations(p2)
+        let heur_collected = heur.derivations(p2).collect_checked();
+        assert_eq!(heur_collected.completeness, ExtractionCompleteness::BoundedByCycleCut);
+        let bv: Vec<_> = heur_collected
+            .value
+            .iter()
             .map(|d| (prim(d.weight), d.key.clone()))
             .collect();
         assert_eq!(av, bv, "cyclic heuristic invariance (closed inside doesn't change results)");

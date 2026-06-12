@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use dovetail::egraph::{EClassId, EGraph, EGraphConfig, ENode};
-use dovetail::extract::{Derivation, Extractor};
+use dovetail::extract::{Derivation, ExtractionCompleteness, Extractor};
 use dovetail::key::{write_ordered_framed, ContentKey, SemanticHash};
 use rigail::{Semiring, TropicalWeight};
 
@@ -166,8 +166,15 @@ pub fn collect_observations<F>(
 where
     F: Fn(&ENode<String>) -> TropicalWeight,
 {
-    extractor
-        .derivations(root)
+    let extracted = extractor.derivations(root).collect_checked();
+    assert_eq!(
+        extracted.completeness,
+        ExtractionCompleteness::Complete,
+        "generated acyclic observation helpers require complete extraction"
+    );
+    extracted
+        .value
+        .into_iter()
         .map(|d| Observation {
             weight: d.weight,
             key: d.key.clone(),

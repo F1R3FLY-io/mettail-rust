@@ -28,18 +28,17 @@ pub fn write_framed(out: &mut Vec<u8>, segment: &[u8]) {
 /// This is used for derivation-tree tiebreak keys. Unlike [`write_framed`], the
 /// payload bytes are compared before the segment terminator, so lexicographic
 /// order of child keys is preserved when child keys are embedded in parent keys.
-/// Byte `0x00` is escaped as `0x00 0xff`; the segment terminator is
-/// `0x00 0x00`.
+/// Each payload byte is encoded as `0x01, byte`; the segment terminator is
+/// `0x00`. Because no payload element begins with `0x00`, the encoding is
+/// prefix-free, and because every payload element begins with the same marker,
+/// bytewise payload order is preserved.
 #[inline]
 pub fn write_ordered_framed(out: &mut Vec<u8>, segment: &[u8]) {
     for &byte in segment {
-        if byte == 0 {
-            out.extend_from_slice(&[0, 0xff]);
-        } else {
-            out.push(byte);
-        }
+        out.push(1);
+        out.push(byte);
     }
-    out.extend_from_slice(&[0, 0]);
+    out.push(0);
 }
 
 /// An exact, content-derived key: the canonical byte serialization of a value.
@@ -96,11 +95,14 @@ impl fmt::Debug for ContentKey {
 ///
 /// ## Contract
 ///
+/// # Safety
+///
 /// `write_content` must be **injective up to observational equivalence**: two
-/// values write the same bytes **iff** they are observationally equal. Composite
-/// implementors MUST length-frame their parts (see [`write_framed`]) so that
-/// distinct structural decompositions cannot alias.
-pub trait SemanticHash {
+/// values write the same bytes **iff** they are observationally equal. It must
+/// also agree with `Eq`/`Hash`: values that compare equal must write identical
+/// bytes. Composite implementors MUST length-frame their parts (see
+/// [`write_framed`]) so that distinct structural decompositions cannot alias.
+pub unsafe trait SemanticHash {
     /// Append this value's canonical content bytes to `out`.
     fn write_content(&self, out: &mut Vec<u8>);
 
@@ -121,7 +123,7 @@ pub trait SemanticHash {
 
 macro_rules! impl_semantic_hash_le {
     ($($t:ty),* $(,)?) => {$(
-        impl SemanticHash for $t {
+        unsafe impl SemanticHash for $t {
             #[inline]
             fn write_content(&self, out: &mut Vec<u8>) {
                 out.extend_from_slice(&self.to_le_bytes());
@@ -131,35 +133,35 @@ macro_rules! impl_semantic_hash_le {
 }
 impl_semantic_hash_le!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 
-impl SemanticHash for bool {
+unsafe impl SemanticHash for bool {
     #[inline]
     fn write_content(&self, out: &mut Vec<u8>) {
         out.push(*self as u8);
     }
 }
 
-impl SemanticHash for str {
+unsafe impl SemanticHash for str {
     #[inline]
     fn write_content(&self, out: &mut Vec<u8>) {
         write_framed(out, self.as_bytes());
     }
 }
 
-impl SemanticHash for String {
+unsafe impl SemanticHash for String {
     #[inline]
     fn write_content(&self, out: &mut Vec<u8>) {
         write_framed(out, self.as_bytes());
     }
 }
 
-impl SemanticHash for [u8] {
+unsafe impl SemanticHash for [u8] {
     #[inline]
     fn write_content(&self, out: &mut Vec<u8>) {
         write_framed(out, self);
     }
 }
 
-impl<T: SemanticHash + ?Sized> SemanticHash for &T {
+unsafe impl<T: SemanticHash + ?Sized> SemanticHash for &T {
     #[inline]
     fn write_content(&self, out: &mut Vec<u8>) {
         (**self).write_content(out);

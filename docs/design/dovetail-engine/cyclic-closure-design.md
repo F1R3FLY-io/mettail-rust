@@ -9,10 +9,13 @@
 > incompleteness (infinite cycle-unrolled k-best) is FLAGGED, never silent.
 
 ## Weight bound
-`W: StarSemiring` on the new path ONLY (`inside_weights_closed`, `with_heuristic`);
-`Extractor`/`kth`/`derivations` keep `W: BestOrder`. Both `TropicalWeight`
-(`rigail/src/lib.rs:759`) and `LexicographicWeight` (`lex_weight.rs:563`) impl
-`StarSemiring` ⟹ `StarSemiringRef` by blanket ⟹ Newton-callable. `max_iters = 64`
+`W: CommutativeStarSemiring` on the cyclic path ONLY (`inside_weights_closed`,
+`with_heuristic`); `Extractor`/`kth`/`derivations` otherwise keep
+`W: MonotoneBestOrder`. The stronger cyclic bound is load-bearing: the SCC lowering groups
+out-of-SCC child factors into `outside_product`, which preserves the source recurrence only
+when `⊗` commutes. Today only `TropicalWeight` implements this marker. `LexicographicWeight`
+can still be extracted without the heuristic, but it must not use cyclic Newton closure until
+its multiplication is proved commutative for the intended semantics. `max_iters = 64`
 (matches prattail; idempotent semirings converge in O(scc_size)).
 
 ## scc.rs (NEW, crate-private) — deterministic iterative Tarjan
@@ -24,7 +27,7 @@ SCCs). `has_self_loop(eg,q)` = some node of q has a child `find()`-ing to q.
 SCCs returned in reverse-topological order (leaf SCCs first) — children solved
 before parents read them as out-of-SCC constants.
 
-## wta.rs — `inside_weights_closed` (where W: StarSemiring) + `solve_scc`
+## wta.rs — `inside_weights_closed` (where W: CommutativeStarSemiring) + `solve_scc`
 Driver:
 1. `let mut inside = self.inside_weights();` (acyclic seed; partial on cycles)
 2. `for scc in tarjan_sccs(eg)`: skip trivial (`len==1 && !has_self_loop`);
@@ -54,14 +57,15 @@ dovetail's fixpoint is from-scratch and Newton replaces it. Double-star = bug
   linear fast-path (exact in one Lehmann step).
 
 ## extract.rs — heuristic routed through closed inside; honest docs
-`with_heuristic` tightened to `where W: StarSemiring`, computes the CLOSED inside
+`with_heuristic` tightened to `where W: CommutativeStarSemiring`, computes the CLOSED inside
 (reuse `wta::inside_weights_closed(egraph, &weigh)` — a free fn taking `&F` so it
 shares with `EGraphDfta`). The admissible reachability skip is now exact on
 cycles (still admissible: never over-estimates "best"). Enumeration core
 UNCHANGED (the `on_stack` cut + `had_cycle_cut` stay). Update module `## Cycles`
 doc: "inside weights / 1-best are EXACT on cycles (Newton-closed); exhaustive
 k-best ENUMERATION across back-edges remains cut and is reported by
-`had_cycle_cut`; full cyclic k-best is a later increment."
+`ExtractionCompleteness::BoundedByCycleCut`/`had_cycle_cut`; full cyclic k-best is a later
+increment."
 
 ## Tests
 - **A (wta):** `x = a|f(x)` tropical (a↦5,f↦1) ⟹ `inside_closed(P)=5` (cycle only
@@ -83,6 +87,8 @@ computes the least fixpoint of `Y=f(Y)` on an ω-continuous semiring) yields the
 exact `⊕`-aggregate. The lowering-equivalence lemma is the one dovetail-specific
 obligation and is proven in
 `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`.
+The commutativity precondition from that proof is enforced in Rust by
+`CommutativeStarSemiring`, not left as a caller-side comment.
 
 ## Files
 Implemented in `dovetail/src/scc.rs`, `dovetail/src/wta.rs`, and

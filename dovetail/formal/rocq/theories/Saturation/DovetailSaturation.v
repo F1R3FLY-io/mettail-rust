@@ -2,12 +2,14 @@
  * DovetailSaturation: abstract rules-as-data saturation obligations.
  *
  * The executable engine stores exact e-classes/e-nodes, then rule saturation
- * only adds equalities or rewrites; budget exhaustion is an explicit outcome.
+ * only adds equalities or rewrites; budget and iteration exhaustion are explicit
+ * outcomes.
  * This file proves the abstract obligations Dovetail relies on:
  *   - one saturation step is monotone;
  *   - iterated saturation is monotone;
  *   - if generated facts are sound, saturation preserves soundness;
- *   - bounded execution reports either the saturated state or a budget overflow.
+ *   - bounded execution reports exactly one terminal outcome: converged,
+ *     node-limit, or iteration-limit.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -93,26 +95,149 @@ Section DovetailSaturation.
       + exact Hg.
   Qed.
 
+  Inductive SaturationOutcome : Type :=
+    | Converged
+    | NodeLimit
+    | IterationLimit.
+
+  Record SatStats : Type := {
+    sat_iterations : nat;
+    sat_total_merges : nat
+  }.
+
+  Record SatReport : Type := {
+    sat_outcome : SaturationOutcome;
+    sat_stats : SatStats;
+    sat_state : State
+  }.
+
   Inductive SaturationResult : Type :=
     | Saturated : State -> SaturationResult
-    | SaturationBudgetOverflow : State -> SaturationResult.
+    | SaturationBudgetOverflow : State -> SaturationResult
+    | SaturationIterationExhausted : State -> SaturationResult.
 
-  Definition bounded_saturate (fuel budget : nat) (generated : State) (s : State)
+  Definition outcome_of (r : SaturationResult) : SaturationOutcome :=
+    match r with
+    | Saturated _ => Converged
+    | SaturationBudgetOverflow _ => NodeLimit
+    | SaturationIterationExhausted _ => IterationLimit
+    end.
+
+  Definition state_of (r : SaturationResult) : State :=
+    match r with
+    | Saturated s => s
+    | SaturationBudgetOverflow s => s
+    | SaturationIterationExhausted s => s
+    end.
+
+  (* `fuel` is the abstract number of iterations required to reach a fixpoint.
+     `budget` is the first iteration at which a fresh-node refusal occurs.
+     `max_iters` is the Rust caller's iteration cap. Node budget wins ties,
+     matching `rules.rs`, where budget is checked inside the iteration body
+     before the loop can return `IterationLimit`. *)
+  Definition bounded_saturate
+    (fuel budget max_iters : nat) (generated : State) (s : State)
     : SaturationResult :=
-    if fuel <=? budget
-    then Saturated (saturate_n fuel generated s)
-    else SaturationBudgetOverflow (saturate_n budget generated s).
+    if fuel <=? budget then
+      if fuel <=? max_iters
+      then Saturated (saturate_n fuel generated s)
+      else SaturationIterationExhausted (saturate_n max_iters generated s)
+    else if budget <=? max_iters
+      then SaturationBudgetOverflow (saturate_n budget generated s)
+      else SaturationIterationExhausted (saturate_n max_iters generated s).
 
-  Theorem bounded_saturate_reports_overflow : forall fuel budget generated s out,
+  Definition bounded_saturate_report
+    (fuel budget max_iters merges : nat) (generated : State) (s : State)
+    : SatReport :=
+    let r := bounded_saturate fuel budget max_iters generated s in
+    {|
+      sat_outcome := outcome_of r;
+      sat_stats := {|
+        sat_iterations :=
+          match r with
+          | Saturated _ => fuel
+          | SaturationBudgetOverflow _ => budget
+          | SaturationIterationExhausted _ => max_iters
+          end;
+        sat_total_merges := merges
+      |};
+      sat_state := state_of r
+    |}.
+
+  Theorem bounded_saturate_reports_overflow :
+    forall fuel budget max_iters generated s out,
     budget < fuel ->
-    bounded_saturate fuel budget generated s = SaturationBudgetOverflow out ->
+    budget <= max_iters ->
+    bounded_saturate fuel budget max_iters generated s =
+      SaturationBudgetOverflow out ->
     out = saturate_n budget generated s.
   Proof.
-    intros fuel budget generated s out Hlt Hres.
+    intros fuel budget max_iters generated s out Hlt Hbudget_first Hres.
     unfold bounded_saturate in Hres.
     destruct (fuel <=? budget) eqn:Hle.
     - apply Nat.leb_le in Hle. lia.
-    - inversion Hres. reflexivity.
+    - destruct (budget <=? max_iters) eqn:Hbudget.
+      + inversion Hres. reflexivity.
+      + apply Nat.leb_gt in Hbudget. lia.
   Qed.
+
+  Theorem bounded_saturate_reports_iteration_limit :
+    forall fuel budget max_iters generated s out,
+    max_iters < fuel ->
+    max_iters < budget ->
+    bounded_saturate fuel budget max_iters generated s =
+      SaturationIterationExhausted out ->
+    out = saturate_n max_iters generated s.
+  Proof.
+    intros fuel budget max_iters generated s out Hfuel Hbudget Hres.
+    unfold bounded_saturate in Hres.
+    destruct (fuel <=? budget) eqn:Hle.
+    - destruct (fuel <=? max_iters) eqn:Hfuel_le.
+      + apply Nat.leb_le in Hfuel_le. lia.
+      + inversion Hres. reflexivity.
+    - destruct (budget <=? max_iters) eqn:Hbudget_le.
+      + apply Nat.leb_le in Hbudget_le. lia.
+      + inversion Hres. reflexivity.
+  Qed.
+
+  Theorem bounded_saturate_reports_converged :
+    forall fuel budget max_iters generated s out,
+    fuel <= budget ->
+    fuel <= max_iters ->
+    bounded_saturate fuel budget max_iters generated s = Saturated out ->
+    out = saturate_n fuel generated s.
+  Proof.
+    intros fuel budget max_iters generated s out Hbudget Hiter Hres.
+    unfold bounded_saturate in Hres.
+    destruct (fuel <=? budget) eqn:Hbudget_le.
+    - destruct (fuel <=? max_iters) eqn:Hiter_le.
+      + inversion Hres. reflexivity.
+      + apply Nat.leb_gt in Hiter_le. lia.
+    - apply Nat.leb_gt in Hbudget_le. lia.
+  Qed.
+
+  Theorem report_outcome_matches_result :
+    forall fuel budget max_iters merges generated s,
+    sat_outcome (bounded_saturate_report fuel budget max_iters merges generated s) =
+      outcome_of (bounded_saturate fuel budget max_iters generated s).
+  Proof. intros. reflexivity. Qed.
+
+  Theorem report_state_matches_result :
+    forall fuel budget max_iters merges generated s,
+    sat_state (bounded_saturate_report fuel budget max_iters merges generated s) =
+      state_of (bounded_saturate fuel budget max_iters generated s).
+  Proof. intros. reflexivity. Qed.
+
+  Theorem node_limit_report_is_not_converged : forall stats st,
+    sat_outcome {| sat_outcome := NodeLimit; sat_stats := stats; sat_state := st |} <> Converged.
+  Proof. intros stats st H. discriminate. Qed.
+
+  Theorem iteration_limit_report_is_not_converged : forall stats st,
+    sat_outcome {| sat_outcome := IterationLimit; sat_stats := stats; sat_state := st |} <> Converged.
+  Proof. intros stats st H. discriminate. Qed.
+
+  Theorem converged_report_has_converged_outcome : forall stats st,
+    sat_outcome {| sat_outcome := Converged; sat_stats := stats; sat_state := st |} = Converged.
+  Proof. reflexivity. Qed.
 
 End DovetailSaturation.

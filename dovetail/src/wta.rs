@@ -22,6 +22,15 @@ use rigail::{solve_scc_weights_newton, PackingFactored, Semiring, StarSemiring};
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::scc;
 
+/// Marker for star semirings whose multiplication is commutative.
+///
+/// The SCC lowering groups out-of-SCC child weights into an `outside_product`.
+/// That regrouping is value-preserving only when `times` commutes. Keep this
+/// bound narrow: adding a new implementation is a proof/test obligation.
+pub trait CommutativeStarSemiring: StarSemiring {}
+
+impl CommutativeStarSemiring for rigail::TropicalWeight {}
+
 /// A weighted-tree-automaton view of an e-graph, weighted by `weigh`.
 pub struct EGraphDfta<'g, L, W, F> {
     egraph: &'g EGraph<L>,
@@ -62,7 +71,7 @@ where
 impl<'g, L, W, F> EGraphDfta<'g, L, W, F>
 where
     L: Clone + Eq + std::hash::Hash,
-    W: StarSemiring,
+    W: CommutativeStarSemiring,
     F: Fn(&ENode<L>) -> W,
 {
     /// Per-class inside weight, EXACT INCLUDING cycles: trivial (acyclic) SCCs
@@ -95,7 +104,10 @@ where
             for node in egraph.nodes(q) {
                 let mut prod = weigh(node);
                 for &child in &node.children {
-                    let cw = inside.get(&egraph.find(child)).copied().unwrap_or_else(W::zero);
+                    let cw = inside
+                        .get(&egraph.find(child))
+                        .copied()
+                        .unwrap_or_else(W::zero);
                     prod = prod.times(&cw);
                 }
                 acc = acc.plus(&prod);
@@ -133,12 +145,12 @@ where
 /// missing none); `trivial_scc_constant` proves the trivial-SCC `continue` above
 /// is sound. Given that lowering equality, Esparza–Kiefer–Luttenberger Newton
 /// correctness (rigail) yields the exact least-fixpoint aggregate for the n-D
-/// multi-call case. Commutativity of `⊗` (true of the Tropical/Viterbi/prob
-/// inside-weight cost semirings) is the precondition for the out-of-SCC factoring.
+/// multi-call case. Commutativity of `⊗` is the precondition for the out-of-SCC
+/// factoring and is enforced by [`CommutativeStarSemiring`].
 pub fn compute_inside_closed<L, W, F>(egraph: &EGraph<L>, weigh: &F) -> HashMap<EClassId, W>
 where
     L: Clone + Eq + std::hash::Hash,
-    W: StarSemiring,
+    W: CommutativeStarSemiring,
     F: Fn(&ENode<L>) -> W,
 {
     let mut inside = compute_inside_acyclic(egraph, weigh);
@@ -163,11 +175,14 @@ fn solve_scc<L, W, F>(
 ) -> Vec<W>
 where
     L: Clone + Eq + std::hash::Hash,
-    W: StarSemiring,
+    W: CommutativeStarSemiring,
     F: Fn(&ENode<L>) -> W,
 {
-    let idx: HashMap<EClassId, usize> =
-        scc_classes.iter().enumerate().map(|(i, &q)| (q, i)).collect();
+    let idx: HashMap<EClassId, usize> = scc_classes
+        .iter()
+        .enumerate()
+        .map(|(i, &q)| (q, i))
+        .collect();
     let mut packings: Vec<PackingFactored<W>> = Vec::new();
     for (i, &q) in scc_classes.iter().enumerate() {
         for node in egraph.nodes(q) {
@@ -183,7 +198,11 @@ where
                     outside_product = outside_product.times(&w_c);
                 }
             }
-            packings.push(PackingFactored { target_i: i, outside_product, in_scc_children });
+            packings.push(PackingFactored {
+                target_i: i,
+                outside_product,
+                in_scc_children,
+            });
         }
     }
     solve_scc_weights_newton(scc_classes.len(), &packings, 64)

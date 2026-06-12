@@ -23,7 +23,8 @@ derivations of `q` (= `⨆ₑ ℕ^arity(e)`) are eventually produced — exhaust
 **Best-first order** holds under the **monotonicity precondition (MON):** `⊗` is monotone
 non-decreasing in each argument w.r.t. the order. Tropical (`⊗=+`) satisfies MON; for
 `LexicographicWeight`, `times` left-projects the tiebreak fields so only the primary varies
-with child rank — MON holds on the varied axis. Document + assert MON for the two weights.
+with child rank — MON holds on the varied axis. The Rust API exposes this as
+`MonotoneBestOrder`, implemented only for checked weight types.
 
 ## Weight order — `BestOrder` trait (NOT changing the semiring crate)
 `Semiring` is `Copy + PartialEq` but NOT `Ord`. Both production weights already impl `Ord`
@@ -45,7 +46,7 @@ pub struct Derivation<L, W> {
     pub weight: W, pub key: ContentKey,    // exact, injective tree key
 }
 ```
-Tree key = `op.write_content` then `write_framed(child.key)` per child — injective
+Tree key = `op.write_content` then `write_ordered_framed(child.key)` per child — injective
 (distinct trees ⇒ distinct keys), so the `built.last().key == d.key` check drops only TRUE
 duplicates, never two distinct equal-weight derivations.
 
@@ -61,23 +62,28 @@ scope, drop the borrow, recurse to pull child `Rc`s (cloned out), re-acquire to 
 data (`op`, `weigh`, child classes) read from the e-graph (a different object than
 `state`) + copied out before recursing. **Cycle guard:** `on_stack` flag — a back-edge
 child is treated as "no derivation at this rank" (combination returns None) so cyclic
-classes yield only acyclic derivations (sound but INCOMPLETE; full closure via rigail's
-`solve_scc_weights_newton` is the next increment) + a `guard_depth` cap; surface
+classes yield only acyclic derivations (sound but bounded for cyclic k>=2). Cyclic inside
+weights / 1-best are exact via `compute_inside_closed`; exhaustive cyclic k-best remains
+bounded and is surfaced by `ExtractionCompleteness::BoundedByCycleCut` and
 `had_cycle_cut()`. Increment 5 is ACYCLIC-scoped (guard never fires on acyclic input).
 
 ## Public API
 ```rust
 impl<'g,L,W,F> Extractor<'g,L,W,F>
-where L: Clone+Eq+Hash+SemanticHash, W: BestOrder, F: Fn(&ENode<L>)->W {
+where L: Clone+Eq+Hash+SemanticHash, W: MonotoneBestOrder, F: Fn(&ENode<L>)->W {
     pub fn new(egraph: &'g EGraph<L>, weigh: F) -> Self;
-    pub fn with_heuristic(self) -> Self;             // memoize inside_weights() (A*/KA*; reorders only)
-    pub fn kth(&mut self, root: EClassId, k: usize) -> Option<Rc<Derivation<L,W>>>;
-    pub fn derivations(&mut self, root) -> impl Iterator<Item=Rc<Derivation<L,W>>> + '_;  // lazy, exhaustive; caller stops
+    pub fn with_heuristic(self) -> Self where W: CommutativeStarSemiring;
+    pub fn kth(&mut self, root: EClassId, k: usize)
+        -> Extraction<Option<Rc<Derivation<L,W>>>>;
+    pub fn derivations(&mut self, root) -> Derivations<'_, 'g, L, W, F>;
+    pub fn completeness(&self) -> ExtractionCompleteness;
     pub fn had_cycle_cut(&self) -> bool;
 }
 ```
-Heuristic is OPTIONAL: baseline is provably exact without it; it only reorders exploration
-(verified by a heuristic-invariance test). No beam/cutoff anywhere.
+`Derivations::collect_checked()` returns `Extraction<Vec<Rc<Derivation<L,W>>>>` so a caller
+cannot collect a vector while silently dropping the cycle-cut completeness status. Heuristic is
+OPTIONAL: baseline is provably exact without it; it only reorders exploration (verified by a
+heuristic-invariance test). No beam/cutoff anywhere.
 
 ## No-miss test suite (the empirical verification)
 T1 single leaf; **T2 hand-built ambiguous (THE gating test):** merge a(5),b(3),c(3) into one
@@ -94,11 +100,13 @@ every non-`0̄` candidate survives, equal-weight distinct alternatives both surv
 demand prefixes are monotone, the stream exhausts on demand, and the ordered output is a
 sorted permutation of the kept candidates. `EnumerationCompleteness.v` proves the
 hypergraph-recursion layer: every hyperedge/rank-vector product point is enumerated.
-`CycleCutBoundary.v` proves cyclic k>=2 enumeration is explicitly reported as bounded
-when a cycle guard cuts a back-edge.
+`CycleCutBoundary.v` models the Rust `Extraction<T> { value, completeness }` wrapper and
+proves a cycle cut maps to `BoundedByCycleCut`, never a silent `Complete` claim.
+`ExactKeyDedup.v` also proves the length-framed and ordered child-key framing contracts used
+by `SemanticHash`/`write_ordered_framed`.
 
 ## Implementation order
 Implemented: BestOrder+OrdKey, Derivation+tree-key, ClassState/Candidate initialization,
 candidate construction, `kth` loop (`0̄` filter + exact-key dup skip + cycle guard),
-`derivations`, `with_heuristic`, `had_cycle_cut`, tests T1-T9, and the Rocq proof suite
-under `dovetail/formal/rocq/theories/Extraction/`.
+`derivations`, `collect_checked`, `with_heuristic`, `completeness`, `had_cycle_cut`, tests
+T1-T9, and the Rocq proof suite under `dovetail/formal/rocq/theories/Extraction/`.

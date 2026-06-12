@@ -4,9 +4,8 @@
 //! reduction rules are loaded and run, not compiled in. Saturation grows the
 //! e-graph of equalities (every rewrite adds an equality, never replacing a
 //! term); the weighted [`crate::extract`] extractor then enumerates normal forms
-//! best-first. **Nothing is pruned during saturation**; budget overflow is
-//! REPORTED (`node_limit_reached`), never silent (carries the b56e1e5 budget
-//! discipline).
+//! best-first. **Nothing is pruned during saturation**; node and iteration
+//! limits are explicit [`SaturationOutcome`] values, never silent.
 
 use std::collections::HashMap;
 
@@ -45,17 +44,38 @@ pub struct RewriteRule<L> {
     pub label: Option<String>,
 }
 
-/// Outcome of equality saturation.
-#[derive(Clone, Debug, Default)]
-pub struct SatReport {
+/// Terminal outcome of equality saturation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaturationOutcome {
     /// A fixpoint was reached (an iteration produced no new merges).
-    pub converged: bool,
-    /// The node budget was hit (saturation stopped early; REPORTED not silent).
-    pub node_limit_reached: bool,
+    Converged,
+    /// The node budget was hit and saturation stopped early.
+    NodeLimit,
+    /// `max_iters` was exhausted before a fixpoint was observed.
+    IterationLimit,
+}
+
+/// Saturation counters shared by every outcome.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SatStats {
     /// Iterations performed.
     pub iterations: usize,
     /// Total merges applied.
     pub total_merges: usize,
+}
+
+/// Outcome of equality saturation.
+#[must_use = "saturation can stop from node or iteration limits; inspect `outcome` before extracting as if complete"]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SatReport {
+    pub outcome: SaturationOutcome,
+    pub stats: SatStats,
+}
+
+impl SatReport {
+    fn new(outcome: SaturationOutcome, stats: SatStats) -> Self {
+        SatReport { outcome, stats }
+    }
 }
 
 impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
@@ -133,11 +153,11 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
 
     /// Equality saturation: apply `rules` to a fixpoint, or until the node budget
     /// or `max_iters` is hit. Every fired rule ADDS an equality (merge); nothing
-    /// is pruned. Budget overflow is reported via `SatReport::node_limit_reached`.
+    /// is pruned. Limits are reported in [`SatReport::outcome`].
     pub fn saturate(&mut self, rules: &[RewriteRule<L>], max_iters: usize) -> SatReport {
-        let mut report = SatReport::default();
+        let mut stats = SatStats::default();
         for iteration in 0..max_iters {
-            report.iterations = iteration + 1;
+            stats.iterations = iteration + 1;
             let mut iter_merges = 0usize;
             for rule in rules {
                 let matches = self.search(&rule.lhs);
@@ -159,18 +179,16 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                     self.rebuild();
                 }
                 iter_merges += rule_merges;
-                report.total_merges += rule_merges;
+                stats.total_merges += rule_merges;
                 if budget_hit {
-                    report.node_limit_reached = true;
-                    return report;
+                    return SatReport::new(SaturationOutcome::NodeLimit, stats);
                 }
             }
             if iter_merges == 0 {
-                report.converged = true;
-                return report;
+                return SatReport::new(SaturationOutcome::Converged, stats);
             }
         }
-        report
+        SatReport::new(SaturationOutcome::IterationLimit, stats)
     }
 }
 
@@ -251,8 +269,7 @@ mod dv0_probe {
         d: &Derivation<String, TropicalWeight>,
         marked: &mut HashSet<ContentKey>,
     ) {
-        let child_classes: Vec<EClassId> =
-            d.children.iter().map(|c| eg.find(c.class)).collect();
+        let child_classes: Vec<EClassId> = d.children.iter().map(|c| eg.find(c.class)).collect();
         marked.insert(node_key(&d.op, &child_classes));
         for c in &d.children {
             mark_derivation(eg, c, marked);
@@ -316,7 +333,10 @@ mod dv0_probe {
                     "add".into(),
                     vec![
                         Pattern::var("x"),
-                        Pattern::app("mul".into(), vec![Pattern::leaf("1".into()), Pattern::var("y")]),
+                        Pattern::app(
+                            "mul".into(),
+                            vec![Pattern::leaf("1".into()), Pattern::var("y")],
+                        ),
                     ],
                 ),
                 label: Some("add_mul_ident".into()),
@@ -340,7 +360,7 @@ mod dv0_probe {
             let mut ex = Extractor::new(&eg, weigh).with_heuristic();
             for &root in &roots {
                 for k in 0..kbest {
-                    match ex.kth(root, k) {
+                    match ex.kth(root, k).value {
                         Some(d) => {
                             mark_derivation(&eg, &d, &mut marked);
                             nf_count += 1;
@@ -372,8 +392,15 @@ mod dv0_probe {
         println!("\n=== EP-P6a DV-0 PROBE (dovetail saturate→extract) ===");
         println!(
             "{:<10} {:>10} {:>12} {:>14} {:>10} {:>10} {:>9} {:>10} {:>11}",
-            "workload", "live_nodes", "added(sat)", "in_extracted",
-            "untouched%", "sat_ns", "ext_ns", "sat%wall", "roots/nf"
+            "workload",
+            "live_nodes",
+            "added(sat)",
+            "in_extracted",
+            "untouched%",
+            "sat_ns",
+            "ext_ns",
+            "sat%wall",
+            "roots/nf"
         );
         // 1-best (k=1) is the normal-form extraction the flip would use.
         for (name, depth, kbest) in [
@@ -384,8 +411,7 @@ mod dv0_probe {
             // honest upper bound on extraction reach.
             ("large_k3", 32, 3),
         ] {
-            let (added, in_ex, sat_ns, ext_ns, live, roots, nf) =
-                run_workload(name, depth, kbest);
+            let (added, in_ex, sat_ns, ext_ns, live, roots, nf) = run_workload(name, depth, kbest);
             let untouched_pct = if added == 0 {
                 0.0
             } else {
@@ -441,7 +467,7 @@ mod tests {
             label: Some("unwrap_f".into()),
         };
         let rep = eg.saturate(&[rule], 20);
-        assert!(rep.converged, "reaches a fixpoint");
+        assert_eq!(rep.outcome, SaturationOutcome::Converged, "reaches a fixpoint");
         assert!(eg.equiv(fa, a), "f(a) ~ a after saturation");
     }
 
@@ -459,7 +485,7 @@ mod tests {
             label: None,
         };
         let rep = eg.saturate(&[rule], 20);
-        assert!(rep.converged);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
         assert!(eg.equiv(a, b));
         assert!(eg.equiv(fa, fb), "congruence: f(a) ~ f(b) after a ~ b");
     }
@@ -482,7 +508,30 @@ mod tests {
             label: None,
         };
         let rep = eg.saturate(&[rule], 100);
-        assert!(rep.node_limit_reached, "budget overflow REPORTED, not silent");
+        assert_eq!(
+            rep.outcome,
+            SaturationOutcome::NodeLimit,
+            "budget overflow REPORTED, not silent"
+        );
         assert!(eg.node_count() <= 5, "no overshoot past the budget");
+    }
+
+    #[test]
+    fn saturate_reports_iteration_limit() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let _fa = eg.add(ENode::new("f".into(), vec![a]));
+        let rule = RewriteRule {
+            lhs: Pattern::app("f".to_string(), vec![Pattern::var("x")]),
+            rhs: Pattern::app(
+                "f".to_string(),
+                vec![Pattern::app("h".to_string(), vec![Pattern::var("x")])],
+            ),
+            label: None,
+        };
+        let rep = eg.saturate(&[rule], 1);
+        assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
+        assert_eq!(rep.stats.iterations, 1);
+        assert!(rep.stats.total_merges > 0);
     }
 }

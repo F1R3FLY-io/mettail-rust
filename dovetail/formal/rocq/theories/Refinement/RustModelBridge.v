@@ -18,6 +18,7 @@ From Dovetail.ExactKeys Require Import ExactKeyDedup.
 From Dovetail.Extraction Require Import NBestExtraction.
 From Dovetail.Extraction Require Import EnumerationCompleteness.
 From Dovetail.Extraction Require Import CycleCutBoundary.
+From Dovetail.Saturation Require Import DovetailSaturation.
 
 Import ListNotations.
 
@@ -89,6 +90,57 @@ Section RustModelBridge.
     apply overflow_preserves_state in Htry. exact Htry.
   Qed.
 
+  Inductive RustSaturationOutcome : Type :=
+    | RustConverged
+    | RustNodeLimit
+    | RustIterationLimit.
+
+  Record RustSatStats : Type := {
+    rust_sat_iterations : nat;
+    rust_sat_total_merges : nat
+  }.
+
+  Record RustSatReport : Type := {
+    rust_sat_outcome : RustSaturationOutcome;
+    rust_sat_stats : RustSatStats
+  }.
+
+  Definition to_sat_outcome (o : RustSaturationOutcome) : SaturationOutcome :=
+    match o with
+    | RustConverged => Converged
+    | RustNodeLimit => NodeLimit
+    | RustIterationLimit => IterationLimit
+    end.
+
+  Definition to_sat_stats (s : RustSatStats) : SatStats :=
+    {|
+      sat_iterations := rust_sat_iterations s;
+      sat_total_merges := rust_sat_total_merges s
+    |}.
+
+  Definition to_sat_report (r : RustSatReport) (st : State) : SatReport :=
+    {|
+      sat_outcome := to_sat_outcome (rust_sat_outcome r);
+      sat_stats := to_sat_stats (rust_sat_stats r);
+      sat_state := st
+    |}.
+
+  Theorem rust_sat_report_outcome_roundtrip : forall r st,
+    sat_outcome (to_sat_report r st) = to_sat_outcome (rust_sat_outcome r).
+  Proof. intros r st. reflexivity. Qed.
+
+  Theorem rust_node_limit_never_claims_converged : forall stats st,
+    sat_outcome
+      (to_sat_report {| rust_sat_outcome := RustNodeLimit; rust_sat_stats := stats |} st)
+      <> Converged.
+  Proof. intros stats st H. discriminate. Qed.
+
+  Theorem rust_iteration_limit_never_claims_converged : forall stats st,
+    sat_outcome
+      (to_sat_report {| rust_sat_outcome := RustIterationLimit; rust_sat_stats := stats |} st)
+      <> Converged.
+  Proof. intros stats st H. discriminate. Qed.
+
   Record RustCycleReport : Type := {
     rust_is_cyclic : bool;
     rust_had_cycle_cut : bool;
@@ -118,6 +170,14 @@ Section RustModelBridge.
       + apply Hguard. exact Hc.
       + discriminate.
     - unfold to_extract_report. simpl. rewrite Hcyc. reflexivity.
+  Qed.
+
+  Theorem rust_cycle_cut_maps_to_bounded : forall r,
+    rust_had_cycle_cut r = true ->
+    @extraction_completeness (list nat) (to_extraction (to_extract_report r)) =
+      BoundedByCycleCut.
+  Proof.
+    intros r Hcut. simpl. unfold status_of. simpl. rewrite Hcut. reflexivity.
   Qed.
 
   Theorem rust_rank_vector_complete : forall bounds v,
