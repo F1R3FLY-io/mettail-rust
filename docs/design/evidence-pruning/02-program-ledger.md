@@ -450,3 +450,65 @@ switch `PRATTAIL_EP_P4_DEMOTE=on`) — NOT self-reverted; the default (OFF) is b
   panels NEUTRAL; the DECISIVE eval-inclusive datum (rhocalc map_put 313× under ON, via a perturbed
   cast winner — AST `CastBigInt`→`CastUInt32` proven by flip) ⇒ **KEEP ESS, RECOMMEND REVERT
   DEMOTION** (recorded STOP; demotion left OFF-by-default, parent decides the L-flip).
+
+## P5 — Stage D (regular residual over-approximation gate): ENTRY-GATE = STOP
+
+> Plan §P5 entry gate (measure-first; no `RegularResidualGate.v`, no codegen, no enforcement unless
+> the gate passes). `residual_dead_steps` reduces (P2-real-refuted = 0 [P2 STOPped, no enforcement];
+> P2-shadow-refuted = 0 [ledger §P2]; P3-shadow-refuted = 0 [§P3 honesty STOP]) to: apply_action
+> steps on cursors that DIE at the EOI `!is_accepting_config` filter, as % of `apply_action_calls`.
+> GATE ≥ 15% ⇒ implement Stage D; < 15% ⇒ STOP. Working findings: `/tmp/p5_gate/findings.md`.
+
+### Measurement (measurement-only; uncommitted; default ep_p1=On world)
+
+Per-cursor `BranchCursor::p5_steps_{own,lineage}` (NON-cfg u32, the `ep_shadow_refuted` precedent;
+incremented at `apply_action_to_cursor` entry; carried through the `FrontierArc` Tomita round-trip).
+**own** (LOWER bound) = own apply_action calls since birth; fork→children born at 0; merge-absorb→
+survivor SUMS the loser (ConfigKey merge + Tomita `register_arc_with_aggregation`); a strict
+partition of `apply_action_calls`. **lineage** (UPPER bound) = ancestry path length; fork→all
+children inherit; merge→MAX. Accounted in `p5_account_eoi_frontier` (a read-only pass over
+`self.branch_cursors`, called BEFORE the stats dump — the resolution snapshot path runs post-dump and
+the deterministic fast-path bypasses it; classifies each cursor via the SAME `is_accepting_config`).
+
+| Corpus | parses | apply_action | EOI examined (dead) | dead[own/lin] | residual_dead% | pre_eoi_lost% |
+|---|---:|---:|---:|---|---:|---:|
+| cast_probe 0/3/4/5/7/8 | 6 | 7,363 | 6 (0) | 0/0 | 0.0000 | 98.87 |
+| `rhocalc_tests` (126/0) | 2,137 | 204,004 | 4,891 (1,706) | 0/0 | 0.0000 | 76.75 |
+| `gen_ledtest_op` SENTINEL (220/0) | 708 | 45,373 | 1,224 (0) | 0/0 | 0.0000 | 49.85 |
+| `gen_rhocalc_op` (530/1 castbigrat) | 8,242 | 388,399 | 20,444 (2,254) | 0/0 | 0.0000 | 37.92 |
+| **CORPUS-AGGREGATE** | **11,093** | **645,139** | **26,565 (3,960)** | **0/0** | **0.0000** | — |
+
+### P5 entry-gate verdict (2026-06-12): **STOP — recorded, first-class (H13/CD06/P2/P3 precedent)**
+
+**`residual_dead_steps` = [0.0000% .. 0.0000%]** of `apply_action_calls` corpus-wide (own LOWER ..
+lineage UPPER bracket); 0% ≪ 15% on BOTH bounds ⇒ unambiguous STOP. **Do NOT implement Stage D /
+`RegularResidualGate.v`.** The plan's predicted ALL(*) lesson ("the cheap gates already took the
+volume") is CONFIRMED.
+
+**Mechanism (deep-dived, not an artifact):** 3,960 cursors DO die at EOI across the corpus — the
+population is non-empty — but EVERY one carries `p5_steps_own = p5_steps_lineage = 0`. They are
+re-seeded TERMINAL states (post-`AmbiguityFanout`-resolution singletons, post-drop write-backs,
+freshly-materialized cohort members) that reach EOI WITHOUT re-entering `apply_action_to_cursor`. The
+real parse work (37.9–98.9% of apply_action, the `pre_eoi_lost` bank) is consumed MID-PARSE by the
+existing dispatch resolution + P1 parking, which collapse the fan well before EOI. A regular-over-
+approximation residual DFA (Stage D's mechanism) would prune ~ZERO apply_action work: the EOI-death
+cursors are already step-free terminals, and the upstream fan is already collapsed by cheaper
+mechanisms. The own-partition identity `dead_own + accepted_own + pre_eoi_lost = apply_action_calls`
+holds exactly per parse (e.g. idx0: 0 + 15 + 192 = 207). A naive "all pre_eoi_lost is dead" upper
+bound (37.9–98.9%) is UNSOUND — it would attribute progress-work (ancestry that produced the
+surviving accepting singleton) and mid-parse Drops (not an EOI-death; outside Stage D's target) to
+the EOI-death class; the faithful §P5 quantity is 0.
+
+**Verification (measurement-only, no behavior change):** SENTINEL `gen_ledtest_op` 220/0; prattail-lib
+**3989/0 BOTH cfgs** (default + `--features walker-stats`); `edge_case_tests` 229/0 (FRESH-built
+default cfg — the non-cfg counter + fork/merge SUM/MAX paths are inert); `gen_rhocalc_op` 530/1
+(pre-existing `castbigrat`); both cfg builds green. Full record: `/tmp/p5_gate/findings.md`.
+
+### P5 stage log
+
+- 2026-06-12 P5 entry-gate measured: per-cursor own/lineage step counters (bracket) + EOI-frontier
+  accounting pass. Deep-dived the initial all-zero surprise to mechanism (stats-dump-before-flush
+  probe artifact → deterministic fast-path → frontier collapses to 1 accepting cursor at EOI →
+  EOI-deaths are step-free re-seeded terminals). Corpus-aggregate residual_dead_steps =
+  [0.0000%..0.0000%] ≪ 15% ⇒ **STOP** (expected; the ALL(*) lesson). No model, no codegen, no
+  enforcement. Battery at baseline (SENTINEL 220/0; prattail-lib 3989/0 both cfgs; edge 229/0).

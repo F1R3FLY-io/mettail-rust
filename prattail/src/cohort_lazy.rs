@@ -712,6 +712,15 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // members are treated as zero-innovation at their first post-
         // revive step (demoted, never lost — ForwardOrderOnly.v T5).
         consumed_since_last_check: false,
+        // EP-P5 (Stage D): a cohort-revived member is reconstructed from the
+        // shared shell + member state, neither of which carries the step
+        // counters (smallest change — member state is NOT extended). The
+        // parked segment's steps are therefore captured in the derived
+        // pre-EOI-lost residual, NOT re-attributed to the revived member
+        // (bias-down for parking-heavy inputs — the cast corpus; recorded in
+        // the findings). Both counters start at 0.
+        p5_steps_own: 0,
+        p5_steps_lineage: 0,
     }
 }
 

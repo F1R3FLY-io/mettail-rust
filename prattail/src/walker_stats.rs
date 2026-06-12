@@ -716,6 +716,46 @@ pub struct WalkerStats {
     /// the first budget/EOI event (the hot path computes it lazily at the
     /// event — it pays NOTHING when no budget event fires).
     pub frontier_ess_x1000_last: u32,
+
+    // ── Evidence-pruning P5 (Stage D: regular residual over-approximation
+    //    gate) ENTRY-GATE measurement (plan §P5; ledger 02-program-ledger.md).
+    //    `residual_dead_steps` reduces (P2-real, P2-shadow, P3-shadow all = 0)
+    //    to: apply_action steps on cursors that DIE at the EOI
+    //    `!is_accepting_config` filter (never reach an accepting config), as a
+    //    % of `apply_action_calls`. GATE: ≥ 15% ⇒ implement Stage D; < 15% ⇒
+    //    STOP. Two numerators BRACKET the true share (a single counter cannot
+    //    be both a global partition AND fork-correct — see the field docs on
+    //    `BranchCursor::p5_steps_own/lineage`): `own` (lower) ≤ true ≤
+    //    `lineage` (upper). Plain scalars; Display prints only when non-zero. ─
+    /// EP-P5: Σ over EOI-dead cursors of `p5_steps_own` (own-since-fork) — the
+    /// LOWER-BOUND `residual_dead_steps` numerator. `dead_own /
+    /// apply_action_calls` under-counts the true dead share (fork ancestry +
+    /// parked segments excluded). Default 0.
+    pub p5_residual_dead_steps_own: u64,
+    /// EP-P5: Σ over EOI-dead cursors of `p5_steps_lineage` (ancestry path
+    /// length) — the UPPER-BOUND numerator. `dead_lineage / apply_action_calls`
+    /// over-counts (shared prefixes double-counted across dead branches; can
+    /// exceed 100%). Default 0.
+    pub p5_residual_dead_steps_lineage: u64,
+    /// EP-P5: Σ over EOI-ACCEPTING cursors of `p5_steps_own` — the denominator
+    /// cross-check. `dead_own + accepted_own ≤ apply_action_calls`; the gap is
+    /// the derived pre-EOI-lost residual (fork ancestry + mid-parse Drops +
+    /// parked segments). Default 0.
+    pub p5_accepted_steps_own: u64,
+    /// EP-P5: Σ over EOI-accepting cursors of `p5_steps_lineage` (the lineage
+    /// counterpart of the cross-check). Default 0.
+    pub p5_accepted_steps_lineage: u64,
+    /// EP-P5: raw cursor counts at the EOI frontier accounting pass
+    /// (`p5_account_eoi_frontier`), independent of step counts —
+    /// `examined` = all live EOI-frontier cursors; `dead` = those failing
+    /// `is_accepting_config`. The LOAD-BEARING interp-A evidence: a non-zero
+    /// `dead` with `p5_residual_dead_steps_* == 0` means the EOI-death
+    /// population EXISTS but is step-free (re-seeded terminal singletons /
+    /// freshly-materialized cohort members that reached EOI without
+    /// re-entering `apply_action_to_cursor`), so Stage D would prune zero
+    /// apply_action work. Default 0.
+    pub p5_eoi_cursors_examined: u64,
+    pub p5_eoi_dead_cursors: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -2481,6 +2521,64 @@ impl fmt::Display for WalkerStats {
                 }
             }
         }
+        // EP-P5 (Stage D) ENTRY-GATE measurement (plan §P5). `residual_dead_steps`
+        // = apply_action steps on cursors that DIE at the EOI accepting filter,
+        // as % of apply_action_calls. Two numerators bracket the true share:
+        // own (lower) ≤ true ≤ lineage (upper). GATE: ≥ 15% ⇒ implement Stage D;
+        // < 15% ⇒ STOP. Printed whenever any parse work happened
+        // (`apply_action_calls > 0`) so the gate evidence — including the
+        // informative all-zero-dead case — is always visible in a measurement
+        // build.
+        {
+            if self.p5_residual_dead_steps_own > 0
+                || self.p5_residual_dead_steps_lineage > 0
+                || self.p5_accepted_steps_own > 0
+                || self.p5_accepted_steps_lineage > 0
+                || self.apply_action_calls > 0
+            {
+                writeln!(
+                    f,
+                    "  ep_p5_residual_gate (EP plan §P5 ENTRY-GATE, default ep_p1=On world):",
+                )?;
+                writeln!(
+                    f,
+                    "    dead_steps[own={} lineage={}]  accepted_steps[own={} lineage={}]  apply_action_calls={}",
+                    self.p5_residual_dead_steps_own,
+                    self.p5_residual_dead_steps_lineage,
+                    self.p5_accepted_steps_own,
+                    self.p5_accepted_steps_lineage,
+                    self.apply_action_calls,
+                )?;
+                if self.apply_action_calls > 0 {
+                    let denom = self.apply_action_calls as f64;
+                    let lower = (self.p5_residual_dead_steps_own as f64) * 100.0 / denom;
+                    let upper = (self.p5_residual_dead_steps_lineage as f64) * 100.0 / denom;
+                    // Derived pre-EOI-lost residual on the OWN (partition)
+                    // counter: apply_action_calls − dead_own − accepted_own
+                    // (fork ancestry + mid-parse Drops + parked segments).
+                    let accounted = self
+                        .p5_residual_dead_steps_own
+                        .saturating_add(self.p5_accepted_steps_own);
+                    let pre_eoi_lost = self.apply_action_calls.saturating_sub(accounted);
+                    let lost_pct = (pre_eoi_lost as f64) * 100.0 / denom;
+                    writeln!(
+                        f,
+                        "    residual_dead_steps = [{:.2}% .. {:.2}%] of apply_action_calls (own..lineage bracket) — GATE ≥ 15% ⇒ implement Stage D, < 15% ⇒ STOP",
+                        lower, upper,
+                    )?;
+                    writeln!(
+                        f,
+                        "    own-partition cross-check: dead_own + accepted_own = {} ; pre_eoi_lost (fork ancestry + drops + parks) = {} ({:.2}%)",
+                        accounted, pre_eoi_lost, lost_pct,
+                    )?;
+                    writeln!(
+                        f,
+                        "    EOI frontier cursors examined={} (of which DIED, !is_accepting_config={}) — the raw EOI-death population (step-free if dead_steps=0 ⇒ Stage D has no late-death work to prune)",
+                        self.p5_eoi_cursors_examined, self.p5_eoi_dead_cursors,
+                    )?;
+                }
+            }
+        }
         // led_chain ROOT-CAUSE DIAGNOSTIC (TEMPORARY).
         {
             let dbg_total: u64 = self.dbg_ccl_reg_outcome.iter().sum::<u64>()
@@ -3032,6 +3130,13 @@ mod tests {
             zero_innovation_demotions: 0,
             demoted_member_unstepped_at_exit: 0,
             frontier_ess_x1000_last: 0,
+            // EP-P5 entry-gate measurement counters.
+            p5_residual_dead_steps_own: 0,
+            p5_residual_dead_steps_lineage: 0,
+            p5_accepted_steps_own: 0,
+            p5_accepted_steps_lineage: 0,
+            p5_eoi_cursors_examined: 0,
+            p5_eoi_dead_cursors: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

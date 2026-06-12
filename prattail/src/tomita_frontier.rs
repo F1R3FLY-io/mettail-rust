@@ -242,6 +242,15 @@ pub struct FrontierArc<W: SemiringRef> {
     /// the round-trip and is readable at the next pass's stable-partition.
     /// `false` for arcs whose producing step did not strictly advance `pos`.
     pub consumed_since_last_check: bool,
+    /// EP-P5 (Stage D) ENTRY-GATE: per-arc step counters carried verbatim
+    /// through Tomita ingest/materialize so a cursor's accumulated
+    /// apply_action work survives the round-trip and is attributable at the
+    /// EOI snapshot. `own` = own-since-fork (lower bound); `lineage` = ancestry
+    /// path length (upper bound). On the `register_arc_with_aggregation`
+    /// absorption the survivor folds the absorbed arc's counts in (own SUMS,
+    /// lineage MAXes) — see that method.
+    pub p5_steps_own: u32,
+    pub p5_steps_lineage: u32,
 }
 
 impl<W: SemiringRef + Clone> FrontierArc<W> {
@@ -299,6 +308,9 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             ep_shadow_refuted: false,
             // EP-P4: explicit-args test constructor — no innovation yet.
             consumed_since_last_check: false,
+            // EP-P5: explicit-args test constructor — no steps yet.
+            p5_steps_own: 0,
+            p5_steps_lineage: 0,
         }
     }
 
@@ -358,6 +370,9 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             ep_shadow_refuted: cursor.ep_shadow_refuted,
             // EP-P4: capture the innovation flag for the round-trip.
             consumed_since_last_check: cursor.consumed_since_last_check,
+            // EP-P5: capture the cursor's step counters for the round-trip.
+            p5_steps_own: cursor.p5_steps_own,
+            p5_steps_lineage: cursor.p5_steps_lineage,
         }
     }
 }
@@ -410,6 +425,9 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         ep_shadow_refuted: arc.ep_shadow_refuted,
         // EP-P4: restore the per-arc innovation flag.
         consumed_since_last_check: arc.consumed_since_last_check,
+        // EP-P5: restore the per-arc step counters.
+        p5_steps_own: arc.p5_steps_own,
+        p5_steps_lineage: arc.p5_steps_lineage,
     }
 }
 
@@ -666,6 +684,14 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                         .pending_packing_weight
                         .plus_ref(&arc.pending_packing_weight);
                     existing.pending_packing_weight = merged_pending;
+                    // EP-P5 (Stage D) ENTRY-GATE: this Tomita-key ⊕-absorption
+                    // discards the incoming `arc` into `existing`. Fold its
+                    // step counts in so the surviving lineage's eventual EOI
+                    // outcome attributes ALL spent work: own SUMS (disjoint
+                    // past apply_action work), lineage MAXes (longer ancestry).
+                    existing.p5_steps_own = existing.p5_steps_own.saturating_add(arc.p5_steps_own);
+                    existing.p5_steps_lineage =
+                        existing.p5_steps_lineage.max(arc.p5_steps_lineage);
                     self.dedup_hits = self.dedup_hits.saturating_add(1);
                     node.generation = gen;
                     node.arc_count()
@@ -908,6 +934,8 @@ mod tests {
             collection_sep_counts: Arc::new(Vec::new()),
             ep_shadow_refuted: false,
             consumed_since_last_check: false,
+            p5_steps_own: 0,
+            p5_steps_lineage: 0,
         }
     }
 
@@ -1425,6 +1453,8 @@ mod tests {
             collection_sep_counts: Arc::new(Vec::new()),
             ep_shadow_refuted: false,
             consumed_since_last_check: false,
+            p5_steps_own: 0,
+            p5_steps_lineage: 0,
         };
         let shell = TomitaShell::from_cursor(&cursor);
         assert_eq!(shell.node, 42);

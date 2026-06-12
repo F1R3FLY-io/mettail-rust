@@ -2237,6 +2237,32 @@ pub struct BranchCursor<W: SemiringRef> {
     /// inheritance and the Tomita arc round-trip exactly like
     /// `ep_shadow_refuted`.
     pub consumed_since_last_check: bool,
+    /// EP-P5 (Stage D) ENTRY-GATE measurement — the cursor's OWN
+    /// `apply_action_to_cursor` calls since BIRTH (a fork-child or a fresh
+    /// seed starts at 0). Incremented at the `apply_action_to_cursor` entry
+    /// (the same site as the global `apply_action_calls`). NON-cfg u32 (the
+    /// `ep_shadow_refuted` precedent) so the field rides every build; the
+    /// walker-stats accumulation at the EOI snapshot is the only stats-gated
+    /// part. Fork: children born at 0 (a fork BIRTHS new cursors — the shared
+    /// prefix is NOT copied; it is banked into `p5_forked_away_steps`). Merge
+    /// absorption: the survivor ADDS the absorbed cursor's count (disjoint
+    /// past work). At EOI: a cursor failing `is_accepting_config` adds this to
+    /// `p5_residual_dead_steps`; an accepting cursor adds it to
+    /// `p5_accepted_steps`. This is the LOWER-BOUND numerator (own-since-fork;
+    /// ancestry + parked segments excluded ⇒ under-counts the true dead
+    /// share). Default 0.
+    pub p5_steps_own: u32,
+    /// EP-P5 (Stage D) ENTRY-GATE measurement — this cursor's full ancestry
+    /// PATH LENGTH (`apply_action_to_cursor` calls from the root seed down
+    /// this lineage). Incremented at the same site as `p5_steps_own`. Fork:
+    /// ALL children inherit `parent.p5_steps_lineage` (each child genuinely
+    /// has that ancestry). Merge absorption: survivor = MAX(survivor, loser)
+    /// (the merged cursor's path length = the longer ancestry). At EOI summing
+    /// this over dead cursors double-counts shared ancestry across distinct
+    /// dead branches ⇒ the UPPER-BOUND numerator (over-counts; can exceed 100%
+    /// of `apply_action_calls`). The pair brackets the true dead share:
+    /// lower (own) ≤ true ≤ upper (lineage). Default 0.
+    pub p5_steps_lineage: u32,
 }
 
 /// Phase F.13 Stage 2.1 (2026-05-22): a single lex-Fork branch
@@ -2358,6 +2384,11 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // EP-P4 (Stages C+E): the innovation flag rides the clone — a
             // clone shares the producing step's consume-window evidence.
             consumed_since_last_check: self.consumed_since_last_check,
+            // EP-P5 (Stage D): a clone IS the same lineage (tiebreak
+            // snapshots / debug dumps), so BOTH step counters ride verbatim —
+            // a clone is not a fork (no new birth) and not a merge.
+            p5_steps_own: self.p5_steps_own,
+            p5_steps_lineage: self.p5_steps_lineage,
             // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
             // memo is walker-global now.
         }
@@ -2471,6 +2502,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             ep_shadow_refuted: false,
             // EP-P4: a fresh seed cursor has consumed nothing yet.
             consumed_since_last_check: false,
+            // EP-P5 (Stage D): a fresh seed is the root of a lineage — both
+            // step counters start at 0.
+            p5_steps_own: 0,
+            p5_steps_lineage: 0,
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
         }
     }
@@ -2564,6 +2599,14 @@ impl<W: SemiringRef> BranchCursor<W> {
             // EP-P4: a Fork-child inherits the parent's consume-window
             // evidence (it IS the parent's lineage at fork time).
             consumed_since_last_check: parent.consumed_since_last_check,
+            // EP-P5 (Stage D): a Fork BIRTHS new cursors. `p5_steps_own`
+            // starts at 0 (so N siblings do NOT each copy — and thereby
+            // multiply — the parent's own pre-fork steps; the parent's own
+            // steps are captured in the derived pre-EOI-lost residual). The
+            // UPPER-bound `p5_steps_lineage` carries the parent's ancestry
+            // path length (each child genuinely has that ancestry).
+            p5_steps_own: 0,
+            p5_steps_lineage: parent.p5_steps_lineage,
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
         }
     }
@@ -4611,6 +4654,15 @@ where
                     ep_shadow_refuted: false,
                     // EP-P4: post-collapse singleton starts a fresh window.
                     consumed_since_last_check: false,
+                    // EP-P5 (Stage D): a post-resolution singleton is a NEW
+                    // logical cursor at the resolved config — the work that
+                    // produced the resolved root belonged to the now-replaced
+                    // cursor(s) and is captured in the derived pre-EOI-lost
+                    // residual (apply_action_calls − dead − accepted), so the
+                    // singleton starts both counters at 0 (bias-down, the same
+                    // treatment as cohort-revive).
+                    p5_steps_own: 0,
+                    p5_steps_lineage: 0,
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
                 })];
                 self.state = new_state.clone();
@@ -5054,6 +5106,11 @@ where
                         snapshot.ep_p2_eoi_dead_refutable[idx].saturating_add(1);
                 }
             }
+            // EP-P5 (Stage D) ENTRY-GATE: accounting MOVED to the dedicated
+            // pre-dump pass `p5_account_eoi_frontier` (this snapshot path runs
+            // AFTER the stats dump, so accumulating here would never reach the
+            // PRATTAIL_WALKER_STATS report; and the deterministic fast-path
+            // bypasses this function entirely). See that method.
             return;
         }
         // EP-P2 (Stage B) Step-0 — check site (iii.b): the HARD-STOP
@@ -5070,6 +5127,9 @@ where
                     snapshot.ep_p2_refuted_then_accepted[idx].saturating_add(1);
             }
         }
+        // EP-P5 (Stage D) ENTRY-GATE: accounting MOVED to the dedicated
+        // pre-dump pass `p5_account_eoi_frontier` (see the death-site comment
+        // above). This snapshot path is post-dump and det-bypassed.
         let root = self.cursor_sppf_root(&cursor);
         if at_logical_eoi {
             snapshot.accepting.push(EoiCursorCandidate {
@@ -5117,12 +5177,82 @@ where
         snapshot
     }
 
+    /// EP-P5 (Stage D) ENTRY-GATE measurement. Iterate the LIVE EOI frontier
+    /// (`self.branch_cursors`, Concrete + materialized Cohort members) and
+    /// classify each cursor accepting/dead via the SAME `is_accepting_config`
+    /// predicate the resolution uses, accumulating its `p5_steps_{own,lineage}`
+    /// into `self.stats`. Called BEFORE the stats dump in
+    /// `resolve_at_end_of_input` (the resolution snapshot path runs post-dump
+    /// and the deterministic fast-path bypasses it). The dead accumulator IS
+    /// `residual_dead_steps` (per §P5: P2-real, P2-shadow, P3-shadow all 0, so
+    /// the quantity reduces to EOI-dead steps); the accepted accumulator is the
+    /// denominator cross-check. own = lower bound, lineage = upper bound.
+    /// walker-stats-only (the per-cursor counters always ride; the accumulation
+    /// is gated). Read-only w.r.t. the frontier (no mutation, no behavior
+    /// change).
+    #[cfg(feature = "walker-stats")]
+    fn p5_account_eoi_frontier(&mut self, tokens: &dyn WpdaTokenSource)
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        let mut dead_own: u64 = 0;
+        let mut dead_lineage: u64 = 0;
+        let mut accepted_own: u64 = 0;
+        let mut accepted_lineage: u64 = 0;
+        let mut examined: u64 = 0;
+        let mut dead_cursors: u64 = 0;
+        // Classify without holding a &mut borrow across is_accepting_config.
+        let mut classify = |this: &Self, cursor: &BranchCursor<W>| {
+            examined += 1;
+            if this.is_accepting_config(cursor, tokens) {
+                accepted_own = accepted_own.saturating_add(cursor.p5_steps_own as u64);
+                accepted_lineage = accepted_lineage.saturating_add(cursor.p5_steps_lineage as u64);
+            } else {
+                dead_cursors += 1;
+                dead_own = dead_own.saturating_add(cursor.p5_steps_own as u64);
+                dead_lineage = dead_lineage.saturating_add(cursor.p5_steps_lineage as u64);
+            }
+        };
+        for frame in &self.branch_cursors {
+            match frame {
+                crate::cohort_lazy::Frame::Concrete(cursor) => classify(self, cursor),
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    for member in &cf.members {
+                        let cursor =
+                            crate::cohort_lazy::materialize_branch_cursor(&cf.shell, member);
+                        classify(self, &cursor);
+                    }
+                },
+            }
+        }
+        self.stats.p5_residual_dead_steps_own =
+            self.stats.p5_residual_dead_steps_own.saturating_add(dead_own);
+        self.stats.p5_residual_dead_steps_lineage =
+            self.stats.p5_residual_dead_steps_lineage.saturating_add(dead_lineage);
+        self.stats.p5_accepted_steps_own =
+            self.stats.p5_accepted_steps_own.saturating_add(accepted_own);
+        self.stats.p5_accepted_steps_lineage =
+            self.stats.p5_accepted_steps_lineage.saturating_add(accepted_lineage);
+        self.stats.p5_eoi_cursors_examined =
+            self.stats.p5_eoi_cursors_examined.saturating_add(examined);
+        self.stats.p5_eoi_dead_cursors =
+            self.stats.p5_eoi_dead_cursors.saturating_add(dead_cursors);
+    }
+
     /// Resolve the final parse result without eagerly expanding lazy
     /// cohort frames at the parse boundary.
     pub fn resolve_at_end_of_input(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaResolveResult<W>
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
+        // EP-P5 (Stage D) ENTRY-GATE: account the live EOI frontier BEFORE the
+        // stats dump (the resolution snapshot below runs AFTER the dump and the
+        // deterministic fast-path bypasses it, so accounting there would never
+        // reach the report). Classifies each cursor in `self.branch_cursors`
+        // accepting/dead via the SAME `is_accepting_config` predicate the
+        // resolution uses. walker-stats-gated.
+        #[cfg(feature = "walker-stats")]
+        self.p5_account_eoi_frontier(tokens);
         // EP-P4 (Stage E): record the frontier ESS at EOI (plan §P4
         // deliverable 1 — "at EOI"). This is the parse-boundary diagnostic
         // value of the report: the ESS of whatever frontier is parked when
@@ -7103,6 +7233,12 @@ where
                         ep_shadow_refuted: false,
                         // EP-P4: commit-winner write-back starts a fresh window.
                         consumed_since_last_check: false,
+                        // EP-P5 (Stage D): post-Drop reset — the dropped
+                        // cursor's accumulated steps are captured in the
+                        // derived pre-EOI-lost residual; the fresh cursor
+                        // starts both counters at 0.
+                        p5_steps_own: 0,
+                        p5_steps_lineage: 0,
                         // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
                     }));
             },
@@ -7380,6 +7516,15 @@ where
     ) -> CursorOutcome<W> {
         // Phase F.13 walker-stats (2026-05-20): count per-cursor invocations.
         crate::stats_inc!(self, apply_action_calls);
+        // EP-P5 (Stage D) ENTRY-GATE: increment BOTH per-cursor step counters
+        // at the canonical apply_action entry (one per cursor-step, exactly
+        // mirroring `apply_action_calls`). NON-cfg (the field rides every
+        // build); the stats accumulation is at the EOI snapshot only. `own` =
+        // this cursor's steps since birth; `lineage` = ancestry path length.
+        // Both bump by 1 here; they diverge only at fork (own resets to 0 on
+        // children, lineage is inherited) and merge (own sums, lineage maxes).
+        cursor.p5_steps_own = cursor.p5_steps_own.saturating_add(1);
+        cursor.p5_steps_lineage = cursor.p5_steps_lineage.saturating_add(1);
         // EP-P1 Step-0 (plan §P1 commit 2): attribute this call to the
         // cast-then-infix waste class when the cursor sits UNDER a
         // CrossCatLhs frame (any such edge in its incoming_edge_stack).
@@ -9055,6 +9200,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9168,6 +9320,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9257,6 +9416,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9339,6 +9505,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9432,6 +9605,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9541,6 +9721,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9634,6 +9821,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9728,6 +9922,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9824,6 +10025,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -9966,6 +10174,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -10101,6 +10316,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -10303,6 +10525,13 @@ where
                                 // EP-P4: Fork-arm / projection child inherits
                                 // the parent cursor's consume-window evidence.
                                 consumed_since_last_check: cursor.consumed_since_last_check,
+                                // EP-P5 (Stage D): Fork BIRTHS new cursors —
+                                // own=0 (no sibling multiplication; the
+                                // parent's own steps land in the derived
+                                // pre-EOI-lost residual); lineage carries the
+                                // parent's ancestry path length.
+                                p5_steps_own: 0,
+                                p5_steps_lineage: cursor.p5_steps_lineage,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -13280,14 +13509,36 @@ where
                                 );
                             }
                         }
+                        // EP-P5 (Stage D): this MERGE joins two DISTINCT
+                        // lineages at one ConfigKey. `cursor` becomes the
+                        // survivor; the prior `merged[idx]` is the loser. Fold
+                        // the loser's steps in so the merged lineage's eventual
+                        // EOI outcome attributes ALL spent work: own SUMS
+                        // (disjoint past apply_action work — no double-count;
+                        // each step was counted once on its own cursor),
+                        // lineage MAXes (the merged cursor's path length is the
+                        // longer ancestry).
+                        let loser_own = merged[idx].p5_steps_own;
+                        let loser_lineage = merged[idx].p5_steps_lineage;
                         let mut replacement = cursor;
                         replacement.weight = combined;
+                        replacement.p5_steps_own =
+                            replacement.p5_steps_own.saturating_add(loser_own);
+                        replacement.p5_steps_lineage =
+                            replacement.p5_steps_lineage.max(loser_lineage);
                         merged[idx] = replacement;
                     } else {
                         // Existing wins or ties (with smaller-or-equal
                         // source_priority) — keep its operational state,
                         // update weight (idempotent on tie).
                         merged[idx].weight = combined;
+                        // EP-P5 (Stage D): `cursor` is the loser here; fold its
+                        // steps into the surviving `merged[idx]` (own SUMS,
+                        // lineage MAXes — same rationale as the win branch).
+                        merged[idx].p5_steps_own =
+                            merged[idx].p5_steps_own.saturating_add(cursor.p5_steps_own);
+                        merged[idx].p5_steps_lineage =
+                            merged[idx].p5_steps_lineage.max(cursor.p5_steps_lineage);
                     }
                 },
             }
@@ -13665,6 +13916,11 @@ where
             // EP-P4: the post-commit singleton inherits the winner's
             // consume-window evidence (same lineage).
             consumed_since_last_check: winner.consumed_since_last_check,
+            // EP-P5 (Stage D): the post-commit singleton IS the winner's
+            // lineage continued (1→1, not a fork) — carry both counters
+            // verbatim so the committed lineage's work stays attributed.
+            p5_steps_own: winner.p5_steps_own,
+            p5_steps_lineage: winner.p5_steps_lineage,
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
@@ -17275,6 +17531,11 @@ where
             // EP-P4: cross-cat projection child inherits the parent's
             // consume-window evidence (same lineage).
             consumed_since_last_check: parent.consumed_since_last_check,
+            // EP-P5 (Stage D): the cross-cat projection worker is a Fork-arm
+            // birth — own=0 (the parent's own steps land in the derived
+            // pre-EOI-lost residual), lineage carries the parent's ancestry.
+            p5_steps_own: 0,
+            p5_steps_lineage: parent.p5_steps_lineage,
         };
         if let Some(stamp) = lex_fork_stamp {
             std::sync::Arc::make_mut(&mut child.lex_fork_path).push(stamp);
