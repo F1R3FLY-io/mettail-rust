@@ -86,6 +86,11 @@ To rebuild exact indexes:
 
 ## Runtime-Facing Reports
 
+Reports are Dovetail's proof-preserving handoff artifacts. They are not
+human-facing logs and they are not Ascent-style fact bags. The dedicated
+contract is documented in
+[Runtime-Facing Reports](10-runtime-facing-reports.md).
+
 `report_from_extraction` converts checked derivations into:
 
 | Field | Meaning |

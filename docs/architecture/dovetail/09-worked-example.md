@@ -127,3 +127,7 @@ After extraction, `report_from_extraction` produces a substrate-neutral report:
 The Rho backend may lower this report to `rhoapi::Par`; an oracle may compare
 it with Ascent output; a local test may assert exact keys directly. Dovetail
 does not need to know which consumer receives the report.
+
+For the full artifact contract, including why a report is not a debug log and
+why `BoundedByCycleCut` must survive the handoff, see
+[Runtime-Facing Reports](10-runtime-facing-reports.md).

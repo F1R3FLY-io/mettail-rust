@@ -26,8 +26,9 @@ For implementers:
 3. [Rules and Saturation](04-rules-and-saturation.md)
 4. [Extraction and Weights](05-extraction-and-weights.md)
 5. [Cyclic Closure and Boundedness](06-cyclic-closure-and-boundedness.md)
-6. [Worked Example](09-worked-example.md)
-7. [Engineering Handoff](08-engineering-handoff.md)
+6. [Runtime-Facing Reports](10-runtime-facing-reports.md)
+7. [Worked Example](09-worked-example.md)
+8. [Engineering Handoff](08-engineering-handoff.md)
 
 For reviewers checking claims:
 
@@ -49,6 +50,7 @@ For reviewers checking claims:
 | [07 - Formal Verification and Tests](07-formal-verification-and-tests.md) | Which Rocq, Why3, Creusot, example, exhaustive, and property checks cover each claim? |
 | [08 - Engineering Handoff](08-engineering-handoff.md) | What does another agent need to maintain or complete Dovetail independently? |
 | [09 - Worked Example](09-worked-example.md) | How does a small rewrite system move through e-graphing, saturation, extraction, and reporting? |
+| [10 - Runtime-Facing Reports](10-runtime-facing-reports.md) | What is a Dovetail report, why does a rewrite engine need one, and what may downstream runtimes rely on? |
 | [References](references.md) | Which local source, test, proof, and design artifacts support the suite? |
 
 ## Architecture at a Glance
@@ -77,7 +79,9 @@ the core Dovetail architecture pages.
 
 Dovetail treats a MeTTaIL rewrite system as a finite, exact-keyed hypergraph.
 Saturation grows equality evidence. Extraction enumerates derivation trees.
-Weights rank derivations; they do not delete derivations.
+Weights rank derivations; they do not delete derivations. A
+[runtime-facing report](10-runtime-facing-reports.md) then packages the checked
+extraction as a proof-preserving artifact rather than a human-facing log.
 
 The theoretical basis is equality saturation over e-graphs
 ([EGG-2021](references.md#egg-2021)), k-best style lazy enumeration

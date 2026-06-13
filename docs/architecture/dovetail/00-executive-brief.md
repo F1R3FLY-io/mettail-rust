@@ -12,6 +12,12 @@ path. Ascent remains valuable as a reference/oracle during rollout. The WPDA
 parser remains active and upstream. The CESK runtime backend is the runtime
 backend path being replaced.
 
+The value handed to downstream consumers is a Dovetail report: a structured
+artifact that preserves exact roots, derivation structure, and extraction
+completeness. It is not a debug log. See
+[Runtime-Facing Reports](10-runtime-facing-reports.md) for the engineering
+contract.
+
 ## Design Thesis
 
 Ascent materializes relation facts through generated Datalog. Dovetail instead

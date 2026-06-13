@@ -29,6 +29,18 @@ conversation context.
 | saturation outcomes are explicit | do not collapse `Converged`, `NodeLimit`, and `IterationLimit` into a Boolean |
 | Dovetail is substrate-agnostic | do not add parser, Ascent, Rho, or runtime dependencies to the crate |
 
+## Report Boundary
+
+A Dovetail report is the public artifact boundary between checked extraction
+and every downstream consumer. Treat it as a certificate-shaped data product:
+it preserves exact roots, exact term keys, derivation edges, and terminal
+completeness. It is not a logging surface.
+
+When changing the report boundary, update
+[Runtime-Facing Reports](10-runtime-facing-reports.md),
+`dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v`, and any
+runtime handoff proof that consumes complete reports.
+
 ## Adding A New Label Type
 
 To use a new e-node label type `L`, the label must satisfy:

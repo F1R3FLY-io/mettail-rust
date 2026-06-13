@@ -10,6 +10,7 @@ files that are versioned with the implementation and formal artifacts.
 - `docs/design/dovetail-engine/cyclic-closure-design.md`
 - `docs/design/dovetail-engine/semiring-extraction-plan.md`
 - `docs/design/dovetail-engine/m-rho-0-implementation-plan.md`
+- `docs/architecture/dovetail/10-runtime-facing-reports.md`
 - `docs/architecture/rho-native-integration/README.md`
 - `prattail/docs/theory/formal-verification/coverage-matrix.md`
 

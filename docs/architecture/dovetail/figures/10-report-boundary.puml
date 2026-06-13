@@ -1,0 +1,75 @@
+@startuml
+title Dovetail Runtime-Facing Report Boundary
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.4
+skinparam defaultFontColor #111827
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam componentStyle rectangle
+
+rectangle "Rewrite Inputs" as Inputs #DBEAFE {
+  rectangle "Typed seed term" as Seed #BFDBFE
+  rectangle "Rewrite rules" as Rules #BFDBFE
+  rectangle "Weights and bounds" as Bounds #BFDBFE
+}
+
+rectangle "Dovetail Core" as Core #DCFCE7 {
+  rectangle "Equality saturation\nSatReport" as Saturation #BBF7D0
+  rectangle "Checked extraction\nExtraction<Vec<Derivation>>" as Extraction #BBF7D0
+  rectangle "Report builder\nreport_from_extraction" as Builder #BBF7D0
+}
+
+rectangle "DovetailRunReport" as Report #FEF3C7 {
+  rectangle "roots\nexact ContentKeys" as Roots #FDE68A
+  rectangle "terms\nunique term records" as Terms #FDE68A
+  rectangle "derivation_edges\nordered child uses" as Edges #FDE68A
+  rectangle "completeness\nComplete or BoundedByCycleCut" as Completeness #FDE68A
+}
+
+rectangle "Proof Boundary" as Proof #EDE9FE {
+  rectangle "root order preserved" as RootProof #DDD6FE
+  rectangle "term keys deduplicated" as TermProof #DDD6FE
+  rectangle "bounded is not complete" as BoundedProof #DDD6FE
+}
+
+rectangle "Consumers" as Consumers #FCE7F3 {
+  rectangle "Rho backend\nrhoapi::Par lowering" as Rho #FBCFE8
+  rectangle "Ascent oracle\nexact-key comparison" as Oracle #FBCFE8
+  rectangle "Tests and tools\nedge inspection" as Tools #FBCFE8
+}
+
+Seed --> Saturation : insert exact node
+Rules --> Saturation : match and instantiate
+Bounds --> Saturation : stop conditions
+Saturation --> Extraction : saturated e-graph
+Extraction --> Builder : derivations plus terminal status
+Builder --> Roots
+Builder --> Terms
+Builder --> Edges
+Builder --> Completeness
+Roots --> RootProof
+Terms --> TermProof
+Completeness --> BoundedProof
+RootProof --> Rho : complete reports only
+TermProof --> Oracle : exact identities
+Edges --> Tools : ordered structure
+BoundedProof --> Rho : reject bounded observations
+
+note right of Report #FFFBEB
+  Report means checked artifact,
+  not prose log and not Ascent facts.
+end note
+
+legend bottom
+  Blue: inputs
+  Green: Dovetail execution
+  Yellow: report payload
+  Purple: proved invariants
+  Pink: downstream consumers
+endlegend
+@enduml

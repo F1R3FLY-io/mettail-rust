@@ -24,6 +24,10 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | SCC | Strongly connected component in the e-class dependency graph. |
 | extraction | Enumeration of derivation trees from an e-class. |
 | derivation | A chosen e-node plus one derivation for each child e-class. |
+| report | A runtime-facing, proof-preserving artifact built from checked extraction output. |
+| report consumer | An adapter or oracle that reads a report without depending on Dovetail internals. |
+| term record | A unique derivation node recorded once in a report under its exact `ContentKey`. |
+| derivation edge | A report edge from parent key to child key, preserving child order and repeated child uses. |
 | cycle cut | A recursion guard that prevents infinite enumeration through a back-edge. |
 | completeness | Terminal metadata saying whether extracted output is exhaustive or bounded by a cycle cut. |
 | tuple-space seam | Generic `TupleSpace` and `Match` traits used to model rendezvous without depending on RSpace. |
@@ -55,6 +59,10 @@ The derivation completeness contract is:
 The bounded cyclic contract is:
 
 `BoundedByCycleCut(q) ⇒ emitted(q) ⊆ { d ∈ D(q) | weight(d) ≠ 0̄ }`
+
+The report completeness contract is:
+
+`ReportComplete(r) ⇔ completeness(r) = Complete`
 
 ## Naming Boundaries
 
