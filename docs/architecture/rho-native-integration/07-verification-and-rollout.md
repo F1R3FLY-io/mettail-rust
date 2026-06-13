@@ -26,6 +26,7 @@ The current proof and coverage sources are
 | host Rho-machine reuse | `HostRhoMachineReuse.v` | proved accepted backend plans include host Rholang/RSpace and exclude custom reducer, tuple-space, matcher, and replay components |
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
+| exact rejected-rule delegation | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set, delegated rejection evidence names exactly the rejected rule set, and omitted or stale delegated rules block the default-backend gate |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, and generated-backend rejection of source-text artifacts |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
@@ -48,9 +49,9 @@ The current proof and coverage sources are
 
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
-guards, ambiguity preservation, cost-axis separation, normalized-`Par`
-well-formedness, source-text artifact exclusion, backend flip gating, and
-fail-closed runtime dispatch.
+guards, ambiguity preservation, cost-axis separation, exact rejected-rule
+delegation, normalized-`Par` well-formedness, source-text artifact exclusion,
+backend flip gating, and fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
 than an Ascent-shaped success value. The handoff proof requires complete
 reports before emitting Rho-visible observations, preserves the extractor root
@@ -253,10 +254,12 @@ and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the
 shape proof for the current scalar-contract `Par` fragment, `RhoArtifactBoundary.v`
 proves source-text artifacts are not accepted generated-backend artifacts, and
 the Rust validator is the executable gate for generated artifacts.
-`RhoBackendFlipGate.v` also models the Rust
-default-backend planner's coverage wrapper: every scalar-lowering rejection must
-be covered by an exact delegated-rule claim, and stale delegation claims block
-the plan. Its
+`RhoRejectedCoverage.v` proves the Rust default-backend planner's exact
+coverage wrapper at the rule-identity level: `AllRulesLowered` is valid only
+when the rejected set is empty, delegated evidence is valid only when the
+delegated rule set equals the rejected rule set, and either an omitted rejection
+or a stale delegated rule blocks the default-backend gate. `RhoBackendFlipGate.v`
+also models the coverage counters consumed by the flip gate. Its
 `deadlock_diagnostic_blocks_flip` theorem models the codegen analyzer output:
 any non-empty channel-deadlock diagnostic list makes `NoNewDeadlocks(L)` false.
 The `clean_deadlock_report_reduces_to_other_gates` theorem proves that an empty

@@ -132,6 +132,9 @@ rocq-rho-bridge: require-capped
 rocq-rho-bridge-artifact-boundary: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoArtifactBoundary.vo
 
+rocq-rho-bridge-rejected-coverage: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/RhoRejectedCoverage.vo
+
 process-rho-generated-check: require-capped
 	python3 process/rho_comm_slice.py --check
 
