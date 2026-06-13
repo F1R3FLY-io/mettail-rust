@@ -34,16 +34,28 @@ Section RhocalcAstLowering.
     | PInput1 : Name -> Proc -> Proc
     | PInput2 : Name -> Name -> Proc -> Proc
     | PString : Value -> Proc
+    | PList : ProcList -> Proc
+    | PMap : ProcPairList -> Proc
+    | PBag : ProcList -> Proc
     | PBoundProc : nat -> Proc
   with Name : Type :=
     | NQuote : Proc -> Name
     | NFree : Channel -> Name
-    | NBound : nat -> Name.
+    | NBound : nat -> Name
+  with ProcList : Type :=
+    | ProcNil : ProcList
+    | ProcCons : Proc -> ProcList -> ProcList
+  with ProcPairList : Type :=
+    | ProcPairNil : ProcPairList
+    | ProcPairCons : Proc -> Proc -> ProcPairList -> ProcPairList.
 
   Scheme Proc_ind' := Induction for Proc Sort Prop
-  with Name_ind' := Induction for Name Sort Prop.
+  with Name_ind' := Induction for Name Sort Prop
+  with ProcList_ind' := Induction for ProcList Sort Prop
+  with ProcPairList_ind' := Induction for ProcPairList Sort Prop.
 
-  Combined Scheme proc_name_ind from Proc_ind', Name_ind'.
+  Combined Scheme proc_name_list_pair_ind
+    from Proc_ind', Name_ind', ProcList_ind', ProcPairList_ind'.
 
   Inductive Ast : Type :=
     | ANil : Ast
@@ -53,6 +65,8 @@ Section RhocalcAstLowering.
     | ASend : Ast -> Ast -> Ast
     | AReceive : list Ast -> Ast -> Ast
     | ANew : nat -> Ast -> Ast
+    | AList : list Ast -> Ast
+    | AMap : list (Ast * Ast) -> Ast
     | APar : Ast -> Ast -> Ast.
 
   Inductive Artifact : Type :=
@@ -72,6 +86,13 @@ Section RhocalcAstLowering.
   Definition bind_index (bind_count formal_index : nat) : nat :=
     bind_count - S formal_index.
 
+  Definition lower_result_pair
+      (key_result value_result : LowerResult) : option (Ast * Ast) :=
+    match key_result, value_result with
+    | Lowered key_ast, Lowered value_ast => Some (key_ast, value_ast)
+    | _, _ => None
+    end.
+
   Fixpoint lookup_ast (index : nat) (env : list Ast) : Ast :=
     match index, env with
     | 0, value :: _ => value
@@ -90,6 +111,9 @@ Section RhocalcAstLowering.
     | AReceive channels body =>
         AReceive (map (subst_ast env) channels) body
     | ANew count body => ANew count body
+    | AList items => AList (map (subst_ast env) items)
+    | AMap pairs =>
+        AMap (map (fun '(key, value) => (subst_ast env key, subst_ast env value)) pairs)
     | APar lhs rhs => APar (subst_ast env lhs) (subst_ast env rhs)
     end.
 
@@ -123,6 +147,17 @@ Section RhocalcAstLowering.
         | _, _, _ => Rejected
         end
     | PString value => Lowered (AValue value)
+    | PList items =>
+        match lower_proc_list items with
+        | Some asts => Lowered (AList asts)
+        | None => Rejected
+        end
+    | PMap pairs =>
+        match lower_proc_pairs pairs with
+        | Some asts => Lowered (AMap asts)
+        | None => Rejected
+        end
+    | PBag _ => Rejected
     | PBoundProc index => Lowered (ABound index)
     end
   with lower_name (name : Name) : LowerResult :=
@@ -130,6 +165,25 @@ Section RhocalcAstLowering.
     | NQuote body => lower_proc body
     | NFree channel => Lowered (AChan channel)
     | NBound index => Lowered (ABound index)
+    end
+  with lower_proc_list (items : ProcList) : option (list Ast) :=
+    match items with
+    | ProcNil => Some []
+    | ProcCons item rest =>
+        match lower_proc item, lower_proc_list rest with
+        | Lowered item_ast, Some rest_ast => Some (item_ast :: rest_ast)
+        | _, _ => None
+        end
+    end
+  with lower_proc_pairs (pairs : ProcPairList) : option (list (Ast * Ast)) :=
+    match pairs with
+    | ProcPairNil => Some []
+    | ProcPairCons key value rest =>
+        match lower_result_pair (lower_proc key) (lower_proc value),
+              lower_proc_pairs rest with
+        | Some pair_ast, Some rest_ast => Some (pair_ast :: rest_ast)
+        | _, _ => None
+        end
     end.
 
   Definition lower_artifact (proc : Proc) : option Artifact :=
@@ -168,6 +222,33 @@ Section RhocalcAstLowering.
     intros proc ast Hlower.
     simpl. exact Hlower.
   Qed.
+
+  Theorem list_literal_lowering_preserves_order :
+    forall lhs rhs lhs_ast rhs_ast,
+      lower_proc lhs = Lowered lhs_ast ->
+      lower_proc rhs = Lowered rhs_ast ->
+      lower_proc (PList (ProcCons lhs (ProcCons rhs ProcNil))) =
+        Lowered (AList [lhs_ast; rhs_ast]).
+  Proof.
+    intros lhs rhs lhs_ast rhs_ast Hlhs Hrhs.
+    simpl. rewrite Hlhs, Hrhs. reflexivity.
+  Qed.
+
+  Theorem map_literal_lowering_preserves_key_value_pairs :
+    forall key value key_ast value_ast,
+      lower_proc key = Lowered key_ast ->
+      lower_proc value = Lowered value_ast ->
+      lower_proc (PMap (ProcPairCons key value ProcPairNil)) =
+        Lowered (AMap [(key_ast, value_ast)]).
+  Proof.
+    intros key value key_ast value_ast Hkey Hvalue.
+    simpl. rewrite Hkey, Hvalue. reflexivity.
+  Qed.
+
+  Theorem bag_literal_lowering_is_fail_closed :
+    forall items,
+      lower_proc (PBag items) = Rejected.
+  Proof. intros items. reflexivity. Qed.
 
   Theorem one_input_comm_lowering_fires_payload :
     forall channel payload payload_ast,

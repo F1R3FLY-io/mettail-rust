@@ -7,13 +7,13 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use mettail_languages::rhocalc::{Name, Proc};
+use mettail_languages::rhocalc::{List, Map, Name, Proc};
 use mettail_runtime::{Binder, FreeVar, OrdVar, Var};
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::utils::{
-    new_boundvar_par, new_freevar_par, new_gbigint_expr, new_gbigrat_expr, new_gbool_par,
-    new_gdouble_expr, new_gfixedpoint_expr, new_gint_par, new_gstring_par, new_new_par,
-    new_receive_par, new_send_par, union,
+    new_boundvar_par, new_elist_par, new_emap_par, new_freevar_par, new_gbigint_expr,
+    new_gbigrat_expr, new_gbool_par, new_gdouble_expr, new_gfixedpoint_expr, new_gint_par,
+    new_gstring_par, new_key_value_pair, new_new_par, new_receive_par, new_send_par, union,
 };
 
 const FREE_NAME_PREFIX: &str = "mtl:";
@@ -166,10 +166,60 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             .try_eval()
             .map(|value| new_gint_par(i64::from(value), Vec::new(), false))
             .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground u32 process")),
-        Proc::CastList(_) => Err(RhocalcAstLowerError::UnsupportedProc("list literal process")),
+        Proc::CastList(value) => lower_list(value.as_ref(), env),
         Proc::CastBag(_) => Err(RhocalcAstLowerError::UnsupportedProc("bag literal process")),
-        Proc::CastMap(_) => Err(RhocalcAstLowerError::UnsupportedProc("map literal process")),
+        Proc::CastMap(value) => lower_map(value.as_ref(), env),
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
+    }
+}
+
+fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    match list {
+        List::ListLit(items) => {
+            let items = items
+                .iter()
+                .map(|item| lower_proc(item, env))
+                .collect::<Result<Vec<_>, _>>()?;
+            let locally_free = locally_free_union(&items);
+            Ok(new_elist_par(
+                items,
+                locally_free.clone(),
+                false,
+                None,
+                locally_free,
+                false,
+            ))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list process")),
+    }
+}
+
+fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    match map {
+        Map::MapLit(entries) => {
+            let mut pairs = Vec::with_capacity(entries.len());
+            let mut locally_free = Vec::new();
+
+            for (key, value) in entries.iter() {
+                let key = lower_proc(key, env)?;
+                let value = lower_proc(value, env)?;
+                locally_free = union(
+                    locally_free,
+                    union(key.locally_free.clone(), value.locally_free.clone()),
+                );
+                pairs.push(new_key_value_pair(key, value));
+            }
+
+            Ok(new_emap_par(
+                pairs,
+                locally_free.clone(),
+                false,
+                None,
+                locally_free,
+                false,
+            ))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map process")),
     }
 }
 
@@ -247,6 +297,12 @@ fn send_par(channel: Par, data: Vec<Par>) -> Par {
         .iter()
         .fold(channel.locally_free.clone(), |acc, item| union(acc, item.locally_free.clone()));
     new_send_par(channel, data, false, locally_free.clone(), false, locally_free, false)
+}
+
+fn locally_free_union(parts: &[Par]) -> Vec<u8> {
+    parts
+        .iter()
+        .fold(Vec::new(), |acc, part| union(acc, part.locally_free.clone()))
 }
 
 fn expr_par(expr: Expr) -> Par {
