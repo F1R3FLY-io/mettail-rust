@@ -19,6 +19,7 @@ use mettail_rho_runtime::PlannedRhoBackend;
 use mettail_runtime::Language;
 use models::rhoapi::Par;
 use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
+use std::collections::BTreeSet;
 
 const CALC_RUN_FRAGMENT: &str = r#"
     name: CalcRun,
@@ -85,12 +86,12 @@ async fn rho_binary(backend: &PlannedRhoBackend, op: &str, a: i64, b: i64) -> i6
         Vec::new(),
         false,
     );
-    let result = backend
-        .run_with_call_and_read_ints(&call, "OUT")
+    let report = backend
+        .run_with_call_and_observe_ints(&call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("rho {op}({a},{b}): {e}"));
-    assert_eq!(result.len(), 1, "rho {op}({a},{b}) must yield exactly one int");
-    result[0]
+    assert_eq!(report.observed_count(), 1, "rho {op}({a},{b}) must yield exactly one int");
+    report.values[0]
 }
 
 #[tokio::test]
@@ -111,8 +112,10 @@ async fn rho_backend_agrees_with_ascent_on_calculator_int_ops() {
     for &(input, op, a, b) in cases {
         let ascent = ascent_normal_forms(&lang, input);
         let rho = rho_binary(&backend, op, a, b).await;
+        let rho_fingerprint = BTreeSet::from([rho.to_string()]);
+        let ascent_fingerprint: BTreeSet<_> = ascent.iter().cloned().collect();
         assert!(
-            ascent.contains(&rho.to_string()),
+            rho_fingerprint.is_subset(&ascent_fingerprint),
             "DIVERGENCE on `{input}`: rho-backend = {rho}, Ascent normal forms = {ascent:?}"
         );
     }

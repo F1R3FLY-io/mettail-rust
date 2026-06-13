@@ -35,7 +35,7 @@
 
 pub mod backend;
 pub mod run;
-pub use backend::PlannedRhoBackend;
+pub use backend::{PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport};
 #[allow(deprecated)]
 pub use run::{
     run_and_read_ints, run_and_read_strings, run_par, run_par_and_read_ints,

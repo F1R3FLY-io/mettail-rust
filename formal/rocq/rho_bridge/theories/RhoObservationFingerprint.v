@@ -12,9 +12,11 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
-From Stdlib Require Import List.
 From Stdlib Require Import Bool.
+From Stdlib Require Import Lia.
+From Stdlib Require Import List.
 From Stdlib Require Import PeanoNat.
+From Stdlib Require Import Sorting.Permutation.
 
 Import ListNotations.
 
@@ -30,6 +32,12 @@ Section RhoObservationFingerprint.
 
   Definition fingerprint_equiv (left right : list Fact) : Prop :=
     forall x, fingerprint left x = fingerprint right x.
+
+  Definition multiplicity (facts : list Fact) (x : Fact) : nat :=
+    count_occ Nat.eq_dec facts x.
+
+  Definition multiplicity_fingerprint_equiv (left right : list Fact) : Prop :=
+    forall x, multiplicity left x = multiplicity right x.
 
   Theorem fingerprint_exact : forall facts x,
     fingerprint facts x = true <-> In x facts.
@@ -68,6 +76,55 @@ Section RhoObservationFingerprint.
       + apply fingerprint_exact in Hl. symmetry. apply fingerprint_exact. apply Hset. exact Hl.
       + apply fingerprint_false_exact in Hl. symmetry. apply fingerprint_false_exact.
         intro Hin. apply Hl. apply Hset. exact Hin.
+  Qed.
+
+  Theorem multiplicity_positive_exact : forall facts x,
+    multiplicity facts x > 0 <-> In x facts.
+  Proof.
+    induction facts as [| y ys IH]; intros x.
+    - unfold multiplicity. simpl. split; [lia | intros []].
+    - unfold multiplicity. simpl.
+      destruct (Nat.eq_dec y x) as [Heq | Hneq].
+      + split.
+        * intros _. left. exact Heq.
+        * intros _. lia.
+      + split.
+        * intro Hpos. right. apply IH. unfold multiplicity. exact Hpos.
+        * intros [Heq | Hin].
+          -- contradiction.
+          -- apply IH in Hin. unfold multiplicity in Hin. exact Hin.
+  Qed.
+
+  Theorem multiplicity_permutation_exact : forall left right,
+    Permutation left right ->
+    multiplicity_fingerprint_equiv left right.
+  Proof.
+    intros left right Hperm.
+    induction Hperm as
+      [| y left right Hperm IH
+       | y z rest
+       | left middle right Hleft IHleft Hright IHright].
+    - intros x. reflexivity.
+    - intros x. unfold multiplicity. simpl.
+      destruct (Nat.eq_dec y x).
+      + rewrite IH. reflexivity.
+      + rewrite IH. reflexivity.
+    - intros x. unfold multiplicity. simpl.
+      destruct (Nat.eq_dec z x); destruct (Nat.eq_dec y x); lia.
+    - intros x. transitivity (multiplicity middle x).
+      + apply IHleft.
+      + apply IHright.
+  Qed.
+
+  Theorem multiplicity_keeps_duplicate_observations : forall facts f,
+    multiplicity (f :: f :: facts) f = S (S (multiplicity facts f)).
+  Proof.
+    intros facts f. unfold multiplicity. simpl.
+    destruct (Nat.eq_dec f f) as [_ | Hneq].
+    - destruct (Nat.eq_dec f f) as [_ | Hneq].
+      + reflexivity.
+      + contradiction.
+    - contradiction.
   Qed.
 
   Theorem insert_exact_membership : forall facts f x,

@@ -229,9 +229,9 @@ pub async fn run_rholang_source_for_oracle(program: &str) -> Result<(), String> 
 /// Build an in-memory `RhoRuntime` and inject a validated generated artifact to
 /// quiescence.
 ///
-/// This is the generated-backend execution path. It bypasses Rholang source
-/// parsing and feeds the validated artifact directly to f1r3node's Rho
-/// interpreter.
+/// This is the raw shape-validated artifact path used by oracle/debug helpers.
+/// Generated backend execution should prefer `PlannedRhoBackend`, which carries
+/// the flip-gated `RhoDefaultBackendPlan`.
 pub async fn run_validated_program(program: &ValidatedRhoProgram) -> Result<(), String> {
     evaluate_validated_program(program).await.map(|_| ())
 }
@@ -239,8 +239,10 @@ pub async fn run_validated_program(program: &ValidatedRhoProgram) -> Result<(), 
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact
 /// composed with a dynamic call process, and evaluate to quiescence.
 ///
-/// The static generated backend artifact is validation-gated. The call `Par` is
-/// dynamic input supplied by the caller/runtime frontend.
+/// The static artifact is shape-validated. The call `Par` is dynamic input
+/// supplied by the caller/runtime frontend. Generated backend execution should
+/// prefer `PlannedRhoBackend`, which carries the flip-gated
+/// `RhoDefaultBackendPlan`.
 pub async fn run_validated_program_with_call(
     program: &ValidatedRhoProgram,
     call: &Par,
@@ -272,6 +274,9 @@ pub async fn run_rholang_source_for_oracle_and_read_ints(
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact to
 /// quiescence, and return every ground integer left resting on the quoted
 /// channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
 pub async fn run_validated_program_and_read_ints(
     program: &ValidatedRhoProgram,
     out_channel: &str,
@@ -282,6 +287,9 @@ pub async fn run_validated_program_and_read_ints(
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact
 /// composed with a dynamic call process, and return every ground integer left
 /// resting on the quoted channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
 pub async fn run_validated_program_with_call_and_read_ints(
     program: &ValidatedRhoProgram,
     call: &Par,
@@ -313,6 +321,9 @@ pub async fn run_rholang_source_for_oracle_and_read_strings(
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact to
 /// quiescence, and return every ground string left resting on the quoted channel
 /// `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
 pub async fn run_validated_program_and_read_strings(
     program: &ValidatedRhoProgram,
     out_channel: &str,
@@ -323,6 +334,9 @@ pub async fn run_validated_program_and_read_strings(
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact
 /// composed with a dynamic call process, and return every ground string left
 /// resting on the quoted channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
 pub async fn run_validated_program_with_call_and_read_strings(
     program: &ValidatedRhoProgram,
     call: &Par,

@@ -13,9 +13,10 @@ use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
     plan_rho_default_backend, RhoArtifactKind, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
-use mettail_rho_runtime::PlannedRhoBackend;
+use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
 use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
+use std::collections::{BTreeMap, BTreeSet};
 
 // The calculator's Int scalar-op fragment, body-less (the lowering keys on the
 // concrete-syntax operator + operand types). Every rule here lowers to a Rholang
@@ -113,18 +114,26 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
     ];
     for &(op, a, b, expected) in cases {
         let call = binary_call(op, a, b);
-        let result = backend
-            .run_with_call_and_read_ints(&call, "OUT")
+        let report = backend
+            .run_with_call_and_observe_ints(&call, "OUT")
             .await
             .unwrap_or_else(|e| panic!("{op}({a},{b}) failed to run: {e}"));
-        assert_eq!(result, vec![expected], "{op}({a}, {b}) on RhoRuntime");
+        assert_eq!(report.boundary, RhoExecutionBoundary::PlannedDefaultBackend);
+        assert_eq!(report.artifact_kind, RhoArtifactKind::NormalizedAst);
+        assert_eq!(report.channel, "OUT");
+        assert_eq!(report.values, vec![expected], "{op}({a}, {b}) on RhoRuntime");
+        assert_eq!(report.observed_count(), 1);
+        assert_eq!(report.membership_fingerprint(), BTreeSet::from([expected]));
+        assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(expected, 1_usize)]));
     }
 
     // Unary negation.
     let call = unary_call("Neg", 7);
-    let result = backend
-        .run_with_call_and_read_ints(&call, "OUT")
+    let report = backend
+        .run_with_call_and_observe_ints(&call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("Neg(7) failed to run: {e}"));
-    assert_eq!(result, vec![-7], "Neg(7) on RhoRuntime");
+    assert_eq!(report.values, vec![-7], "Neg(7) on RhoRuntime");
+    assert_eq!(report.membership_fingerprint(), BTreeSet::from([-7]));
+    assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(-7, 1_usize)]));
 }

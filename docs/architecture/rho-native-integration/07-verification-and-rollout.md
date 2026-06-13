@@ -30,7 +30,7 @@ The current proof and coverage sources are
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
-| resting-space fingerprint | `RhoObservationFingerprint.v` | proved exact-key fingerprints are membership-exact and order-insensitive |
+| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `mettail-rho-runtime::RhoObservationReport` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
 | call-by-need observation | `RhoCallByNeedObservation.v` | proved thunk forcing and memoization preserve weak source observation |
@@ -56,6 +56,11 @@ survive until the Rho adapter explicitly handles them.
 Generated Rho execution now starts from `PlannedRhoBackend`, which wraps the
 `RhoDefaultBackendPlan` produced by the flip gate; raw validated artifacts remain
 available for oracle/debug helpers only.
+Generated Rho observations now use `RhoObservationReport<T>` rather than
+`AscentResults`: the report carries the planned execution boundary, the artifact
+kind, the observed channel, the read-order values, an order-insensitive
+set-membership fingerprint for set-semantics oracle comparison, and an
+order-insensitive counted fingerprint for bag-sensitive observations.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
@@ -266,6 +271,8 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::RhoDefaultBackendPlan`
 - `mettail_rho_codegen::RhoDefaultBackendPlanError`
 - `mettail_rho_runtime::PlannedRhoBackend`
+- `mettail_rho_runtime::RhoObservationReport`
+- `mettail_rho_runtime::RhoExecutionBoundary`
 - `mettail_rho_codegen::RhoProgram`
 - `mettail_rho_codegen::validate_rho_program`
 - `mettail_rho_codegen::RhoValidationError`
@@ -406,7 +413,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`, and source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; observations return `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 
