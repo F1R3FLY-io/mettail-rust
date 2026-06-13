@@ -142,6 +142,9 @@ rocq-rho-bridge-rejected-coverage: require-capped
 rocq-rho-bridge-schedule-family: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoCommScheduleFamily.vo
 
+rocq-rho-bridge-cbn-budget: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/RhoCallByNeedBudget.vo
+
 process-rho-generated-check: require-capped
 	python3 process/rho_comm_slice.py --check
 

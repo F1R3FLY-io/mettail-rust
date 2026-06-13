@@ -58,6 +58,9 @@ The capped entry point runs:
   compatibility alias). The mCRL2, Maude, and TLA+ files are generated from
   `formal/process/rho_comm_slice.json`, and the formal targets run
   `formal/process/rho_comm_slice.py --check` before model checking.
+- focused Rho bridge targets:
+  `rocq-rho-bridge-artifact-boundary`, `rocq-rho-bridge-rejected-coverage`,
+  `rocq-rho-bridge-schedule-family`, and `rocq-rho-bridge-cbn-budget`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests

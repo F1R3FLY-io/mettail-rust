@@ -100,7 +100,7 @@ impl RhoDefaultBackendPlan {
 /// Rejected Rho-default plan with complete diagnostic state for callers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoDefaultBackendPlanError {
-    pub lowering: RhoLowering,
+    pub lowering: Box<RhoLowering>,
     pub decision: RhoFlipDecision,
     pub uncovered_rejections: Vec<String>,
     pub extraneous_delegations: Vec<String>,
@@ -142,7 +142,7 @@ pub fn plan_rho_default_backend(
         })
     } else {
         Err(RhoDefaultBackendPlanError {
-            lowering,
+            lowering: Box::new(lowering),
             decision,
             uncovered_rejections,
             extraneous_delegations,

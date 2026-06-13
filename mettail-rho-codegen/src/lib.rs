@@ -27,10 +27,11 @@
 //! supported native scalar subset, records every unsupported rule as an explicit
 //! rejection, and keeps Rholang-looking text only as a reader/debug annotation.
 //! `plan_rho_default_backend` then ties that lowering to proof, oracle, coverage,
-//! and deadlock evidence before returning the concrete backend plan. The
-//! totality-or-explicit-rejection proof is
-//! `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the flip-gate
-//! proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
+//! artifact-validation, scheduler-fairness, and deadlock evidence before
+//! returning the concrete backend plan. Generic call-by-need admission is bounded
+//! by explicit lookahead and heap budgets. The totality-or-explicit-rejection
+//! proof is `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the
+//! flip-gate proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
 
 #![forbid(unsafe_code)]
 
@@ -38,6 +39,7 @@ pub mod backend;
 pub mod deadlock;
 pub mod flip;
 pub mod lower;
+pub mod need;
 pub mod validate;
 pub use backend::{
     plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
@@ -49,6 +51,10 @@ pub use deadlock::{
 };
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use lower::{lower_language_def, RhoArtifactKind, RhoAstProgram, RhoLowering, RhoProgram};
+pub use need::{
+    admit_call_by_need_force, CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker,
+    CallByNeedForce,
+};
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,
 };

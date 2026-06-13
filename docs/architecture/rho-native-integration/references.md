@@ -258,6 +258,7 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/RhoObservationFingerprint.v`
 - `formal/rocq/rho_bridge/theories/AmbiguityWitnessEnumeration.v`
 - `formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v`
+- `formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v`
 - `formal/rocq/rho_bridge/theories/DeltaOneMinCostJoin.v`
 - `formal/rocq/rho_bridge/theories/GuardedCommSoundness.v`
 - `formal/rocq/rho_bridge/theories/AmbiguitySetPreservation.v`
@@ -269,7 +270,8 @@ Used for: current M-RHO proof coverage from one-way bridge shape through
 Rho-machine reuse, exact rejected-rule delegation, normalized-`Par` validation,
 generated-backend source-text exclusion, COMM correspondence, exact observation,
 guard behavior, ambiguity preservation, cost separation, arity-parametric
-independent-redex COMM schedules, and backend flip gating.
+independent-redex COMM schedules, call-by-need budget admission, and backend
+flip gating.
 
 ### RHO-PROCESS-FORMAL
 

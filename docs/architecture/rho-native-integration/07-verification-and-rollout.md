@@ -34,7 +34,7 @@ The current proof and coverage sources are
 | resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `mettail-rho-runtime::RhoObservationReport` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
-| call-by-need observation | `RhoCallByNeedObservation.v` | proved thunk forcing and memoization preserve weak source observation |
+| call-by-need observation and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, and bounded force admission respects lookahead and heap budgets |
 | Δ1 min-cost join | `DeltaOneMinCostJoin.v` | proved selected joins are present and cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
@@ -181,7 +181,22 @@ observes the same value as source evaluation, that a force miss memoizes the
 source value, that repeated force is observationally idempotent, and that a
 repeated force after a miss preserves the memo.
 
-Runtime gate:
+`RhoCallByNeedBudget.v` proves the bounded admission contract for
+`Lookahead[n] + HeapBudget`: zero lookahead blocks a force before observation,
+a memo hit consumes only lookahead, a memo miss consumes lookahead plus exactly
+one heap cell, a memo miss without heap budget blocks without changing the
+budget, every successful bounded force has passed admission, and every
+successful bounded observation still matches `source_eval(t)`.
+
+Rust/runtime gate:
+
+- `mettail_rho_codegen::admit_call_by_need_force` is the executable admission
+  contract mirrored by `RhoCallByNeedBudget.v`.
+- `mettail_rho_codegen::CallByNeedBudget` carries the remaining lookahead and
+  heap-cell budgets.
+- `mettail_rho_codegen::CallByNeedBudgetBlocker::LookaheadExceeded` and
+  `mettail_rho_codegen::CallByNeedBudgetBlocker::HeapBudgetExceeded` report the
+  explicit boundedness reason.
 
 - `rho_call_by_need::call_by_need_force_miss_memoizes_and_repeated_force_reuses_value`
   forces a cold lowered thunk twice and observes one compute marker plus two

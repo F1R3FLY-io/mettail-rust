@@ -36,8 +36,8 @@ is not:
 - full abstraction for all Rholang contexts;
 - strong bisimulation across thunk/force boundaries, because the proved
   call-by-need contract is weak observation equivalence;
-- a per-language production flip before that language's runtime oracle,
-  coverage, and deadlock gates pass;
+- a per-language production flip before that language's proof, runtime oracle,
+  coverage, artifact-validation, scheduler-fairness, and deadlock gates pass;
 - correctness of arbitrary user-written Rholang mixed into generated code.
 
 ## Definitions
@@ -395,7 +395,7 @@ stated backend-correctness theorem.
 | full abstraction | arbitrary Rholang contexts can observe or interfere beyond the generated boundary unless restricted |
 | finite complete enumeration of productive cyclic k-best spaces | `CyclicEnumerationImpossibility.v` proves a productive self-cycle has more derivations than any finite list can exhaust; Dovetail reports bounded cycle cuts explicitly |
 | host Rholang compiler correctness | the backend relies on the host compiler and verifies the bridge contract |
-| unconditional production flip for every language | the proved flip gate requires that language's oracle, coverage, and deadlock evidence |
+| unconditional production flip for every language | the proved flip gate requires that language's proof, oracle, coverage, artifact-validation, scheduler-fairness, and deadlock evidence |
 
 ## Proof Dependency Diagram
 

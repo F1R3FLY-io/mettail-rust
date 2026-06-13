@@ -25,6 +25,7 @@ theories/RhoGroundingAndNames.v
 theories/RhoObservationFingerprint.v
 theories/AmbiguityWitnessEnumeration.v
 theories/RhoCallByNeedObservation.v
+theories/RhoCallByNeedBudget.v
 theories/DeltaOneMinCostJoin.v
 theories/GuardedCommSoundness.v
 theories/AmbiguitySetPreservation.v
