@@ -68,8 +68,8 @@ The capped entry point runs:
   commutation and fail-closed duplicate/missing-purse rejects.
 - focused Rho bridge targets:
   `rocq-rho-bridge-artifact-boundary`, `rocq-rho-bridge-rejected-coverage`,
-  `rocq-rho-bridge-schedule-family`, `rocq-rho-bridge-cbn-budget`,
-  `rocq-rho-bridge-delta1-matching`,
+  `rocq-rho-bridge-lowering-boundary`, `rocq-rho-bridge-schedule-family`,
+  `rocq-rho-bridge-cbn-budget`, `rocq-rho-bridge-delta1-matching`,
   `rocq-rho-bridge-escrow-settlement`, and
   `rocq-rho-bridge-purse-determinism`
 - the critical Dovetail/Rho Rocq zero-admission gate:
