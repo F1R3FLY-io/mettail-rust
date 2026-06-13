@@ -234,8 +234,9 @@ where
         self
     }
 
-    /// True iff a back-edge was cut by the cycle guard (⟹ enumeration for some
-    /// class is sound but possibly incomplete). Always false for acyclic inputs.
+    /// True iff a back-edge was cut by the cycle guard (so finite enumeration
+    /// for some class is bounded by a productive cyclic derivation space).
+    /// Always false for acyclic inputs.
     pub fn had_cycle_cut(&self) -> bool {
         self.cycle_cut
     }

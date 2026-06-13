@@ -131,7 +131,7 @@ RhoNet form:
 
 `Contract("rule:double-neg", bind Fact("delta:Proc", Neg(Neg(x))), true, Send("delta:Proc", x))`
 
-Rholang sketch:
+Readable Rholang rendering:
 
 ```rholang
 contract @"mtl:rule:double-neg"(@term) = {
@@ -142,9 +142,10 @@ contract @"mtl:rule:double-neg"(@term) = {
 }
 ```
 
-The sketch is illustrative. The implementation constructs the equivalent
-normalized `Par` value directly. Text like the sketch may be stored as an
-annotation for logs and documents, but it is not parsed as the execution path.
+The rendering is documentation-only. The implementation constructs the
+equivalent normalized `Par` value directly. Text like the rendering may be
+stored as an annotation for logs and documents, but it is not parsed as the
+execution path.
 
 ## Example: Multi-Premise Rewrite as Join
 
