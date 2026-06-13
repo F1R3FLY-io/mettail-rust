@@ -259,13 +259,73 @@ fn declared_relation_head(line: &str) -> Option<&str> {
     .then_some(head)
 }
 
+#[derive(Debug)]
+struct RelationDecl {
+    head: String,
+    params: Vec<String>,
+}
+
+fn declared_relation(line: &str) -> Option<RelationDecl> {
+    let line = line.trim();
+    let marker = "relation ";
+    let marker_start = line.find(marker)?;
+    let after_marker = &line[marker_start + marker.len()..];
+    let open = after_marker.find('(')?;
+    let close = after_marker[open + 1..].find(')')? + open + 1;
+    let head = after_marker[..open].trim();
+    if head.is_empty()
+        || !head
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+
+    let params = split_relation_params(&after_marker[open + 1..close]);
+    Some(RelationDecl { head: head.to_owned(), params })
+}
+
+fn split_relation_params(params: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut angle_depth = 0usize;
+
+    for (idx, ch) in params.char_indices() {
+        match ch {
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            ',' if angle_depth == 0 => {
+                let param = params[start..idx].trim();
+                if !param.is_empty() {
+                    out.push(param.to_owned());
+                }
+                start = idx + ch.len_utf8();
+            },
+            _ => {},
+        }
+    }
+
+    let param = params[start..].trim();
+    if !param.is_empty() {
+        out.push(param.to_owned());
+    }
+    out
+}
+
+fn is_generated_category_relation(decl: &RelationDecl) -> bool {
+    let [payload_type] = decl.params.as_slice() else {
+        return false;
+    };
+    decl.head == payload_type.to_ascii_lowercase()
+}
+
 fn category_relation_heads_from_datalog(source: &str) -> BTreeSet<String> {
     let relation_prelude = source.split("// Category rules").next().unwrap_or(source);
     relation_prelude
         .lines()
-        .filter_map(declared_relation_head)
-        .filter(|head| *head != "step_term" && classify_datalog_head(head).is_none())
-        .map(ToOwned::to_owned)
+        .filter_map(declared_relation)
+        .filter(is_generated_category_relation)
+        .map(|decl| decl.head)
         .collect()
 }
 
@@ -320,6 +380,31 @@ fn classify_datalog_head(head: &str) -> Option<Requirement> {
     } else {
         None
     }
+}
+
+#[test]
+fn generated_category_heads_are_derived_from_relation_signatures() {
+    let source = r#"
+        ascent_source! {
+            sample_source:
+
+            // Relations
+            relation proc(Proc);
+            #[ds(crate::eqrel)] relation eq_proc(Proc, Proc);
+            #[ds(crate::dual_indexed)] relation rw_proc(Proc, Proc);
+            relation name(Name);
+            relation step_term(Proc);
+            #[ds(crate::dual_indexed)] relation ppar_contains(Proc, Proc);
+
+            // Category rules
+            proc(t) <-- proc(t);
+        }
+    "#;
+
+    assert_eq!(
+        category_relation_heads_from_datalog(source),
+        BTreeSet::from(["name".to_owned(), "proc".to_owned()])
+    );
 }
 
 fn rocq_requirement_name(requirement: Requirement) -> &'static str {
