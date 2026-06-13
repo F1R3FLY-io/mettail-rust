@@ -18,6 +18,7 @@ include ../../capped.mk
 check: check-generated prepare-tmp check-safety check-liveness
 
 check-generated:
+	$(PYTHON) "$(GENERATOR)" --self-test
 	$(PYTHON) "$(GENERATOR)" --check
 
 prepare-tmp:

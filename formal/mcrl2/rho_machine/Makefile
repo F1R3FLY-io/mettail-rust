@@ -20,6 +20,7 @@ include ../../capped.mk
 check: check-generated check-rho-formulas check-dovetail-formulas check-guard-formulas compare
 
 check-generated:
+	$(PYTHON) "$(GENERATOR)" --self-test
 	$(PYTHON) "$(GENERATOR)" --check
 
 $(BUILD_DIR):

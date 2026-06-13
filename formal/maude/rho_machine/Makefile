@@ -17,6 +17,7 @@ check: check-generated $(BUILD_DIR)/comm-schedule.log
 	$(PYTHON) "$(GENERATOR)" --check-maude-log "$(BUILD_DIR)/comm-schedule.log"
 
 check-generated:
+	$(PYTHON) "$(GENERATOR)" --self-test
 	$(PYTHON) "$(GENERATOR)" --check
 
 $(BUILD_DIR):
