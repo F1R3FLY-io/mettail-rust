@@ -5,10 +5,11 @@
 //!     its normal-form display strings, and
 //!   - the RHO backend: the lowered Rholang contract (mettail-rho-codegen) on a
 //!     real in-memory f1r3node RhoRuntime (mettail-rho-runtime),
-//! and asserts the rho result is among the Ascent normal forms (weight-erased =
-//! display-string comparison). This is the genuine two-backend differential the
-//! exactness proof `OracleQuotientEquivalence.v` underwrites — not a comparison
-//! against hand-written constants.
+//!
+//! The test asserts the rho result is among the Ascent normal forms
+//! (weight-erased = display-string comparison). This is the genuine two-backend
+//! differential the exactness proof `OracleQuotientEquivalence.v` underwrites —
+//! not a comparison against hand-written constants.
 
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;

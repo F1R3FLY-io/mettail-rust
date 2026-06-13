@@ -19,6 +19,9 @@
 //! `formal/rocq/rho_bridge/theories/BridgeInertness.v`.
 //!
 //! ## Contents
+//! - [`ambiguity`] — exact-key ambiguity witness collection: scheduler order
+//!   may choose execution order, not which enabled alternatives remain
+//!   observable.
 //! - [`delta1`] — Delta-one join-candidate selection and exact bipartite
 //!   matching with separate refutation and ordering axes.
 //! - [`gslt`] — `MettaGslt` (`GsltPresentation`, `CanonicalProgram = Par`),
@@ -41,12 +44,17 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ambiguity;
 pub mod conformance;
 pub mod delta1;
 pub mod gslt;
 pub mod logic;
 pub mod settlement;
 
+pub use ambiguity::{
+    ambiguity_observes_key, collect_enabled_ambiguity_witnesses, AmbiguityCandidate,
+    AmbiguityWitnessConflict, AmbiguityWitnessSet,
+};
 pub use delta1::{
     delta1_selects_index, delta1_selects_left_perfect_matching_indices,
     select_delta1_min_cost_left_perfect_matchings, select_delta1_minima, DeltaOneCandidate,

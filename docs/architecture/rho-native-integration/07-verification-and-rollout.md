@@ -250,6 +250,7 @@ Mechanized evidence:
 - `DeltaOneMinCostJoin.v`
 - `DeltaOneMinCostMatching.v`
 - `GuardedCommSoundness.v`
+- `AmbiguityWitnessEnumeration.v`
 - `AmbiguitySetPreservation.v`
 - `RhoCostAxisSeparation.v`
 - `RhoEscrowSettlement.v`
@@ -261,8 +262,13 @@ Rust adapter evidence:
 - `mettail_rho_adapter::DeltaOneCandidate`
 - `mettail_rho_adapter::DeltaOneMatchEdge`
 - `mettail_rho_adapter::DeltaOneMatching`
+- `mettail_rho_adapter::AmbiguityCandidate`
+- `mettail_rho_adapter::AmbiguityWitnessSet`
+- `mettail_rho_adapter::AmbiguityWitnessConflict`
 - `mettail_rho_adapter::select_delta1_minima`
 - `mettail_rho_adapter::select_delta1_min_cost_left_perfect_matchings`
+- `mettail_rho_adapter::collect_enabled_ambiguity_witnesses`
+- `mettail_rho_adapter::ambiguity_observes_key`
 - `mettail_rho_adapter::{reserve_escrow, commit_escrow, refund_escrow}`
 - `mettail_rho_adapter::{LocatedEscrowLedger, SettlementAction}`
 - `mettail_rho_adapter::delta1_selects_index`
@@ -278,6 +284,12 @@ Rust adapter evidence:
 - `delta1_matching_allows_unused_right_witnesses`
 - `delta1_matching_ignores_edges_outside_declared_frontier`
 - `delta1_matching_empty_frontier_has_empty_left_perfect_matching`
+- `ambiguity::collects_every_enabled_witness`
+- `ambiguity::schedule_order_preserves_observed_witness_set`
+- `ambiguity::exact_duplicate_witness_is_idempotent`
+- `ambiguity::duplicate_key_with_different_payload_is_rejected`
+- `ambiguity::disabled_conflicting_payload_is_ignored`
+- `ambiguity::observes_key_only_when_enabled_and_conflict_free`
 - `settlement::located_ledger_rejects_duplicate_purse_states`
 - `settlement::located_ledger_missing_purse_preserves_ledger`
 - `settlement::located_ledger_updates_only_matching_purse`
@@ -302,6 +314,12 @@ Acceptance:
 
 `cost_orders(c₁, c₂)` may rank enabled candidates but must not remove either
 candidate when their ordering costs are equal.
+
+`ambiguity_enabled(w)` inserts witness `w` into the exact-key witness set.
+Scheduler order may change the sequence in which witnesses arrive, but not the
+observed set. Exact duplicate witnesses are idempotent; the same exact key with
+a different payload rejects as `AmbiguityWitnessConflict` rather than
+overwriting one semantic alternative with another.
 
 `located(action)` first selects the unique purse named by the action. If no
 purse exists, the ledger is preserved with `MissingPurse`. If duplicate purse
