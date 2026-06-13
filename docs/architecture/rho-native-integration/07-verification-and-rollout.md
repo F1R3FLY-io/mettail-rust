@@ -108,11 +108,12 @@ start
 stop
 
 legend right
-  <#DBEAFE> shipped base
-  <#DCFCE7> first Rho-native semantics
-  <#FEF3C7> generic language support
-  <#FDE68A> cost and guard hardening
-  <#FCE7F3> production default
+|= Area |= Meaning |
+|<#DBEAFE> M-RHO.0 | bridge and scalar oracle |
+|<#DCFCE7> M-RHO.1 | Rho-native COMM semantics |
+|<#FEF3C7> M-RHO.2 | generic need encoding |
+|<#FDE68A> M-RHO.3 | cost, guards, ambiguity |
+|<#FCE7F3> M-RHO.4 | production default flip |
 endlegend
 @enduml
 ```

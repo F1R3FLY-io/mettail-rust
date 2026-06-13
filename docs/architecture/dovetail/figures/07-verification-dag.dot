@@ -24,6 +24,9 @@ digraph dovetail_verification {
   inside [label="SCC inside closure", fillcolor="#FDE68A"];
   reports [label="Runtime report bridge", fillcolor="#EDE9FE"];
   requirements [label="MeTTaIL requirement coverage", fillcolor="#FBCFE8"];
+  rust_tests [label="Rust example,\nexhaustive, property tests", fillcolor="#CCFBF1"];
+  formal_gates [label="Rocq / Why3 /\nCreusot gates", fillcolor="#F3E8FF"];
+  doc_validation [label="Documentation\nvalidation", fillcolor="#FFEDD5"];
   production [label="Dovetail production evidence", fillcolor="#FCE7F3"];
 
   exact_keys -> frontier;
@@ -33,6 +36,29 @@ digraph dovetail_verification {
   enumeration -> reports;
   cycles -> reports;
   inside -> frontier;
+  exact_keys -> rust_tests;
+  saturation -> rust_tests;
+  frontier -> rust_tests;
+  reports -> formal_gates;
+  requirements -> formal_gates;
   requirements -> production;
   reports -> production;
+  rust_tests -> production;
+  formal_gates -> production;
+  doc_validation -> production;
+
+  subgraph cluster_legend {
+    label="Color Key";
+    color="#D1D5DB";
+    style="rounded,dashed";
+    key_exact [label="identity", fillcolor="#DBEAFE"];
+    key_engine [label="engine facts", fillcolor="#DCFCE7"];
+    key_extract [label="extraction", fillcolor="#FEF3C7"];
+    key_cycles [label="cycles", fillcolor="#FDE68A"];
+    key_bridge [label="bridges", fillcolor="#EDE9FE"];
+    key_tests [label="tests", fillcolor="#CCFBF1"];
+    key_gates [label="formal gates", fillcolor="#F3E8FF"];
+    key_prod [label="production evidence", fillcolor="#FCE7F3"];
+    key_exact -> key_engine -> key_extract -> key_cycles -> key_bridge -> key_tests -> key_gates -> key_prod [style=invis];
+  }
 }

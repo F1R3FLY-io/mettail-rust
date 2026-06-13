@@ -52,10 +52,10 @@ Report --> Rho
 Report --> Tooling
 
 legend right
-|= Color |= Role |
-|<#DBEAFE> | inputs |
-|<#DCFCE7> | Dovetail-owned core |
-|<#FEF3C7> | rigail algebra |
-|<#FCE7F3> | downstream consumers |
+|= Area |= Role |
+|<#DBEAFE> Inputs | typed terms, rules, weights |
+|<#DCFCE7> Dovetail core | exact keys, e-graph, saturation, extraction |
+|<#FEF3C7> Algebra | semiring and Newton-SCC support |
+|<#FCE7F3> Consumers | oracle, Rho backend, local tooling |
 endlegend
 @enduml

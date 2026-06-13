@@ -113,12 +113,13 @@ RSpace -> Oracle : resting-space snapshot
 Oracle -> User : canonical result set
 
 legend right
-  <#E0F2FE> External input
-  <#DBEAFE> MeTTaIL frontend
-  <#DCFCE7> Dovetail semantics
-  <#FEF3C7> Rho lowering
-  <#FCE7F3> F1r3node runtime
-  <#EDE9FE> Observation/oracle
+|= Area |= Meaning |
+|<#E0F2FE> User | source snippet owner |
+|<#DBEAFE> MeTTaIL | parser and typed AST |
+|<#DCFCE7> Dovetail | rewrite semantics |
+|<#FEF3C7> Rho lowering | RhoNet and AST artifact |
+|<#FCE7F3> F1r3node | RhoRuntime and RSpace |
+|<#EDE9FE> Observation | oracle and result projection |
 endlegend
 @enduml
 ```

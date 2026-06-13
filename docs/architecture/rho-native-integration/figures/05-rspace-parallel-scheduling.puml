@@ -35,12 +35,13 @@ EmitFacts --> Quiescent : no new facts
 Quiescent --> [*]
 
 legend right
-  <#DBEAFE> installed contracts
-  <#FEF3C7> data arrival
-  <#DCFCE7> spatial matching
-  <#FDE68A> guard decision
-  <#FBCFE8> atomic commit
-  <#FCE7F3> rule body
-  <#EDE9FE> recursive delta
+|= Area |= Meaning |
+|<#DBEAFE> Contracts | persistent rule receives |
+|<#FEF3C7> Data | fact arrival |
+|<#DCFCE7> Match | spatial pattern search |
+|<#FDE68A> Guard | non-consuming decision |
+|<#FBCFE8> Commit | atomic consume step |
+|<#FCE7F3> Body | continuation execution |
+|<#EDE9FE> Delta | derived fact emission |
 endlegend
 @enduml

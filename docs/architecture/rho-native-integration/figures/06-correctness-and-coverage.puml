@@ -36,14 +36,15 @@ OC --> SP
 HR --> SP
 
 legend right
-  <#DBEAFE> coverage inputs
-  <#DCFCE7> Dovetail facts
-  <#BBF7D0> identity preservation
-  <#FEF3C7> Rho lowering
-  <#FDE68A> guard behavior
-  <#FBCFE8> parallel scheduling
-  <#EDE9FE> oracle
-  <#F3E8FF> host runtime boundary
-  <#FCE7F3> final theorem
+|= Area |= Meaning |
+|<#DBEAFE> Inventory | language coverage inputs |
+|<#DCFCE7> Dovetail | saturation facts |
+|<#BBF7D0> Identity | exact-key preservation |
+|<#FEF3C7> Lowering | RhoNet correctness |
+|<#FDE68A> Guards | atomic guard behavior |
+|<#FBCFE8> Parallelism | schedule independence |
+|<#EDE9FE> Oracle | observation correctness |
+|<#F3E8FF> Host | Rho-machine reuse boundary |
+|<#FCE7F3> Theorem | backend semantic preservation |
 endlegend
 @enduml

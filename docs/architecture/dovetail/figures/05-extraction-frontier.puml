@@ -11,22 +11,33 @@ skinparam activity {
 }
 
 start
-:Initialize class state;
-:Seed heap with zero-rank candidate\nfor each e-node;
+:Initialize class state; <<#DBEAFE>>
+:Seed heap with zero-rank candidate\nfor each e-node; <<#DCFCE7>>
 repeat
-  :Pop best candidate by\n(weight, exact key);
-  :Generate successors by bumping\none child rank at a time;
-  :Compose derivation tree;
+  :Pop best candidate by\n(weight, exact key); <<#FEF3C7>>
+  :Generate successors by bumping\none child rank at a time; <<#FDE68A>>
+  :Compose derivation tree; <<#EDE9FE>>
   if (cycle back-edge?) then (yes)
-    :Mark cycle cut;\nskip this candidate;
+    :Mark cycle cut;\nskip this candidate; <<#FFEDD5>>
   elseif (weight is zero?) then (yes)
-    :Treat as refuted;\nkeep successors available;
+    :Treat as refuted;\nkeep successors available; <<#FEE2E2>>
   elseif (exact key already emitted?) then (yes)
-    :Skip duplicate tree;
+    :Skip duplicate tree; <<#E5E7EB>>
   else (no)
-    :Emit derivation item;
+    :Emit derivation item; <<#BBF7D0>>
   endif
 repeat while (heap has candidates?) is (yes)
-:Return Done(completeness);
+:Return Done(completeness); <<#FCE7F3>>
 stop
+
+legend right
+|= Area |= Meaning |
+|<#DBEAFE> State | class-local stream state |
+|<#DCFCE7> Frontier | heap initialization |
+|<#FEF3C7> Ordering | best-first pop key |
+|<#FDE68A> Expansion | successor generation |
+|<#BBF7D0> Emission | valid distinct derivation |
+|<#FEE2E2> Refutation | zero-weight candidate |
+|<#FFEDD5> Boundary | cycle-cut completeness marker |
+endlegend
 @enduml

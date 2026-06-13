@@ -352,17 +352,25 @@ pub trait Language: Send + Sync {
     /// Backend used by user-facing evaluation when no backend is requested
     /// explicitly.
     ///
-    /// Generated languages inherit `Ascent` until their Dovetail/Rho flip gates
-    /// produce proof, oracle, coverage, artifact-validation, and deadlock
-    /// evidence strong enough to override this method.
+    /// Metadata must advertise only executable backends. When multiple metadata
+    /// entries are marked default, the first declaration wins, preserving the
+    /// language author's generated order.
     fn default_runtime_backend(&self) -> RuntimeBackend {
-        RuntimeBackend::Ascent
+        self.metadata()
+            .runtime_backends()
+            .iter()
+            .find(|capability| capability.is_default)
+            .map(|capability| capability.backend)
+            .unwrap_or(RuntimeBackend::Ascent)
     }
 
     /// Whether this language currently exposes the selected backend through the
     /// generic runtime trait.
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
-        matches!(backend, RuntimeBackend::Ascent)
+        self.metadata()
+            .runtime_backends()
+            .iter()
+            .any(|capability| capability.backend == backend)
     }
 
     /// Run the selected backend on a term and return results.
@@ -1165,6 +1173,7 @@ impl AscentResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BackendCapabilityDef;
 
     #[derive(Debug, Clone)]
     struct DispatchTerm;
@@ -1195,6 +1204,12 @@ mod tests {
 
     struct DispatchMetadata;
 
+    static DISPATCH_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
+        backend: RuntimeBackend::Ascent,
+        is_default: true,
+        evidence_refs: &["runtime-test:dispatch-ascent"],
+    }];
+
     impl LanguageMetadata for DispatchMetadata {
         fn name(&self) -> &'static str {
             "Dispatch"
@@ -1214,6 +1229,10 @@ mod tests {
 
         fn rewrites(&self) -> &'static [crate::metadata::RewriteDef] {
             &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            DISPATCH_BACKENDS
         }
     }
 
@@ -1240,6 +1259,152 @@ mod tests {
 
         fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
             Ok(AscentResults::empty())
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
+    struct RhoDispatchMetadata;
+
+    static RHO_DISPATCH_BACKENDS: &[BackendCapabilityDef] = &[
+        BackendCapabilityDef {
+            backend: RuntimeBackend::RhoMachine,
+            is_default: true,
+            evidence_refs: &[
+                "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v",
+                "runtime-test:rho-dispatch",
+            ],
+        },
+        BackendCapabilityDef {
+            backend: RuntimeBackend::Ascent,
+            is_default: false,
+            evidence_refs: &["runtime-test:ascent-oracle"],
+        },
+    ];
+
+    impl LanguageMetadata for RhoDispatchMetadata {
+        fn name(&self) -> &'static str {
+            "RhoDispatch"
+        }
+
+        fn types(&self) -> &'static [crate::metadata::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [crate::metadata::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [crate::metadata::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [crate::metadata::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            RHO_DISPATCH_BACKENDS
+        }
+    }
+
+    static RHO_DISPATCH_METADATA: RhoDispatchMetadata = RhoDispatchMetadata;
+
+    struct RhoDispatchLanguage;
+
+    impl Language for RhoDispatchLanguage {
+        fn name(&self) -> &'static str {
+            "RhoDispatch"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &RHO_DISPATCH_METADATA
+        }
+
+        fn parse_term(&self, _input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(DispatchTerm))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            Ok(AscentResults::empty())
+        }
+
+        fn run_with_backend(
+            &self,
+            backend: RuntimeBackend,
+            term: &dyn Term,
+        ) -> Result<AscentResults, String> {
+            match backend {
+                RuntimeBackend::Ascent => self.run_ascent(term),
+                RuntimeBackend::RhoMachine => Ok(AscentResults {
+                    all_terms: vec![TermInfo {
+                        term_id: 7,
+                        exact_key: None,
+                        display: "rho-default".to_string(),
+                        is_normal_form: true,
+                    }],
+                    rewrites: Vec::new(),
+                    equivalences: Vec::new(),
+                    custom_relations: HashMap::new(),
+                }),
+                other => {
+                    Err(format!("{} backend is not installed for language {}", other, self.name()))
+                },
+            }
         }
 
         fn create_env(&self) -> Box<dyn Any + Send + Sync> {
@@ -1343,6 +1508,7 @@ mod tests {
         let language = DispatchLanguage;
         let term = DispatchTerm;
 
+        assert_eq!(language.metadata().runtime_backends(), DISPATCH_BACKENDS);
         assert_eq!(language.default_runtime_backend(), RuntimeBackend::Ascent);
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
@@ -1353,6 +1519,23 @@ mod tests {
             .run_with_backend(RuntimeBackend::Dovetail, &term)
             .expect_err("absent Dovetail backend must not fall back to Ascent");
         assert!(err.contains("Dovetail backend is not installed for language Dispatch"));
+    }
+
+    #[test]
+    fn runtime_backend_dispatch_uses_metadata_default_when_backend_is_installed() {
+        let language = RhoDispatchLanguage;
+        let term = DispatchTerm;
+
+        assert_eq!(language.metadata().runtime_backends(), RHO_DISPATCH_BACKENDS);
+        assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+        assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+        assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
+
+        let results = language
+            .run_default_backend(&term)
+            .expect("metadata-selected Rho backend must dispatch");
+        assert_eq!(results.normal_forms()[0].display, "rho-default");
     }
 
     #[test]

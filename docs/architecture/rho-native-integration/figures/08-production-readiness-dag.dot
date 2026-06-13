@@ -33,6 +33,7 @@ digraph RuntimeBackendReadiness {
   extraction [label="Extraction\nhonesty", fillcolor="#CCFBF1"];
   oracle [label="Ascent oracle\nagreement", fillcolor="#FFEDD5"];
   memory [label="Bounded RSS\nstress gate", fillcolor="#FEE2E2"];
+  metadata [label="Runtime metadata\nbackend capability", fillcolor="#E0F2FE"];
   flip [label="Flip-gated\nbackend plan", fillcolor="#DCFCE7"];
   production [label="Dovetail/Rho\nproduction runtime", fillcolor="#BBF7D0", penwidth=2.2];
 
@@ -46,5 +47,22 @@ digraph RuntimeBackendReadiness {
   extraction -> oracle;
   oracle -> memory;
   memory -> flip;
+  flip -> metadata;
+  metadata -> production;
   flip -> production;
+
+  subgraph cluster_legend {
+    label="Color Key";
+    color="#D1D5DB";
+    style="rounded,dashed";
+    key_coverage [label="coverage", fillcolor="#DBEAFE"];
+    key_dovetail [label="Dovetail proofs", fillcolor="#DCFCE7"];
+    key_ast [label="AST artifact", fillcolor="#FEF3C7"];
+    key_scheduler [label="RSpace schedule", fillcolor="#FCE7F3"];
+    key_oracle [label="oracle", fillcolor="#FFEDD5"];
+    key_memory [label="bounded resources", fillcolor="#FEE2E2"];
+    key_metadata [label="runtime metadata", fillcolor="#E0F2FE"];
+    key_prod [label="production runtime", fillcolor="#BBF7D0"];
+    key_coverage -> key_dovetail -> key_ast -> key_scheduler -> key_oracle -> key_memory -> key_metadata -> key_prod [style=invis];
+  }
 }

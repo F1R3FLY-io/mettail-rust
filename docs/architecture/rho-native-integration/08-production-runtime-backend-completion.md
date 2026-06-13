@@ -73,10 +73,11 @@ AscentOracle --> Diff : reference observations
 RhoRuntime --> Diff : RSpace observations
 
 legend right
-  <#DBEAFE> Parser boundary: retained
-  <#FEE2E2> Runtime backend surface being retired
-  <#DCFCE7> Production runtime target
-  <#FEF3C7> Evidence path retained during rollout
+|= Area |= Meaning |
+|<#DBEAFE> Frontend | retained WPDA parser boundary |
+|<#FEE2E2> Legacy runtime | backend surface being retired |
+|<#DCFCE7> Target runtime | Dovetail plus Rho machine |
+|<#FEF3C7> Evidence | oracle path retained during rollout |
 endlegend
 @enduml
 ```

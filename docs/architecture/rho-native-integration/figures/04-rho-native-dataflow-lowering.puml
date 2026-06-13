@@ -10,7 +10,7 @@ skinparam activity {
 }
 
 start
-:Dovetail rule\n`p₁ ∧ ... ∧ pₙ ∧ g ⇒ q`;
+:Dovetail rule\n`p₁ ∧ ... ∧ pₙ ∧ g ⇒ q`; <<#DBEAFE>>
 :Compute exact keys\nfor premise channels; <<#DBEAFE>>
 :Create RhoNet join\nfor `p₁ ... pₙ`; <<#DCFCE7>>
 if (guard class?) then (same-bind pure)
@@ -18,7 +18,7 @@ if (guard class?) then (same-bind pure)
 elseif (cross-bind or external)
   :Lower to native\nguard handler; <<#FDE68A>>
 else (none)
-  :Use `true`; <<#E5E7EB>>
+  :Use `true`; <<#CCFBF1>>
 endif
 :Emit persistent contract AST; <<#FCE7F3>>
 :Attach Rholang-text\nreader annotation; <<#FBCFE8>>
@@ -26,11 +26,13 @@ endif
 stop
 
 legend right
-  <#DBEAFE> key/channel selection
-  <#DCFCE7> RhoNet construction
-  <#FEF3C7> direct RSpace guard
-  <#FDE68A> native handler guard
-  <#FCE7F3> Rholang AST surface
-  <#EDE9FE> host Rho execution
+|= Area |= Meaning |
+|<#DBEAFE> Dovetail rule | source rewrite semantics |
+|<#DCFCE7> RhoNet | join construction |
+|<#FEF3C7> RSpace guard | direct guard check |
+|<#FDE68A> Native guard | host handler check |
+|<#CCFBF1> Unguarded | unconditional rule |
+|<#FCE7F3> AST artifact | generated `rhoapi::Par` |
+|<#EDE9FE> Runtime | host Rho execution |
 endlegend
 @enduml
