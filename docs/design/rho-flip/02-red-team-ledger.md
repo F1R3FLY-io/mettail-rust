@@ -37,7 +37,7 @@ Per `feedback_red_team_design_until_convergence`: after the contract was drafted
 
 ### Verified-pass items (claims that survived round 1 — do not re-investigate)
 - §1 rule names/line cites all exact (Critic F, full sweep); Comm/PInputs shapes read correctly.
-- Same-channel duplicate-bind joins AND k-distinct-channel joins supported by `consume` (`rspace.rs:330-334,652-655`; `space_matcher.rs:81-105`) — `join_pattern_same_channel` → one 2-bind Receive is sound.
+- k-distinct-channel joins are supported by the source-text path. Lower-level RSpace `consume` supports duplicate channel groups (`rspace.rs:330-334,652-655`; `space_matcher.rs:81-105`), but `evaluate_with_term` currently rejects duplicate receive channels before runtime evaluation. `join_pattern_same_channel` is therefore a source-text excluded case for .1 and needs direct ADT lowering or a parser-supported encoding before it can be promoted.
 - B1-b artifacts real (`resource_logic.rs:120-209,292-293`); `InMemoryStoreManager` no-disk runtime as claimed (`run.rs:50-65`); string-path phlo = `Cost::unsafe_max()` (`rho_runtime.rs:91-94`).
 - gxhash LLVM profile scoping verbatim (`mettail-rust/Cargo.toml:72-80`); five rho_bridge theories + claimed contents confirmed; `generate_rho_vm` absence confirmed; CA* capstones exist at `f1r3node-rust/formal/rocq/cost_accounted_rho/theories/`.
 - dovetail substrate-agnostic framing correct (constraint is on dovetail's dependencies, not dependents).
@@ -49,4 +49,42 @@ Per `feedback_red_team_design_until_convergence`: after the contract was drafted
 | D7's enumeration premise over-claimed: arrival-order permutation explores NOTHING for multi-bind same-channel joins — the join waits until all binds are satisfiable, then the bind↔datum assignment is hash-pinned given the resting multiset (H-M6's own evidence, `rspace.rs:1211-1233` + `space_matcher.rs:81-105`) | re-derived while restating §4 thm 6 | D7/§5 rescoped: enumeration covers **eager-fire races** (1-bind receive, k contending sends — commits per arrival step); .1.1 gate input changed to the single-bind contention race `{(c?x).{*(x)} \| c!(a) \| c!(b)}`; join-assignment ambiguity membership-gated with the set-coverage residue NAMED and scheduled (M-RHO.3 branch-per-alternative/Lookahead encoding); §4 thm 6 split into a positive coverage lemma + a negative `join_assignment_not_arrival_explorable` |
 | Sentinel-channel namespace collision: `@"mtl:out"` collides with a free name var literally named `out` under the `"mtl:<name>"` grounding image | direct inspection of D2 | sentinel channel renamed `@"mtl#out"` — format-disjoint (`#` vs `:`) from the var-grounding image |
 
-## Round 2 (2026-06-12) — fresh independent critics vs contract v2 → PENDING
+## Round 2 (2026-06-12) — fresh independent critics vs contract v2 → host NOT-CONVERGED (resolved in v3); FV critic lost, checks performed inline
+
+- **Critic H2** (host lens): 1 BLOCKER, 3 MAJORs, 3 MINORs → all resolved in v3 (§0-REVISION v3). Its resolutions-verified sweep CONFIRMED every round-1 fix it re-checked (D1/D2/D3 plumbing, D7 mechanics, renderer grammar forms, error surfacing, quiescence-on-return, sequential accumulation, casper seam) — see the v3 contract for the carried citations.
+- **Critic F2** (mettail/FV lens): **died at a usage limit after 72 tool calls without delivering a report.** Its load-bearing checks were performed inline by the caller (see below). NOTE: before dying it WROTE four Rocq theories into `formal/rocq/rho_bridge/theories/` + registered them in `_CoqProject` — beyond its review charter; a fifth (`RhoBackendFlipGate.v`) landed minutes later from the continuing parallel session. All assessed below.
+
+### H2 findings → v3 resolutions
+
+| Finding | Evidence (key cites) | Resolution |
+|---|---|---|
+| B: member #8 (`join_pattern_same_channel`) UNRENDERABLE under D1 — the host normalizer hard-rejects same-channel joins in source; round-1's "consume supports duplicates" was true only BELOW the compiler; nested-receive substitute is non-atomic (unfaithful) | `p_input_normalizer.rs:408-423` (`ReceiveOnSameChannelsError`, normalized-`Par` HashSet check); `cost_accounting_spec.rs:288-296` (expected rejection class) | member #8 → source-text EXCLUDED + parser-boundary regression (user applied this edit directly); §1a PInputs row + §5 + §6 item 2 updated |
+| M: v2's "join assignment hash-pinned regardless of π" is FALSE — produce path PREPENDS the arriving datum (index −1) AFTER the hash sort; first bind takes the LAST-ARRIVED datum; and `deterministic_candidate_hash` ingests `random_state` while evaluate draws from `thread_rng` ⇒ resting-candidate selection not even run-deterministic | `rspace.rs:818-825` (`shuffled_data.insert(0, (data, -1))`); `space_matcher.rs:31-66,81-105,140-156`; `rspace.rs:139-145`; `internal.rs:16-20`; `rho_runtime.rs:111`; `blake2b512_random.rs:89-93` | **D7-CORRECTION**: the negative lemma `join_assignment_not_arrival_explorable` KILLED before any Rocq was written (the round-1 vacuous-model disease caught at design time); positive 1-bind lemma retained (each arrival step single-candidate = entropy-independent, critic-verified); "never rely on resting-candidate order" recorded |
+| M: sentinel rename `@"mtl#out"` not propagated — §1a′/§2/§3 still shipped the colliding `@"mtl:out"` | contract self-contradiction on a load-bearing constant | propagated everywhere (replace-all) |
+| M: D3 fingerprint under-specified vs the real `HotStoreState` — read-through-cache `[]` residue false-REDs nearly every member; 5 maps incl. unconditionally-installed system processes with `ScalaBodyRef` continuations; `condition` field; "sequence numbers" described Scala-shaped fields | `hot_store.rs:85-97,221-231,334,358-382,430`; `rho_runtime.rs:999-1004,1207`; `system_processes.rs:81-139`; `trace/event.rs:97-108` | **D3-PIN**: user `data` + user `continuations` ONLY; DROP-EMPTY; `installed_*`/`joins` excluded; tuple `(patterns, body, persist)` + `condition` asserted-None; `source` dropped wholesale |
+| m: `create_soft_checkpoint` not a pure observer (drains event log + produce counter); revert consumes by value | `rspace.rs:283-294,302-320`; `checkpoint.rs:10-15` | recorded in §0-REVISION v3; π-loop clones the post-receive checkpoint |
+| m: ν-quotient "first-occurrence order" circular for ≥2 GPrivates (sorting needs the ids being quotiented — graph canonicalization) | direct argument | corpus RESTRICTED to single-ν members; multi-ν = out-of-.1, iso-search quotient recorded |
+| m: revert-on-error ⇒ erroring t-run dump = pre-eval state ⇒ false-GREEN on inert-NF members if `errors=∅` ever weakened | `rho_runtime.rs:117-120` | R10 hardened: the assertion is load-bearing, never warn-only |
+
+### Inline FV-lens verification (caller, replacing the dead F2)
+
+| Check | Result |
+|---|---|
+| Renderer feasibility over the generated AST | VERIFIED — HOL binders generate `Scope<Vec<Binder<String>>, Arc<Proc>>` (`macros/src/gen/types/enums.rs:371-375`; PInputs decl `rhocalc.rs:77-78`); the generated `Display` already walks it (rhocalc_tests asserts display strings), so name-recovery machinery exists |
+| Ascent gate API | VERIFIED — `normal_forms_reachable_from_seeds(&self, seed_ids: &[u64])` at `runtime/src/language.rs:732` (+ `_iter` :724) |
+| Corpus-partition completeness sweep (all eval-asserting rhocalc tests) | v2 MISSED transport-pure families → corpus EXPANDED to 16 members (+ exec_basic, exec_with_process, par_cong_exec, new_cong, new_congruence_reaches_normal_form, extrusion_reaches_result, extrusion_blocked_when_not_fresh, new_is_normal_when_body_is); fold-dependent exclusions += add_cong (:274), comparison_cong (:280); extrusion + ν-shadowing members align NATIVELY on the host (no Extrude step needed; bound-name shadowing is host-native) |
+| Rocq abstraction pattern | VERIFIED — existing theories use Section-local concrete models (`Definition`/`Inductive` over nat keys), zero Parameters (`OracleQuotientEquivalence.v:28-52` pattern) |
+
+### Parallel-session Rocq landing (assessed; kept per no-clobber; NONE discharges the .1 obligations)
+
+| File | Zero-admission | Honest classification |
+|---|---|---|
+| `CommReductionCorrespondence.v` (280 lines) | ✓ compiles, no Admitted/Axiom/Conjecture | **MONOTONE fact-insertion model with persistent contracts** (premises by membership, never consumed; `insert_exact` only grows) = the M-RHO.2+ rules-as-data saturation layer. NOT .1's linear `Comm` (consumes matched sends + receive). Occupies the §4 keystone filename — the .1 LINEAR model must be added without over-claiming this file (R6) |
+| `RhoObservationFingerprint.v` (128) | ✓ | sound exact-key/order-irrelevance comparison kit — reusable as D3's discipline layer |
+| `RhoGroundingAndNames.v` (134) | ✓ | sound ν-freshness/no-capture kit — adjacent to (not equal to) `grounding_commutes` |
+| `AmbiguityWitnessEnumeration.v` (114) | ✓ | branch-per-alternative witness encoding = the M-RHO.3 mechanism (does NOT model arrival enumeration; notably does NOT contain the killed negative lemma) |
+| `RhoBackendFlipGate.v` (69) | ✓ | the M-RHO.4 per-language flip-gate conjunction |
+
+Capped gate re-run after the landing: **GREEN** (`make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rho-bridge`; an initial failure was a race against the mid-write `RhoBackendFlipGate.v`, resolved on completion).
+
+## Round 3 — confirmation pass vs contract v3 → PENDING (required before implementation)
