@@ -34,7 +34,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
-.PHONY: process-rho-generated-check process-rho-comm-slice process-rho-first-slice mcrl2-rho-machine maude-rho-machine tla-rho-machine
+.PHONY: process-rho-generated-check process-rho-comm-slice process-rho-first-slice mcrl2-rho-machine maude-rho-machine tla-rho-machine tla-rho-settlement
 .PHONY: why3-dovetail-budget creusot-dovetail-budget prepare-creusot-data
 
 check: check-capped
@@ -148,6 +148,9 @@ rocq-rho-bridge-cbn-budget: require-capped
 rocq-rho-bridge-escrow-settlement: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoEscrowSettlement.vo
 
+rocq-rho-bridge-purse-determinism: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/RhoPurseDeterminism.vo
+
 process-rho-generated-check: require-capped
 	python3 process/rho_comm_slice.py --check
 
@@ -159,6 +162,9 @@ maude-rho-machine: require-capped
 
 tla-rho-machine: require-capped
 	$(MAKE) -C tla/rho_machine check
+
+tla-rho-settlement: require-capped
+	$(MAKE) -C tla/rho_settlement check
 
 process-rho-comm-slice: require-capped process-rho-generated-check mcrl2-rho-machine maude-rho-machine tla-rho-machine
 

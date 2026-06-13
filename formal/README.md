@@ -58,10 +58,14 @@ The capped entry point runs:
   compatibility alias). The mCRL2, Maude, and TLA+ files are generated from
   `formal/process/rho_comm_slice.json`, and the formal targets run
   `formal/process/rho_comm_slice.py --check` before model checking.
+- focused Rho settlement scheduler target:
+  `tla-rho-settlement`, which TLC-checks bounded per-purse settlement
+  commutation and fail-closed duplicate/missing-purse rejects.
 - focused Rho bridge targets:
   `rocq-rho-bridge-artifact-boundary`, `rocq-rho-bridge-rejected-coverage`,
   `rocq-rho-bridge-schedule-family`, `rocq-rho-bridge-cbn-budget`, and
-  `rocq-rho-bridge-escrow-settlement`
+  `rocq-rho-bridge-escrow-settlement`, and
+  `rocq-rho-bridge-purse-determinism`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests

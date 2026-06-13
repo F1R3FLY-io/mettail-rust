@@ -40,6 +40,7 @@ The current proof and coverage sources are
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | escrow/refund settlement | `RhoEscrowSettlement.v`, `mettail-rho-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
+| per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
@@ -51,8 +52,9 @@ The current proof and coverage sources are
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
 guards, ambiguity preservation, cost-axis separation, escrow/refund settlement,
-exact rejected-rule delegation, normalized-`Par` well-formedness, source-text
-artifact exclusion, backend flip gating, and fail-closed runtime dispatch.
+per-purse determinism, exact rejected-rule delegation, normalized-`Par`
+well-formedness, source-text artifact exclusion, backend flip gating, and
+fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
 than an Ascent-shaped success value. The handoff proof requires complete
 reports before emitting Rho-visible observations, preserves the extractor root
@@ -218,6 +220,9 @@ Gate clauses:
 
 - `Δ1` min-cost matching for n-ary joins;
 - two-axis cost model: refutation versus ordering;
+- per-purse determinism: a located funding operation affects exactly one
+  unique purse, duplicate purse states reject, and distinct-purse operations
+  commute on the final ledger;
 - escrow settlement: reserve before candidate commit, charge only committed
   winners, and refund failed or abandoned candidates;
 - guarded-COMM soundness;
@@ -231,16 +236,26 @@ Mechanized evidence:
 - `AmbiguitySetPreservation.v`
 - `RhoCostAxisSeparation.v`
 - `RhoEscrowSettlement.v`
+- `RhoPurseDeterminism.v`
+- `formal/tla/rho_settlement/RhoPurseSettlement.tla`
 
 Rust adapter evidence:
 
 - `mettail_rho_adapter::DeltaOneCandidate`
 - `mettail_rho_adapter::select_delta1_minima`
 - `mettail_rho_adapter::{reserve_escrow, commit_escrow, refund_escrow}`
+- `mettail_rho_adapter::{LocatedEscrowLedger, SettlementAction}`
 - `mettail_rho_adapter::delta1_selects_index`
 - `delta1_selects_all_enabled_minimal_ties`
 - `delta1_refutation_precedes_ordering`
 - `delta1_returns_empty_when_no_candidate_is_enabled`
+- `settlement::located_ledger_rejects_duplicate_purse_states`
+- `settlement::located_ledger_missing_purse_preserves_ledger`
+- `settlement::located_ledger_updates_only_matching_purse`
+- `settlement::located_ledger_local_blocker_preserves_whole_ledger`
+- `settlement::located_ledger_distinct_purse_actions_commute`
+- `settlement::located_ledger_same_sequence_is_deterministic`
+- `settlement::located_ledger_owned_apply_matches_borrowed_apply`
 - `settlement::reserve_moves_available_to_escrow_and_returns_ticket`
 - `settlement::commit_moves_escrow_to_charged_and_preserves_total`
 - `settlement::refund_reverses_a_successful_reserve`
@@ -258,6 +273,12 @@ Acceptance:
 
 `cost_orders(c₁, c₂)` may rank enabled candidates but must not remove either
 candidate when their ordering costs are equal.
+
+`located(action)` first selects the unique purse named by the action. If no
+purse exists, the ledger is preserved with `MissingPurse`. If duplicate purse
+states exist, construction rejects the ledger with `DuplicatePurse`. For
+distinct purse IDs `p₁ ≠ p₂`, applying an action at `p₁` and then an action at
+`p₂` produces the same final ledger as applying them in the opposite order.
 
 `reserve(c)` moves funds from available balance into escrow and returns a
 ticket. `commit(ticket)` moves exactly the ticket amount from escrow to charged.

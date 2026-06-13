@@ -242,6 +242,12 @@ does not schedule RSpace; it only makes candidate admission, charging, and
 refunds explicit so RSpace can continue to expose enabled COMM actions in
 parallel.
 
+The purse ledger is located by `PurseId`. Duplicate purse states are rejected
+before execution, absent purse targets fail closed, and actions at distinct
+purses commute on the final ledger. This means funding settlement does not
+introduce a hidden global serialization point for independent RSpace COMM
+actions.
+
 ## Failure Modes and Safeguards
 
 | Risk | Safeguard |

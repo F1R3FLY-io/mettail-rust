@@ -264,6 +264,7 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/AmbiguitySetPreservation.v`
 - `formal/rocq/rho_bridge/theories/RhoCostAxisSeparation.v`
 - `formal/rocq/rho_bridge/theories/RhoEscrowSettlement.v`
+- `formal/rocq/rho_bridge/theories/RhoPurseDeterminism.v`
 - `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`
 - `formal/rocq/rho_bridge/theories/OracleQuotientEquivalence.v`
 
@@ -272,7 +273,7 @@ Rho-machine reuse, exact rejected-rule delegation, normalized-`Par` validation,
 generated-backend source-text exclusion, COMM correspondence, exact observation,
 guard behavior, ambiguity preservation, cost separation, arity-parametric
 independent-redex COMM schedules, call-by-need budget admission,
-escrow/refund settlement, and backend flip gating.
+escrow/refund settlement, per-purse determinism, and backend flip gating.
 
 ### RHO-PROCESS-FORMAL
 
@@ -292,6 +293,8 @@ Repository-local finite process-calculus projections:
 - `formal/tla/rho_machine/RhoNetScheduler.tla`
 - `formal/tla/rho_machine/Safety.cfg`
 - `formal/tla/rho_machine/Liveness.cfg`
+- `formal/tla/rho_settlement/RhoPurseSettlement.tla`
+- `formal/tla/rho_settlement/Safety.cfg`
 
 Used for: finite executable projections of the RhoNet/Dovetail COMM bridge.
 The mCRL2, Maude, and TLA+ models are generated from the same JSON slice
@@ -301,6 +304,8 @@ bounded four-redex process fragment and the matching scheduler boundary. The
 Maude projection records visible fire/complete traces while leaving Rho reserve
 steps internal, checks all 24 full schedules on both projections, and rejects
 every visible completion trace with fewer than all four fires.
+The settlement TLA+ model separately checks bounded per-purse reserve
+commutation and fail-closed duplicate/missing-purse rejection.
 
 ### COVERAGE-MATRIX
 
