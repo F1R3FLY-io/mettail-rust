@@ -1,4 +1,4 @@
-module DovetailBudgetPilot
+module DovetailBudgetContract
   use int.Int
 
   type add_result = Added int | Overflow int

@@ -35,7 +35,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
 .PHONY: process-rho-generated-check process-rho-comm-slice process-rho-first-slice mcrl2-rho-machine maude-rho-machine tla-rho-machine
-.PHONY: why3-dovetail-pilot creusot-dovetail-pilot prepare-creusot-data
+.PHONY: why3-dovetail-budget creusot-dovetail-budget prepare-creusot-data
 
 check: check-capped
 
@@ -158,15 +158,15 @@ process-rho-comm-slice: require-capped process-rho-generated-check mcrl2-rho-mac
 
 process-rho-first-slice: process-rho-comm-slice
 
-why3-dovetail-pilot: require-capped
-	why3 prove -P "Alt-Ergo,2.6.0" -t 5 ../dovetail/formal/why3/key_budget_pilot.mlw
+why3-dovetail-budget: require-capped
+	why3 prove -P "Alt-Ergo,2.6.0" -t 5 ../dovetail/formal/why3/key_budget_contract.mlw
 
 prepare-creusot-data: require-capped prepare-tmp
 	CREUSOT_DATA_HOME="$(abspath $(CREUSOT_DATA_HOME))" \
 	CREUSOT_PACKAGE_SRC="$(CREUSOT_PACKAGE_SRC)" \
 	sh ../dovetail/formal/creusot/prepare-creusot-data.sh
 
-creusot-dovetail-pilot: require-capped prepare-creusot-data
+creusot-dovetail-budget: require-capped prepare-creusot-data
 	cd ../dovetail/formal/creusot && \
 		CREUSOT_DATA_HOME="$(abspath $(CREUSOT_DATA_HOME))" \
 		XDG_CONFIG_HOME="$(abspath $(CREUSOT_XDG_CONFIG_HOME))" \
@@ -187,7 +187,12 @@ creusot-dovetail-pilot: require-capped prepare-creusot-data
 			verif/dovetail_creusot_formal_rlib/try_add_with_budget.coma \
 			verif/dovetail_creusot_formal_rlib/added_never_overshoots_budget.coma \
 			verif/dovetail_creusot_formal_rlib/overflow_preserves_state_at_limit.coma \
-			verif/dovetail_creusot_formal_rlib/add_succeeds_below_limit.coma
+			verif/dovetail_creusot_formal_rlib/add_succeeds_below_limit.coma \
+			verif/dovetail_creusot_formal_rlib/admit_enode_with_budget.coma \
+			verif/dovetail_creusot_formal_rlib/admission_never_overshoots_budget.coma \
+			verif/dovetail_creusot_formal_rlib/existing_enode_preserves_budget_state.coma \
+			verif/dovetail_creusot_formal_rlib/fresh_enode_below_limit_adds_once.coma \
+			verif/dovetail_creusot_formal_rlib/fresh_enode_at_limit_sets_node_limit.coma
 
 rocq-lattice: require-capped
 	$(MAKE) -C rocq/lattice
