@@ -43,6 +43,10 @@ check-inner: require-capped
 	mkdir -p "$(TMPDIR)"
 	$(MAKE) prattail-wpda
 	$(MAKE) rocq-support
+	$(MAKE) process-rho-comm-slice
+	$(MAKE) tla-rho-settlement
+	$(MAKE) why3-dovetail-budget
+	$(MAKE) creusot-dovetail-budget
 
 check-uncapped:
 	@echo "Refusing uncapped formal verification; use check-capped so RSS stays within the 32 GiB hard cap."
