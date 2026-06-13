@@ -16,32 +16,42 @@ participant "MeTTaIL\nParser" as Parser #DBEAFE
 participant "MeTTaIL\nTyped AST" as AST #BFDBFE
 participant "Dovetail\nRewrite Model" as Dovetail #DCFCE7
 participant "Rho Backend\nRhoNet Lowerer" as Lowerer #FEF3C7
-participant "Rholang\nAST" as Rholang #FDE68A
+participant "Rholang AST\nrhoapi::Par" as Rholang #FDE68A
+participant "Artifact\nBoundary" as Artifact #CCFBF1
 participant "F1r3node\nRhoRuntime" as Runtime #FCE7F3
 participant "RSpace" as RSpace #FBCFE8
 participant "Observation\nOracle" as Oracle #EDE9FE
 
-User -> Parser : source snippet
-Parser -> AST : parsed typed term
+User -> Parser : source snippet or bootstrapped Rholang form
+Parser -> AST : parsed typed term graph
 AST -> Dovetail : seed facts + language metadata
-Dovetail -> Dovetail : exact-key saturation
-Dovetail -> Lowerer : supported rewrite network
-Lowerer -> Rholang : contracts + initial messages
-Rholang -> Runtime : inject normalized `Par`
-Runtime -> RSpace : produce facts
-Runtime -> RSpace : install rule receives
-RSpace -> Runtime : COMM events trigger continuations
-Runtime -> RSpace : derived facts
-RSpace -> Oracle : resting-space snapshot
-Oracle -> User : canonical result set
+Dovetail -> Dovetail : exact-key saturation + checked extraction
+Dovetail -> Lowerer : coverage-checked rewrite report
+Lowerer -> Lowerer : classify joins, guards, native handlers
+Lowerer -> Rholang : persistent contracts + initial sends
+Rholang -> Artifact : normalized AST value, reader text annotation
+Artifact -> Runtime : inject executable `Par` artifact
+Runtime -> RSpace : install persistent receives
+Runtime -> RSpace : produce initial facts
+par independent enabled join on channel family A
+  RSpace -> Runtime : COMM event
+  Runtime -> RSpace : derived facts
+else independent enabled join on channel family B
+  RSpace -> Runtime : COMM event
+  Runtime -> RSpace : derived facts
+end
+RSpace -> Oracle : resting-space snapshot + event log
+Oracle -> Dovetail : differential semantic check
+Oracle -> User : canonical observation report
 
 legend right
 |= Area |= Meaning |
 |<#E0F2FE> User | source snippet owner |
-|<#DBEAFE> MeTTaIL | parser and typed AST |
-|<#DCFCE7> Dovetail | rewrite semantics |
-|<#FEF3C7> Rho lowering | RhoNet and AST artifact |
-|<#FCE7F3> F1r3node | RhoRuntime and RSpace |
+|<#DBEAFE> MeTTaIL | parser, recognizer, typed AST |
+|<#DCFCE7> Dovetail | exact rewrite semantics |
+|<#FEF3C7> Rho lowering | RhoNet and guard classification |
+|<#CCFBF1> Artifact | AST today, bytecode-ready boundary |
+|<#FCE7F3> F1r3node | RhoRuntime, RSpace, COMM scheduling |
 |<#EDE9FE> Observation | oracle and result projection |
 endlegend
 @enduml

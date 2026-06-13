@@ -12,52 +12,73 @@ skinparam component {
 }
 
 rectangle "MeTTaIL\nlanguage frontend" as M #DBEAFE {
-  component "Grammar + parser" as Parser #BFDBFE
-  component "Typed AST" as AST #BFDBFE
-  component "Language metadata" as Metadata #BFDBFE
+  component "WPDA parser /\nMeTTaIL recognizer" as Parser #BFDBFE
+  component "Typed AST\n(language terms)" as AST #BFDBFE
+  component "Language metadata\nbackend capabilities" as Metadata #BFDBFE
+  component "Bootstrapped\nRholang model" as RhoModel #93C5FD
 }
 
 rectangle "Dovetail\nrewrite semantics" as D #DCFCE7 {
-  component "Exact keys" as Keys #BBF7D0
+  component "SemanticHash\nexact keys" as Keys #BBF7D0
   component "E-graph + facts" as EGraph #BBF7D0
-  component "Saturation" as Saturation #BBF7D0
-  component "Extraction" as Extraction #BBF7D0
+  component "Saturation\nwith outcomes" as Saturation #BBF7D0
+  component "Checked extraction\nand run report" as Report #BBF7D0
 }
 
 rectangle "Rho backend\ncompile-time bridge" as B #FEF3C7 {
   component "RhoNet IR" as RhoNet #FDE68A
-  component "Rholang AST builder" as AstBuilder #FDE68A
+  component "Guard + native\nhandler classifier" as Guards #FDE68A
+  component "rhoapi::Par\nAST builder" as AstBuilder #FDE68A
+  component "Bytecode-ready\nartifact boundary" as Artifact #CCFBF1
   component "Oracle harness" as Oracle #FDE68A
 }
 
 rectangle "F1r3node / Rholang\nruntime substrate" as F #FCE7F3 {
   component "RhoRuntime" as Runtime #FBCFE8
   component "RSpace" as RSpace #FBCFE8
+  component "COMM scheduler\nand event log" as Scheduler #FBCFE8
   component "Replay + checkpoints" as Replay #FBCFE8
   component "Cost / funding" as Cost #FBCFE8
 }
 
+rectangle "Verification + rollout\nevidence" as V #EDE9FE {
+  component "Formal proof suite" as Formal #DDD6FE
+  component "Differential reports" as Diff #DDD6FE
+  component "Flip gate\nevidence refs" as Gate #DDD6FE
+}
+
 Parser --> AST : parsed terms
 AST --> Metadata : typed categories
+RhoModel --> AST : Rholang as MeTTaIL language
 AST --> EGraph : initial facts
 Metadata --> Saturation : rule inventory
 Keys --> EGraph : exact identity
 EGraph --> Saturation : fact base
-Saturation --> Extraction : candidate derivations
-Saturation --> RhoNet : supported rewrite network
-RhoNet --> AstBuilder : contracts + channels
-AstBuilder --> Runtime : normalized Rholang AST (`Par`)
+Saturation --> Report : complete or bounded report
+Report --> RhoNet : supported rewrite network
+RhoNet --> Guards : join + guard plan
+Guards --> AstBuilder : guarded contracts
+AstBuilder --> Artifact : normalized Rholang AST (`Par`)
+Artifact --> Runtime : direct AST injection
 Runtime --> RSpace : produce / consume / join
-RSpace --> Replay : event log
+RSpace --> Scheduler : enabled COMM events
+Scheduler --> RSpace : parallel continuations
+Scheduler --> Replay : event log
 Runtime --> Cost : funded execution
 RSpace --> Oracle : resting-space facts
-Oracle --> Extraction : differential comparison
+Report --> Oracle : Dovetail reference facts
+Oracle --> Diff : observed equivalence
+Report --> Formal : proof obligations
+Formal --> Gate : verified contracts
+Diff --> Gate : oracle parity evidence
+Gate --> Metadata : Rho backend default eligibility
 
 legend right
 |= Area |= Role |
-|<#DBEAFE> MeTTaIL | frontend and compiler |
-|<#DCFCE7> Dovetail | rewrite semantics |
-|<#FEF3C7> Rho backend | lowering and oracle |
-|<#FCE7F3> F1r3node | execution substrate |
+|<#DBEAFE> MeTTaIL | parser, typed terms, metadata |
+|<#DCFCE7> Dovetail | rewrite semantics and checked reports |
+|<#FEF3C7> Rho backend | RhoNet lowering and AST artifact |
+|<#FCE7F3> F1r3node | RhoRuntime, RSpace, scheduler |
+|<#EDE9FE> Evidence | proofs, oracle reports, flip gates |
 endlegend
 @enduml

@@ -16,33 +16,48 @@ digraph dovetail_verification {
   ];
   edge [color="#374151", arrowsize=0.8];
 
-  exact_keys [label="Exact keys", fillcolor="#DBEAFE"];
-  saturation [label="Saturation outcomes", fillcolor="#DCFCE7"];
-  frontier [label="Lazy frontier order", fillcolor="#FEF3C7"];
-  enumeration [label="Enumeration completeness", fillcolor="#FEF3C7"];
-  cycles [label="Cycle-cut boundary", fillcolor="#FDE68A"];
-  inside [label="SCC inside closure", fillcolor="#FDE68A"];
+  semantic_hash [label="SemanticHash\nsafety contract", fillcolor="#DBEAFE"];
+  exact_keys [label="Length-framed\nexact keys", fillcolor="#BFDBFE"];
+  saturation [label="Saturation\noutcomes", fillcolor="#DCFCE7"];
+  sat_limits [label="Node and iteration\nlimit honesty", fillcolor="#FEE2E2"];
+  ordered_framing [label="Ordered child-key\nframing", fillcolor="#CCFBF1"];
+  monotone_order [label="Monotone best\norder", fillcolor="#FEF3C7"];
+  frontier [label="Lazy frontier\nsorted stream", fillcolor="#FEF3C7"];
+  enumeration [label="Enumeration\ncompleteness", fillcolor="#FEF3C7"];
+  cycles [label="Cycle-cut\nboundary", fillcolor="#FDE68A"];
+  inside [label="SCC inside\nclosure", fillcolor="#FDE68A"];
   reports [label="Runtime report bridge", fillcolor="#EDE9FE"];
   requirements [label="MeTTaIL requirement coverage", fillcolor="#FBCFE8"];
+  rho_bridge [label="Rho backend\ncoverage bridge", fillcolor="#F3E8FF"];
   rust_tests [label="Rust example,\nexhaustive, property tests", fillcolor="#CCFBF1"];
   formal_gates [label="Rocq / Why3 /\nCreusot gates", fillcolor="#F3E8FF"];
   doc_validation [label="Documentation\nvalidation", fillcolor="#FFEDD5"];
   production [label="Dovetail production evidence", fillcolor="#FCE7F3"];
 
+  semantic_hash -> exact_keys;
   exact_keys -> frontier;
   exact_keys -> reports;
   saturation -> requirements;
+  saturation -> sat_limits;
+  sat_limits -> reports;
+  ordered_framing -> frontier;
+  monotone_order -> frontier;
   frontier -> enumeration;
   enumeration -> reports;
   cycles -> reports;
   inside -> frontier;
+  inside -> monotone_order;
+  reports -> rho_bridge;
   exact_keys -> rust_tests;
   saturation -> rust_tests;
   frontier -> rust_tests;
   reports -> formal_gates;
   requirements -> formal_gates;
+  rho_bridge -> formal_gates;
+  doc_validation -> formal_gates;
   requirements -> production;
   reports -> production;
+  rho_bridge -> production;
   rust_tests -> production;
   formal_gates -> production;
   doc_validation -> production;
@@ -57,8 +72,9 @@ digraph dovetail_verification {
     key_cycles [label="cycles", fillcolor="#FDE68A"];
     key_bridge [label="bridges", fillcolor="#EDE9FE"];
     key_tests [label="tests", fillcolor="#CCFBF1"];
+    key_limits [label="bounded outcomes", fillcolor="#FEE2E2"];
     key_gates [label="formal gates", fillcolor="#F3E8FF"];
     key_prod [label="production evidence", fillcolor="#FCE7F3"];
-    key_exact -> key_engine -> key_extract -> key_cycles -> key_bridge -> key_tests -> key_gates -> key_prod [style=invis];
+    key_exact -> key_engine -> key_extract -> key_cycles -> key_bridge -> key_tests -> key_limits -> key_gates -> key_prod [style=invis];
   }
 }

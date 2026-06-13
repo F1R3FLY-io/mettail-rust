@@ -12,7 +12,8 @@ skinparam activity {
 
 start
 :Receive typed seed terms\nand rewrite rules; <<#DBEAFE>>
-:Build exact-keyed e-graph; <<#BBF7D0>>
+:Validate `SemanticHash`\nexact-key contract; <<#BFDBFE>>
+:Build exact-keyed e-graph\nwith length-framed identity; <<#BBF7D0>>
 :Run saturation iterations; <<#DCFCE7>>
 if (terminal outcome?) then (Converged)
   :Use saturated graph as complete\nfor the chosen bounds; <<#DCFCE7>>
@@ -23,21 +24,24 @@ elseif (IterationLimit)
 endif
 :View e-graph as weighted tree automaton; <<#FEF3C7>>
 :Compute inside weights\nand cyclic SCC closure when requested; <<#FDE68A>>
-:Extract derivations through checked stream; <<#FBCFE8>>
+:Order child keys with\norder-preserving framing; <<#CCFBF1>>
+:Extract derivations through\nchecked best-first stream; <<#FBCFE8>>
 if (cycle cut?) then (yes)
   :Return BoundedByCycleCut; <<#FFEDD5>>
 else (no)
   :Return Complete; <<#BBF7D0>>
 endif
-:Build substrate-neutral run report; <<#EDE9FE>>
+:Build substrate-neutral run report\nwith saturation and extraction metadata; <<#EDE9FE>>
 :Dispatch report to oracle,\nRho backend, or tooling; <<#FCE7F3>>
 stop
 
 legend right
 |= Area |= Meaning |
 |<#DBEAFE> Inputs | typed terms and rewrite rules |
+|<#BBF7D0> Identity | exact-keyed e-graph construction |
 |<#DCFCE7> Saturation | equality evidence growth |
 |<#FEF3C7> Automaton | weighted-tree interpretation |
+|<#CCFBF1> Ordering | framed child-key ordering |
 |<#FBCFE8> Extraction | checked derivation stream |
 |<#EDE9FE> Report | substrate-neutral handoff |
 |<#FEE2E2> Boundary | explicit bounded outcome |

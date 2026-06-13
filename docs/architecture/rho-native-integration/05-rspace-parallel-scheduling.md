@@ -55,40 +55,48 @@ skinparam state {
   ArrowColor #374151
 }
 
-[*] --> Waiting : install persistent rule contracts
+[*] --> ContractsInstalled : inject normalized `Par`
 
-state Waiting #DBEAFE {
-  [*] --> HasContracts
+state ContractsInstalled #DBEAFE {
+  [*] --> PersistentReceives
 }
-state DataArrives #FEF3C7
-state MatchSearch #DCFCE7
+state FactArrives #FEF3C7
+state MatchIndex #DCFCE7
 state GuardCheck #FDE68A
+state EnabledJoin #CCFBF1
 state Commit #FBCFE8
 state FireBody #FCE7F3
 state EmitFacts #EDE9FE
+state ReplayLog #DDD6FE
+state Snapshot #CFFAFE
 state Quiescent #E5E7EB
 
-Waiting --> DataArrives : fact send
-DataArrives --> MatchSearch : RSpace checks waiting continuations
-MatchSearch --> GuardCheck : patterns match
-MatchSearch --> Waiting : no match
+ContractsInstalled --> FactArrives : seed or derived fact send
+FactArrives --> MatchIndex : update channel index
+MatchIndex --> EnabledJoin : all premise patterns match
+MatchIndex --> ContractsInstalled : no enabled join
+EnabledJoin --> GuardCheck : bind substitution
 GuardCheck --> Commit : guard true
-GuardCheck --> Waiting : guard false\n(no consumption)
+GuardCheck --> ContractsInstalled : guard false\n(no consumption)
 Commit --> FireBody : atomically consume selected inputs
 FireBody --> EmitFacts : continuation sends outputs
-EmitFacts --> DataArrives : emitted delta facts
-EmitFacts --> Quiescent : no new facts
+EmitFacts --> ReplayLog : record COMM event
+ReplayLog --> FactArrives : emitted delta wakes\nindependent joins
+ReplayLog --> Snapshot : frontier empty
+Snapshot --> Quiescent : resting-space observation
 Quiescent --> [*]
 
 legend right
 |= Area |= Meaning |
 |<#DBEAFE> Contracts | persistent rule receives |
-|<#FEF3C7> Data | fact arrival |
-|<#DCFCE7> Match | spatial pattern search |
+|<#FEF3C7> Data | seed and derived fact arrival |
+|<#DCFCE7> Match | indexed spatial pattern search |
+|<#CCFBF1> Enabled join | complete premise vector |
 |<#FDE68A> Guard | non-consuming decision |
 |<#FBCFE8> Commit | atomic consume step |
 |<#FCE7F3> Body | continuation execution |
-|<#EDE9FE> Delta | derived fact emission |
+|<#EDE9FE> Delta | derived fact emission and replay |
+|<#CFFAFE> Snapshot | observable resting space |
 endlegend
 @enduml
 ```

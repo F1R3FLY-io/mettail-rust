@@ -12,9 +12,11 @@ skinparam activity {
 
 start
 :Initialize class state; <<#DBEAFE>>
+:Load inside weights and\n`MonotoneBestOrder`; <<#BFDBFE>>
 :Seed heap with zero-rank candidate\nfor each e-node; <<#DCFCE7>>
 repeat
-  :Pop best candidate by\n(weight, exact key); <<#FEF3C7>>
+  :Pop best candidate by\n(weight, ordered exact key); <<#FEF3C7>>
+  :Decode ordered child-key\nframing without ambiguity; <<#CCFBF1>>
   :Generate successors by bumping\none child rank at a time; <<#FDE68A>>
   :Compose derivation tree; <<#EDE9FE>>
   if (cycle back-edge?) then (yes)
@@ -27,14 +29,15 @@ repeat
     :Emit derivation item; <<#BBF7D0>>
   endif
 repeat while (heap has candidates?) is (yes)
-:Return Done(completeness); <<#FCE7F3>>
+:Return Done(Complete)\nor Done(BoundedByCycleCut); <<#FCE7F3>>
 stop
 
 legend right
 |= Area |= Meaning |
 |<#DBEAFE> State | class-local stream state |
 |<#DCFCE7> Frontier | heap initialization |
-|<#FEF3C7> Ordering | best-first pop key |
+|<#FEF3C7> Ordering | best-first monotone pop key |
+|<#CCFBF1> Framing | prefix-free ordered child keys |
 |<#FDE68A> Expansion | successor generation |
 |<#BBF7D0> Emission | valid distinct derivation |
 |<#FEE2E2> Refutation | zero-weight candidate |

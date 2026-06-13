@@ -143,6 +143,9 @@ while IFS= read -r puml; do
   [[ -s "$figure_svg" ]] || fail "missing or empty rendered SVG asset: $figure_svg"
   rg -q '<svg([[:space:]>])' "$figure_svg" || fail "rendered asset is missing an SVG root: $figure_svg"
   rg -q '</svg>' "$figure_svg" || fail "rendered asset is missing an SVG close tag: $figure_svg"
+  if rg -q '&lt;#|&lt;&lt;#|&lt;back:' "$figure_svg"; then
+    fail "rendered asset contains escaped PlantUML color markup: $figure_svg"
+  fi
   cmp -s "$puml" "$figure_puml" || fail "PlantUML fence differs from figure source: $figure_puml"
 done < <(find "$tmpdir" -type f -name '*.puml' | sort)
 
@@ -154,6 +157,9 @@ while IFS= read -r puml; do
   [[ -s "$figure_svg" ]] || fail "missing or empty rendered SVG asset: $figure_svg"
   rg -q '<svg([[:space:]>])' "$figure_svg" || fail "rendered asset is missing an SVG root: $figure_svg"
   rg -q '</svg>' "$figure_svg" || fail "rendered asset is missing an SVG close tag: $figure_svg"
+  if rg -q '&lt;#|&lt;&lt;#|&lt;back:' "$figure_svg"; then
+    fail "rendered asset contains escaped PlantUML color markup: $figure_svg"
+  fi
 done < <(find "$figures_dir" -type f -name '*.puml' | sort)
 
 printf 'checking rendered Graphviz DOT assets...\n'
@@ -164,6 +170,9 @@ while IFS= read -r dot_source; do
   [[ -s "$figure_svg" ]] || fail "missing or empty rendered SVG asset: $figure_svg"
   rg -q '<svg([[:space:]>])' "$figure_svg" || fail "rendered asset is missing an SVG root: $figure_svg"
   rg -q '</svg>' "$figure_svg" || fail "rendered asset is missing an SVG close tag: $figure_svg"
+  if rg -q '&lt;#|&lt;&lt;#|&lt;back:' "$figure_svg"; then
+    fail "rendered asset contains escaped diagram color markup: $figure_svg"
+  fi
   dot -Tsvg "$dot_source" -o "$tmpdir/$stem.svg"
 done < <(find "$figures_dir" -type f -name '*.dot' | sort)
 

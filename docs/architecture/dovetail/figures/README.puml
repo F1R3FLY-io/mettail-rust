@@ -15,20 +15,27 @@ rectangle "Inputs" as Inputs #DBEAFE {
   component "Typed seed terms" as Seeds #BFDBFE
   component "Rewrite rules as data" as RuleData #BFDBFE
   component "Weight function" as Weigh #BFDBFE
+  component "Runtime bounds" as Bounds #BFDBFE
 }
 
 rectangle "Dovetail core" as Core #DCFCE7 {
-  component "Exact keys" as Keys #BBF7D0
+  component "SemanticHash\nexact keys" as Keys #BBF7D0
   component "Runtime e-graph" as EGraph #BBF7D0
-  component "Saturation driver" as Saturation #BBF7D0
+  component "Saturation driver\nand SatReport" as Saturation #BBF7D0
   component "WTA view" as Wta #BBF7D0
-  component "Lazy extractor" as Extractor #BBF7D0
-  component "Run report" as Report #BBF7D0
+  component "Lazy extractor\nchecked stream" as Extractor #BBF7D0
+  component "Run report\nwith completeness" as Report #BBF7D0
 }
 
 rectangle "Algebra" as Algebra #FEF3C7 {
   component "Semiring weights" as Weights #FDE68A
   component "Newton-SCC solver" as Newton #FDE68A
+  component "Monotone best order" as Order #FDE68A
+}
+
+rectangle "Evidence" as Evidence #EDE9FE {
+  component "Rocq / Why3 /\nCreusot models" as Formal #DDD6FE
+  component "Example + property\nstress tests" as Tests #DDD6FE
 }
 
 rectangle "Consumers" as Consumers #FCE7F3 {
@@ -41,21 +48,27 @@ Seeds --> EGraph : insert exact nodes
 RuleData --> Saturation : match and instantiate
 Keys --> EGraph : identity and dedup
 EGraph --> Saturation : current classes
+Bounds --> Saturation : node / iteration limits
 Saturation --> Wta : saturated graph
 Weigh --> Wta : transition weights
 Weights --> Wta : semiring operations
 Newton --> Wta : cyclic closure
 Wta --> Extractor : states and transitions
+Order --> Extractor : monotone frontier key
 Extractor --> Report : checked derivations
+Saturation --> Report : convergence or bound outcome
+Report --> Formal : proof obligations
+Report --> Tests : executable evidence
 Report --> Oracle
 Report --> Rho
 Report --> Tooling
 
 legend right
 |= Area |= Role |
-|<#DBEAFE> Inputs | typed terms, rules, weights |
+|<#DBEAFE> Inputs | typed terms, rules, weights, bounds |
 |<#DCFCE7> Dovetail core | exact keys, e-graph, saturation, extraction |
-|<#FEF3C7> Algebra | semiring and Newton-SCC support |
+|<#FEF3C7> Algebra | semiring, SCC, and best-order support |
+|<#EDE9FE> Evidence | formal models and tests |
 |<#FCE7F3> Consumers | oracle, Rho backend, local tooling |
 endlegend
 @enduml
