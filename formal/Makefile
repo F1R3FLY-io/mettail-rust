@@ -30,7 +30,8 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-critical-zero-admission rocq-rho-bridge rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
+.PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
