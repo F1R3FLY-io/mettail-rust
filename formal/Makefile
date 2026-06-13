@@ -117,6 +117,7 @@ rocq-dovetail: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq
 
 rocq-dovetail-refinement: require-capped
+	$(MAKE) -C ../dovetail/formal/rocq theories/Refinement/RhoReportHandoff.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Refinement/RustModelBridge.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Rigail/NewtonSccAdequacy.vo
 

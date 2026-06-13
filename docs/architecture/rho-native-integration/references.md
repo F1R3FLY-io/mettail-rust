@@ -220,8 +220,12 @@ Repository-local Dovetail formal suite:
 - `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v`
 - `dovetail/formal/rocq/theories/Requirements/LanguageDefInventory.v`
 - `dovetail/formal/rocq/theories/Lowering/PatternLoweringSoundness.v`
+- `dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v`
+- `dovetail/formal/rocq/theories/Refinement/RhoReportHandoff.v`
 
-Used for: current Dovetail proof coverage.
+Used for: current Dovetail proof coverage, including the checked runtime report
+boundary and the Rho handoff rule that complete reports expose exactly their
+root exact keys while bounded cycle-cut reports expose no Rho observations.
 
 ### METTAIL-RUNTIME-FORMAL
 

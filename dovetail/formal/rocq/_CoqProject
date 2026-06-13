@@ -28,4 +28,5 @@ theories/Requirements/MeTTaILRewriteCoverage.v
 theories/Requirements/LanguageDefInventory.v
 theories/Lowering/PatternLoweringSoundness.v
 theories/Refinement/RuntimeReportBridge.v
+theories/Refinement/RhoReportHandoff.v
 theories/Refinement/RustModelBridge.v

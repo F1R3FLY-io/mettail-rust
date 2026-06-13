@@ -41,7 +41,7 @@ The current proof and coverage sources are
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
-| Dovetail report boundary | `dovetail::report`, `RuntimeReportBridge.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness before any runtime/Rho adapter consumes them |
+| Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
 | finite process projection | `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | generates, model-checks, and rewrite-checks a bounded three-redex RhoNet/Dovetail COMM fragment with Rho-internal reserve phases for no deadlock, all six visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, and weak-fair scheduler completion |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime |
 | differential oracle | `mettail-rho-runtime/tests/rho_vs_ascent.rs` | compares a validated Rho-default backend plan with Ascent results |
@@ -51,8 +51,10 @@ grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
 guards, ambiguity preservation, cost-axis separation, normalized-`Par`
 well-formedness, backend flip gating, and fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
-than an Ascent-shaped success value, so exact keys and `BoundedByCycleCut`
-survive until the Rho adapter explicitly handles them.
+than an Ascent-shaped success value. The handoff proof requires complete
+reports before emitting Rho-visible observations, preserves the extractor root
+order as the observed exact-key sequence, and rejects `BoundedByCycleCut`
+reports without observations.
 Generated Rho execution now starts from `PlannedRhoBackend`, which wraps the
 `RhoDefaultBackendPlan` produced by the flip gate; raw validated artifacts remain
 available for oracle/debug helpers only.
