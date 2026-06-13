@@ -2,8 +2,8 @@
  * LanguageDefInventory: proof layer for the executable LanguageDef inventory
  * audit.
  *
- * The companion Rust test parses actual in-repo `language!` macro bodies and
- * classifies their rewrite surfaces. This Rocq file models the checked
+ * The companion Rust test audits actual in-repo `language!` macro bodies and
+ * generated Datalog relation families. This Rocq file models the checked
  * inventory shape and proves that every inventoried requirement is covered by
  * the Dovetail capability taxonomy.
  *
@@ -68,14 +68,54 @@ Section LanguageDefInventory.
     ReqCongruencePremise
   ].
 
+  Definition class2_collection_surface : list RewriteRequirement := [
+    ReqCollectionPattern
+  ].
+
+  Definition class2_map_surface : list RewriteRequirement := [
+    ReqCollectionPattern;
+    ReqMapPattern
+  ].
+
+  Definition class3_binder_collection_surface : list RewriteRequirement := [
+    ReqCollectionPattern;
+    ReqZipPattern;
+    ReqBinderPattern
+  ].
+
+  Definition guarded_rho_surface : list RewriteRequirement := [
+    ReqBehavioralGuard;
+    ReqSyntheticInjectionGuard;
+    ReqEnvRelationPremise;
+    ReqCollectionPattern;
+    ReqBinderPattern;
+    ReqRhoCommHandlerContract;
+    ReqRhoResourceGuardContract
+  ].
+
+  Definition refinement_surface : list RewriteRequirement := [
+    ReqEnvRelationPremise
+  ].
+
   Definition current_language_inventory : list LanguageInventory := [
     {| inventory_name := "calculator"; inventory_requirements := arithmetic_rewrite_surface ++ collection_rewrite_surface |};
     {| inventory_name := "rhocalc"; inventory_requirements := process_rewrite_surface ++ arithmetic_rewrite_surface |};
     {| inventory_name := "ambient"; inventory_requirements := process_rewrite_surface |};
     {| inventory_name := "lambda"; inventory_requirements := binder_rewrite_surface |};
+    {| inventory_name := "guardedrho"; inventory_requirements := guarded_rho_surface |};
     {| inventory_name := "ledtest"; inventory_requirements := arithmetic_rewrite_surface |};
-    {| inventory_name := "composition"; inventory_requirements := arithmetic_rewrite_surface |};
-    {| inventory_name := "refinements"; inventory_requirements := ReqEnvRelationPremise :: ReqFoldNativeHandler :: arithmetic_rewrite_surface |}
+    {| inventory_name := "optsmoke"; inventory_requirements := ReqFoldNativeHandler :: class2_collection_surface |};
+    {| inventory_name := "class2smoke"; inventory_requirements := class2_collection_surface |};
+    {| inventory_name := "class2hashmapsmoke"; inventory_requirements := class2_map_surface |};
+    {| inventory_name := "class2multi"; inventory_requirements := class2_collection_surface |};
+    {| inventory_name := "class2optsmoke"; inventory_requirements := class2_collection_surface |};
+    {| inventory_name := "class3multi"; inventory_requirements := class3_binder_collection_surface |};
+    {| inventory_name := "class3opt"; inventory_requirements := class3_binder_collection_surface |};
+    {| inventory_name := "basemath"; inventory_requirements := arithmetic_rewrite_surface |};
+    {| inventory_name := "extmath"; inventory_requirements := arithmetic_rewrite_surface |};
+    {| inventory_name := "importedmath"; inventory_requirements := arithmetic_rewrite_surface |};
+    {| inventory_name := "mixedmath"; inventory_requirements := arithmetic_rewrite_surface |};
+    {| inventory_name := "refinementsmoke"; inventory_requirements := refinement_surface |}
   ].
 
   Definition flat_inventory : list RewriteRequirement :=
@@ -106,6 +146,17 @@ Section LanguageDefInventory.
     intros r Hin. exists (covering_capability r). split.
     - reflexivity.
     - apply covering_capability_sound.
+  Qed.
+
+  Theorem every_current_language_has_requirements : forall inv,
+    In inv current_language_inventory ->
+    inventory_requirements inv <> [].
+  Proof.
+    intros inv Hinv.
+    repeat
+      (destruct Hinv as [Hinv | Hinv];
+       [subst; simpl; discriminate |]).
+    contradiction.
   Qed.
 
 End LanguageDefInventory.
