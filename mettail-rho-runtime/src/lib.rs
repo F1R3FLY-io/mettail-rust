@@ -28,8 +28,8 @@
 //! hand-authored host oracle tests, reads public resting data for oracle checks,
 //! runs lowered calculator contracts against the Ascent baseline, and hosts the
 //! M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language flip
-//! baseline until a language's proof, oracle, coverage, artifact-validation, and
-//! deadlock gates pass.
+//! baseline until a language's proof, oracle, coverage, artifact-validation,
+//! scheduler-fairness, and deadlock gates pass.
 
 #![forbid(unsafe_code)]
 

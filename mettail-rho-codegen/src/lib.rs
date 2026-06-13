@@ -262,6 +262,7 @@ mod tests {
                 oracle_parity_passed: true,
                 coverage_passed: true,
                 artifact_validated: true,
+                scheduler_fairness_passed: true,
             },
             &out.deadlock_report,
         );

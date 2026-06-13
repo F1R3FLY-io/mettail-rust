@@ -228,28 +228,28 @@ Section RhoRejectedCoverage.
     subst xs. contradiction.
   Qed.
 
-  Theorem omitted_rejected_rule_blocks_default_backend : forall proofs oracle artifact audit rejected delegated rule diagnostics,
+  Theorem omitted_rejected_rule_blocks_default_backend : forall proofs oracle artifact fairness audit rejected delegated rule diagnostics,
     In rule rejected ->
     ~ In rule delegated ->
-    default_backend_gate proofs oracle artifact
+    default_backend_gate proofs oracle artifact fairness
       (coverage_state_from_evidence audit (DelegatedRejectedRules delegated) rejected)
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact audit rejected delegated rule diagnostics
+    intros proofs oracle artifact fairness audit rejected delegated rule diagnostics
       Hrejected Homitted.
     apply uncovered_rejection_blocks_default_backend.
     apply inhabited_list_has_nonzero_length with (rule := rule).
     apply omitted_rule_appears_in_uncovered; assumption.
   Qed.
 
-  Theorem stale_delegated_rule_blocks_default_backend : forall proofs oracle artifact audit rejected delegated rule diagnostics,
+  Theorem stale_delegated_rule_blocks_default_backend : forall proofs oracle artifact fairness audit rejected delegated rule diagnostics,
     In rule delegated ->
     ~ In rule rejected ->
-    default_backend_gate proofs oracle artifact
+    default_backend_gate proofs oracle artifact fairness
       (coverage_state_from_evidence audit (DelegatedRejectedRules delegated) rejected)
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact audit rejected delegated rule diagnostics
+    intros proofs oracle artifact fairness audit rejected delegated rule diagnostics
       Hdelegated Hstale.
     assert (Hnonzero :
       length (extraneous_delegation_ids rejected delegated) <> 0).
@@ -265,18 +265,18 @@ Section RhoRejectedCoverage.
       Nat.eqb (length (extraneous_delegation_ids rejected delegated)) 0 = false).
     { rewrite Nat.eqb_neq. exact Hnonzero. }
     rewrite Hextra.
-    destruct proofs; destruct oracle; destruct artifact; destruct audit;
+    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
       destruct (Nat.eqb (length (uncovered_rejection_ids rejected delegated)) 0);
       reflexivity.
   Qed.
 
-  Theorem all_rules_lowered_blocks_any_rejection : forall proofs oracle artifact audit rejected rule diagnostics,
+  Theorem all_rules_lowered_blocks_any_rejection : forall proofs oracle artifact fairness audit rejected rule diagnostics,
     In rule rejected ->
-    default_backend_gate proofs oracle artifact
+    default_backend_gate proofs oracle artifact fairness
       (coverage_state_from_evidence audit AllRulesLowered rejected)
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact audit rejected rule diagnostics Hrejected.
+    intros proofs oracle artifact fairness audit rejected rule diagnostics Hrejected.
     apply omitted_rejected_rule_blocks_default_backend with
       (rule := rule).
     - exact Hrejected.

@@ -4,7 +4,8 @@
 //! debug code that needs to inject a shape-validated AST. Generated backend
 //! execution should use [`PlannedRhoBackend`]: it can only be built from a
 //! `RhoDefaultBackendPlan`, which is the codegen artifact produced after the
-//! proof, oracle, coverage, validation, and deadlock gates pass.
+//! proof, oracle, coverage, scheduler-fairness, validation, and deadlock gates
+//! pass.
 
 use std::collections::{BTreeMap, BTreeSet};
 

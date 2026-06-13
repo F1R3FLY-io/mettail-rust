@@ -39,7 +39,7 @@ The current proof and coverage sources are
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
-| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, and deadlock gates |
+| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
@@ -242,12 +242,12 @@ match.
 Verified statement:
 
 Make Rho the default runtime backend for a language, in place of the CESK
-runtime backend, only after proof, oracle, coverage, artifact-validation, and
-deadlock gates pass.
+runtime backend, only after proof, oracle, coverage, artifact-validation,
+scheduler-fairness, and deadlock gates pass.
 
 Flip condition for language `L`:
 
-`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`
+`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ SchedulerFairness(L) ∧ NoNewDeadlocks(L)`
 
 `RhoBackendFlipGate.v` proves the Boolean flip gate is exactly this conjunction
 and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the
@@ -262,15 +262,17 @@ or a stale delegated rule blocks the default-backend gate. `RhoBackendFlipGate.v
 also models the coverage counters consumed by the flip gate. Its
 `deadlock_diagnostic_blocks_flip` theorem models the codegen analyzer output:
 any non-empty channel-deadlock diagnostic list makes `NoNewDeadlocks(L)` false.
-The `clean_deadlock_report_reduces_to_other_gates` theorem proves that an empty
-deadlock report leaves the proof, oracle, coverage, and artifact-validation
-gates as the remaining flip obligations.
+The `missing_scheduler_fairness_blocks_flip` theorem proves that a language
+cannot flip while the scheduler-fairness obligation is open. The
+`clean_deadlock_report_reduces_to_other_gates` theorem proves that an empty
+deadlock report leaves the proof, oracle, coverage, artifact-validation, and
+scheduler-fairness gates as the remaining flip obligations.
 The `no_blockers_iff_can_flip` and `any_blocker_blocks_flip` theorems model the
 Rust blocker-list API: a language can flip exactly when no blocker remains.
 The `default_backend_gate_iff_all_evidence` theorem models
-`plan_rho_default_backend`: proof, oracle, coverage audit, no uncovered rejected
-rules, no extraneous delegation claims, and no deadlock diagnostics are jointly
-necessary and sufficient.
+`plan_rho_default_backend`: proof, oracle, scheduler fairness, coverage audit,
+no uncovered rejected rules, no extraneous delegation claims, and no deadlock
+diagnostics are jointly necessary and sufficient.
 
 Rust flip-gate evidence:
 
@@ -284,11 +286,13 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::validate_rho_program`
 - `mettail_rho_codegen::RhoValidationError`
 - `mettail_rho_codegen::RhoDefaultBackendEvidence`
+- `mettail_rho_codegen::RhoDefaultBackendEvidence::scheduler_fairness_passed`
 - `mettail_rho_codegen::RhoCoverageEvidence`
 - `mettail_rho_codegen::decide_rho_flip`
 - `mettail_rho_codegen::RhoFlipDecision::can_flip_to_rho`
 - `mettail_rho_codegen::RhoFlipBlocker`
 - `mettail_rho_codegen::RhoFlipBlocker::ArtifactValidation`
+- `mettail_rho_codegen::RhoFlipBlocker::SchedulerFairness`
 - `mettail_rho_codegen::analyze_channel_deadlocks`
 - `mettail_rho_codegen::ChannelDeadlockReport`
 - `mettail_rho_codegen::ChannelDeadlockReport::no_new_deadlocks`

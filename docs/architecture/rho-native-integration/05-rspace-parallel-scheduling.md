@@ -141,15 +141,17 @@ projecting out scheduler metadata and ordering artifacts.
 This is the core reason the Rho machine is attractive for Dovetail: many rewrite
 instances are independent, and RSpace can run them without a central work queue.
 
-## Fairness Assumption
+## Scheduler Fairness Gate
 
 Completeness of the Rho execution requires fairness:
 
 `enabled_forever(action) ⇒ eventually_fired(action)`
 
 The runtime may choose any enabled communication first, but it must not starve an
-enabled communication forever in the mathematical model. Tests and bounded
-oracles check representative schedules; the proof states fairness explicitly.
+enabled communication forever in the mathematical model. `SchedulerFairness(L)`
+is therefore a Rho-default flip-gate input, not an advisory note. Tests and
+bounded oracles check representative schedules; the TLA⁺/process-calculus models
+and Rocq bridge theorems state fairness explicitly.
 
 ## Determinism Versus Ambiguity
 

@@ -205,7 +205,7 @@ MeTTaIL-owned reducer, tuple space, matcher, or replay engine.
 |---|---|---|
 | Local Dovetail | Dovetail saturates and extracts inside MeTTaIL. | Formal reference, tests, non-Rho deployments. |
 | Rho differential | Both Dovetail/Ascent and Rho run; result sets are compared. | M-RHO rollout safety. |
-| Rho default | Rho is the selected runtime backend for a language in place of the CESK runtime backend. | M-RHO.4 after proof, oracle, coverage, artifact-validation, and deadlock gates. |
+| Rho default | Rho is the selected runtime backend for a language in place of the CESK runtime backend. | M-RHO.4 after proof, oracle, coverage, artifact-validation, scheduler-fairness, and deadlock gates. |
 
 ## Pedagogical Example: Communication
 

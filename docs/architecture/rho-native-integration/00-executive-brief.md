@@ -85,7 +85,7 @@ The proof is decomposed into:
 
 A language may use Rho as its default runtime only when:
 
-`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`
+`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ SchedulerFairness(L) ∧ NoNewDeadlocks(L)`
 
 That means:
 
@@ -95,6 +95,8 @@ That means:
 - every rewrite requirement is covered, rejected with evidence, or delegated to
   an explicit contract;
 - the generated `rhoapi::Par` artifact passes the normalized-AST validator;
+- the RSpace/Rho scheduler fairness obligation for the covered fragment is
+  discharged by the scheduler model and rollout evidence;
 - generated communication structure has no newly introduced deadlock class.
 
 ## Principal Takeaways
@@ -102,7 +104,7 @@ That means:
 | Question | Answer |
 |---|---|
 | Does this create a custom Rho machine in MeTTaIL? | No. It reuses F1r3node's Rholang interpreter and RSpace. |
-| Does the Rho path replace the CESK runtime backend immediately? | No. A language flips only after proof, oracle, coverage, artifact-validation, and deadlock gates pass; WPDA parsing remains active, and Ascent remains available only as a reference/oracle path. |
+| Does the Rho path replace the CESK runtime backend immediately? | No. A language flips only after proof, oracle, coverage, artifact-validation, scheduler-fairness, and deadlock gates pass; WPDA parsing remains active, and Ascent remains available only as a reference/oracle path. |
 | Does RSpace scheduling change semantics? | It must not. Scheduler order is quotiented away; semantic alternatives are represented as data. |
 | Can snippets modeled by MeTTaIL run on F1r3node? | Yes, after MeTTaIL/WPDA parsing and after the language's Rho lowering fragment satisfies its gates. |
 | Where is the detailed design? | Start with [End-to-End Architecture](02-end-to-end-architecture.md), [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md), and [Correctness and Coverage](06-correctness-and-coverage.md). |

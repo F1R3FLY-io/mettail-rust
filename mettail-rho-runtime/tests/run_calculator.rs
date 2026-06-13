@@ -43,6 +43,7 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
         proofs_passed: true,
         oracle_parity_passed: true,
         coverage_audit_passed: true,
+        scheduler_fairness_passed: true,
         coverage: RhoCoverageEvidence::AllRulesLowered,
     }
 }

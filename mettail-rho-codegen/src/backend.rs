@@ -2,8 +2,9 @@
 //!
 //! `RhoBackendFlipGate.v` proves the Boolean gate. This module is the Rust-side
 //! artifact that a runtime selector can consume: it lowers a `LanguageDef`,
-//! checks proof/oracle/coverage/deadlock evidence, and either returns a concrete
-//! Rho-default backend plan or all blockers.
+//! checks proof/oracle/coverage/artifact-validation/scheduler-fairness/deadlock
+//! evidence, and either returns a concrete Rho-default backend plan or all
+//! blockers.
 
 use std::collections::BTreeSet;
 
@@ -67,6 +68,7 @@ pub struct RhoDefaultBackendEvidence {
     pub proofs_passed: bool,
     pub oracle_parity_passed: bool,
     pub coverage_audit_passed: bool,
+    pub scheduler_fairness_passed: bool,
     pub coverage: RhoCoverageEvidence,
 }
 
@@ -123,6 +125,7 @@ pub fn plan_rho_default_backend(
             oracle_parity_passed: evidence.oracle_parity_passed,
             coverage_passed,
             artifact_validated: validation_errors.is_empty(),
+            scheduler_fairness_passed: evidence.scheduler_fairness_passed,
         },
         &lowering.deadlock_report,
     );
@@ -182,6 +185,7 @@ mod tests {
             proofs_passed: true,
             oracle_parity_passed: true,
             coverage_audit_passed: true,
+            scheduler_fairness_passed: true,
             coverage,
         }
     }
@@ -255,6 +259,7 @@ mod tests {
                 proofs_passed: false,
                 oracle_parity_passed: false,
                 coverage_audit_passed: true,
+                scheduler_fairness_passed: false,
                 coverage: RhoCoverageEvidence::AllRulesLowered,
             },
         )
@@ -263,7 +268,11 @@ mod tests {
         assert_eq!(err.uncovered_rejections, Vec::<String>::new());
         assert_eq!(
             err.decision.blockers,
-            vec![RhoFlipBlocker::Proofs, RhoFlipBlocker::OracleParity]
+            vec![
+                RhoFlipBlocker::Proofs,
+                RhoFlipBlocker::OracleParity,
+                RhoFlipBlocker::SchedulerFairness
+            ]
         );
     }
 }
