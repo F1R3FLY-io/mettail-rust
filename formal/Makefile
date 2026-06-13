@@ -5,7 +5,7 @@ FORMAL_TMPDIR ?= $(abspath $(REPO_ROOT)/.formal-tmp)
 TMPDIR ?= $(FORMAL_TMPDIR)
 export TMPDIR
 
-FORMAL_TOOL_PATH_PREFIX ?= $(HOME)/.opam/default/bin:$(HOME)/.local/tlaps/bin:$(HOME)/.npm-global/bin:$(HOME)/.cargo/bin
+FORMAL_TOOL_PATH_PREFIX ?= $(HOME)/.opam/default/bin:$(HOME)/.local/tlaps/bin:$(HOME)/.npm-global/bin:$(HOME)/.cargo/bin:$(HOME)/.local/bin
 PATH := $(FORMAL_TOOL_PATH_PREFIX):$(PATH)
 export PATH
 

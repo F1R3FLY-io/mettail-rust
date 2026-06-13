@@ -18,8 +18,10 @@ repository-local `.formal-tmp` scratch directory. `FORMAL_MEMORY_MAX_BYTES` and
 `check-capped` rejects any `FORMAL_MEMORY_MAX_BYTES` above 34359738368 bytes.
 The capped service receives a deterministic `PATH` prefix through
 `FORMAL_TOOL_PATH_PREFIX`, which defaults to the expected opam, TLAPS,
-npm-global, and cargo binary directories. Override `FORMAL_TOOL_PATH_PREFIX`
-when Rocq/Coq, Apalache, or Cargo are installed elsewhere.
+npm-global, cargo, and local user binary directories. The local user binary
+directory covers locally installed Creusot/Alt-Ergo helpers such as
+`alt-ergo` and `creusot-rustc`. Override `FORMAL_TOOL_PATH_PREFIX` when Rocq/Coq,
+Apalache, Cargo, or the Creusot prover helpers are installed elsewhere.
 The Maude process-calculus target exports `MAUDE_LIB=/usr/share/maude` by
 default so capped non-login runs can locate `prelude.maude`; override
 `MAUDE_LIB` only if Maude is installed in a non-system prefix.
