@@ -40,6 +40,7 @@ The current proof and coverage sources are
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, and deadlock gates |
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
+| Dovetail report boundary | `dovetail::report`, `RuntimeReportBridge.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness before any runtime/Rho adapter consumes them |
 | finite process projection | `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | generates, model-checks, and rewrite-checks a bounded three-redex RhoNet/Dovetail COMM fragment with Rho-internal reserve phases for no deadlock, all six visible fire schedules, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, and weak-fair scheduler completion |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime |
 | differential oracle | `mettail-rho-runtime/tests/rho_vs_ascent.rs` | compares a validated Rho-default backend plan with Ascent results |
@@ -48,6 +49,9 @@ The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
 guards, ambiguity preservation, cost-axis separation, normalized-`Par`
 well-formedness, backend flip gating, and fail-closed runtime dispatch.
+Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
+than an Ascent-shaped success value, so exact keys and `BoundedByCycleCut`
+survive until the Rho adapter explicitly handles them.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
