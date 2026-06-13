@@ -47,6 +47,13 @@ production backend target. It is now superseded for generated MeTTaIL backends:
   `RhoProgram::Ast(RhoAstProgram { par: models::rhoapi::Par, text_annotation })`.
   The Rholang-looking string is a reader/debug annotation only; it is never a
   parser gate for generated backend correctness.
+- **Generated execution is validation-gated**: raw `RhoProgram::Ast` values are
+  inspectable lowering artifacts, not executable credentials. Runtime dispatch
+  consumes the opaque Rust typestate `ValidatedRhoProgram`, which is produced
+  only by `validate_rho_program` / `TryFrom<RhoProgram>` after checking the
+  normalized contract shape and metadata. `RhoParWellFormedness.v` mirrors this
+  with `validate_artifact_sound`, `validate_artifact_rejects_invalid`, and
+  `lowered_scalar_program_validates`.
 - **Direct injection is budgeted explicitly**: the runtime helper installs
   `Cost::unsafe_max()` before `RhoRuntime::inj(Par, Env<Par>, rand)`, matching
   the old source evaluator's budget while avoiding source parsing.

@@ -41,6 +41,13 @@ pub struct ValidatedRhoAstProgram {
 }
 
 impl ValidatedRhoAstProgram {
+    fn from_validated(program: RhoAstProgram) -> Self {
+        Self {
+            par: program.par,
+            text_annotation: program.text_annotation,
+        }
+    }
+
     pub fn par(&self) -> &Par {
         &self.par
     }
@@ -51,43 +58,38 @@ impl ValidatedRhoAstProgram {
     }
 }
 
-impl From<RhoAstProgram> for ValidatedRhoAstProgram {
-    fn from(program: RhoAstProgram) -> Self {
-        Self {
-            par: program.par,
-            text_annotation: program.text_annotation,
-        }
-    }
-}
-
 /// Rho artifact whose generated shape has passed codegen validation.
 ///
 /// Production generated-backend execution should consume this typestate instead
 /// of arbitrary `Par`. Low-level raw-`Par` execution remains available in
 /// `mettail-rho-runtime` for host oracle tests and debugging.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
-pub enum ValidatedRhoProgram {
+pub struct ValidatedRhoProgram {
+    inner: ValidatedRhoArtifact,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ValidatedRhoArtifact {
     Ast(ValidatedRhoAstProgram),
 }
 
 impl ValidatedRhoProgram {
     pub fn artifact_kind(&self) -> RhoArtifactKind {
-        match self {
-            Self::Ast(_) => RhoArtifactKind::NormalizedAst,
+        match &self.inner {
+            ValidatedRhoArtifact::Ast(_) => RhoArtifactKind::NormalizedAst,
         }
     }
 
     pub fn ast_par(&self) -> Option<&Par> {
-        match self {
-            Self::Ast(program) => Some(program.par()),
+        match &self.inner {
+            ValidatedRhoArtifact::Ast(program) => Some(program.par()),
         }
     }
 
     /// Reader/debug annotation. This text is not parsed as the execution path.
     pub fn text_annotation(&self) -> &str {
-        match self {
-            Self::Ast(program) => program.text_annotation(),
+        match &self.inner {
+            ValidatedRhoArtifact::Ast(program) => program.text_annotation(),
         }
     }
 }
@@ -98,7 +100,9 @@ impl TryFrom<RhoProgram> for ValidatedRhoProgram {
     fn try_from(program: RhoProgram) -> Result<Self, Self::Error> {
         validate_rho_program(&program)?;
         match program {
-            RhoProgram::Ast(ast) => Ok(Self::Ast(ast.into())),
+            RhoProgram::Ast(ast) => Ok(Self {
+                inner: ValidatedRhoArtifact::Ast(ValidatedRhoAstProgram::from_validated(ast)),
+            }),
         }
     }
 }

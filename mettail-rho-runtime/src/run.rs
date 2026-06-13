@@ -251,11 +251,11 @@ pub async fn run_validated_program_with_call(
 }
 
 /// Build an in-memory `RhoRuntime` and inject an already-normalized `Par`
-/// program to quiescence.
+/// program to quiescence for oracle/debug tests.
 ///
-/// Low-level raw-`Par` execution is kept for host oracles and debugging. Default
-/// generated-backend dispatch should require `ValidatedRhoProgram`.
-pub async fn run_par(program: &Par) -> Result<(), String> {
+/// This is not the generated-backend entry point because it accepts arbitrary
+/// `Par`. Generated backend dispatch must use `run_validated_program`.
+pub async fn run_normalized_par_for_oracle(program: &Par) -> Result<(), String> {
     evaluate_par(program).await.map(|_| ())
 }
 
@@ -290,10 +290,13 @@ pub async fn run_validated_program_with_call_and_read_ints(
     run_validated_program_with_call_and_read_ground(program, call, out_channel, par_as_i64).await
 }
 
-/// Build an in-memory `RhoRuntime`, inject normalized `program` to quiescence,
-/// and return every ground integer left resting on the quoted channel
-/// `@"<out_channel>"`.
-pub async fn run_par_and_read_ints(program: &Par, out_channel: &str) -> Result<Vec<i64>, String> {
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every ground integer left resting on the quoted
+/// channel `@"<out_channel>"`.
+pub async fn run_normalized_par_for_oracle_and_read_ints(
+    program: &Par,
+    out_channel: &str,
+) -> Result<Vec<i64>, String> {
     run_par_and_read_ground(program, out_channel, par_as_i64).await
 }
 
@@ -328,10 +331,10 @@ pub async fn run_validated_program_with_call_and_read_strings(
     run_validated_program_with_call_and_read_ground(program, call, out_channel, par_as_string).await
 }
 
-/// Build an in-memory `RhoRuntime`, inject normalized `program` to quiescence,
-/// and return every ground string left resting on the quoted channel
-/// `@"<out_channel>"`.
-pub async fn run_par_and_read_strings(
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every ground string left resting on the quoted
+/// channel `@"<out_channel>"`.
+pub async fn run_normalized_par_for_oracle_and_read_strings(
     program: &Par,
     out_channel: &str,
 ) -> Result<Vec<String>, String> {
@@ -430,6 +433,13 @@ pub async fn run_program(program: &str) -> Result<(), String> {
 }
 
 #[deprecated(
+    note = "use run_normalized_par_for_oracle for raw-Par oracle/debug tests; generated backend execution should use run_validated_program"
+)]
+pub async fn run_par(program: &Par) -> Result<(), String> {
+    run_normalized_par_for_oracle(program).await
+}
+
+#[deprecated(
     note = "use run_rholang_source_for_oracle_and_read_ints for source oracles; generated backend execution should use run_validated_program_and_read_ints"
 )]
 pub async fn run_and_read_ints(program: &str, out_channel: &str) -> Result<Vec<i64>, String> {
@@ -437,10 +447,27 @@ pub async fn run_and_read_ints(program: &str, out_channel: &str) -> Result<Vec<i
 }
 
 #[deprecated(
+    note = "use run_normalized_par_for_oracle_and_read_ints for raw-Par oracle/debug tests; generated backend execution should use run_validated_program_and_read_ints"
+)]
+pub async fn run_par_and_read_ints(program: &Par, out_channel: &str) -> Result<Vec<i64>, String> {
+    run_normalized_par_for_oracle_and_read_ints(program, out_channel).await
+}
+
+#[deprecated(
     note = "use run_rholang_source_for_oracle_and_read_strings for source oracles; generated backend execution should use run_validated_program_and_read_strings"
 )]
 pub async fn run_and_read_strings(program: &str, out_channel: &str) -> Result<Vec<String>, String> {
     run_rholang_source_for_oracle_and_read_strings(program, out_channel).await
+}
+
+#[deprecated(
+    note = "use run_normalized_par_for_oracle_and_read_strings for raw-Par oracle/debug tests; generated backend execution should use run_validated_program_and_read_strings"
+)]
+pub async fn run_par_and_read_strings(
+    program: &Par,
+    out_channel: &str,
+) -> Result<Vec<String>, String> {
+    run_normalized_par_for_oracle_and_read_strings(program, out_channel).await
 }
 
 #[deprecated(

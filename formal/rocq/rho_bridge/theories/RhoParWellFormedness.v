@@ -68,6 +68,55 @@ Section RhoParWellFormedness.
   Definition program_well_formed (contracts : list ContractAst) : bool :=
     forallb contract_well_formed contracts.
 
+  Inductive RhoArtifact : Type :=
+  | NormalizedAstArtifact : list ContractAst -> RhoArtifact.
+
+  Record ValidatedArtifact : Type := {
+    validated_contracts : list ContractAst
+  }.
+
+  Definition validate_artifact (artifact : RhoArtifact) : option ValidatedArtifact :=
+    match artifact with
+    | NormalizedAstArtifact contracts =>
+        if program_well_formed contracts
+        then Some {| validated_contracts := contracts |}
+        else None
+    end.
+
+  Theorem validate_artifact_sound : forall artifact validated,
+    validate_artifact artifact = Some validated ->
+    program_well_formed (validated_contracts validated) = true.
+  Proof.
+    intros [contracts] validated Hvalidate.
+    unfold validate_artifact in Hvalidate.
+    destruct (program_well_formed contracts) eqn:Hwf.
+    - inversion Hvalidate. subst. simpl. exact Hwf.
+    - discriminate Hvalidate.
+  Qed.
+
+  Theorem validate_artifact_rejects_invalid : forall contracts,
+    program_well_formed contracts = false ->
+    validate_artifact (NormalizedAstArtifact contracts) = None.
+  Proof.
+    intros contracts Hinvalid. unfold validate_artifact.
+    destruct (program_well_formed contracts) eqn:Hwf.
+    - discriminate Hinvalid.
+    - reflexivity.
+  Qed.
+
+  Theorem validate_artifact_complete : forall contracts,
+    program_well_formed contracts = true ->
+    exists validated,
+      validate_artifact (NormalizedAstArtifact contracts) = Some validated
+      /\ validated_contracts validated = contracts.
+  Proof.
+    intros contracts Hvalid. unfold validate_artifact.
+    destruct (program_well_formed contracts) eqn:Hwf.
+    - exists {| validated_contracts := contracts |}.
+      split; reflexivity.
+    - discriminate Hvalid.
+  Qed.
+
   Definition scalar_contract (operand_count : nat) : ContractAst :=
     {|
       source_is_ground_string := true;
@@ -112,6 +161,15 @@ Section RhoParWellFormedness.
     intros c Hin. apply in_map_iff in Hin.
     destruct Hin as [arity [Heq _]]. subst.
     apply scalar_contract_well_formed.
+  Qed.
+
+  Theorem lowered_scalar_program_validates : forall arities,
+    exists validated,
+      validate_artifact (NormalizedAstArtifact (map scalar_contract arities)) = Some validated
+      /\ validated_contracts validated = map scalar_contract arities.
+  Proof.
+    intros arities. apply validate_artifact_complete.
+    apply lowered_scalar_program_well_formed.
   Qed.
 
   Theorem scalar_contract_return_channel_zero : forall operand_count,

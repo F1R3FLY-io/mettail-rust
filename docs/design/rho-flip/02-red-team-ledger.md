@@ -130,6 +130,9 @@ Resolution evidence:
 - `mettail-rho-codegen::lower_language_def` now returns `RhoProgram::Ast` with a
   normalized `models::rhoapi::Par` execution artifact and a Rholang-text reader
   annotation.
+- Generated backend dispatch consumes opaque `ValidatedRhoProgram`, not raw
+  `Par` or unchecked `RhoAstProgram`; the validator is the only codegen path
+  that can produce the executable typestate.
 - The runtime path uses direct `RhoRuntime::inj(Par, Env<Par>, rand)` after
   installing `Cost::unsafe_max()`, avoiding source parsing while keeping the old
   source path available for hand-authored parser/regression oracles.

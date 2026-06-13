@@ -35,11 +35,13 @@
 pub mod run;
 #[allow(deprecated)]
 pub use run::{
-    run_and_read_ints, run_and_read_strings, run_program, run_program_then_consume_strings,
+    run_and_read_ints, run_and_read_strings, run_par, run_par_and_read_ints,
+    run_par_and_read_strings, run_program, run_program_then_consume_strings,
     run_sequence_and_read_ints, run_sequence_and_read_strings,
 };
 pub use run::{
-    run_par, run_par_and_read_ints, run_par_and_read_strings, run_rholang_source_for_oracle,
+    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_ints,
+    run_normalized_par_for_oracle_and_read_strings, run_rholang_source_for_oracle,
     run_rholang_source_for_oracle_and_read_ints, run_rholang_source_for_oracle_and_read_strings,
     run_rholang_source_for_oracle_then_consume_strings,
     run_rholang_source_sequence_for_oracle_and_read_ints,

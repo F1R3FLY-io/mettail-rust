@@ -396,7 +396,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge artifacts are normalized `rhoapi::Par` values injected directly; source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge artifacts are normalized `rhoapi::Par` values injected directly through opaque `ValidatedRhoProgram`; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 

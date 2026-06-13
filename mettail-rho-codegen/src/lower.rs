@@ -37,15 +37,13 @@ use crate::deadlock::{
 
 /// Executable artifact family for the Rho backend.
 ///
-/// `NormalizedAst` is the implementation available today. `Bytecode` is reserved
-/// for the future f1r3node bytecode backend; it is named here so runtime
-/// dispatch and documentation speak in terms of artifact kind instead of
-/// hard-wiring source text or `Par` forever.
+/// `NormalizedAst` is the implementation available today. The enum is
+/// non-exhaustive so the future f1r3node bytecode artifact can be added without
+/// making source text the boundary again.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RhoArtifactKind {
     NormalizedAst,
-    Bytecode,
 }
 
 /// Bytecode-ready backend artifact for Rho execution.
