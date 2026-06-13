@@ -93,9 +93,12 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_SAMPLES);
-    let heavy_on = std::env::var("CAST_TOWER_HEAVY").map(|v| v != "off").unwrap_or(true);
-    let pathological_on =
-        std::env::var("CAST_TOWER_PATHOLOGICAL").map(|v| v == "on").unwrap_or(false);
+    let heavy_on = std::env::var("CAST_TOWER_HEAVY")
+        .map(|v| v != "off")
+        .unwrap_or(true);
+    let pathological_on = std::env::var("CAST_TOWER_PATHOLOGICAL")
+        .map(|v| v == "on")
+        .unwrap_or(false);
     let config = std::env::var("PRATTAIL_EP_CONFIG").unwrap_or_else(|_| "base".to_string());
 
     let inputs: Vec<(usize, (&'static str, Shape, usize))> = workload()

@@ -37,12 +37,14 @@ impl CastWidth for i64 {
 // Calculator
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "calculator")]
 use crate::calculator::{
     BigInt as CalcBigInt, BigRat as CalcBigRat, Bool as CalcBool, Fixed as CalcFixed,
     Float as CalcFloat, Int as CalcInt, List as CalcList, Proc as CalcProc, Str as CalcStr,
     UInt32 as CalcUInt32,
 };
 
+#[cfg(feature = "calculator")]
 impl CastWidth for CalcInt {
     fn into_width_i64(self) -> Option<i64> {
         match self {
@@ -53,6 +55,7 @@ impl CastWidth for CalcInt {
     }
 }
 
+#[cfg(feature = "calculator")]
 impl CastWidth for &CalcInt {
     fn into_width_i64(self) -> Option<i64> {
         match self {
@@ -63,6 +66,7 @@ impl CastWidth for &CalcInt {
     }
 }
 
+#[cfg(feature = "calculator")]
 #[inline]
 pub(crate) fn calc_peel_list_elem(p: &CalcProc) -> &CalcProc {
     match p {
@@ -92,6 +96,7 @@ pub(crate) fn calc_peel_list_elem(p: &CalcProc) -> &CalcProc {
     }
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calculator_proc_to_numeric_input(p: &CalcProc) -> Option<NumericInput<'_>> {
     Some(match p {
         CalcProc::ProcBool(b) => match b.as_ref() {
@@ -140,6 +145,7 @@ pub(crate) fn calculator_proc_to_numeric_input(p: &CalcProc) -> Option<NumericIn
     })
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calc_try_int_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<i32> {
     let width = w.into_width_i64()?;
     let a = calc_peel_list_elem(a);
@@ -159,6 +165,7 @@ pub(crate) fn calc_try_int_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<i32> 
     int_bin_pipeline_i32(input, width)
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calc_try_uint_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<u32> {
     let width = w.into_width_i64()?;
     let a = calc_peel_list_elem(a);
@@ -172,6 +179,7 @@ pub(crate) fn calc_try_uint_bin<W: CastWidth>(a: &CalcProc, w: W) -> Option<u32>
     uint_bin_pipeline_u32(input, width)
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calc_try_float_bin<W: CastWidth>(
     a: &CalcProc,
     w: W,
@@ -197,6 +205,7 @@ pub(crate) fn calc_try_float_bin<W: CastWidth>(
     float_bin_pipeline(input, width)
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calc_try_fixed_bin<W: CastWidth>(
     a: &CalcProc,
     w: W,
@@ -213,6 +222,7 @@ pub(crate) fn calc_try_fixed_bin<W: CastWidth>(
     fixed_bin_pipeline(input, width)
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calc_try_bigint_unary(a: &CalcProc) -> Option<mettail_runtime::CanonicalBigInt> {
     let a = calc_peel_list_elem(a);
     if let CalcProc::ProcStr(s) = a {
@@ -231,6 +241,7 @@ pub(crate) fn calc_try_bigint_unary(a: &CalcProc) -> Option<mettail_runtime::Can
     bigint_unary_pipeline(input)
 }
 
+#[cfg(feature = "calculator")]
 pub(crate) fn calc_try_bigrat_unary(a: &CalcProc) -> Option<mettail_runtime::CanonicalBigRat> {
     let a = calc_peel_list_elem(a);
     if let CalcProc::ProcStr(s) = a {
@@ -253,11 +264,13 @@ pub(crate) fn calc_try_bigrat_unary(a: &CalcProc) -> Option<mettail_runtime::Can
 // RhoCalc
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "rhocalc")]
 use crate::rhocalc::{
     BigInt as RhoBigInt, BigRat as RhoBigRat, Bool as RhoBool, Fixed as RhoFixed,
     Float as RhoFloat, Int as RhoInt, Proc as RhoProc, Str as RhoStr, UInt32 as RhoUInt32,
 };
 
+#[cfg(feature = "rhocalc")]
 impl CastWidth for RhoInt {
     fn into_width_i64(self) -> Option<i64> {
         match self {
@@ -267,6 +280,7 @@ impl CastWidth for RhoInt {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 impl CastWidth for &RhoInt {
     fn into_width_i64(self) -> Option<i64> {
         match self {
@@ -276,6 +290,7 @@ impl CastWidth for &RhoInt {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rhocalc_proc_to_numeric_input(p: &RhoProc) -> Option<NumericInput<'_>> {
     Some(match p {
         RhoProc::CastBool(b) => match b.as_ref() {
@@ -318,6 +333,7 @@ pub(crate) fn rhocalc_proc_to_numeric_input(p: &RhoProc) -> Option<NumericInput<
     })
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_try_int_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<i64> {
     let width = w.into_width_i64()?;
     if let RhoProc::CastStr(s) = a {
@@ -334,6 +350,7 @@ pub(crate) fn rho_try_int_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<i64> {
     int_bin_pipeline_i64(input, width)
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_try_uint_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<u32> {
     let width = w.into_width_i64()?;
     if let RhoProc::CastStr(s) = a {
@@ -346,6 +363,7 @@ pub(crate) fn rho_try_uint_bin<W: CastWidth>(a: &RhoProc, w: W) -> Option<u32> {
     uint_bin_pipeline_u32(input, width)
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_try_float_bin<W: CastWidth>(
     a: &RhoProc,
     w: W,
@@ -375,6 +393,7 @@ pub(crate) fn rho_try_float_bin<W: CastWidth>(
     float_bin_pipeline(input, width)
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_try_fixed_bin<W: CastWidth>(
     a: &RhoProc,
     w: W,
@@ -390,6 +409,7 @@ pub(crate) fn rho_try_fixed_bin<W: CastWidth>(
     fixed_bin_pipeline(input, width)
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_try_bigint_unary(a: &RhoProc) -> Option<mettail_runtime::CanonicalBigInt> {
     if let RhoProc::CastStr(s) = a {
         return match s.as_ref() {
@@ -405,6 +425,7 @@ pub(crate) fn rho_try_bigint_unary(a: &RhoProc) -> Option<mettail_runtime::Canon
     bigint_unary_pipeline(input)
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_try_bigrat_unary(a: &RhoProc) -> Option<mettail_runtime::CanonicalBigRat> {
     if let RhoProc::CastStr(s) = a {
         return match s.as_ref() {
@@ -420,6 +441,7 @@ pub(crate) fn rho_try_bigrat_unary(a: &RhoProc) -> Option<mettail_runtime::Canon
     bigrat_unary_pipeline(input)
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_proc_int_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_int_bin(a, w) {
         Some(n) => RhoProc::CastInt(std::sync::Arc::new(RhoInt::NumLit(n))),
@@ -427,6 +449,7 @@ pub(crate) fn rho_proc_int_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_proc_uint_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_uint_bin(a, w) {
         Some(n) => RhoProc::CastUInt32(std::sync::Arc::new(RhoUInt32::NumLit(n))),
@@ -434,6 +457,7 @@ pub(crate) fn rho_proc_uint_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_proc_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_float_bin(a, w) {
         Some(cf) => RhoProc::CastFloat(std::sync::Arc::new(RhoFloat::FloatLit(cf))),
@@ -441,6 +465,7 @@ pub(crate) fn rho_proc_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_proc_fixed_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_fixed_bin(a, w) {
         Some(fp) => RhoProc::CastFixed(std::sync::Arc::new(RhoFixed::FixedLit(fp))),
@@ -448,6 +473,7 @@ pub(crate) fn rho_proc_fixed_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_proc_bigint_unary(a: &RhoProc) -> RhoProc {
     match rho_try_bigint_unary(a) {
         Some(n) => RhoProc::CastBigInt(std::sync::Arc::new(RhoBigInt::NumLit(n))),
@@ -455,6 +481,7 @@ pub(crate) fn rho_proc_bigint_unary(a: &RhoProc) -> RhoProc {
     }
 }
 
+#[cfg(feature = "rhocalc")]
 pub(crate) fn rho_proc_bigrat_unary(a: &RhoProc) -> RhoProc {
     match rho_try_bigrat_unary(a) {
         Some(r) => RhoProc::CastBigRat(std::sync::Arc::new(RhoBigRat::RatLit(r))),

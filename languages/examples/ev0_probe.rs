@@ -301,9 +301,7 @@ fn main() {
     println!("\n--- CORPUS TOTALS ({} measured, {} skipped) ---", measured, skipped);
     println!(
         "terms: total={} demanded={} UNDEMANDED={:.1}%",
-        sum_terms,
-        sum_terms_dem,
-        undem_terms_pct
+        sum_terms, sum_terms_dem, undem_terms_pct
     );
     println!(
         "rewrites: total={} demanded={} UNDEMANDED={:.1}%",

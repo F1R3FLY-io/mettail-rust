@@ -7,6 +7,39 @@ edition = "2021"
 # Tests use separate test binaries.
 
 [features]
+default = ["all-languages"]
+all-languages = [
+    "ambient",
+    "calculator",
+    "class2hashmapsmoke",
+    "class2multi",
+    "class2optsmoke",
+    "class2smoke",
+    "class3multi",
+    "class3opt",
+    "composition",
+    "guarded-rho",
+    "lambda",
+    "led-test",
+    "optsmoke",
+    "refinementsmoke",
+    "rhocalc",
+]
+ambient = []
+calculator = []
+class2hashmapsmoke = []
+class2multi = []
+class2optsmoke = []
+class2smoke = []
+class3multi = []
+class3opt = []
+composition = ["calculator", "lambda"]
+guarded-rho = []
+lambda = []
+led-test = []
+optsmoke = []
+refinementsmoke = []
+rhocalc = []
 ## Ascent parallel fixpoint: switches ascent! → ascent_par! for parallel
 ## rewriting in generated language structs. Currently broken by upstream ascent bug.
 ascent-parallel = ["mettail-prattail/ascent-parallel"]
