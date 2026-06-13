@@ -320,8 +320,8 @@ mod dv0_probe {
         let seed_nodes = eg.node_count();
 
         // ── Rewrite system that GROWS the e-graph with equivalent-but-costlier
-        //    forms (the off-Ascent reduction analog: every rule adds an equality,
-        //    nothing is pruned). `x -> add(x, h(x))`-style expanders plus
+        //    forms (the CESK runtime-backend replacement analog: every rule adds
+        //    an equality, nothing is pruned). `x -> add(x, h(x))`-style expanders plus
         //    commutativity create many materialized e-nodes that extraction will
         //    NOT choose (the cheaper original wins), which is exactly the
         //    "added but untouched" share DV-0 quantifies.

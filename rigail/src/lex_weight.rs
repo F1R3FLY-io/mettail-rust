@@ -218,10 +218,10 @@ pub struct LexicographicWeight {
 /// `if false then if false then 1 else 2`:
 /// - Inner-TAKE+Outer-SKIP: weight = 0.0 + EPSILON_OPT_SKIP = 0.5.
 /// - Inner-SKIP+Outer-TAKE: weight = EPSILON_OPT_SKIP + 0.0 = 0.5.
-/// Both reach Accepted with identical primary (0.5). Tiebreak by
-/// cursor-allocation order (TAKE branch is first per `vec![take, skip]`)
-/// → Inner-TAKE descendant wins → `IfElse(false, IfElse(false, 1, Some(2)), None)`
-/// — right-associative.
+///   Both reach Accepted with identical primary (0.5). Tiebreak by
+///   cursor-allocation order (TAKE branch is first per `vec![take, skip]`)
+///   → Inner-TAKE descendant wins → `IfElse(false, IfElse(false, 1, Some(2)), None)`
+///   — right-associative.
 pub const EPSILON_OPT_SKIP: f64 = 0.5;
 
 /// Stage 3.18 Cluster 3 BP-tier biases (Commit 2 / Mechanism γ, 2026-05-05).
@@ -356,7 +356,7 @@ impl Eq for LexicographicWeight {}
 
 impl PartialOrd for LexicographicWeight {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.lex_cmp(other))
+        Some(self.cmp(other))
     }
 }
 

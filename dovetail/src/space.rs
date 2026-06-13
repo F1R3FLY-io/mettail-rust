@@ -37,27 +37,21 @@ pub struct Fired<Partner, Bindings> {
 /// Reified-RSpace backend implements; the reduction core drives reduction
 /// through it without knowing the concrete store.
 pub trait TupleSpace<C, P, A, K> {
+    /// Successful COMM metadata captured by the matcher.
+    type Bindings;
+
     /// The spatial matcher used to fire COMMs.
-    type Matcher: Match<P, A>;
+    type Matcher: Match<P, A, Bindings = Self::Bindings>;
 
     /// Offer `data` on `chan`. If a parked consumer's pattern matches, the COMM
     /// fires (the consumer is removed) and its continuation + bindings are
     /// returned; otherwise `data` is parked and `None` is returned.
-    fn produce(
-        &mut self,
-        chan: C,
-        data: A,
-    ) -> Option<Fired<K, <Self::Matcher as Match<P, A>>::Bindings>>;
+    fn produce(&mut self, chan: C, data: A) -> Option<Fired<K, Self::Bindings>>;
 
     /// Offer continuation `k` guarded by `pat` on `chan`. If parked data
     /// matches, the COMM fires (the datum is removed) and it + bindings are
     /// returned; otherwise `(pat, k)` is parked and `None` is returned.
-    fn consume(
-        &mut self,
-        chan: C,
-        pat: P,
-        k: K,
-    ) -> Option<Fired<A, <Self::Matcher as Match<P, A>>::Bindings>>;
+    fn consume(&mut self, chan: C, pat: P, k: K) -> Option<Fired<A, Self::Bindings>>;
 }
 
 /// An in-memory tuplespace: per-channel queues of parked data and parked
@@ -103,6 +97,7 @@ where
     C: Eq + Hash + Clone,
     M: Match<P, A>,
 {
+    type Bindings = M::Bindings;
     type Matcher = M;
 
     fn produce(&mut self, chan: C, data: A) -> Option<Fired<K, M::Bindings>> {

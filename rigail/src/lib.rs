@@ -406,13 +406,13 @@ pub fn matrix_star_ref<W: StarSemiringRef>(adj: &[Vec<W>]) -> Vec<Vec<W>> {
     // that the two functions return numerically-equivalent closures on
     // the same input.
     let mut dist: Vec<Vec<W>> = Vec::with_capacity(n);
-    for i in 0..n {
+    for (i, adj_row) in adj.iter().enumerate().take(n) {
         let mut row = Vec::with_capacity(n);
-        for j in 0..n {
+        for (j, cell) in adj_row.iter().enumerate().take(n) {
             if i == j {
-                row.push(W::one_ref().plus_ref(&adj[i][j]));
+                row.push(W::one_ref().plus_ref(cell));
             } else {
-                row.push(adj[i][j].clone());
+                row.push(cell.clone());
             }
         }
         dist.push(row);
@@ -2157,7 +2157,7 @@ impl<const N: usize> NbestWeight<N> {
 
     /// Create from a slice of entries (sorts and truncates to N).
     pub fn from_entries(mut input: Vec<NbestEntry>) -> Self {
-        input.sort_by(|a, b| a.weight.cmp(&b.weight));
+        input.sort_by_key(|entry| entry.weight);
         input.dedup_by(|a, b| a.path_id == b.path_id);
         let mut entries = [None; N];
         let len = input.len().min(N);
@@ -2244,7 +2244,7 @@ impl<const N: usize> NbestWeight<N> {
             // Dedup: skip if this path_id is already in merged
             let is_dup = merged[..count]
                 .iter()
-                .any(|m| m.map_or(false, |m| m.path_id == entry.path_id));
+                .any(|m| m.is_some_and(|m| m.path_id == entry.path_id));
             if !is_dup {
                 merged[count] = Some(entry);
                 count += 1;
@@ -2310,7 +2310,7 @@ impl<const N: usize> Semiring for NbestWeight<N> {
 
     #[inline]
     fn is_one(&self) -> bool {
-        self.len == 1 && self.entries[0].map_or(false, |e| e.path_id == 0 && e.weight.is_one())
+        self.len == 1 && self.entries[0].is_some_and(|e| e.path_id == 0 && e.weight.is_one())
     }
 
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
@@ -3198,14 +3198,14 @@ pub fn matrix_star<W: StarSemiring>(adj: &[Vec<W>]) -> Vec<Vec<W>> {
 
     // Initialize: dist[i][j] = adj[i][j], with identity on the diagonal.
     let mut dist: Vec<Vec<W>> = Vec::with_capacity(n);
-    for i in 0..n {
+    for (i, adj_row) in adj.iter().enumerate().take(n) {
         let mut row = Vec::with_capacity(n);
-        for j in 0..n {
+        for (j, cell) in adj_row.iter().enumerate().take(n) {
             if i == j {
                 // Identity (zero-length path) ⊕ direct edge
-                row.push(W::one().plus(&adj[i][j]));
+                row.push(W::one().plus(cell));
             } else {
-                row.push(adj[i][j]);
+                row.push(*cell);
             }
         }
         dist.push(row);

@@ -1,9 +1,12 @@
 //! # Dovetail — substrate-agnostic GSLT reduction engine core
 //!
-//! `dovetail` is the standalone, extractable core of an off-Ascent reduction
-//! engine: a generic-`W` weighted tree automaton (WTA) over a runtime e-graph
-//! treated as a deterministic finite tree automaton (DFTA), with N-best /
-//! set-valued exact lazy best-first extraction.
+//! `dovetail` is the standalone, extractable core for MeTTaIL rewrite
+//! semantics used by the CESK runtime-backend replacement path: a generic-`W`
+//! weighted tree automaton (WTA) over a runtime e-graph treated as a
+//! deterministic finite tree automaton (DFTA), with N-best / set-valued exact
+//! lazy best-first extraction. The active WPDA parser/recognizer remains
+//! upstream of this crate, and Ascent remains available as a reference/oracle
+//! path for differential evidence.
 //!
 //! Design of record:
 //! `docs/design/dovetail-engine/dovetail-core-implementation-plan.md`.

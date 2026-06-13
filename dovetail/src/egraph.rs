@@ -252,8 +252,9 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
     }
 
     /// Add a hashconsed e-node without exceeding the configured node budget.
-    /// Returns `None` (and records [`node_limit_reached`]) when a *fresh* node
-    /// would overflow the budget; an existing (deduped) node always succeeds.
+    /// Returns `None` (and records [`node_limit_reached`](Self::node_limit_reached))
+    /// when a *fresh* node would overflow the budget; an existing (deduped)
+    /// node always succeeds.
     pub fn try_add_with_budget(&mut self, enode: ENode<L>) -> Option<EClassId> {
         let canonical = enode.canonicalize(&self.union_find);
         if let Some(&id) = self.memo.get(&canonical) {
@@ -289,7 +290,7 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
     /// Restore the hashcons invariant and propagate congruence closure: after
     /// merges, e-nodes that became congruent (same label, same canonical
     /// children) are merged. Ends by restoring the exact class/memo/parent
-    /// indexes (see [`rebuild_exact_indices`](Self::rebuild_exact_indices)).
+    /// indexes with the private `rebuild_exact_indices` helper.
     pub fn rebuild(&mut self) {
         while !self.pending.is_empty() {
             let pending = std::mem::take(&mut self.pending);
