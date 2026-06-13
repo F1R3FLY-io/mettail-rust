@@ -453,12 +453,10 @@ fn generated_datalog_relation_heads_are_requirement_classified() {
                 category_path.display()
             );
             let relation_category_heads = category_relation_heads_from_datalog(&source);
-            assert!(
-                category_heads.is_subset(&relation_category_heads),
-                "{} category metadata contains heads with no generated Datalog category relation: metadata={:?}, datalog={:?}",
+            assert_eq!(
+                category_heads, relation_category_heads,
+                "{} generated category metadata must exactly match generated Datalog category relations",
                 path.display(),
-                category_heads,
-                relation_category_heads
             );
         }
     }

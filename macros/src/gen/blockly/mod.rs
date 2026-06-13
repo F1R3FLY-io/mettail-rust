@@ -28,8 +28,14 @@ pub use writer::{write_blockly_blocks, write_blockly_categories};
 pub fn generate_blockly_definitions(language: &LanguageDef) -> BlocklyOutput {
     let language_name = language.name.to_string();
 
-    // Group constructors by category
+    // Seed every declared category so constructor-free categories still appear
+    // in generated metadata and remain visible to downstream inventory checks.
     let mut categories: HashMap<String, Vec<String>> = HashMap::new();
+    for ty in &language.types {
+        categories.entry(ty.name.to_string()).or_default();
+    }
+
+    // Group constructors by category.
     for rule in &language.terms {
         let category = rule.category.to_string();
         categories
@@ -104,4 +110,34 @@ pub struct CategoryInfo {
     pub name: String,
     pub constructors: Vec<String>,
     pub colour: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_ast::language::LanguageDef;
+
+    #[test]
+    fn declared_constructor_free_categories_are_emitted() {
+        let language: LanguageDef = syn::parse_quote! {
+            name: BlocklySmoke,
+
+            types {
+                Proc;
+                Name;
+            }
+
+            terms {
+                PZero . Proc ::= "0";
+            }
+        };
+
+        let output = generate_blockly_definitions(&language);
+
+        let proc_category = output.categories.get("Proc").expect("Proc metadata");
+        assert_eq!(proc_category.constructors, vec!["PZero"]);
+
+        let name_category = output.categories.get("Name").expect("Name metadata");
+        assert!(name_category.constructors.is_empty());
+    }
 }
