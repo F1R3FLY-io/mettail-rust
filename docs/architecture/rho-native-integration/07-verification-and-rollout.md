@@ -32,7 +32,7 @@ The current proof and coverage sources are
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
-| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `mettail-rho-runtime::RhoObservationReport` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint |
+| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, and evidence references without fabricating an Ascent-shaped result |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
 | call-by-need observation and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, and bounded force admission respects lookahead and heap budgets |
@@ -79,10 +79,12 @@ Rho-runtime boundary and `mettail_runtime::RuntimeBackendReport` at the generic
 The typed report carries the planned execution boundary, the artifact kind, the
 observed channel, the read-order values, an order-insensitive set-membership
 fingerprint for set-semantics oracle comparison, and an order-insensitive
-counted fingerprint for bag-sensitive observations. The generic report carries
-the selected backend, artifact kind, evidence references, and channel
-observations so callers can select `RhoMachine` without depending on
-Ascent-shaped fact materialization.
+counted fingerprint for bag-sensitive observations. With the optional
+`mettail-rho-runtime/runtime-report` feature, typed Rho observation payloads
+convert through `try_into_runtime_backend_report`, which fails closed for future
+unknown artifact kinds. The generic report carries the selected backend,
+artifact kind, evidence references, and channel observations so callers can
+select `RhoMachine` without depending on Ascent-shaped fact materialization.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
@@ -451,6 +453,8 @@ Rust flip-gate evidence:
 - `mettail_runtime::RuntimeChannelObservation`
 - `mettail_rho_runtime::PlannedRhoBackend`
 - `mettail_rho_runtime::RhoObservationReport`
+- `mettail_rho_runtime::IntoRuntimeObservationValue`
+- `mettail_rho_runtime::RuntimeReportConversionError`
 - `mettail_rho_runtime::RhoExecutionBoundary`
 - `mettail_rho_codegen::RhoProgram`
 - `mettail_rho_codegen::validate_rho_program`

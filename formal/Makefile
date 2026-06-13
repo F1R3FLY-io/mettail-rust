@@ -179,6 +179,7 @@ rocq-rho-bridge-flip-gate: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoPlannedExecutionBoundary.vo
 	$(MAKE) -C rocq/rho_bridge theories/RhoArtifactBoundary.vo
 	$(MAKE) -C rocq/rho_bridge theories/RhoObservationReportBoundary.vo
+	$(MAKE) -C rocq/rho_bridge theories/RhoRuntimeBackendReportBridge.vo
 	$(MAKE) -C rocq/rho_bridge theories/RuntimeBackendDispatch.vo
 
 process-rho-generated-check: require-capped

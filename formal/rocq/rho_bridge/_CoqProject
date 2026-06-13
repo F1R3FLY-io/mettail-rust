@@ -38,4 +38,5 @@ theories/RhoPurseDeterminism.v
 theories/RhoBackendFlipGate.v
 theories/RhoPlannedExecutionBoundary.v
 theories/RhoObservationReportBoundary.v
+theories/RhoRuntimeBackendReportBridge.v
 theories/OracleQuotientEquivalence.v

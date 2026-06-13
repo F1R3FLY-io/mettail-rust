@@ -16,14 +16,18 @@ description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's R
 
 [features]
 default = []
+# Enables conversion from typed Rho observation reports into
+# mettail_runtime::RuntimeBackendReport, the generic Language backend report
+# surface used by generated backends.
+runtime-report = ["dep:mettail-runtime"]
 # Pulls in the generated MeTTaIL language suite for the two-backend
 # Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine
 # tests do not compile every generated language.
-oracle-ascent = ["dep:mettail-languages", "dep:mettail-runtime", "mettail-languages/calculator"]
+oracle-ascent = ["runtime-report", "dep:mettail-languages", "mettail-languages/calculator"]
 # Pulls in the generated rhocalc language only for the AST-first rhocalc-to-Rho
 # oracle. This keeps the Rholang process lowering independent from the legacy
 # calculator/Ascent oracle feature.
-oracle-rhocalc = ["dep:mettail-languages", "dep:mettail-runtime", "mettail-languages/rhocalc"]
+oracle-rhocalc = ["runtime-report", "dep:mettail-languages", "mettail-languages/rhocalc"]
 
 [dependencies]
 mettail-rho-codegen = { path = "../mettail-rho-codegen" }

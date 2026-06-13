@@ -10,6 +10,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mettail_rho_codegen::{RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram};
+#[cfg(feature = "runtime-report")]
+use mettail_runtime::{
+    RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
+    RuntimeObservationValue,
+};
 use models::rhoapi::Par;
 
 use crate::run::{
@@ -41,6 +46,61 @@ pub struct RhoObservationReport<T> {
     pub values: Vec<T>,
 }
 
+#[cfg(feature = "runtime-report")]
+fn runtime_artifact_kind(
+    kind: RhoArtifactKind,
+) -> Result<RuntimeBackendArtifact, RuntimeReportConversionError> {
+    match kind {
+        RhoArtifactKind::NormalizedAst => Ok(RuntimeBackendArtifact::RhoNormalizedAst),
+        _ => Err(RuntimeReportConversionError::UnsupportedArtifactKind),
+    }
+}
+
+/// Failure converting a typed Rho observation report into the generic runtime
+/// backend report envelope.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeReportConversionError {
+    /// A future Rho artifact kind was observed before the generic runtime
+    /// report layer learned how to represent it.
+    UnsupportedArtifactKind,
+}
+
+/// Conversion from typed Rho observation payloads into the generic runtime
+/// observation value domain.
+#[cfg(feature = "runtime-report")]
+pub trait IntoRuntimeObservationValue {
+    fn into_runtime_observation_value(self) -> RuntimeObservationValue;
+}
+
+#[cfg(feature = "runtime-report")]
+impl IntoRuntimeObservationValue for i64 {
+    fn into_runtime_observation_value(self) -> RuntimeObservationValue {
+        RuntimeObservationValue::Int(self)
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl IntoRuntimeObservationValue for bool {
+    fn into_runtime_observation_value(self) -> RuntimeObservationValue {
+        RuntimeObservationValue::Bool(self)
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl IntoRuntimeObservationValue for String {
+    fn into_runtime_observation_value(self) -> RuntimeObservationValue {
+        RuntimeObservationValue::Text(self)
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl IntoRuntimeObservationValue for Vec<u8> {
+    fn into_runtime_observation_value(self) -> RuntimeObservationValue {
+        RuntimeObservationValue::Bytes(self)
+    }
+}
+
 impl<T> RhoObservationReport<T> {
     fn planned(artifact_kind: RhoArtifactKind, channel: impl Into<String>, values: Vec<T>) -> Self {
         Self {
@@ -54,6 +114,32 @@ impl<T> RhoObservationReport<T> {
     /// Number of values observed on the channel, before membership projection.
     pub fn observed_count(&self) -> usize {
         self.values.len()
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<T> RhoObservationReport<T>
+where
+    T: IntoRuntimeObservationValue,
+{
+    /// Convert this typed Rho observation into the generic `Language` backend
+    /// report shape without routing through `AscentResults`.
+    pub fn try_into_runtime_backend_report(
+        self,
+        evidence_refs: Vec<String>,
+    ) -> Result<RuntimeBackendReport, RuntimeReportConversionError> {
+        let artifact = runtime_artifact_kind(self.artifact_kind)?;
+        let values = self
+            .values
+            .into_iter()
+            .map(IntoRuntimeObservationValue::into_runtime_observation_value)
+            .collect();
+        Ok(RuntimeBackendReport::observations(
+            RuntimeBackend::RhoMachine,
+            artifact,
+            vec![RuntimeChannelObservation::new(self.channel, values)],
+            evidence_refs,
+        ))
     }
 }
 
@@ -230,6 +316,52 @@ mod tests {
         assert_eq!(
             report.multiplicity_fingerprint(),
             BTreeMap::from([(1_i64, 1_usize), (2, 1), (3, 2)])
+        );
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn observation_report_converts_to_runtime_backend_report() {
+        let report =
+            RhoObservationReport::planned(RhoArtifactKind::NormalizedAst, "OUT", vec![3_i64, 1, 3])
+                .try_into_runtime_backend_report(vec![
+                    "formal/rocq/rho_bridge/theories/RhoObservationReportBoundary.v".to_string(),
+                    "formal/rocq/rho_bridge/theories/RhoRuntimeBackendReportBridge.v".to_string(),
+                ])
+                .expect("normalized AST observations must convert to runtime backend reports");
+
+        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+        assert_eq!(
+            report.evidence_refs,
+            vec![
+                "formal/rocq/rho_bridge/theories/RhoObservationReportBoundary.v",
+                "formal/rocq/rho_bridge/theories/RhoRuntimeBackendReportBridge.v",
+            ]
+        );
+
+        let out = report
+            .observations_for_channel("OUT")
+            .expect("converted report must preserve the observed channel");
+        assert_eq!(out.observed_count(), 3);
+        assert_eq!(
+            out.values,
+            vec![
+                RuntimeObservationValue::Int(3),
+                RuntimeObservationValue::Int(1),
+                RuntimeObservationValue::Int(3),
+            ]
+        );
+        assert_eq!(
+            out.membership_fingerprint(),
+            BTreeSet::from([RuntimeObservationValue::Int(1), RuntimeObservationValue::Int(3)])
+        );
+        assert_eq!(
+            out.multiplicity_fingerprint(),
+            BTreeMap::from([
+                (RuntimeObservationValue::Int(1), 1_usize),
+                (RuntimeObservationValue::Int(3), 2_usize),
+            ])
         );
     }
 }
