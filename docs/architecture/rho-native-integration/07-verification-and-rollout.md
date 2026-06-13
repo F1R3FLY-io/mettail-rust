@@ -35,7 +35,8 @@ The current proof and coverage sources are
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
 | call-by-need observation and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, and bounded force admission respects lookahead and heap budgets |
-| Δ1 min-cost join | `DeltaOneMinCostJoin.v` | proved selected joins are present and cost-minimal |
+| Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
+| Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
@@ -50,9 +51,10 @@ The current proof and coverage sources are
 | differential oracle | `mettail-rho-runtime/tests/rho_vs_ascent.rs` | compares a validated Rho-default backend plan with Ascent results |
 
 The Rho bridge now has mechanized model contracts for pure COMM, name
-grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
-guards, ambiguity preservation, cost-axis separation, escrow/refund settlement,
-per-purse determinism, exact rejected-rule delegation, normalized-`Par`
+grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal candidate
+selection and exact bipartite matching, guards, ambiguity preservation,
+cost-axis separation, escrow/refund settlement, per-purse determinism, exact
+rejected-rule delegation, normalized-`Par`
 well-formedness, source-text artifact exclusion, backend flip gating, and
 fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
@@ -218,7 +220,11 @@ Harden advanced runtime behavior.
 
 Gate clauses:
 
-- `Δ1` min-cost matching for n-ary joins;
+- `Δ1` candidate minima for already-formed n-ary join candidates;
+- `Δ1` min-cost left-perfect matching over the finite admitted join frontier, where
+  the left side is the required join obligations and the right side is the
+  message/witness slots admitted to that frontier; all required left obligations
+  are covered, and extra right witnesses may remain unused;
 - two-axis cost model: refutation versus ordering;
 - per-purse determinism: a located funding operation affects exactly one
   unique purse, duplicate purse states reject, and distinct-purse operations
@@ -229,9 +235,20 @@ Gate clauses:
 - ambiguity-set preservation under nondeterministic schedules;
 - mergeable-channel optimization only when the algebraic contract matches.
 
+The current Rust matching selector is an exact exhaustive reference search over
+the finite enabled frontier: it enumerates feasible left-perfect matchings, sums
+edge costs exactly as `u128`, and returns every globally minimum-cost matching. A
+Hungarian or min-cost-flow implementation may replace that search only as a
+performance optimization behind the same public contract; because semantic
+ambiguity is observable, an optimized implementation must still surface every
+equal-cost optimum or return a checked certificate that drives an
+ambiguity-preserving completion step. This matching frontier is a normalized
+`Par`/RSpace-level data structure, not generated Rholang source text.
+
 Mechanized evidence:
 
 - `DeltaOneMinCostJoin.v`
+- `DeltaOneMinCostMatching.v`
 - `GuardedCommSoundness.v`
 - `AmbiguitySetPreservation.v`
 - `RhoCostAxisSeparation.v`
@@ -242,13 +259,25 @@ Mechanized evidence:
 Rust adapter evidence:
 
 - `mettail_rho_adapter::DeltaOneCandidate`
+- `mettail_rho_adapter::DeltaOneMatchEdge`
+- `mettail_rho_adapter::DeltaOneMatching`
 - `mettail_rho_adapter::select_delta1_minima`
+- `mettail_rho_adapter::select_delta1_min_cost_left_perfect_matchings`
 - `mettail_rho_adapter::{reserve_escrow, commit_escrow, refund_escrow}`
 - `mettail_rho_adapter::{LocatedEscrowLedger, SettlementAction}`
 - `mettail_rho_adapter::delta1_selects_index`
+- `mettail_rho_adapter::delta1_selects_left_perfect_matching_indices`
 - `delta1_selects_all_enabled_minimal_ties`
 - `delta1_refutation_precedes_ordering`
 - `delta1_returns_empty_when_no_candidate_is_enabled`
+- `delta1_matching_selects_cheapest_left_perfect_assignment`
+- `delta1_matching_preserves_equal_cost_ambiguity`
+- `delta1_matching_is_globally_optimal_not_greedy`
+- `delta1_matching_refutation_precedes_ordering`
+- `delta1_matching_returns_empty_without_left_perfect_assignment`
+- `delta1_matching_allows_unused_right_witnesses`
+- `delta1_matching_ignores_edges_outside_declared_frontier`
+- `delta1_matching_empty_frontier_has_empty_left_perfect_matching`
 - `settlement::located_ledger_rejects_duplicate_purse_states`
 - `settlement::located_ledger_missing_purse_preserves_ledger`
 - `settlement::located_ledger_updates_only_matching_purse`

@@ -19,8 +19,8 @@
 //! `formal/rocq/rho_bridge/theories/BridgeInertness.v`.
 //!
 //! ## Contents
-//! - [`delta1`] — Delta-one join-candidate selection with separate refutation
-//!   and ordering axes.
+//! - [`delta1`] — Delta-one join-candidate selection and exact bipartite
+//!   matching with separate refutation and ordering axes.
 //! - [`gslt`] — `MettaGslt` (`GsltPresentation`, `CanonicalProgram = Par`),
 //!   `MettaSig` (`ResourceSignature` over the host lane algebra), `MettaProgram`.
 //! - [`logic`] — `MettaResourceLogic` (`OslfResourceLogic<MettaGslt>`),
@@ -35,8 +35,9 @@
 //! The cost axis is two-fold (vindicated by the cost-accounting papers' R-C
 //! obstruction): the **refutation** axis (`is_funded`'s verdict; `0̄` = refuted)
 //! and the **ordering** axis (`i64` demand magnitude; rank-only, never refutes).
-//! The Delta-one selector in [`delta1`] applies that split to MeTTaIL's n-ary
-//! join candidates without collapsing equal-cost semantic alternatives.
+//! The Delta-one selectors in [`delta1`] apply that split to MeTTaIL's n-ary
+//! join candidates and finite matching frontiers without collapsing equal-cost
+//! semantic alternatives.
 
 #![forbid(unsafe_code)]
 
@@ -46,7 +47,11 @@ pub mod gslt;
 pub mod logic;
 pub mod settlement;
 
-pub use delta1::{delta1_selects_index, select_delta1_minima, DeltaOneCandidate};
+pub use delta1::{
+    delta1_selects_index, delta1_selects_left_perfect_matching_indices,
+    select_delta1_min_cost_left_perfect_matchings, select_delta1_minima, DeltaOneCandidate,
+    DeltaOneMatchEdge, DeltaOneMatching,
+};
 pub use gslt::{MettaGslt, MettaProgram, MettaSig};
 pub use logic::MettaResourceLogic;
 pub use settlement::{

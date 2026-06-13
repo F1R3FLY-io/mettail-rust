@@ -53,6 +53,7 @@ is used formally elsewhere.
 | receive | A continuation waiting for data on a channel, written `for (@x <- c) { P }` for a linear receive. |
 | persistent receive | A receive that remains installed after firing, written `for (@x <= c) { P }` or as a `contract`. |
 | join | An atomic receive over multiple channels. It fires only when all required messages are available. |
+| left-perfect matching | A bipartite join-frontier assignment that covers every required left-side join obligation exactly once while using each right-side message or witness slot at most once. Extra right-side slots may remain unused. |
 | peek | A receive that reads without consuming. |
 | guard | A boolean predicate checked before a receive commits. A failing guard behaves like no match: no data is consumed. |
 | COMM | The communication rule: matching output and input synchronize and run the continuation with the received value substituted. |

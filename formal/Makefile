@@ -30,7 +30,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-rho-bridge rocq-rho-bridge-schedule-family
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-rho-bridge rocq-rho-bridge-delta1-matching rocq-rho-bridge-schedule-family
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
@@ -144,6 +144,9 @@ rocq-rho-bridge-schedule-family: require-capped
 
 rocq-rho-bridge-cbn-budget: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoCallByNeedBudget.vo
+
+rocq-rho-bridge-delta1-matching: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/DeltaOneMinCostMatching.vo
 
 rocq-rho-bridge-escrow-settlement: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoEscrowSettlement.vo

@@ -260,6 +260,7 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v`
 - `formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v`
 - `formal/rocq/rho_bridge/theories/DeltaOneMinCostJoin.v`
+- `formal/rocq/rho_bridge/theories/DeltaOneMinCostMatching.v`
 - `formal/rocq/rho_bridge/theories/GuardedCommSoundness.v`
 - `formal/rocq/rho_bridge/theories/AmbiguitySetPreservation.v`
 - `formal/rocq/rho_bridge/theories/RhoCostAxisSeparation.v`

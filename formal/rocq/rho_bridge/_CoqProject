@@ -27,6 +27,7 @@ theories/AmbiguityWitnessEnumeration.v
 theories/RhoCallByNeedObservation.v
 theories/RhoCallByNeedBudget.v
 theories/DeltaOneMinCostJoin.v
+theories/DeltaOneMinCostMatching.v
 theories/GuardedCommSoundness.v
 theories/AmbiguitySetPreservation.v
 theories/RhoCostAxisSeparation.v
