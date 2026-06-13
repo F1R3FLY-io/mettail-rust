@@ -70,8 +70,8 @@ The capped entry point runs:
   `rocq-rho-bridge-artifact-boundary`, `rocq-rho-bridge-rejected-coverage`,
   `rocq-rho-bridge-lowering-boundary`, `rocq-rho-bridge-schedule-family`,
   `rocq-rho-bridge-cbn-budget`, `rocq-rho-bridge-delta1-matching`,
-  `rocq-rho-bridge-escrow-settlement`, and
-  `rocq-rho-bridge-purse-determinism`
+  `rocq-rho-bridge-escrow-settlement`, `rocq-rho-bridge-purse-determinism`,
+  and `rocq-rho-bridge-flip-gate`
 - the critical Dovetail/Rho Rocq zero-admission gate:
   `rocq-critical-zero-admission`, which first runs the scanner self-test, then
   strips Rocq comments and rejects real `Admitted`, `admit.`, `Axiom`,
