@@ -3671,10 +3671,6 @@ fn generate_language_trait_impl(
                 Ok(#language_name::run_ascent_typed(typed_term))
             }
 
-            fn default_runtime_backend(&self) -> mettail_runtime::RuntimeBackend {
-                mettail_runtime::RuntimeBackend::Ascent
-            }
-
             fn run_ascent_with_facts(
                 &self,
                 term: &dyn mettail_runtime::Term,
@@ -4028,10 +4024,6 @@ fn generate_language_trait_impl_multi(
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
-            }
-
-            fn default_runtime_backend(&self) -> mettail_runtime::RuntimeBackend {
-                mettail_runtime::RuntimeBackend::Ascent
             }
 
             fn run_ascent_with_facts(
@@ -4960,6 +4952,18 @@ mod tests {
             .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn generated_language_impl_inherits_metadata_runtime_default() {
+        let source = include_str!("language.rs");
+        let needle = concat!("fn default_runtime_", "backend(&self)");
+
+        assert!(
+            !source.contains(needle),
+            "generated Language impls must inherit the metadata-driven \
+             default_runtime_backend trait method"
+        );
     }
 
     #[test]
