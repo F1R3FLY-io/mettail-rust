@@ -187,6 +187,95 @@ new out in {
 RSpace performs the communication when both sides are present. This is not a
 simulation of COMM; it is COMM delegated to the host Rho machine.
 
+### AST-First rhocalc Bridge
+
+The executable rhocalc bridge follows this pipeline:
+
+`rhocalc source → MeTTaIL/WPDA Proc AST → normalized rhoapi::Par → RhoRuntime::inj`
+
+The bridge is implemented by `mettail-rho-runtime::lower_rhocalc_proc` and
+`lower_rhocalc_name`. It does not generate Rholang source text. Reader-facing
+documents may display an equivalent Rholang rendering, but the generated value
+is the Rholang AST form consumed by the interpreter. This keeps the path aligned
+with the forward-looking bytecode plan: bytecode can become another artifact
+kind after `Par`, while source text remains a diagnostic annotation rather than
+an execution dependency.
+
+The supported transport-pure rhocalc core maps directly onto host Rho-machine
+constructs:
+
+| rhocalc form | Lowered Rho AST shape | Scheduling consequence |
+|---|---|---|
+| `PZero` | empty `Par` | no work |
+| `PPar(p, q)` | parallel `Par::append(lower(p), lower(q))` | independent subprocesses are scheduled by RhoRuntime |
+| `POutput(n, q)` | `Send(lower_name(n), [lower(q)])` | RSpace stores or immediately matches a datum |
+| `PInputs([n₁,...,nₖ], ^[x₁,...,xₖ].p)` | one `Receive` with `k` bind sources and body `lower(p)` | all premises form one atomic RSpace join |
+| `PDrop(NQuote(p))` | `lower(p)` | quote/drop cancellation is compile-time |
+| `PDrop(NVar(x))` | `BoundVar(i)` when `x` is input-bound | received process is executed by the host reducer |
+| `PNew(^[x̄].p)` | `New(|x̄|, lower(p))` | private names are allocated by the host reducer |
+| ground `Int`, `UInt32`, `BigInt`, `BigRat`, `Fixed`, `Float`, `Bool`, `Str` | native Rho ground expressions | payloads use host scalar representation |
+
+Input binders use f1r3node's de Bruijn convention:
+
+`index(xᵢ, k) = k - 1 - i`
+
+where `k` is the number of binders and `i` is the zero-based syntactic binder
+position. Thus the body of `(c?x,d?y).{*(x)|*(y)}` uses `BoundVar(1)` for `x`
+and `BoundVar(0)` for `y`, matching the host environment that pushes matched
+data in receive-bind order.
+
+Literate lowering sketch:
+
+```pseudocode
+Algorithm: Lower a rhocalc process to normalized Rho AST
+
+Given:
+  rhocalc process p
+  bound-name environment Γ mapping free variables to de Bruijn indices
+
+Produce:
+  normalized Rholang AST value A or an explicit rejection
+
+Steps:
+  1. If p is zero, return the empty Par.
+
+  2. If p is parallel composition, lower each subprocess and append the Par
+     values. Appending preserves parallelism for the host scheduler.
+
+  3. If p is output n!(q), lower n as a channel, lower q as a payload process,
+     and build one Send node.
+
+  4. If p is input `(n₁?x₁,...,nₖ?xₖ).{body}`, lower each source name under Γ.
+     Extend Γ by shifting existing entries by k and assigning
+     `xᵢ ↦ k - 1 - i`. Lower the body under the extended Γ and build one
+     Receive node with k sources.
+
+  5. If p is drop of a quoted process, lower the quoted process directly.
+     If p is drop of a bound name, emit the corresponding BoundVar.
+
+  6. If p introduces new names, extend Γ using the same de Bruijn convention
+     and build one New node around the lowered body.
+
+  7. If p is a ground scalar supported by Rho, emit the corresponding native
+     Rho expression.
+
+  8. Otherwise reject explicitly. Rejection is data for the rollout gate, not a
+     silent fallback to source-text generation.
+```
+
+Correctness statement:
+
+`run_Rho(lower_rhocalc(p)) ≈ obs_rhocalc(p)`
+
+for the transport-pure COMM subset, where `≈` is the documented observation
+quotient over public resting facts. The mechanized bridge proof
+`formal/rocq/rho_bridge/theories/RhocalcAstLowering.v` proves the AST-only
+artifact boundary, quote/drop preservation, one-input COMM correspondence,
+two-input atomic-join correspondence, and de Bruijn binder ordering. The runtime
+test `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the same path with
+WPDA parsing, direct `Par` lowering, RhoRuntime injection, received-name channel
+reuse, and private-name non-leakage.
+
 ## Semi-Naive Channels
 
 The Rho backend uses two fact families:

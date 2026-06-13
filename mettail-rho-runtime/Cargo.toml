@@ -19,7 +19,11 @@ default = []
 # Pulls in the generated MeTTaIL language suite for the two-backend
 # Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine
 # tests do not compile every generated language.
-oracle-ascent = ["dep:mettail-languages", "dep:mettail-runtime"]
+oracle-ascent = ["dep:mettail-languages", "dep:mettail-runtime", "mettail-languages/calculator"]
+# Pulls in the generated rhocalc language only for the AST-first rhocalc-to-Rho
+# oracle. This keeps the Rholang process lowering independent from the legacy
+# calculator/Ascent oracle feature.
+oracle-rhocalc = ["dep:mettail-languages", "dep:mettail-runtime", "mettail-languages/rhocalc"]
 
 [dependencies]
 mettail-rho-codegen = { path = "../mettail-rho-codegen" }
@@ -29,7 +33,7 @@ rho-pure-eval = { workspace = true }
 rspace_plus_plus = { workspace = true }
 crypto = { workspace = true }
 tokio = { workspace = true }
-mettail-languages = { path = "../languages", optional = true, default-features = false, features = ["calculator"] }
+mettail-languages = { path = "../languages", optional = true, default-features = false }
 mettail-runtime = { path = "../runtime", optional = true }
 
 [dev-dependencies]
@@ -43,3 +47,8 @@ syn = { workspace = true }
 name = "rho_vs_ascent"
 path = "tests/rho_vs_ascent.rs"
 required-features = ["oracle-ascent"]
+
+[[test]]
+name = "rho_rhocalc_ast"
+path = "tests/rho_rhocalc_ast.rs"
+required-features = ["oracle-rhocalc"]

@@ -28,6 +28,7 @@ The current proof and coverage sources are
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
 | exact rejected-rule delegation | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set, delegated rejection evidence names exactly the rejected rule set, and omitted or stale delegated rules block the default-backend gate |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text |
+| rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::lower_rhocalc_proc`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
@@ -66,10 +67,12 @@ reports without observations.
 Generated Rho execution now starts from `PlannedRhoBackend`, which wraps the
 `RhoDefaultBackendPlan` produced by the flip gate; raw validated artifacts remain
 available for oracle/debug helpers only. Dynamic contract calls and ambiguity
-witnesses are constructed with `mettail_rho_codegen::RhoAstSend`, so they also
-cross the runtime boundary as normalized `Par` values. Their Rholang-looking
-strings are annotations for logs, tests, and documentation, not executable
-source.
+witnesses are constructed with `mettail_rho_codegen::RhoAstSend`, and the
+rhocalc process bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with
+`lower_rhocalc_proc` and `lower_rhocalc_name`, so both dynamic calls and
+transport-pure rhocalc programs cross the runtime boundary as normalized `Par`
+values. Their Rholang-looking strings are annotations for logs, tests, and
+documentation, not executable source.
 Generated Rho observations now use `RhoObservationReport<T>` rather than
 `AscentResults`: the report carries the planned execution boundary, the artifact
 kind, the observed channel, the read-order values, an order-insensitive
@@ -129,6 +132,12 @@ Mechanized coverage:
   completeness, quote/drop name canonicalization, grounding/COMM commutation,
   send-arrival permutation coverage for one-bind races, and statement-only
   fences for strong-bisimulation/full-abstraction non-claims.
+- `RhocalcAstLowering.v` proves the concrete AST-first rhocalc bridge model:
+  accepted lowerings produce AST artifacts rather than source text, quote/drop
+  lowers to the quoted body, one-input COMM fires the lowered payload, two-input
+  COMM is one atomic receive over both channels, syntactic binder order matches
+  f1r3node's `k - 1 - i` de Bruijn convention, and receive-local bound bits are
+  removed from the enclosing local-free set.
 - `RhoGroundingAndNames.v` proves fresh `new` names do not capture grounded
   existing fact names and alpha-renaming a fresh private name is observationally
   inert for existing public names.
@@ -152,6 +161,8 @@ Runtime corpus:
 - received-name sends;
 - process-valued payloads;
 - `new` smoke behavior;
+- WPDA rhocalc source parsing followed by direct normalized-`Par` lowering;
+- received-name channel reuse through the AST path;
 - order-sensitive one-bind contention by deterministic send-arrival
   enumeration;
 - same-channel duplicate receive joins through direct RSpace `consume_result`;
