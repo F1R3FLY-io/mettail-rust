@@ -54,9 +54,10 @@ RSpace --> Oracle : resting-space facts
 Oracle --> Extraction : differential comparison
 
 legend right
-  <#DBEAFE> MeTTaIL: frontend/compiler
-  <#DCFCE7> Dovetail: rewrite semantics
-  <#FEF3C7> Rho backend: lowering and oracle
-  <#FCE7F3> F1r3node: execution substrate
+|= Color |= Role |
+|<#DBEAFE> | MeTTaIL: frontend/compiler |
+|<#DCFCE7> | Dovetail: rewrite semantics |
+|<#FEF3C7> | Rho backend: lowering and oracle |
+|<#FCE7F3> | F1r3node: execution substrate |
 endlegend
 @enduml

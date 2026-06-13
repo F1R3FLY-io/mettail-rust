@@ -4,15 +4,18 @@
  * Rust image:
  *   - `mettail_rho_codegen::RhoCoverageEvidence::AllRulesLowered` is valid
  *     only when `RhoLowering::rejected` is empty.
- *   - `DelegatedRejectedRules(labels)` is valid only when `labels` names
- *     exactly the rejected rules: no rejected rule is omitted and no stale
- *     delegation names a rule that did not reject.
- *   - `plan_rho_default_backend` turns those two list-level diagnostics into
- *     `uncovered_rejections` and `extraneous_delegations` coverage counters
- *     before calling the flip gate.
+ *   - `CoveredRejectedRules(dispositions)` is valid only when its disposition
+ *     rule ids name exactly the rejected rules: no rejected rule is omitted
+ *     and no stale disposition names a rule that did not reject.
+ *   - Each disposition must be auditable: the rule id and evidence reference
+ *     are present, and no rule has duplicate dispositions.
+ *   - `plan_rho_default_backend` turns those diagnostics into
+ *     `uncovered_rejections`, `extraneous_dispositions`, and
+ *     `invalid_dispositions` coverage counters before calling the flip gate.
  *
- * This file proves the rule-identity/set-level contract underneath those
- * counters. Counts alone are not the specification: exact membership is.
+ * This file proves the rule-identity/set-level contract and the auditable
+ * disposition contract underneath those counters. Counts alone are not the
+ * specification: exact membership and valid evidence are.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -20,6 +23,7 @@
 From Stdlib Require Import List.
 From Stdlib Require Import Bool.
 From Stdlib Require Import PeanoNat.
+From Stdlib Require Import Lia.
 From RhoBridge Require Import RhoBackendFlipGate.
 
 Import ListNotations.
@@ -27,6 +31,30 @@ Import ListNotations.
 Section RhoRejectedCoverage.
 
   Definition RuleId : Type := nat.
+  Definition EvidenceId : Type := nat.
+
+  Inductive DispositionKind : Type :=
+    | NativeHandler
+    | ExternalContract
+    | RhoAstContract.
+
+  Record RejectedRuleDisposition : Type := {
+    disposition_rule_id : RuleId;
+    disposition_kind : DispositionKind;
+    disposition_evidence_id : EvidenceId
+  }.
+
+  (* In this finite model, zero is the missing/blank token for Rust's
+     whitespace-only rule ids and evidence references. *)
+  Definition valid_rule_id (rule : RuleId) : bool :=
+    negb (Nat.eqb rule 0).
+
+  Definition valid_evidence_id (evidence : EvidenceId) : bool :=
+    negb (Nat.eqb evidence 0).
+
+  Definition disposition_valid (disposition : RejectedRuleDisposition) : bool :=
+    valid_rule_id (disposition_rule_id disposition)
+    && valid_evidence_id (disposition_evidence_id disposition).
 
   Definition rule_member (rule : RuleId) (rules : list RuleId) : bool :=
     existsb (Nat.eqb rule) rules.
@@ -65,28 +93,56 @@ Section RhoRejectedCoverage.
       apply rule_member_iff. apply Hall. exact Hin.
   Qed.
 
+  Definition disposition_rule_ids
+      (dispositions : list RejectedRuleDisposition) : list RuleId :=
+    map disposition_rule_id dispositions.
+
+  Definition invalid_disposition_entries
+      (dispositions : list RejectedRuleDisposition)
+      : list RejectedRuleDisposition :=
+    filter (fun disposition => negb (disposition_valid disposition)) dispositions.
+
+  Fixpoint duplicate_rule_ids
+      (dispositions : list RejectedRuleDisposition) : list RuleId :=
+    match dispositions with
+    | [] => []
+    | disposition :: rest =>
+        let rule := disposition_rule_id disposition in
+        if rule_member rule (disposition_rule_ids rest)
+        then rule :: duplicate_rule_ids rest
+        else duplicate_rule_ids rest
+    end.
+
+  Definition invalid_disposition_count
+    (dispositions : list RejectedRuleDisposition) : nat :=
+    length (invalid_disposition_entries dispositions)
+    + length (duplicate_rule_ids dispositions).
+
   Inductive RejectionCoverageEvidence : Type :=
     | AllRulesLowered
-    | DelegatedRejectedRules : list RuleId -> RejectionCoverageEvidence.
+    | CoveredRejectedRules :
+        list RejectedRuleDisposition -> RejectionCoverageEvidence.
 
-  Definition delegated_rule_ids (evidence : RejectionCoverageEvidence)
+  Definition covered_rule_ids (evidence : RejectionCoverageEvidence)
       : list RuleId :=
     match evidence with
     | AllRulesLowered => []
-    | DelegatedRejectedRules delegated => delegated
+    | CoveredRejectedRules dispositions => disposition_rule_ids dispositions
     end.
 
   Definition uncovered_rejection_ids
-      (rejected delegated : list RuleId) : list RuleId :=
-    filter (fun rule => negb (rule_member rule delegated)) rejected.
+      (rejected covered : list RuleId) : list RuleId :=
+    filter (fun rule => negb (rule_member rule covered)) rejected.
 
-  Definition extraneous_delegation_ids
-      (rejected delegated : list RuleId) : list RuleId :=
-    filter (fun rule => negb (rule_member rule rejected)) delegated.
+  Definition extraneous_disposition_ids
+      (rejected covered : list RuleId) : list RuleId :=
+    filter (fun rule => negb (rule_member rule rejected)) covered.
 
-  Definition delegated_rejections_exact
-      (rejected delegated : list RuleId) : bool :=
-    all_members_of rejected delegated && all_members_of delegated rejected.
+  Definition covered_rejections_exact
+      (rejected : list RuleId)
+      (dispositions : list RejectedRuleDisposition) : bool :=
+    let covered := disposition_rule_ids dispositions in
+    all_members_of rejected covered && all_members_of covered rejected.
 
   Definition coverage_evidence_exact
       (evidence : RejectionCoverageEvidence)
@@ -97,20 +153,36 @@ Section RhoRejectedCoverage.
         | [] => true
         | _ :: _ => false
         end
-    | DelegatedRejectedRules delegated =>
-        delegated_rejections_exact rejected delegated
+    | CoveredRejectedRules dispositions =>
+        covered_rejections_exact rejected dispositions
+        && Nat.eqb (invalid_disposition_count dispositions) 0
     end.
 
   Definition coverage_state_from_evidence
       (audit : bool)
       (evidence : RejectionCoverageEvidence)
       (rejected : list RuleId) : CoverageState :=
-    let delegated := delegated_rule_ids evidence in
+    let covered := covered_rule_ids evidence in
+    let invalid :=
+      match evidence with
+      | AllRulesLowered => 0
+      | CoveredRejectedRules dispositions =>
+          invalid_disposition_count dispositions
+      end in
     {|
       coverage_audit_passed := audit;
-      uncovered_rejections := length (uncovered_rejection_ids rejected delegated);
-      extraneous_delegations := length (extraneous_delegation_ids rejected delegated)
+      uncovered_rejections := length (uncovered_rejection_ids rejected covered);
+      extraneous_dispositions := length (extraneous_disposition_ids rejected covered);
+      invalid_dispositions := invalid
     |}.
+
+  Lemma inhabited_list_has_nonzero_length : forall (A : Type) (xs : list A) x,
+    In x xs -> length xs <> 0.
+  Proof.
+    intros A xs x Hin Hlen.
+    apply length_zero_iff_nil in Hlen.
+    subst xs. contradiction.
+  Qed.
 
   Theorem all_rules_lowered_exact_iff_no_rejections : forall rejected,
     coverage_evidence_exact AllRulesLowered rejected = true
@@ -123,11 +195,13 @@ Section RhoRejectedCoverage.
     - discriminate H.
   Qed.
 
-  Theorem delegated_rejections_exact_iff_same_rule_set : forall rejected delegated,
-    delegated_rejections_exact rejected delegated = true
-    <-> forall rule, In rule rejected <-> In rule delegated.
+  Theorem covered_rejections_exact_iff_same_rule_set :
+    forall rejected dispositions,
+    covered_rejections_exact rejected dispositions = true
+    <-> forall rule,
+      In rule rejected <-> In rule (disposition_rule_ids dispositions).
   Proof.
-    intros rejected delegated. unfold delegated_rejections_exact.
+    intros rejected dispositions. unfold covered_rejections_exact.
     rewrite andb_true_iff.
     repeat rewrite all_members_of_iff.
     split.
@@ -140,64 +214,69 @@ Section RhoRejectedCoverage.
       + intros rule Hin. apply Hsame. exact Hin.
   Qed.
 
-  Theorem delegated_coverage_omits_no_rejected_rule : forall rejected delegated rule,
-    delegated_rejections_exact rejected delegated = true ->
+  Theorem covered_rejection_omits_no_rejected_rule :
+    forall rejected dispositions rule,
+    covered_rejections_exact rejected dispositions = true ->
     In rule rejected ->
-    In rule delegated.
+    In rule (disposition_rule_ids dispositions).
   Proof.
-    intros rejected delegated rule Hexact Hin.
-    destruct (delegated_rejections_exact_iff_same_rule_set rejected delegated)
+    intros rejected dispositions rule Hexact Hin.
+    destruct (covered_rejections_exact_iff_same_rule_set rejected dispositions)
       as [Hto_set _].
     specialize (Hto_set Hexact rule).
     apply Hto_set. exact Hin.
   Qed.
 
-  Theorem delegated_coverage_has_no_stale_rule : forall rejected delegated rule,
-    delegated_rejections_exact rejected delegated = true ->
-    In rule delegated ->
+  Theorem covered_rejection_has_no_stale_rule :
+    forall rejected dispositions rule,
+    covered_rejections_exact rejected dispositions = true ->
+    In rule (disposition_rule_ids dispositions) ->
     In rule rejected.
   Proof.
-    intros rejected delegated rule Hexact Hin.
-    destruct (delegated_rejections_exact_iff_same_rule_set rejected delegated)
+    intros rejected dispositions rule Hexact Hin.
+    destruct (covered_rejections_exact_iff_same_rule_set rejected dispositions)
       as [Hto_set _].
     specialize (Hto_set Hexact rule).
     apply Hto_set. exact Hin.
   Qed.
 
-  Theorem omitted_rejected_rule_blocks_exact_delegation : forall rejected delegated rule,
+  Theorem omitted_rejected_rule_blocks_exact_coverage :
+    forall rejected dispositions rule,
     In rule rejected ->
-    ~ In rule delegated ->
-    delegated_rejections_exact rejected delegated = false.
+    ~ In rule (disposition_rule_ids dispositions) ->
+    covered_rejections_exact rejected dispositions = false.
   Proof.
-    intros rejected delegated rule Hrejected Homitted.
-    destruct (delegated_rejections_exact rejected delegated) eqn:Hexact.
-    - apply delegated_coverage_omits_no_rejected_rule with
+    intros rejected dispositions rule Hrejected Homitted.
+    destruct (covered_rejections_exact rejected dispositions) eqn:Hexact.
+    - apply covered_rejection_omits_no_rejected_rule with
         (rule := rule) in Hexact.
       + contradiction.
       + exact Hrejected.
     - reflexivity.
   Qed.
 
-  Theorem stale_delegated_rule_blocks_exact_delegation : forall rejected delegated rule,
-    In rule delegated ->
+  Theorem stale_disposition_blocks_exact_coverage :
+    forall rejected dispositions rule,
+    In rule (disposition_rule_ids dispositions) ->
     ~ In rule rejected ->
-    delegated_rejections_exact rejected delegated = false.
+    covered_rejections_exact rejected dispositions = false.
   Proof.
-    intros rejected delegated rule Hdelegated Hstale.
-    destruct (delegated_rejections_exact rejected delegated) eqn:Hexact.
-    - apply delegated_coverage_has_no_stale_rule with
+    intros rejected dispositions rule Hcovered Hstale.
+    destruct (covered_rejections_exact rejected dispositions) eqn:Hexact.
+    - apply covered_rejection_has_no_stale_rule with
         (rule := rule) in Hexact.
       + contradiction.
-      + exact Hdelegated.
+      + exact Hcovered.
     - reflexivity.
   Qed.
 
-  Lemma omitted_rule_appears_in_uncovered : forall rejected delegated rule,
+  Lemma omitted_rule_appears_in_uncovered :
+    forall rejected covered rule,
     In rule rejected ->
-    ~ In rule delegated ->
-    In rule (uncovered_rejection_ids rejected delegated).
+    ~ In rule covered ->
+    In rule (uncovered_rejection_ids rejected covered).
   Proof.
-    intros rejected delegated rule Hrejected Homitted.
+    intros rejected covered rule Hrejected Homitted.
     unfold uncovered_rejection_ids.
     apply filter_In. split.
     - exact Hrejected.
@@ -206,79 +285,197 @@ Section RhoRejectedCoverage.
       exact Homitted.
   Qed.
 
-  Lemma stale_rule_appears_in_extraneous : forall rejected delegated rule,
-    In rule delegated ->
+  Lemma stale_rule_appears_in_extraneous :
+    forall rejected covered rule,
+    In rule covered ->
     ~ In rule rejected ->
-    In rule (extraneous_delegation_ids rejected delegated).
+    In rule (extraneous_disposition_ids rejected covered).
   Proof.
-    intros rejected delegated rule Hdelegated Hstale.
-    unfold extraneous_delegation_ids.
+    intros rejected covered rule Hcovered Hstale.
+    unfold extraneous_disposition_ids.
     apply filter_In. split.
-    - exact Hdelegated.
+    - exact Hcovered.
     - apply negb_true_iff.
       apply rule_member_false_iff.
       exact Hstale.
   Qed.
 
-  Lemma inhabited_list_has_nonzero_length : forall (xs : list RuleId) rule,
-    In rule xs -> length xs <> 0.
+  Lemma invalid_disposition_appears :
+    forall dispositions disposition,
+    In disposition dispositions ->
+    disposition_valid disposition = false ->
+    In disposition (invalid_disposition_entries dispositions).
   Proof.
-    intros xs rule Hin Hlen.
-    apply length_zero_iff_nil in Hlen.
-    subst xs. contradiction.
+    intros dispositions disposition Hin Hinvalid.
+    unfold invalid_disposition_entries.
+    apply filter_In. split.
+    - exact Hin.
+    - rewrite Hinvalid. reflexivity.
   Qed.
 
-  Theorem omitted_rejected_rule_blocks_default_backend : forall proofs oracle artifact fairness audit rejected delegated rule diagnostics,
-    In rule rejected ->
-    ~ In rule delegated ->
-    default_backend_gate proofs oracle artifact fairness
-      (coverage_state_from_evidence audit (DelegatedRejectedRules delegated) rejected)
-      diagnostics = false.
+  Lemma invalid_disposition_count_nonzero_if_invalid :
+    forall dispositions disposition,
+    In disposition dispositions ->
+    disposition_valid disposition = false ->
+    invalid_disposition_count dispositions <> 0.
   Proof.
-    intros proofs oracle artifact fairness audit rejected delegated rule diagnostics
-      Hrejected Homitted.
-    apply uncovered_rejection_blocks_default_backend.
-    apply inhabited_list_has_nonzero_length with (rule := rule).
-    apply omitted_rule_appears_in_uncovered; assumption.
-  Qed.
-
-  Theorem stale_delegated_rule_blocks_default_backend : forall proofs oracle artifact fairness audit rejected delegated rule diagnostics,
-    In rule delegated ->
-    ~ In rule rejected ->
-    default_backend_gate proofs oracle artifact fairness
-      (coverage_state_from_evidence audit (DelegatedRejectedRules delegated) rejected)
-      diagnostics = false.
-  Proof.
-    intros proofs oracle artifact fairness audit rejected delegated rule diagnostics
-      Hdelegated Hstale.
-    assert (Hnonzero :
-      length (extraneous_delegation_ids rejected delegated) <> 0).
+    intros dispositions disposition Hin Hinvalid.
+    unfold invalid_disposition_count.
+    assert (Hlen : length (invalid_disposition_entries dispositions) <> 0).
     {
-      apply inhabited_list_has_nonzero_length with (rule := rule).
-      apply stale_rule_appears_in_extraneous; assumption.
+      apply inhabited_list_has_nonzero_length with
+        (x := disposition).
+      apply invalid_disposition_appears; assumption.
     }
-    unfold default_backend_gate, gate_state_from_deadlock_report,
-      coverage_state_from_evidence, exact_coverage_evidence,
-      deadlock_report_passes.
-    simpl.
-    assert (Hextra :
-      Nat.eqb (length (extraneous_delegation_ids rejected delegated)) 0 = false).
+    lia.
+  Qed.
+
+  Lemma duplicate_head_appears_in_duplicate_rule_ids :
+    forall disposition rest,
+    In (disposition_rule_id disposition) (disposition_rule_ids rest) ->
+    In (disposition_rule_id disposition)
+      (duplicate_rule_ids (disposition :: rest)).
+  Proof.
+    intros disposition rest Hdup. simpl.
+    apply rule_member_iff in Hdup. rewrite Hdup.
+    simpl. left. reflexivity.
+  Qed.
+
+  Lemma invalid_disposition_count_nonzero_if_duplicate_head :
+    forall disposition rest,
+    In (disposition_rule_id disposition) (disposition_rule_ids rest) ->
+    invalid_disposition_count (disposition :: rest) <> 0.
+  Proof.
+    intros disposition rest Hdup.
+    unfold invalid_disposition_count.
+    assert (Hlen : length (duplicate_rule_ids (disposition :: rest)) <> 0).
+    {
+      apply inhabited_list_has_nonzero_length with
+        (x := disposition_rule_id disposition).
+      apply duplicate_head_appears_in_duplicate_rule_ids.
+      exact Hdup.
+    }
+    lia.
+  Qed.
+
+  Theorem invalid_disposition_blocks_exact_coverage :
+    forall rejected dispositions disposition,
+    In disposition dispositions ->
+    disposition_valid disposition = false ->
+    coverage_evidence_exact (CoveredRejectedRules dispositions) rejected = false.
+  Proof.
+    intros rejected dispositions disposition Hin Hinvalid.
+    unfold coverage_evidence_exact.
+    assert (Hnonzero :
+      invalid_disposition_count dispositions <> 0).
+    {
+      apply invalid_disposition_count_nonzero_if_invalid with
+        (disposition := disposition); assumption.
+    }
+    assert (Hcount :
+      Nat.eqb (invalid_disposition_count dispositions) 0 = false).
     { rewrite Nat.eqb_neq. exact Hnonzero. }
-    rewrite Hextra.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
-      destruct (Nat.eqb (length (uncovered_rejection_ids rejected delegated)) 0);
+    rewrite Hcount.
+    destruct (covered_rejections_exact rejected dispositions); reflexivity.
+  Qed.
+
+  Theorem duplicate_disposition_blocks_exact_coverage :
+    forall rejected disposition rest,
+    In (disposition_rule_id disposition) (disposition_rule_ids rest) ->
+    coverage_evidence_exact
+      (CoveredRejectedRules (disposition :: rest)) rejected = false.
+  Proof.
+    intros rejected disposition rest Hdup.
+    unfold coverage_evidence_exact.
+    assert (Hnonzero :
+      invalid_disposition_count (disposition :: rest) <> 0).
+    {
+      apply invalid_disposition_count_nonzero_if_duplicate_head.
+      exact Hdup.
+    }
+    assert (Hcount :
+      Nat.eqb (invalid_disposition_count (disposition :: rest)) 0 = false).
+    { rewrite Nat.eqb_neq. exact Hnonzero. }
+    rewrite Hcount.
+    destruct (covered_rejections_exact rejected (disposition :: rest));
       reflexivity.
   Qed.
 
-  Theorem all_rules_lowered_blocks_any_rejection : forall proofs oracle artifact fairness audit rejected rule diagnostics,
+  Theorem omitted_rejected_rule_blocks_default_backend :
+    forall proofs oracle artifact fairness audit rejected dispositions rule diagnostics,
+    In rule rejected ->
+    ~ In rule (disposition_rule_ids dispositions) ->
+    default_backend_gate proofs oracle artifact fairness
+      (coverage_state_from_evidence audit (CoveredRejectedRules dispositions) rejected)
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit rejected dispositions rule diagnostics
+      Hrejected Homitted.
+    unfold coverage_state_from_evidence. simpl.
+    apply uncovered_rejection_blocks_default_backend.
+    apply inhabited_list_has_nonzero_length with (x := rule).
+    apply omitted_rule_appears_in_uncovered; assumption.
+  Qed.
+
+  Theorem stale_disposition_blocks_default_backend :
+    forall proofs oracle artifact fairness audit rejected dispositions rule diagnostics,
+    In rule (disposition_rule_ids dispositions) ->
+    ~ In rule rejected ->
+    default_backend_gate proofs oracle artifact fairness
+      (coverage_state_from_evidence audit (CoveredRejectedRules dispositions) rejected)
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit rejected dispositions rule diagnostics
+      Hcovered Hstale.
+    unfold coverage_state_from_evidence. simpl.
+    apply extraneous_delegation_blocks_default_backend.
+    apply inhabited_list_has_nonzero_length with (x := rule).
+    apply stale_rule_appears_in_extraneous; assumption.
+  Qed.
+
+  Theorem inauditable_disposition_blocks_default_backend :
+    forall proofs oracle artifact fairness audit rejected dispositions disposition diagnostics,
+    In disposition dispositions ->
+    disposition_valid disposition = false ->
+    default_backend_gate proofs oracle artifact fairness
+      (coverage_state_from_evidence audit (CoveredRejectedRules dispositions) rejected)
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit rejected dispositions disposition diagnostics
+      Hin Hinvalid.
+    unfold coverage_state_from_evidence. simpl.
+    apply invalid_disposition_blocks_default_backend.
+    apply invalid_disposition_count_nonzero_if_invalid with
+      (disposition := disposition); assumption.
+  Qed.
+
+  Theorem duplicate_disposition_blocks_default_backend :
+    forall proofs oracle artifact fairness audit rejected disposition rest diagnostics,
+    In (disposition_rule_id disposition) (disposition_rule_ids rest) ->
+    default_backend_gate proofs oracle artifact fairness
+      (coverage_state_from_evidence audit
+        (CoveredRejectedRules (disposition :: rest)) rejected)
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit rejected disposition rest diagnostics Hdup.
+    unfold coverage_state_from_evidence. simpl.
+    apply invalid_disposition_blocks_default_backend.
+    apply invalid_disposition_count_nonzero_if_duplicate_head.
+    exact Hdup.
+  Qed.
+
+  Theorem all_rules_lowered_blocks_any_rejection :
+    forall proofs oracle artifact fairness audit rejected rule diagnostics,
     In rule rejected ->
     default_backend_gate proofs oracle artifact fairness
       (coverage_state_from_evidence audit AllRulesLowered rejected)
       diagnostics = false.
   Proof.
     intros proofs oracle artifact fairness audit rejected rule diagnostics Hrejected.
-    apply omitted_rejected_rule_blocks_default_backend with
-      (rule := rule).
+    unfold coverage_state_from_evidence. simpl.
+    apply uncovered_rejection_blocks_default_backend.
+    apply inhabited_list_has_nonzero_length with (x := rule).
+    apply omitted_rule_appears_in_uncovered.
     - exact Hrejected.
     - intros Hempty. inversion Hempty.
   Qed.

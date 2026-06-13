@@ -183,13 +183,15 @@ Section RhoBackendFlipGate.
   Record CoverageState : Type := {
     coverage_audit_passed : bool;
     uncovered_rejections : nat;
-    extraneous_delegations : nat
+    extraneous_dispositions : nat;
+    invalid_dispositions : nat
   }.
 
   Definition exact_coverage_evidence (c : CoverageState) : bool :=
     coverage_audit_passed c
-    && Nat.eqb (uncovered_rejections c) 0
-    && Nat.eqb (extraneous_delegations c) 0.
+    && (Nat.eqb (uncovered_rejections c) 0
+        && (Nat.eqb (extraneous_dispositions c) 0
+            && Nat.eqb (invalid_dispositions c) 0)).
 
   Definition default_backend_gate
       (proofs oracle artifact fairness : bool)
@@ -203,32 +205,40 @@ Section RhoBackendFlipGate.
     exact_coverage_evidence c = true
     <-> coverage_audit_passed c = true
         /\ uncovered_rejections c = 0
-        /\ extraneous_delegations c = 0.
+        /\ extraneous_dispositions c = 0
+        /\ invalid_dispositions c = 0.
   Proof.
-    intros [audit uncovered extra]. simpl.
+    intros [audit uncovered extra invalid].
+    unfold exact_coverage_evidence. simpl.
     destruct audit; simpl.
     - split.
-      + intro H. apply andb_true_iff in H.
-        destruct H as [Huncovered Hextra].
+      + intro H.
+        apply andb_true_iff in H as [Huncovered Hrest].
+        apply andb_true_iff in Hrest as [Hextra Hinvalid].
         apply Nat.eqb_eq in Huncovered.
         apply Nat.eqb_eq in Hextra.
+        apply Nat.eqb_eq in Hinvalid.
         repeat split; assumption.
-      + intros [_ [Huncovered Hextra]].
-        apply andb_true_iff. split; apply Nat.eqb_eq; assumption.
+      + intros [_ [Huncovered [Hextra Hinvalid]]].
+        apply andb_true_iff. split.
+        * apply Nat.eqb_eq. exact Huncovered.
+        * apply andb_true_iff. split; apply Nat.eqb_eq; assumption.
     - split; intro H.
       + discriminate H.
       + destruct H as [Haudit _]. discriminate Haudit.
   Qed.
 
-  Theorem uncovered_rejection_blocks_default_backend : forall proofs oracle artifact fairness audit n extra diagnostics,
+  Theorem uncovered_rejection_blocks_default_backend :
+    forall proofs oracle artifact fairness audit n extra invalid diagnostics,
     n <> 0 ->
     default_backend_gate proofs oracle artifact fairness
       {| coverage_audit_passed := audit;
          uncovered_rejections := n;
-         extraneous_delegations := extra |}
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid |}
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact fairness audit n extra diagnostics Hnonzero.
+    intros proofs oracle artifact fairness audit n extra invalid diagnostics Hnonzero.
     unfold default_backend_gate, gate_state_from_deadlock_report,
       exact_coverage_evidence, deadlock_report_passes.
     simpl.
@@ -238,22 +248,46 @@ Section RhoBackendFlipGate.
     destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit; reflexivity.
   Qed.
 
-  Theorem extraneous_delegation_blocks_default_backend : forall proofs oracle artifact fairness audit extra diagnostics,
+  Theorem extraneous_delegation_blocks_default_backend :
+    forall proofs oracle artifact fairness audit uncovered extra invalid diagnostics,
     extra <> 0 ->
     default_backend_gate proofs oracle artifact fairness
       {| coverage_audit_passed := audit;
-         uncovered_rejections := 0;
-         extraneous_delegations := extra |}
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid |}
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact fairness audit extra diagnostics Hnonzero.
+    intros proofs oracle artifact fairness audit uncovered extra invalid diagnostics Hnonzero.
     unfold default_backend_gate, gate_state_from_deadlock_report,
       exact_coverage_evidence, deadlock_report_passes.
     simpl.
     assert (Hextra : Nat.eqb extra 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Hextra.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit; reflexivity.
+    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+      destruct (Nat.eqb uncovered 0); reflexivity.
+  Qed.
+
+  Theorem invalid_disposition_blocks_default_backend :
+    forall proofs oracle artifact fairness audit uncovered extra invalid diagnostics,
+    invalid <> 0 ->
+    default_backend_gate proofs oracle artifact fairness
+      {| coverage_audit_passed := audit;
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid |}
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit uncovered extra invalid diagnostics Hnonzero.
+    unfold default_backend_gate, gate_state_from_deadlock_report,
+      exact_coverage_evidence, deadlock_report_passes.
+    simpl.
+    assert (Hinvalid : Nat.eqb invalid 0 = false).
+    { rewrite Nat.eqb_neq. assumption. }
+    rewrite Hinvalid.
+    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+      destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0); reflexivity.
   Qed.
 
   Theorem missing_artifact_validation_blocks_default_backend : forall proofs oracle fairness coverage diagnostics,
@@ -282,7 +316,8 @@ Section RhoBackendFlipGate.
         /\ fairness = true
         /\ coverage_audit_passed coverage = true
         /\ uncovered_rejections coverage = 0
-        /\ extraneous_delegations coverage = 0
+        /\ extraneous_dispositions coverage = 0
+        /\ invalid_dispositions coverage = 0
         /\ diagnostics = 0.
   Proof.
     intros proofs oracle artifact fairness coverage diagnostics.
@@ -293,9 +328,9 @@ Section RhoBackendFlipGate.
     rewrite deadlock_report_passes_iff_empty.
     split.
     - intros [Hproofs [Horacle [Hcoverage [Hartifact [Hfairness Hdiagnostics]]]]].
-      destruct Hcoverage as [Haudit [Huncovered Hextra]].
+      destruct Hcoverage as [Haudit [Huncovered [Hextra Hinvalid]]].
       repeat split; assumption.
-    - intros [Hproofs [Horacle [Hartifact [Hfairness [Haudit [Huncovered [Hextra Hdiagnostics]]]]]]].
+    - intros [Hproofs [Horacle [Hartifact [Hfairness [Haudit [Huncovered [Hextra [Hinvalid Hdiagnostics]]]]]]]].
       split; [assumption|].
       split; [assumption|].
       split.

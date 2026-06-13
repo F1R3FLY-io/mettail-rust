@@ -26,7 +26,7 @@ The current proof and coverage sources are
 | host Rho-machine reuse | `HostRhoMachineReuse.v` | proved accepted backend plans include host Rholang/RSpace and exclude custom reducer, tuple-space, matcher, and replay components |
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
-| exact rejected-rule delegation | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set, delegated rejection evidence names exactly the rejected rule set, and omitted or stale delegated rules block the default-backend gate |
+| auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text |
 | rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::lower_rhocalc_proc`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
@@ -382,10 +382,11 @@ proves source-text artifacts are not accepted generated-backend artifacts, and
 the Rust validator is the executable gate for generated artifacts.
 `RhoRejectedCoverage.v` proves the Rust default-backend planner's exact
 coverage wrapper at the rule-identity level: `AllRulesLowered` is valid only
-when the rejected set is empty, delegated evidence is valid only when the
-delegated rule set equals the rejected rule set, and either an omitted rejection
-or a stale delegated rule blocks the default-backend gate. `RhoBackendFlipGate.v`
-also models the coverage counters consumed by the flip gate. Its
+when the rejected set is empty; `CoveredRejectedRules` is valid only when typed
+dispositions name exactly the rejected rule set; and omitted, stale, duplicate,
+blank-rule, or blank-evidence dispositions block the default-backend gate.
+`RhoBackendFlipGate.v` also models the coverage counters consumed by the flip
+gate, including the `invalid_dispositions` counter. Its
 `deadlock_diagnostic_blocks_flip` theorem models the codegen analyzer output:
 any non-empty channel-deadlock diagnostic list makes `NoNewDeadlocks(L)` false.
 The `missing_scheduler_fairness_blocks_flip` theorem proves that a language
@@ -397,8 +398,8 @@ The `no_blockers_iff_can_flip` and `any_blocker_blocks_flip` theorems model the
 Rust blocker-list API: a language can flip exactly when no blocker remains.
 The `default_backend_gate_iff_all_evidence` theorem models
 `plan_rho_default_backend`: proof, oracle, scheduler fairness, coverage audit,
-no uncovered rejected rules, no extraneous delegation claims, and no deadlock
-diagnostics are jointly necessary and sufficient.
+no uncovered rejected rules, no extraneous disposition claims, no invalid
+dispositions, and no deadlock diagnostics are jointly necessary and sufficient.
 
 Rust flip-gate evidence:
 
@@ -414,6 +415,9 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::RhoDefaultBackendEvidence`
 - `mettail_rho_codegen::RhoDefaultBackendEvidence::scheduler_fairness_passed`
 - `mettail_rho_codegen::RhoCoverageEvidence`
+- `mettail_rho_codegen::RhoRejectedRuleDisposition`
+- `mettail_rho_codegen::RhoRejectedRuleDispositionKind`
+- `mettail_rho_codegen::RhoRejectedRuleDispositionDiagnostic`
 - `mettail_rho_codegen::decide_rho_flip`
 - `mettail_rho_codegen::RhoFlipDecision::can_flip_to_rho`
 - `mettail_rho_codegen::RhoFlipBlocker`
@@ -445,8 +449,10 @@ Rust flip-gate evidence:
 - `rejects_mutated_operand_metadata`
 - `default_backend_plan_succeeds_when_all_rules_lower`
 - `default_backend_plan_blocks_uncovered_rejections`
-- `default_backend_plan_accepts_exact_delegated_rejections`
-- `default_backend_plan_rejects_stale_delegation_claims`
+- `default_backend_plan_accepts_exact_covered_rejections`
+- `default_backend_plan_rejects_stale_disposition_claims`
+- `default_backend_plan_rejects_inauditable_dispositions`
+- `default_backend_plan_rejects_duplicate_dispositions`
 - `default_backend_plan_reports_all_non_coverage_gate_failures`
 
 The CESK runtime backend remains selectable until this gate passes for a

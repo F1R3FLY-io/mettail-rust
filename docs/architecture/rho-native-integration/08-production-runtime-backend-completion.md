@@ -166,7 +166,7 @@ An agent can complete a language runtime backend migration by following this
 order:
 
 1. Classify every language rule as Dovetail-core, RhoNet-lowerable,
-   native-handler, exact-delegated, or rejected.
+   native-handler, covered by a typed disposition, or rejected.
 2. Add Dovetail proofs for Dovetail-core rules and external contracts for
    native-handler rules.
 3. Implement RhoNet lowering to `rhoapi::Par` for each lowerable rule.

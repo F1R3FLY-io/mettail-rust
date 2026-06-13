@@ -310,20 +310,28 @@ explicit reason, or delegated to an external/native/Rho contract. Therefore no
 requirement remains unclassified. The statement is a coverage theorem, not a
 claim that every external contract is already mechanized.
 
-For the Rho lowering gate, delegation is exact at the rule-identity level:
+For the Rho lowering gate, disposition coverage is exact at the rule-identity
+level:
 `AllRulesLowered` is acceptable only when the rejected set is empty, and
-`DelegatedRejectedRules(D)` is acceptable only when `D` is the same set as the
-lowering rejection set `R`.
+`CoveredRejectedRules(D)` is acceptable only when the rule ids carried by
+`D` are the same set as the lowering rejection set `R`. Each disposition also
+carries a kind, such as native handler, external contract, or non-scalar Rho AST
+contract, and a non-empty evidence reference. Duplicate disposition claims are
+invalid.
 
-`ValidDelegation(R, D) ⇔ ∀r. r ∈ R ⇔ r ∈ D`
+`ValidDispositionCoverage(R, D) ⇔ (∀r. r ∈ R ⇔ r ∈ ruleIds(D)) ∧ Auditable(D)`
+
+`Auditable(D) ⇔ noBlankRuleId(D) ∧ noBlankEvidenceRef(D) ∧ noDuplicateRuleId(D)`
 
 Mechanized support:
 [RHO-BRIDGE-FORMAL](references.md#rho-bridge-formal) includes
 `RhoRejectedCoverage.v`, whose
 `all_rules_lowered_exact_iff_no_rejections`,
-`delegated_rejections_exact_iff_same_rule_set`,
-`omitted_rejected_rule_blocks_default_backend`, and
-`stale_delegated_rule_blocks_default_backend` theorems prove this gate.
+`covered_rejections_exact_iff_same_rule_set`,
+`omitted_rejected_rule_blocks_default_backend`,
+`stale_disposition_blocks_default_backend`,
+`inauditable_disposition_blocks_default_backend`, and
+`duplicate_disposition_blocks_default_backend` theorems prove this gate.
 
 ## Theorem 11: Host Rho Machine Reuse Boundary
 
