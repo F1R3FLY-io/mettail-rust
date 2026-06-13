@@ -281,8 +281,11 @@ Used for: finite executable projections of the RhoNet/Dovetail COMM bridge.
 The mCRL2, Maude, and TLA+ models are generated from the same JSON slice
 specification and checked for drift before model checking. These checks
 complement the Rocq bridge proof by model-checking and rewrite-checking a
-bounded three-redex process fragment and the matching scheduler boundary; they
-are not a replacement for the unbounded Rocq obligations.
+bounded three-redex process fragment and the matching scheduler boundary. The
+Maude projection records visible fire/complete traces while leaving Rho reserve
+steps internal, checks all six full schedules on both projections, and rejects
+every visible completion trace with fewer than all three fires. These bounded
+models are not a replacement for the unbounded Rocq obligations.
 
 ### COVERAGE-MATRIX
 

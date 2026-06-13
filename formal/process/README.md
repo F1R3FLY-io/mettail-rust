@@ -50,7 +50,11 @@ properties are:
    are hidden as internal `τ` actions.
 5. both rewrite projections have the same unique terminal observation and expose
    every one-step independent redex witness under AC fact-multiset
-   normalization.
+   normalization;
+6. Maude traced configurations realize the same six visible fire/complete
+   schedules on the RhoNet and Dovetail sides while keeping Rho reserve steps
+   unobserved; every visible completion trace with fewer than all three fires is
+   unreachable on both sides.
 
 `formal/tla/rho_machine/` models the matching scheduler boundary for the same
 three independent redexes. Apalache checks bounded safety invariants, and TLC

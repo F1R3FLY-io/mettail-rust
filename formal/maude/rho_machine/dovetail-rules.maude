@@ -18,3 +18,26 @@ mod DOVETAIL-FACT-STEPS is
   rl [fireC] : c => firedC .
   rl [complete] : firedA firedB firedC => completed .
 endm
+
+mod DOVETAIL-FACT-STEPS-TRACED is
+  protecting BOOL .
+
+  sorts Fact State Trace Step Config .
+  subsort Fact < State .
+
+  ops a b c firedA firedB firedC completed : -> Fact [ctor] .
+  ops fireA fireB fireC complete : -> Step [ctor] .
+  op empty : -> State [ctor] .
+  op __ : State State -> State [ctor assoc comm id: empty] .
+  op nil : -> Trace [ctor] .
+  op _then_ : Trace Step -> Trace [ctor] .
+  op <_;_> : State Trace -> Config [ctor] .
+
+  var REST : State .
+  var T : Trace .
+
+  rl [fireATraced] : < a REST ; T > => < firedA REST ; T then fireA > .
+  rl [fireBTraced] : < b REST ; T > => < firedB REST ; T then fireB > .
+  rl [fireCTraced] : < c REST ; T > => < firedC REST ; T then fireC > .
+  rl [completeTraced] : < firedA firedB firedC REST ; T > => < completed REST ; T then complete > .
+endm

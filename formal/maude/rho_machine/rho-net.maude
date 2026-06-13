@@ -21,3 +21,30 @@ mod RHO-NET-COMM is
   rl [reserveJoin] : firedA firedB firedC => reservedJoin .
   rl [complete] : reservedJoin => completed .
 endm
+
+mod RHO-NET-COMM-TRACED is
+  protecting BOOL .
+
+  sorts Fact State Trace Step Config .
+  subsort Fact < State .
+
+  ops a b c reservedA reservedB reservedC firedA firedB firedC reservedJoin completed : -> Fact [ctor] .
+  ops fireA fireB fireC complete : -> Step [ctor] .
+  op empty : -> State [ctor] .
+  op __ : State State -> State [ctor assoc comm id: empty] .
+  op nil : -> Trace [ctor] .
+  op _then_ : Trace Step -> Trace [ctor] .
+  op <_;_> : State Trace -> Config [ctor] .
+
+  var REST : State .
+  var T : Trace .
+
+  rl [reserveATraced] : < a REST ; T > => < reservedA REST ; T > .
+  rl [fireATraced] : < reservedA REST ; T > => < firedA REST ; T then fireA > .
+  rl [reserveBTraced] : < b REST ; T > => < reservedB REST ; T > .
+  rl [fireBTraced] : < reservedB REST ; T > => < firedB REST ; T then fireB > .
+  rl [reserveCTraced] : < c REST ; T > => < reservedC REST ; T > .
+  rl [fireCTraced] : < reservedC REST ; T > => < firedC REST ; T then fireC > .
+  rl [reserveJoinTraced] : < firedA firedB firedC REST ; T > => < reservedJoin REST ; T > .
+  rl [completeTraced] : < reservedJoin REST ; T > => < completed REST ; T then complete > .
+endm

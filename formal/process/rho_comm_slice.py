@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import itertools
 import json
 from pathlib import Path
@@ -201,6 +202,7 @@ def render_maude_rho(spec: dict) -> str:
     labels = [r["label"] for r in spec["redexes"]]
     facts = [r["fact"] for r in spec["redexes"]]
     ops = facts + [f"reserved{label}" for label in labels] + [f"fired{label}" for label in labels] + ["reservedJoin", "completed"]
+    visible_steps = [f"fire{label}" for label in labels] + ["complete"]
     lines = [
         "--- Generated from formal/process/rho_comm_slice.json.",
         "--- Executable rewrite-logic projection for a finite RhoNet COMM",
@@ -223,6 +225,36 @@ def render_maude_rho(spec: dict) -> str:
     lines.append(f"  rl [reserveJoin] : {' '.join(f'fired{label}' for label in labels)} => reservedJoin .")
     lines.append("  rl [complete] : reservedJoin => completed .")
     lines.append("endm")
+    lines.append("")
+    lines.extend(
+        [
+            "mod RHO-NET-COMM-TRACED is",
+            "  protecting BOOL .",
+            "",
+            "  sorts Fact State Trace Step Config .",
+            "  subsort Fact < State .",
+            "",
+            f"  ops {' '.join(ops)} : -> Fact [ctor] .",
+            f"  ops {' '.join(visible_steps)} : -> Step [ctor] .",
+            "  op empty : -> State [ctor] .",
+            "  op __ : State State -> State [ctor assoc comm id: empty] .",
+            "  op nil : -> Trace [ctor] .",
+            "  op _then_ : Trace Step -> Trace [ctor] .",
+            "  op <_;_> : State Trace -> Config [ctor] .",
+            "",
+            "  var REST : State .",
+            "  var T : Trace .",
+            "",
+        ]
+    )
+    for label, fact in zip(labels, facts):
+        lines.append(f"  rl [reserve{label}Traced] : < {fact} REST ; T > => < reserved{label} REST ; T > .")
+        lines.append(f"  rl [fire{label}Traced] : < reserved{label} REST ; T > => < fired{label} REST ; T then fire{label} > .")
+    lines.append(
+        f"  rl [reserveJoinTraced] : < {' '.join(f'fired{label}' for label in labels)} REST ; T > => < reservedJoin REST ; T > ."
+    )
+    lines.append("  rl [completeTraced] : < reservedJoin REST ; T > => < completed REST ; T then complete > .")
+    lines.append("endm")
     return "\n".join(lines) + "\n"
 
 
@@ -230,6 +262,7 @@ def render_maude_dovetail(spec: dict) -> str:
     labels = [r["label"] for r in spec["redexes"]]
     facts = [r["fact"] for r in spec["redexes"]]
     ops = facts + [f"fired{label}" for label in labels] + ["completed"]
+    visible_steps = [f"fire{label}" for label in labels] + ["complete"]
     lines = [
         "--- Generated from formal/process/rho_comm_slice.json.",
         "--- Executable rewrite-logic projection for the corresponding finite",
@@ -251,7 +284,86 @@ def render_maude_dovetail(spec: dict) -> str:
         lines.append(f"  rl [fire{label}] : {fact} => fired{label} .")
     lines.append(f"  rl [complete] : {' '.join(f'fired{label}' for label in labels)} => completed .")
     lines.append("endm")
+    lines.append("")
+    lines.extend(
+        [
+            "mod DOVETAIL-FACT-STEPS-TRACED is",
+            "  protecting BOOL .",
+            "",
+            "  sorts Fact State Trace Step Config .",
+            "  subsort Fact < State .",
+            "",
+            f"  ops {' '.join(ops)} : -> Fact [ctor] .",
+            f"  ops {' '.join(visible_steps)} : -> Step [ctor] .",
+            "  op empty : -> State [ctor] .",
+            "  op __ : State State -> State [ctor assoc comm id: empty] .",
+            "  op nil : -> Trace [ctor] .",
+            "  op _then_ : Trace Step -> Trace [ctor] .",
+            "  op <_;_> : State Trace -> Config [ctor] .",
+            "",
+            "  var REST : State .",
+            "  var T : Trace .",
+            "",
+        ]
+    )
+    for label, fact in zip(labels, facts):
+        lines.append(f"  rl [fire{label}Traced] : < {fact} REST ; T > => < fired{label} REST ; T then fire{label} > .")
+    lines.append(
+        f"  rl [completeTraced] : < {' '.join(f'fired{label}' for label in labels)} REST ; T > => < completed REST ; T then complete > ."
+    )
+    lines.append("endm")
     return "\n".join(lines) + "\n"
+
+
+def maude_trace(actions: list[str]) -> str:
+    trace = "nil"
+    for action in actions:
+        trace = f"({trace} then {action})"
+    return trace
+
+
+def maude_visible_schedule_queries(spec: dict) -> list[tuple[str, str]]:
+    labels = [r["label"] for r in spec["redexes"]]
+    facts = [r["fact"] for r in spec["redexes"]]
+    fact_multiset = " ".join(facts)
+    queries: list[tuple[str, str]] = []
+
+    positive_orders = list(itertools.permutations(labels))
+    for order in positive_orders:
+        actions = [f"fire{label}" for label in order] + ["complete"]
+        trace = maude_trace(actions)
+        queries.append(
+            (
+                f"search [1] in RHO-NET-COMM-TRACED : < {fact_multiset} ; nil > =>* < completed ; {trace} > .",
+                "Solution 1",
+            )
+        )
+        queries.append(
+            (
+                f"search [1] in DOVETAIL-FACT-STEPS-TRACED : < {fact_multiset} ; nil > =>* < completed ; {trace} > .",
+                "Solution 1",
+            )
+        )
+
+    premature_prefixes: set[tuple[str, ...]] = {()}
+    for length in range(1, len(labels)):
+        premature_prefixes.update(itertools.permutations(labels, length))
+    for prefix in sorted(premature_prefixes):
+        actions = [f"fire{label}" for label in prefix] + ["complete"]
+        trace = maude_trace(actions)
+        queries.append(
+            (
+                f"search [1] in RHO-NET-COMM-TRACED : < {fact_multiset} ; nil > =>* < completed ; {trace} > .",
+                "No solution.",
+            )
+        )
+        queries.append(
+            (
+                f"search [1] in DOVETAIL-FACT-STEPS-TRACED : < {fact_multiset} ; nil > =>* < completed ; {trace} > .",
+                "No solution.",
+            )
+        )
+    return queries
 
 
 def render_maude_checks(spec: dict) -> str:
@@ -278,8 +390,141 @@ def render_maude_checks(spec: dict) -> str:
         rest = facts.copy()
         rest[index] = f"fired{label}"
         lines.append(f"search [1] in DOVETAIL-FACT-STEPS : {fact_multiset} =>* {' '.join(rest)} .")
+    lines.append("")
+    lines.append("--- Visible schedule equivalence checks.")
+    lines.append("--- Rho internal reserve steps are intentionally not recorded in the trace.")
+    for query, _ in maude_visible_schedule_queries(spec):
+        lines.append(query)
     lines.extend(["", "quit", ""])
     return "\n".join(lines)
+
+
+def normalize_maude_query(query: str) -> str:
+    return " ".join(query.replace("(", " ").replace(")", " ").split())
+
+
+def maude_ac_query_parts(query: str) -> tuple[str, Counter[str]] | None:
+    normalized = normalize_maude_query(query)
+    if "<" in normalized or "=>*" not in normalized:
+        return None
+    prefix, target = normalized.split("=>*", 1)
+    target = target.strip()
+    if target.endswith("."):
+        target = target[:-1].strip()
+    return prefix.strip(), Counter(target.split())
+
+
+def find_maude_block(blocks: dict[str, str], query: str) -> str | None:
+    normalized = normalize_maude_query(query)
+    block = blocks.get(normalized)
+    if block is not None:
+        return block
+    ac_parts = maude_ac_query_parts(query)
+    if ac_parts is None:
+        return None
+    for candidate, candidate_block in blocks.items():
+        if maude_ac_query_parts(candidate) == ac_parts:
+            return candidate_block
+    return None
+
+
+def maude_log_blocks(log_text: str) -> dict[str, str]:
+    blocks: dict[str, str] = {}
+    for raw_block in log_text.split("=========================================="):
+        lines = raw_block.splitlines()
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        if not lines or not lines[0].startswith("search "):
+            continue
+        query_lines = []
+        for line in lines:
+            if not line.strip():
+                break
+            query_lines.append(line.strip())
+        blocks[normalize_maude_query(" ".join(query_lines))] = "\n".join(lines)
+    return blocks
+
+
+def check_maude_log(spec: dict, log_path: Path) -> int:
+    log_text = log_path.read_text(encoding="utf-8")
+    blocks = maude_log_blocks(log_text)
+    labels = [r["label"] for r in spec["redexes"]]
+    facts = [r["fact"] for r in spec["redexes"]]
+    fact_multiset = " ".join(facts)
+
+    expectations: list[tuple[str, str, str]] = [
+        (
+            f"search [2] in RHO-NET-COMM : {fact_multiset} =>! S:State .",
+            "S:State --> completed",
+            "rho terminal state is completed",
+        ),
+        (
+            f"search [2] in RHO-NET-COMM : {fact_multiset} =>! S:State .",
+            "No more solutions.",
+            "rho terminal state is unique",
+        ),
+        (
+            f"search [2] in DOVETAIL-FACT-STEPS : {fact_multiset} =>! S:State .",
+            "S:State --> completed",
+            "dovetail terminal state is completed",
+        ),
+        (
+            f"search [2] in DOVETAIL-FACT-STEPS : {fact_multiset} =>! S:State .",
+            "No more solutions.",
+            "dovetail terminal state is unique",
+        ),
+    ]
+    for index, (label, fact) in enumerate(zip(labels, facts)):
+        rest = facts.copy()
+        rest[index] = f"reserved{label}"
+        expectations.append(
+            (
+                f"search [1] in RHO-NET-COMM : {fact_multiset} =>* {' '.join(rest)} .",
+                "Solution 1",
+                f"rho can reserve {label}",
+            )
+        )
+        rest[index] = f"fired{label}"
+        expectations.append(
+            (
+                f"search [1] in RHO-NET-COMM : {fact_multiset} =>* {' '.join(rest)} .",
+                "Solution 1",
+                f"rho can visibly fire {label}",
+            )
+        )
+    expectations.append(
+        (
+            f"search [1] in RHO-NET-COMM : {fact_multiset} =>* reservedJoin .",
+            "Solution 1",
+            "rho can reserve final join",
+        )
+    )
+    for index, label in enumerate(labels):
+        rest = facts.copy()
+        rest[index] = f"fired{label}"
+        expectations.append(
+            (
+                f"search [1] in DOVETAIL-FACT-STEPS : {fact_multiset} =>* {' '.join(rest)} .",
+                "Solution 1",
+                f"dovetail can visibly fire {label}",
+            )
+        )
+    for query, expected in maude_visible_schedule_queries(spec):
+        expectations.append((query, expected, query))
+
+    failures = []
+    for query, expected, label in expectations:
+        block = find_maude_block(blocks, query)
+        if block is None:
+            failures.append(f"missing Maude query for {label}: {query}")
+        elif expected not in block:
+            failures.append(f"Maude query failed {label}: expected {expected!r} in block:\n{block}")
+    if failures:
+        print("Maude Rho COMM slice verification failed:")
+        for failure in failures:
+            print(f"  {failure}")
+        return 1
+    return 0
 
 
 def tla_set(items: list[str], indent: str = "  ") -> list[str]:
@@ -457,11 +702,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="check generated files without writing")
     parser.add_argument("--write", action="store_true", help="rewrite generated files")
+    parser.add_argument("--check-maude-log", type=Path, help="check a Maude comm-schedule log")
     args = parser.parse_args()
-    if args.check == args.write:
-        parser.error("choose exactly one of --check or --write")
+    selected = sum(bool(flag) for flag in (args.check, args.write, args.check_maude_log))
+    if selected != 1:
+        parser.error("choose exactly one of --check, --write, or --check-maude-log")
     files = generated_files(load_spec())
-    return check_files(files) if args.check else write_files(files)
+    if args.check:
+        return check_files(files)
+    if args.write:
+        return write_files(files)
+    return check_maude_log(load_spec(), args.check_maude_log)
 
 
 if __name__ == "__main__":

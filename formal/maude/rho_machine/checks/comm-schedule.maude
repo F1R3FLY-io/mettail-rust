@@ -16,4 +16,39 @@ search [1] in DOVETAIL-FACT-STEPS : a b c =>* firedA b c .
 search [1] in DOVETAIL-FACT-STEPS : a b c =>* a firedB c .
 search [1] in DOVETAIL-FACT-STEPS : a b c =>* a b firedC .
 
+--- Visible schedule equivalence checks.
+--- Rho internal reserve steps are intentionally not recorded in the trace.
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireA) then fireB) then fireC) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireA) then fireB) then fireC) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireA) then fireC) then fireB) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireA) then fireC) then fireB) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireB) then fireA) then fireC) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireB) then fireA) then fireC) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireB) then fireC) then fireA) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireB) then fireC) then fireA) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireC) then fireA) then fireB) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireC) then fireA) then fireB) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireC) then fireB) then fireA) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((((nil then fireC) then fireB) then fireA) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (nil then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (nil then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((nil then fireA) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((nil then fireA) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireA) then fireB) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireA) then fireB) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireA) then fireC) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireA) then fireC) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((nil then fireB) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((nil then fireB) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireB) then fireA) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireB) then fireA) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireB) then fireC) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireB) then fireC) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; ((nil then fireC) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; ((nil then fireC) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireC) then fireA) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireC) then fireA) then complete) > .
+search [1] in RHO-NET-COMM-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireC) then fireB) then complete) > .
+search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c ; nil > =>* < completed ; (((nil then fireC) then fireB) then complete) > .
+
 quit
