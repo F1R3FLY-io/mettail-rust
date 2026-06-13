@@ -27,4 +27,5 @@ theories/GuardedCommSoundness.v
 theories/AmbiguitySetPreservation.v
 theories/RhoCostAxisSeparation.v
 theories/RhoBackendFlipGate.v
+theories/RhoPlannedExecutionBoundary.v
 theories/OracleQuotientEquivalence.v

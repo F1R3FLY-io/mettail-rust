@@ -11,9 +11,9 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence, ValidatedRhoProgram,
+    plan_rho_default_backend, RhoArtifactKind, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
-use mettail_rho_runtime::run_validated_program_with_call_and_read_ints;
+use mettail_rho_runtime::PlannedRhoBackend;
 use models::rhoapi::Par;
 use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
 
@@ -46,7 +46,7 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
     }
 }
 
-fn calculator_contracts() -> ValidatedRhoProgram {
+fn calculator_backend() -> PlannedRhoBackend {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
     let plan = plan_rho_default_backend(&def, passing_evidence())
@@ -57,7 +57,7 @@ fn calculator_contracts() -> ValidatedRhoProgram {
         "all six Int scalar ops must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    plan.program().clone()
+    PlannedRhoBackend::from_plan(plan)
 }
 
 /// `@"OP"!(a, b, @"OUT")`
@@ -92,7 +92,17 @@ fn unary_call(op: &str, a: i64) -> Par {
 
 #[tokio::test]
 async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
-    let contracts = calculator_contracts();
+    let backend = calculator_backend();
+
+    assert_eq!(backend.artifact_kind(), RhoArtifactKind::NormalizedAst);
+    assert!(
+        backend.ast_par().is_some(),
+        "generated execution must use normalized AST, not source text"
+    );
+    assert!(
+        backend.text_annotation().contains("contract @\"AddInt\""),
+        "reader annotation remains available but is not the execution boundary"
+    );
 
     let cases: &[(&str, i64, i64, i64)] = &[
         ("AddInt", 2, 3, 5),
@@ -103,7 +113,8 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
     ];
     for &(op, a, b, expected) in cases {
         let call = binary_call(op, a, b);
-        let result = run_validated_program_with_call_and_read_ints(&contracts, &call, "OUT")
+        let result = backend
+            .run_with_call_and_read_ints(&call, "OUT")
             .await
             .unwrap_or_else(|e| panic!("{op}({a},{b}) failed to run: {e}"));
         assert_eq!(result, vec![expected], "{op}({a}, {b}) on RhoRuntime");
@@ -111,7 +122,8 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
 
     // Unary negation.
     let call = unary_call("Neg", 7);
-    let result = run_validated_program_with_call_and_read_ints(&contracts, &call, "OUT")
+    let result = backend
+        .run_with_call_and_read_ints(&call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("Neg(7) failed to run: {e}"));
     assert_eq!(result, vec![-7], "Neg(7) on RhoRuntime");

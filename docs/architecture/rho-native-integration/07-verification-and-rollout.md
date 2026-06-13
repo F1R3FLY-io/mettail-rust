@@ -39,6 +39,7 @@ The current proof and coverage sources are
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, and deadlock gates |
+| planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
 | Dovetail report boundary | `dovetail::report`, `RuntimeReportBridge.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness before any runtime/Rho adapter consumes them |
 | finite process projection | `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | generates, model-checks, and rewrite-checks a bounded three-redex RhoNet/Dovetail COMM fragment with Rho-internal reserve phases for no deadlock, all six visible fire schedules, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, and weak-fair scheduler completion |
@@ -52,6 +53,9 @@ well-formedness, backend flip gating, and fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
 than an Ascent-shaped success value, so exact keys and `BoundedByCycleCut`
 survive until the Rho adapter explicitly handles them.
+Generated Rho execution now starts from `PlannedRhoBackend`, which wraps the
+`RhoDefaultBackendPlan` produced by the flip gate; raw validated artifacts remain
+available for oracle/debug helpers only.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
@@ -261,6 +265,7 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::plan_rho_default_backend`
 - `mettail_rho_codegen::RhoDefaultBackendPlan`
 - `mettail_rho_codegen::RhoDefaultBackendPlanError`
+- `mettail_rho_runtime::PlannedRhoBackend`
 - `mettail_rho_codegen::RhoProgram`
 - `mettail_rho_codegen::validate_rho_program`
 - `mettail_rho_codegen::RhoValidationError`
@@ -401,7 +406,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge artifacts are normalized `rhoapi::Par` values injected directly through opaque `ValidatedRhoProgram`; source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`, and source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 

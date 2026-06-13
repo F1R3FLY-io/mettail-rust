@@ -13,9 +13,9 @@
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence, ValidatedRhoProgram,
+    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
-use mettail_rho_runtime::run_validated_program_with_call_and_read_ints;
+use mettail_rho_runtime::PlannedRhoBackend;
 use mettail_runtime::Language;
 use models::rhoapi::Par;
 use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
@@ -45,7 +45,7 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
     }
 }
 
-fn calculator_contracts() -> ValidatedRhoProgram {
+fn calculator_backend() -> PlannedRhoBackend {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
     let plan = plan_rho_default_backend(&def, passing_evidence())
@@ -56,7 +56,7 @@ fn calculator_contracts() -> ValidatedRhoProgram {
         "all five Int binary scalar ops must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    plan.program().clone()
+    PlannedRhoBackend::from_plan(plan)
 }
 
 /// The Ascent backend's normal-form display strings for `input`.
@@ -71,7 +71,7 @@ fn ascent_normal_forms(lang: &CalculatorLanguage, input: &str) -> Vec<String> {
 }
 
 /// The rho backend's result of `@"op"!(a, b, @"OUT")` on a real RhoRuntime.
-async fn rho_binary(contracts: &ValidatedRhoProgram, op: &str, a: i64, b: i64) -> i64 {
+async fn rho_binary(backend: &PlannedRhoBackend, op: &str, a: i64, b: i64) -> i64 {
     let call = new_send_par(
         quoted_channel(op),
         vec![
@@ -85,7 +85,8 @@ async fn rho_binary(contracts: &ValidatedRhoProgram, op: &str, a: i64, b: i64) -
         Vec::new(),
         false,
     );
-    let result = run_validated_program_with_call_and_read_ints(contracts, &call, "OUT")
+    let result = backend
+        .run_with_call_and_read_ints(&call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("rho {op}({a},{b}): {e}"));
     assert_eq!(result.len(), 1, "rho {op}({a},{b}) must yield exactly one int");
@@ -95,7 +96,7 @@ async fn rho_binary(contracts: &ValidatedRhoProgram, op: &str, a: i64, b: i64) -
 #[tokio::test]
 async fn rho_backend_agrees_with_ascent_on_calculator_int_ops() {
     let lang = CalculatorLanguage;
-    let contracts = calculator_contracts();
+    let backend = calculator_backend();
 
     // (Ascent input string, rho op label, operands). The calculator parses the
     // input to the matching constructor; both backends must agree on the result.
@@ -109,7 +110,7 @@ async fn rho_backend_agrees_with_ascent_on_calculator_int_ops() {
 
     for &(input, op, a, b) in cases {
         let ascent = ascent_normal_forms(&lang, input);
-        let rho = rho_binary(&contracts, op, a, b).await;
+        let rho = rho_binary(&backend, op, a, b).await;
         assert!(
             ascent.contains(&rho.to_string()),
             "DIVERGENCE on `{input}`: rho-backend = {rho}, Ascent normal forms = {ascent:?}"

@@ -22,17 +22,20 @@
 //!
 //! ## Status
 //! Integrated bridge runtime. It injects generated normalized `rhoapi::Par`
-//! programs directly through `RhoRuntime::inj`, exposes a `ValidatedRhoProgram`
-//! entry point for generated backend execution, keeps source-text evaluation
-//! only for hand-authored host oracle tests, reads public resting data for oracle
-//! checks, runs lowered calculator contracts against the Ascent baseline, and
-//! hosts the M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language
-//! flip baseline until a language's proof, oracle, coverage, artifact-validation,
-//! and deadlock gates pass.
+//! programs directly through `RhoRuntime::inj`, exposes `PlannedRhoBackend` as
+//! the flip-gated generated execution boundary, keeps raw `ValidatedRhoProgram`
+//! helpers for oracle/debug code, keeps source-text evaluation only for
+//! hand-authored host oracle tests, reads public resting data for oracle checks,
+//! runs lowered calculator contracts against the Ascent baseline, and hosts the
+//! M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language flip
+//! baseline until a language's proof, oracle, coverage, artifact-validation, and
+//! deadlock gates pass.
 
 #![forbid(unsafe_code)]
 
+pub mod backend;
 pub mod run;
+pub use backend::PlannedRhoBackend;
 #[allow(deprecated)]
 pub use run::{
     run_and_read_ints, run_and_read_strings, run_par, run_par_and_read_ints,
