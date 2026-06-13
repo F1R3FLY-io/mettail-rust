@@ -1,0 +1,121 @@
+(*
+ * RhoCallByNeedObservation: weak observation correctness for the generic
+ * call-by-need encoding.
+ *
+ * A source computation is represented by a private thunk id and a deterministic
+ * value.  The Rho encoding forces the thunk by sending a continuation to that
+ * private channel and memoizes the first result.  The internal force/memo COMM
+ * steps are deliberately hidden by the observation function; the public
+ * observation is the value delivered to the continuation.
+ *
+ * Proven here:
+ *   - forcing a sound memoized thunk observes the same value as source_eval;
+ *   - a force miss memoizes the source value;
+ *   - repeated forcing is observationally idempotent;
+ *   - a repeated force after a miss does not grow or rewrite the memo;
+ *   - forcing preserves the memo soundness needed for the same thunk.
+ *
+ * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+ *)
+
+From Stdlib Require Import List.
+From Stdlib Require Import PeanoNat.
+
+Import ListNotations.
+
+Section RhoCallByNeedObservation.
+
+  Definition ThunkId : Type := nat.
+  Definition Value : Type := nat.
+  Definition Memo : Type := list (ThunkId * Value).
+
+  Record Expr : Type := {
+    expr_thunk : ThunkId;
+    expr_value : Value
+  }.
+
+  Fixpoint lookup (id : ThunkId) (memo : Memo) : option Value :=
+    match memo with
+    | [] => None
+    | (k, v) :: rest => if Nat.eqb id k then Some v else lookup id rest
+    end.
+
+  Definition source_eval (e : Expr) : Value :=
+    expr_value e.
+
+  Definition memo_sound_for (e : Expr) (memo : Memo) : Prop :=
+    forall v, lookup (expr_thunk e) memo = Some v -> v = expr_value e.
+
+  Definition force (e : Expr) (memo : Memo) : Value * Memo :=
+    match lookup (expr_thunk e) memo with
+    | Some v => (v, memo)
+    | None => (expr_value e, (expr_thunk e, expr_value e) :: memo)
+    end.
+
+  Theorem force_observes_source : forall e memo,
+    memo_sound_for e memo ->
+    fst (force e memo) = source_eval e.
+  Proof.
+    intros e memo Hsound. unfold force, source_eval.
+    destruct (lookup (expr_thunk e) memo) eqn:Hlookup.
+    - apply Hsound. exact Hlookup.
+    - reflexivity.
+  Qed.
+
+  Theorem force_memoizes_on_miss : forall e memo,
+    lookup (expr_thunk e) memo = None ->
+    lookup (expr_thunk e) (snd (force e memo)) = Some (expr_value e).
+  Proof.
+    intros e memo Hmiss. unfold force. rewrite Hmiss. simpl.
+    rewrite Nat.eqb_refl. reflexivity.
+  Qed.
+
+  Theorem force_hit_preserves_memo : forall e memo v,
+    lookup (expr_thunk e) memo = Some v ->
+    snd (force e memo) = memo.
+  Proof.
+    intros e memo v Hhit. unfold force. rewrite Hhit. reflexivity.
+  Qed.
+
+  Theorem force_preserves_memo_sound_for : forall e memo,
+    memo_sound_for e memo ->
+    memo_sound_for e (snd (force e memo)).
+  Proof.
+    intros e memo Hsound v. unfold force.
+    destruct (lookup (expr_thunk e) memo) eqn:Hlookup.
+    - simpl. apply Hsound.
+    - simpl. rewrite Nat.eqb_refl. intro H. inversion H. reflexivity.
+  Qed.
+
+  Theorem repeated_force_observation_idempotent : forall e memo,
+    memo_sound_for e memo ->
+    fst (force e (snd (force e memo))) = fst (force e memo).
+  Proof.
+    intros e memo Hsound.
+    rewrite (force_observes_source e memo Hsound).
+    rewrite (force_observes_source e (snd (force e memo))).
+    - reflexivity.
+    - apply force_preserves_memo_sound_for. exact Hsound.
+  Qed.
+
+  Theorem force_miss_then_repeated_force_preserves_memo : forall e memo,
+    lookup (expr_thunk e) memo = None ->
+    snd (force e (snd (force e memo))) = snd (force e memo).
+  Proof.
+    intros e memo Hmiss.
+    unfold force. rewrite Hmiss. simpl.
+    rewrite Nat.eqb_refl. reflexivity.
+  Qed.
+
+  Theorem weak_observation_equivalent_to_source : forall e memo,
+    memo_sound_for e memo ->
+    fst (force e memo) = source_eval e
+    /\ fst (force e (snd (force e memo))) = source_eval e.
+  Proof.
+    intros e memo Hsound. split.
+    - apply force_observes_source. exact Hsound.
+    - apply force_observes_source.
+      apply force_preserves_memo_sound_for. exact Hsound.
+  Qed.
+
+End RhoCallByNeedObservation.

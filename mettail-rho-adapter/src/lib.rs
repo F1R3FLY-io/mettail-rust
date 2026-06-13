@@ -3,7 +3,7 @@
 //! M-RHO compiles MeTTaIL GSLTs onto f1r3node-rust's Rho machine: MeTTaIL is the
 //! COMPILER, f1r3node-rust is the parallel RUNTIME. This crate is the
 //! **cost/funding adapter**: it presents a MeTTaIL GSLT to f1r3node-rust's
-//! resource logic by implementing the host trait [`OslfResourceLogic`]`<MettaGslt>`,
+//! resource logic by implementing the host trait `OslfResourceLogic<MettaGslt>`,
 //! delegating `demand`/`is_funded` to the host's VERIFIED `delta_sigma` over a
 //! canonicalized `Par`. It is **pure analysis** — no RSpace, no Tokio — so the
 //! host's funding gate can consume it GENERICALLY, the way its own
@@ -19,6 +19,8 @@
 //! `formal/rocq/rho_bridge/theories/BridgeInertness.v`.
 //!
 //! ## Contents
+//! - [`delta1`] — Delta-one join-candidate selection with separate refutation
+//!   and ordering axes.
 //! - [`gslt`] — `MettaGslt` (`GsltPresentation`, `CanonicalProgram = Par`),
 //!   `MettaSig` (`ResourceSignature` over the host lane algebra), `MettaProgram`.
 //! - [`logic`] — `MettaResourceLogic` (`OslfResourceLogic<MettaGslt>`),
@@ -30,14 +32,17 @@
 //! The cost axis is two-fold (vindicated by the cost-accounting papers' R-C
 //! obstruction): the **refutation** axis (`is_funded`'s verdict; `0̄` = refuted)
 //! and the **ordering** axis (`i64` demand magnitude; rank-only, never refutes).
-//! M-RHO.3 adds the MeTTaIL-specific Δ1 N-ary min-cost-matching join on top.
+//! The Delta-one selector in [`delta1`] applies that split to MeTTaIL's n-ary
+//! join candidates without collapsing equal-cost semantic alternatives.
 
 #![forbid(unsafe_code)]
 
 pub mod conformance;
+pub mod delta1;
 pub mod gslt;
 pub mod logic;
 
+pub use delta1::{delta1_selects_index, select_delta1_minima, DeltaOneCandidate};
 pub use gslt::{MettaGslt, MettaProgram, MettaSig};
 pub use logic::MettaResourceLogic;
 
@@ -46,7 +51,9 @@ mod tests {
     use super::*;
     use models::rhoapi::Par;
     use rholang::rust::interpreter::accounting::delta_sigma;
-    use rholang::rust::interpreter::accounting::resource_logic::{GsltPresentation, OslfResourceLogic};
+    use rholang::rust::interpreter::accounting::resource_logic::{
+        GsltPresentation, OslfResourceLogic,
+    };
     use rholang::rust::interpreter::accounting::Sig;
 
     /// `MettaResourceLogic` satisfies all four OSLF conformance laws (the
@@ -67,10 +74,7 @@ mod tests {
         let program = MettaProgram(Par::default());
         let sig = MettaSig(Sig::Ground(vec![1, 2, 3, 4]));
         let canonical = gslt.canonicalize_for_funding(&program);
-        assert_eq!(
-            rl.demand(&canonical, &sig),
-            delta_sigma::demand(&canonical, &sig.0)
-        );
+        assert_eq!(rl.demand(&canonical, &sig), delta_sigma::demand(&canonical, &sig.0));
     }
 
     /// `canonicalize_for_funding` is total and matches the host desugaring.

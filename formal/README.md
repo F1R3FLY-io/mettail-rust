@@ -20,6 +20,9 @@ The capped service receives a deterministic `PATH` prefix through
 `FORMAL_TOOL_PATH_PREFIX`, which defaults to the expected opam, TLAPS,
 npm-global, and cargo binary directories. Override `FORMAL_TOOL_PATH_PREFIX`
 when Rocq/Coq, Apalache, or Cargo are installed elsewhere.
+The Maude process-calculus target exports `MAUDE_LIB=/usr/share/maude` by
+default so capped non-login runs can locate `prelude.maude`; override
+`MAUDE_LIB` only if Maude is installed in a non-system prefix.
 The direct `check-uncapped` target always refuses to run; formal verification
 must go through the capped entry point.
 Direct verification subtargets and formal subproject Makefiles include
@@ -49,6 +52,12 @@ The capped entry point runs:
 - focused Dovetail enrichment targets:
   `rocq-dovetail-refinement`, `rocq-dovetail-requirements`,
   `why3-dovetail-pilot`, and `creusot-dovetail-pilot`
+- focused Rho process-calculus targets:
+  `mcrl2-rho-machine`, `maude-rho-machine`, `tla-rho-machine`, and
+  `process-rho-comm-slice` (`process-rho-first-slice` remains as a
+  compatibility alias). The mCRL2, Maude, and TLA+ files are generated from
+  `formal/process/rho_comm_slice.json`, and the formal targets run
+  `formal/process/rho_comm_slice.py --check` before model checking.
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests

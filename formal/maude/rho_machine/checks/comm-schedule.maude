@@ -1,0 +1,19 @@
+--- Generated from formal/process/rho_comm_slice.json.
+load ../rho-net.maude
+load ../dovetail-rules.maude
+
+search [2] in RHO-NET-COMM : a b c =>! S:State .
+search [2] in DOVETAIL-FACT-STEPS : a b c =>! S:State .
+
+search [1] in RHO-NET-COMM : a b c =>* reservedA b c .
+search [1] in RHO-NET-COMM : a b c =>* firedA b c .
+search [1] in RHO-NET-COMM : a b c =>* a reservedB c .
+search [1] in RHO-NET-COMM : a b c =>* a firedB c .
+search [1] in RHO-NET-COMM : a b c =>* a b reservedC .
+search [1] in RHO-NET-COMM : a b c =>* a b firedC .
+search [1] in RHO-NET-COMM : a b c =>* reservedJoin .
+search [1] in DOVETAIL-FACT-STEPS : a b c =>* firedA b c .
+search [1] in DOVETAIL-FACT-STEPS : a b c =>* a firedB c .
+search [1] in DOVETAIL-FACT-STEPS : a b c =>* a b firedC .
+
+quit

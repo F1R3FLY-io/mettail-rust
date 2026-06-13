@@ -1,0 +1,36 @@
+@startuml
+title Dovetail Rule to RhoNet / Rholang Dataflow
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  ArrowColor #374151
+}
+
+start
+:Dovetail rule\n`p₁ ∧ ... ∧ pₙ ∧ g ⇒ q`;
+:Compute exact keys\nfor premise channels; <<#DBEAFE>>
+:Create RhoNet join\nfor `p₁ ... pₙ`; <<#DCFCE7>>
+if (guard class?) then (same-bind pure)
+  :Lower to RSpace\n`where` guard; <<#FEF3C7>>
+elseif (cross-bind or external)
+  :Lower to native\nguard handler; <<#FDE68A>>
+else (none)
+  :Use `true`; <<#E5E7EB>>
+endif
+:Emit persistent contract AST; <<#FCE7F3>>
+:Attach Rholang-text\nreader annotation; <<#FBCFE8>>
+:Inject normalized `Par`\ninto RhoRuntime; <<#EDE9FE>>
+stop
+
+legend right
+  <#DBEAFE> key/channel selection
+  <#DCFCE7> RhoNet construction
+  <#FEF3C7> direct RSpace guard
+  <#FDE68A> native handler guard
+  <#FCE7F3> Rholang AST surface
+  <#EDE9FE> host Rho execution
+endlegend
+@enduml

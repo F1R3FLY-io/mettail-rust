@@ -61,6 +61,7 @@ query = { path = "query" }
 # pins nightly-2026-02-09; mettail-rust floats `nightly` + cranelift dev backend.
 models = { path = "../f1r3node-rust/models" }
 rholang = { path = "../f1r3node-rust/rholang" }
+rho-pure-eval = { path = "../f1r3node-rust/rho-pure-eval" }
 rspace_plus_plus = { path = "../f1r3node-rust/rspace++" }
 crypto = { path = "../f1r3node-rust/crypto" }
 tokio = { version = "1", features = ["full"] }

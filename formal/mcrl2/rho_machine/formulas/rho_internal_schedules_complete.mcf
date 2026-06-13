@@ -1,0 +1,12 @@
+<reserveA . fireA . reserveB . fireB . reserveC . fireC . reserveJoin . complete>true &&
+<reserveA . fireA . reserveC . fireC . reserveB . fireB . reserveJoin . complete>true &&
+<reserveB . fireB . reserveA . fireA . reserveC . fireC . reserveJoin . complete>true &&
+<reserveB . fireB . reserveC . fireC . reserveA . fireA . reserveJoin . complete>true &&
+<reserveC . fireC . reserveA . fireA . reserveB . fireB . reserveJoin . complete>true &&
+<reserveC . fireC . reserveB . fireB . reserveA . fireA . reserveJoin . complete>true &&
+[reserveA . fireA . reserveB . fireB . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveA . fireA . reserveC . fireC . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveA . fireA . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveC . fireC . reserveA . fireA]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveA . fireA . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveB . fireB . reserveA . fireA]<reserveJoin . complete>true

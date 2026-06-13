@@ -1,0 +1,46 @@
+@startuml
+title RSpace Scheduling of Lowered Rewrite Rules
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+  ArrowColor #374151
+}
+
+[*] --> Waiting : install persistent rule contracts
+
+state Waiting #DBEAFE {
+  [*] --> HasContracts
+}
+state DataArrives #FEF3C7
+state MatchSearch #DCFCE7
+state GuardCheck #FDE68A
+state Commit #FBCFE8
+state FireBody #FCE7F3
+state EmitFacts #EDE9FE
+state Quiescent #E5E7EB
+
+Waiting --> DataArrives : fact send
+DataArrives --> MatchSearch : RSpace checks waiting continuations
+MatchSearch --> GuardCheck : patterns match
+MatchSearch --> Waiting : no match
+GuardCheck --> Commit : guard true
+GuardCheck --> Waiting : guard false\n(no consumption)
+Commit --> FireBody : atomically consume selected inputs
+FireBody --> EmitFacts : continuation sends outputs
+EmitFacts --> DataArrives : emitted delta facts
+EmitFacts --> Quiescent : no new facts
+Quiescent --> [*]
+
+legend right
+  <#DBEAFE> installed contracts
+  <#FEF3C7> data arrival
+  <#DCFCE7> spatial matching
+  <#FDE68A> guard decision
+  <#FBCFE8> atomic commit
+  <#FCE7F3> rule body
+  <#EDE9FE> recursive delta
+endlegend
+@enduml

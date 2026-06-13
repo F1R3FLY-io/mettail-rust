@@ -10,7 +10,20 @@
 -Q theories RhoBridge
 
 theories/BridgeInertness.v
+theories/HostRhoMachineReuse.v
 theories/MettaGsltPresentation.v
 theories/MettaOslfLawsConformance.v
 theories/RhoLoweringTotalOrRejects.v
+theories/RhoParWellFormedness.v
+theories/CommReductionCorrespondence.v
+theories/LinearCommCorrespondence.v
+theories/RhoGroundingAndNames.v
+theories/RhoObservationFingerprint.v
+theories/AmbiguityWitnessEnumeration.v
+theories/RhoCallByNeedObservation.v
+theories/DeltaOneMinCostJoin.v
+theories/GuardedCommSoundness.v
+theories/AmbiguitySetPreservation.v
+theories/RhoCostAxisSeparation.v
+theories/RhoBackendFlipGate.v
 theories/OracleQuotientEquivalence.v

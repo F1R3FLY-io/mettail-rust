@@ -23,7 +23,8 @@ Technical overview of MeTTaIL's implementation architecture.
     ▼              ▼              ▼
 ┌────────┐   ┌─────────┐   ┌──────────┐
 │  Rust  │   │ Parser  │   │ Ascent   │
-│  AST   │   │(LALRPOP)│   │ Datalog  │
+│  AST   │   │(WPDA +  │   │ Datalog  │
+│        │   │syntax)  │   │          │
 └────┬───┘   └────┬────┘   └────┬─────┘
      │            │              │
      └────────────┼──────────────┘
@@ -39,6 +40,22 @@ Technical overview of MeTTaIL's implementation architecture.
          │   (REPL, tests) │
          └─────────────────┘
 ```
+
+---
+
+## Rewrite Engine Architecture Tracks
+
+The diagram above describes the existing generated Ascent execution path. The
+Dovetail and Rho-native execution design is documented separately in
+[architecture/rho-native-integration/README.md](architecture/rho-native-integration/README.md).
+That design is scoped to replacement of the CESK runtime backend path; it does
+not make the active WPDA parser/recognizer legacy and it does not remove Ascent
+as a reference/oracle path.
+
+That suite explains how MeTTaIL source snippets are parsed into typed terms,
+how Dovetail supplies substrate-neutral rewrite semantics, how the Rho backend
+lowers rewrite networks into Rholang/RSpace dataflow, and how F1r3node's Rho
+machine schedules enabled rewrites in parallel.
 
 ---
 
@@ -98,7 +115,7 @@ pub enum Proc {
 }
 ```
 
-**`syntax/parser/`**: LALRPOP grammar generation
+**`syntax/parser/` and WPDA codegen**: generated syntax and active parser/recognizer support
 - `lalrpop.rs` - Grammar string generation
 - `actions.rs` - Semantic actions
 - `writer.rs` - File writing
@@ -382,5 +399,4 @@ Theory → IR → Cranelift → Native Code
 - `design/` - Detailed design docs
 - Source code comments - Implementation details
 
-**Last Updated**: December 2025
-
+**Last Updated**: June 2026

@@ -3,15 +3,15 @@
 //!
 //! It DELEGATES `demand`/`is_funded` to the already-verified pure analyzer
 //! `delta_sigma::{demand,is_funded}` — the same analyzer f1r3node-rust's built-in
-//! [`DefaultResourceLogic`] and the live D2 acceptance gate use — so the MeTTaIL
+//! `DefaultResourceLogic` and the live D2 acceptance gate use — so the MeTTaIL
 //! adapter and the host gate cannot diverge, and the OSLF conformance laws (see
 //! [`crate::conformance`]) hold by delegation (the Rocq `OSLF_Funding_Logic_Sound`
 //! capstone's image; cf. `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`).
 //!
-//! MeTTaIL-specific cost extensions (the Δ1 N-ary min-cost-matching join, the
-//! two-axis refutation/ordering split) layer on in M-RHO.3 by making `demand`
-//! compute more than a pure delegation; for the funding gate, full delegation is
-//! the correct, sound, conformant baseline.
+//! MeTTaIL-specific candidate ordering is implemented in [`crate::delta1`].
+//! This keeps the host funding judgment pure: `demand`/`is_funded` decide
+//! refutation, and Delta-one selection ranks the enabled join candidates without
+//! changing the OSLF funding law.
 
 use models::rhoapi::Par;
 

@@ -1,0 +1,46 @@
+@startuml
+title Source Snippet to Rho Machine Execution
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #374151
+  LifeLineBorderColor #64748B
+  LifeLineBackgroundColor #F8FAFC
+  ParticipantBorderColor #1F2937
+  ParticipantFontColor #111827
+}
+
+participant "User" as User #E0F2FE
+participant "MeTTaIL\nParser" as Parser #DBEAFE
+participant "MeTTaIL\nTyped AST" as AST #BFDBFE
+participant "Dovetail\nRewrite Model" as Dovetail #DCFCE7
+participant "Rho Backend\nRhoNet Lowerer" as Lowerer #FEF3C7
+participant "Rholang\nAST" as Rholang #FDE68A
+participant "F1r3node\nRhoRuntime" as Runtime #FCE7F3
+participant "RSpace" as RSpace #FBCFE8
+participant "Observation\nOracle" as Oracle #EDE9FE
+
+User -> Parser : source snippet
+Parser -> AST : parsed typed term
+AST -> Dovetail : seed facts + language metadata
+Dovetail -> Dovetail : exact-key saturation
+Dovetail -> Lowerer : supported rewrite network
+Lowerer -> Rholang : contracts + initial messages
+Rholang -> Runtime : inject normalized `Par`
+Runtime -> RSpace : produce facts
+Runtime -> RSpace : install rule receives
+RSpace -> Runtime : COMM events trigger continuations
+Runtime -> RSpace : derived facts
+RSpace -> Oracle : resting-space snapshot
+Oracle -> User : canonical result set
+
+legend right
+  <#E0F2FE> External input
+  <#DBEAFE> MeTTaIL frontend
+  <#DCFCE7> Dovetail semantics
+  <#FEF3C7> Rho lowering
+  <#FCE7F3> F1r3node runtime
+  <#EDE9FE> Observation/oracle
+endlegend
+@enduml

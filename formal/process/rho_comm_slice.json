@@ -1,0 +1,18 @@
+{
+  "name": "rho_comm_three_redex",
+  "completion_observation": "Q",
+  "redexes": [
+    {
+      "label": "A",
+      "fact": "a"
+    },
+    {
+      "label": "B",
+      "fact": "b"
+    },
+    {
+      "label": "C",
+      "fact": "c"
+    }
+  ]
+}

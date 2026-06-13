@@ -1,0 +1,12 @@
+<fireA . fireB . fireC . complete>true &&
+<fireA . fireC . fireB . complete>true &&
+<fireB . fireA . fireC . complete>true &&
+<fireB . fireC . fireA . complete>true &&
+<fireC . fireA . fireB . complete>true &&
+<fireC . fireB . fireA . complete>true &&
+[fireA . fireB . fireC]<complete>true &&
+[fireA . fireC . fireB]<complete>true &&
+[fireB . fireA . fireC]<complete>true &&
+[fireB . fireC . fireA]<complete>true &&
+[fireC . fireA . fireB]<complete>true &&
+[fireC . fireB . fireA]<complete>true

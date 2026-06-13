@@ -34,6 +34,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
+.PHONY: process-rho-generated-check process-rho-comm-slice process-rho-first-slice mcrl2-rho-machine maude-rho-machine tla-rho-machine
 .PHONY: why3-dovetail-pilot creusot-dovetail-pilot prepare-creusot-data
 
 check: check-capped
@@ -127,6 +128,22 @@ rocq-dovetail-requirements: require-capped
 rocq-rho-bridge: require-capped
 	$(MAKE) -C rocq/rho_bridge
 
+process-rho-generated-check: require-capped
+	python3 process/rho_comm_slice.py --check
+
+mcrl2-rho-machine: require-capped
+	$(MAKE) -C mcrl2/rho_machine check
+
+maude-rho-machine: require-capped
+	$(MAKE) -C maude/rho_machine check
+
+tla-rho-machine: require-capped
+	$(MAKE) -C tla/rho_machine check
+
+process-rho-comm-slice: require-capped process-rho-generated-check mcrl2-rho-machine maude-rho-machine tla-rho-machine
+
+process-rho-first-slice: process-rho-comm-slice
+
 why3-dovetail-pilot: require-capped
 	why3 prove -P "Alt-Ergo,2.6.0" -t 5 ../dovetail/formal/why3/key_budget_pilot.mlw
 
@@ -208,6 +225,9 @@ clean:
 	$(MAKE) -C rocq/egraph clean
 	$(MAKE) -C ../dovetail/formal/rocq clean
 	$(MAKE) -C rocq/rho_bridge clean
+	$(MAKE) -C mcrl2/rho_machine clean
+	$(MAKE) -C maude/rho_machine clean
+	$(MAKE) -C tla/rho_machine clean
 	$(MAKE) -C rocq/lattice clean
 	$(MAKE) -C rocq/logict clean
 	$(MAKE) -C rocq/mathematical_analyses clean

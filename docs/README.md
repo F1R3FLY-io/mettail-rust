@@ -11,7 +11,28 @@ These documents are actively maintained and should always reflect the current st
 - **`main_goals.md`** - Project vision, objectives, and roadmap
 - **`getting_started.md`** - Quick start guide for new users
 - **`architecture.md`** - System design and implementation overview
+- **`architecture/rho-native-integration/README.md`** - Rho-native MeTTaIL / Dovetail / F1r3node integration architecture
 - **`contributing.md`** - How to contribute to the project
+
+---
+
+## Rho-Native Execution Architecture
+
+Pedagogical design suite for the MeTTaIL, Dovetail, Rholang, RSpace, F1r3node,
+and Rho machine integration:
+
+- **`architecture/rho-native-integration/README.md`** - Executive overview and reading paths
+- **`architecture/rho-native-integration/00-executive-brief.md`** - One-page decision brief for principals
+- **`architecture/rho-native-integration/00-requirements-traceability.md`** - Explicit requirement-to-document coverage map
+- **`architecture/rho-native-integration/01-concepts-and-glossary.md`** - Symbols, acronyms, and key terms
+- **`architecture/rho-native-integration/02-end-to-end-architecture.md`** - Source snippet to RhoRuntime lifecycle
+- **`architecture/rho-native-integration/03-dovetail-rewrite-semantics.md`** - Dovetail facts, rewrite rules, saturation, extraction, and coverage
+- **`architecture/rho-native-integration/04-rho-native-dataflow-lowering.md`** - Compiling rewrite semantics into RhoNet and Rholang/RSpace
+- **`architecture/rho-native-integration/05-rspace-parallel-scheduling.md`** - How RSpace schedules enabled rewrites in parallel
+- **`architecture/rho-native-integration/06-correctness-and-coverage.md`** - Mathematical prose proofs and non-claims
+- **`architecture/rho-native-integration/07-verification-and-rollout.md`** - M-RHO verification and rollout gates
+- **`architecture/rho-native-integration/references.md`** - Citations, DOI links, and repository-local proof references
+- **`architecture/rho-native-integration/validate.sh`** - Reproducible local validation for the suite
 
 ---
 
@@ -38,7 +59,7 @@ mechanisms, theory/correctness, future operators, morphisms):
 - **`composition/bibliography.md`** - Numbered references with DOIs
 
 Browse the subdirectories for in-depth coverage of foundations, mechanisms,
-formal semantics, correctness, system interactions, morphisms, deferred
+formal semantics, correctness, system interactions, morphisms, additional
 operators, diagnostics, examples, implementation, and comparison.
 
 ---
@@ -136,5 +157,4 @@ Internal documentation about the documentation itself:
 
 ---
 
-**Last Updated**: February 2026
-
+**Last Updated**: June 2026

@@ -1,0 +1,30 @@
+% Generated from formal/process/rho_comm_slice.json.
+% Finite Dovetail fact-step projection for the same COMM fragment as
+% rho_net_comm.mcrl2.
+%
+% Dovetail's abstract fact steps are direct: firing each redex consumes
+% the corresponding input and produces the corresponding observation.
+% Completion consumes all produced observations. The RhoNet model has
+% extra internal reserve actions; this model intentionally does not.
+
+act
+  fireA, fireB, fireC, complete, done;
+
+proc
+  Dovetail(
+    aIn: Bool,
+    bIn: Bool,
+    cIn: Bool,
+    aOut: Bool,
+    bOut: Bool,
+    cOut: Bool,
+    completed: Bool
+  ) =
+       (aIn && !aOut && !completed) -> fireA . Dovetail(false, bIn, cIn, true, bOut, cOut, completed)
+     + (bIn && !bOut && !completed) -> fireB . Dovetail(aIn, false, cIn, aOut, true, cOut, completed)
+     + (cIn && !cOut && !completed) -> fireC . Dovetail(aIn, bIn, false, aOut, bOut, true, completed)
+     + (aOut && bOut && cOut && !completed) -> complete . Dovetail(aIn, bIn, cIn, false, false, false, true)
+     + completed -> done . Dovetail(aIn, bIn, cIn, aOut, bOut, cOut, true);
+
+init
+  Dovetail(true, true, true, false, false, false, false);

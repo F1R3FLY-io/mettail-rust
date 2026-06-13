@@ -1,0 +1,20 @@
+--- Generated from formal/process/rho_comm_slice.json.
+--- Executable rewrite-logic projection for the corresponding finite
+--- Dovetail fact-step fragment. The visible observations intentionally
+--- match the RhoNet projection in rho-net.maude.
+
+mod DOVETAIL-FACT-STEPS is
+  protecting BOOL .
+
+  sorts Fact State .
+  subsort Fact < State .
+
+  ops a b c firedA firedB firedC completed : -> Fact [ctor] .
+  op empty : -> State [ctor] .
+  op __ : State State -> State [ctor assoc comm id: empty] .
+
+  rl [fireA] : a => firedA .
+  rl [fireB] : b => firedB .
+  rl [fireC] : c => firedC .
+  rl [complete] : firedA firedB firedC => completed .
+endm

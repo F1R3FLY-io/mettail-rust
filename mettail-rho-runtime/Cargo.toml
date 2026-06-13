@@ -10,24 +10,35 @@ description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's R
 # (InMemoryStoreManager → RSpace → create_rho_runtime), evaluates the lowered
 # Rholang, and reads results back for the differential oracle. Threading/scheduling
 # are OWNED BY f1r3node (eval_par/RSpace, tokio). Depends ONE-WAY on f1r3node-rust
-# (proven one-way in formal/rocq/rho_bridge/theories/BridgeInertness.v). Fully
-# integrated (no feature gating).
+# (proven one-way in formal/rocq/rho_bridge/theories/BridgeInertness.v). The
+# runtime is always integrated; only the heavy generated-language Ascent oracle
+# is feature-gated below.
+
+[features]
+default = []
+# Pulls in the generated MeTTaIL language suite for the two-backend
+# Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine
+# tests do not compile every generated language.
+oracle-ascent = ["dep:mettail-languages", "dep:mettail-runtime"]
 
 [dependencies]
+mettail-rho-codegen = { path = "../mettail-rho-codegen" }
 models = { workspace = true }
 rholang = { workspace = true }
+rho-pure-eval = { workspace = true }
 rspace_plus_plus = { workspace = true }
 crypto = { workspace = true }
 tokio = { workspace = true }
+mettail-languages = { path = "../languages", optional = true, default-features = false, features = ["calculator"] }
+mettail-runtime = { path = "../runtime", optional = true }
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
 # the RhoRuntime run / differential oracle.
-mettail-rho-codegen = { path = "../mettail-rho-codegen" }
 mettail-ast = { path = "../ast" }
 syn = { workspace = true }
-# The Ascent backend (the differential oracle reference): the calculator language +
-# its run_ascent. Dev-only, so the gauntlet (`cargo test -p mettail-languages`)
-# stays f1r3node-free — the cross-backend coupling lives here, in the bridge crate.
-mettail-languages = { path = "../languages" }
-mettail-runtime = { path = "../runtime" }
+
+[[test]]
+name = "rho_vs_ascent"
+path = "tests/rho_vs_ascent.rs"
+required-features = ["oracle-ascent"]

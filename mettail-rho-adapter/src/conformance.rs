@@ -10,9 +10,9 @@
 //! against `OslfResourceLogic<MettaGslt>`. This module is a FAITHFUL transcription
 //! of those four generic laws (same assertions, same coverage grid), exposed as
 //! `pub fn`s generic over `<G: GsltPresentation, R: OslfResourceLogic<G>>` so the
-//! MeTTaIL adapter is checked against the identical contract. (Promoting the
-//! host's laws to a `pub` conformance kit + a `G`-generic gate seam upstream is
-//! B1-b, deferred to M-RHO.1 since it changes a f1r3node runtime path.)
+//! MeTTaIL adapter is checked against the identical contract. Keeping the laws
+//! local also avoids changing f1r3node's runtime acceptance path while preserving
+//! a byte-for-byte-equivalent law suite for this bridge.
 //!
 //! The Rust laws here are mirrored by the zero-admission Rocq proof
 //! `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v` (a second instance
@@ -24,10 +24,7 @@ use rholang::rust::interpreter::accounting::resource_logic::{GsltPresentation, O
 /// A fully-resolvable demand with known lower bound `lower` (no `unknown`
 /// over-approximation).
 fn resolvable(lower: i64) -> DemandEntry {
-    DemandEntry {
-        known_lower_bound: lower,
-        unknown: false,
-    }
+    DemandEntry { known_lower_bound: lower, unknown: false }
 }
 
 /// Law (sound proof-checker, both directions): funded iff `Σ ≥ Δ + margin`.

@@ -1,16 +1,21 @@
 //! M-RHO.0.5 / M-RHO.0.4: run the lowered calculator scalar-op contracts on a
 //! REAL in-memory f1r3node-rust `RhoRuntime` and assert the computed results.
 //!
-//! For each Int operator the lowered Rholang contract (from
-//! `mettail_rho_codegen::lower_language_def`) is installed, called with concrete
-//! arguments, and the result read back from a fixed output channel. The asserted
-//! values ARE the calculator's defined arithmetic semantics (`AddInt = a + b`,
-//! …) — i.e. exactly what the Ascent backend computes — so this is the per-op
-//! differential oracle (rho-backend ≡ Ascent) executed end-to-end.
+//! For each Int operator the Rho-default planner validates the lowered Rholang
+//! AST contract artifact, the runtime injects that validated artifact directly,
+//! sends a concrete AST call process, and reads the result back from a fixed
+//! output channel. The asserted values ARE the calculator's defined arithmetic semantics
+//! (`AddInt = a + b`, …) — i.e. exactly what the Ascent backend computes — so
+//! this is the per-op differential oracle (rho-backend ≡ Ascent) executed
+//! end-to-end without routing generated code through source text.
 
 use mettail_ast::language::LanguageDef;
-use mettail_rho_codegen::lower_language_def;
-use mettail_rho_runtime::run_and_read_ints;
+use mettail_rho_codegen::{
+    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence, ValidatedRhoProgram,
+};
+use mettail_rho_runtime::run_validated_program_with_call_and_read_ints;
+use models::rhoapi::Par;
+use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
 
 // The calculator's Int scalar-op fragment, body-less (the lowering keys on the
 // concrete-syntax operator + operand types). Every rule here lowers to a Rholang
@@ -28,30 +33,60 @@ const CALC_RUN_FRAGMENT: &str = r#"
     }
 "#;
 
-fn calculator_contracts() -> String {
+fn quoted_channel(name: &str) -> Par {
+    new_gstring_par(name.to_string(), Vec::new(), false)
+}
+
+fn passing_evidence() -> RhoDefaultBackendEvidence {
+    RhoDefaultBackendEvidence {
+        proofs_passed: true,
+        oracle_parity_passed: true,
+        coverage_audit_passed: true,
+        coverage: RhoCoverageEvidence::AllRulesLowered,
+    }
+}
+
+fn calculator_contracts() -> ValidatedRhoProgram {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let lowering = lower_language_def(&def);
+    let plan = plan_rho_default_backend(&def, passing_evidence())
+        .expect("all calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
-        lowering.lowered,
+        plan.lowering.lowered,
         vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg"],
         "all six Int scalar ops must lower"
     );
-    assert!(lowering.rejected.is_empty(), "no rule should be rejected here");
-    lowering.source
+    assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
+    plan.program().clone()
 }
 
-/// `new ret in { <contracts> | @"OP"!(a, b, *ret) | for (@v <- ret) { @"OUT"!(v) } }`
-fn binary_program(contracts: &str, op: &str, a: i64, b: i64) -> String {
-    format!(
-        "new ret in {{\n{contracts} |\n@\"{op}\"!({a}, {b}, *ret) |\nfor (@v <- ret) {{ @\"OUT\"!(v) }}\n}}"
+/// `@"OP"!(a, b, @"OUT")`
+fn binary_call(op: &str, a: i64, b: i64) -> Par {
+    new_send_par(
+        quoted_channel(op),
+        vec![
+            new_gint_par(a, Vec::new(), false),
+            new_gint_par(b, Vec::new(), false),
+            quoted_channel("OUT"),
+        ],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
     )
 }
 
-/// `new ret in { <contracts> | @"OP"!(a, *ret) | for (@v <- ret) { @"OUT"!(v) } }`
-fn unary_program(contracts: &str, op: &str, a: i64) -> String {
-    format!(
-        "new ret in {{\n{contracts} |\n@\"{op}\"!({a}, *ret) |\nfor (@v <- ret) {{ @\"OUT\"!(v) }}\n}}"
+/// `@"OP"!(a, @"OUT")`
+fn unary_call(op: &str, a: i64) -> Par {
+    new_send_par(
+        quoted_channel(op),
+        vec![new_gint_par(a, Vec::new(), false), quoted_channel("OUT")],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
     )
 }
 
@@ -67,16 +102,16 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
         ("ModInt", 17, 5, 2),
     ];
     for &(op, a, b, expected) in cases {
-        let program = binary_program(&contracts, op, a, b);
-        let result = run_and_read_ints(&program, "OUT")
+        let call = binary_call(op, a, b);
+        let result = run_validated_program_with_call_and_read_ints(&contracts, &call, "OUT")
             .await
             .unwrap_or_else(|e| panic!("{op}({a},{b}) failed to run: {e}"));
         assert_eq!(result, vec![expected], "{op}({a}, {b}) on RhoRuntime");
     }
 
     // Unary negation.
-    let program = unary_program(&contracts, "Neg", 7);
-    let result = run_and_read_ints(&program, "OUT")
+    let call = unary_call("Neg", 7);
+    let result = run_validated_program_with_call_and_read_ints(&contracts, &call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("Neg(7) failed to run: {e}"));
     assert_eq!(result, vec![-7], "Neg(7) on RhoRuntime");

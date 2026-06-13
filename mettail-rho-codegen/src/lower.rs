@@ -1,66 +1,259 @@
-//! `lower_language_def` — the M-RHO.0.3 spec→Rholang lowering of a MeTTaIL
-//! `LanguageDef`'s scalar reduction rules to f1r3node-rust Rholang `contract`s.
+//! `lower_language_def` — the M-RHO.0.3 spec→Rholang AST lowering of a MeTTaIL
+//! `LanguageDef`'s scalar reduction rules to normalized f1r3node `Par`
+//! `contract`s.
 //!
 //! Each scalar operator rule whose concrete syntax is a supported infix/prefix
 //! operator (one with an exact Rholang `Expr` equivalent — `+ - * / %`,
 //! comparisons `== != < > <= >=`, `and`/`or`/`not`, `++`, unary `-`) lowers to a
-//! Rholang contract `contract @"<Label>"(@a, @b, ret) = { ret!(a <op> b) }`. Every
-//! other rule (BigInt/BigRat/Fixed/Float/UInt32 ops, casts, `Err`/`Proc`
-//! injections, collections, ternary, factorial, power, bitwise, …) is NOT silently
-//! dropped — it is recorded in [`RhoLowering::rejected`]. This is the "miss
-//! nothing" discipline at the codegen layer (cf.
+//! normalized Rholang AST equivalent to
+//! `contract @"<Label>"(@a, @b, ret) = { ret!(a <op> b) }`. The Rholang-looking
+//! string is kept only as a human-readable annotation; execution feeds the AST
+//! directly to `RhoRuntime::inj`. Every other rule (BigInt/BigRat/Fixed/Float/
+//! UInt32 ops, casts, `Err`/`Proc` injections, collections, ternary, factorial,
+//! power, bitwise, …) is NOT silently dropped — it is recorded in
+//! [`RhoLowering::rejected`]. This is the "miss nothing" discipline at the
+//! codegen layer (cf.
 //! `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`): every rule in
 //! `def.terms` is accounted for — exactly one of lowered / rejected.
 //!
-//! The semantic equivalence of the emitted Rholang to the Ascent evaluator is the
-//! NEXT substage (M-RHO.0.4, the differential oracle); this substage establishes a
-//! WELL-FORMED Rholang lowering (the parse round-trip via `Compiler::source_to_adt`
-//! is the gate) plus the totality/no-loss guarantee.
+//! Semantic equivalence for this scalar subset is checked by the M-RHO.0.4
+//! differential oracle against the Ascent evaluator. This module establishes a
+//! well-formed normalized-AST lowering plus the totality/no-loss guarantee.
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
+use models::create_bit_vector;
+use models::rhoapi::expr::ExprInstance;
+use models::rhoapi::{
+    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPlus,
+    EPlusPlus, Expr, Par, Receive, ReceiveBind,
+};
+use models::rust::utils::{new_boundvar_par, new_freevar_par, new_gstring_par, new_send_par};
 
-/// The result of lowering a `LanguageDef` to Rholang: the well-formed Rholang
-/// `source`, the rule labels that were `lowered` to contracts, and the labels
+use crate::deadlock::{
+    analyze_channel_deadlocks, ChannelDeadlockReport, ChannelNetwork, ContractFlow,
+};
+
+/// Executable artifact family for the Rho backend.
+///
+/// `NormalizedAst` is the implementation available today. `Bytecode` is reserved
+/// for the future f1r3node bytecode backend; it is named here so runtime
+/// dispatch and documentation speak in terms of artifact kind instead of
+/// hard-wiring source text or `Par` forever.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhoArtifactKind {
+    NormalizedAst,
+    Bytecode,
+}
+
+/// Bytecode-ready backend artifact for Rho execution.
+///
+/// The current concrete representation is a normalized `rhoapi::Par` AST because
+/// that is what f1r3node's interpreter consumes today. Future bytecode support
+/// can add a new variant without changing the fact that source text is not the
+/// execution boundary.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum RhoProgram {
+    Ast(RhoAstProgram),
+}
+
+impl RhoProgram {
+    pub fn artifact_kind(&self) -> RhoArtifactKind {
+        match self {
+            Self::Ast(_) => RhoArtifactKind::NormalizedAst,
+        }
+    }
+
+    /// Normalized AST to inject into the host Rho runtime, when this artifact is
+    /// represented as `Par`.
+    pub fn ast_par(&self) -> Option<&Par> {
+        match self {
+            Self::Ast(program) => Some(program.par()),
+        }
+    }
+
+    /// Reader/debug annotation. This text is not parsed as the execution path.
+    pub fn text_annotation(&self) -> &str {
+        match self {
+            Self::Ast(program) => program.text_annotation(),
+        }
+    }
+}
+
+/// Current concrete Rho program representation: normalized `Par` plus a
+/// Rholang-looking annotation for people reading logs, docs, or test failures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RhoAstProgram {
+    pub(crate) par: Par,
+    pub(crate) text_annotation: String,
+}
+
+impl RhoAstProgram {
+    pub(crate) fn new(par: Par, text_annotation: String) -> Self {
+        Self { par, text_annotation }
+    }
+
+    pub fn par(&self) -> &Par {
+        &self.par
+    }
+
+    /// Reader/debug annotation. This text is not parsed as the execution path.
+    pub fn text_annotation(&self) -> &str {
+        &self.text_annotation
+    }
+}
+
+/// The result of lowering a `LanguageDef` to Rholang: the executable normalized
+/// `program`, the rule labels that were `lowered` to contracts, and the labels
 /// explicitly `rejected` (out of the supported scalar-operator subset). Every
 /// rule of `def.terms` appears in exactly one of `lowered` / `rejected`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RhoLowering {
-    pub source: String,
+    pub(crate) program: RhoProgram,
     pub lowered: Vec<String>,
     pub rejected: Vec<String>,
+    pub deadlock_report: ChannelDeadlockReport,
+}
+
+impl RhoLowering {
+    /// Lowered backend artifact. This is exposed for inspection and validation;
+    /// generated execution should consume `ValidatedRhoProgram`.
+    pub fn program(&self) -> &RhoProgram {
+        &self.program
+    }
+
+    pub fn artifact_kind(&self) -> RhoArtifactKind {
+        self.program.artifact_kind()
+    }
+
+    /// Normalized AST to inject into the host Rho runtime, when available.
+    pub fn ast_par(&self) -> Option<&Par> {
+        self.program.ast_par()
+    }
+
+    /// Reader/debug annotation. This text is not parsed as the execution path.
+    pub fn text_annotation(&self) -> &str {
+        self.program.text_annotation()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RhoBinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Lte,
+    Gte,
+    And,
+    Or,
+    Concat,
+}
+
+impl RhoBinaryOp {
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::Mod => "%",
+            Self::Eq => "==",
+            Self::Neq => "!=",
+            Self::Lt => "<",
+            Self::Gt => ">",
+            Self::Lte => "<=",
+            Self::Gte => ">=",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Concat => "++",
+        }
+    }
+
+    fn expr(self, lhs: Par, rhs: Par) -> ExprInstance {
+        match self {
+            Self::Add => ExprInstance::EPlusBody(EPlus { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Sub => ExprInstance::EMinusBody(EMinus { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Mul => ExprInstance::EMultBody(EMult { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Div => ExprInstance::EDivBody(EDiv { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Mod => ExprInstance::EModBody(EMod { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Eq => ExprInstance::EEqBody(EEq { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Neq => ExprInstance::ENeqBody(ENeq { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Lt => ExprInstance::ELtBody(ELt { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Gt => ExprInstance::EGtBody(EGt { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Lte => ExprInstance::ELteBody(ELte { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Gte => ExprInstance::EGteBody(EGte { p1: Some(lhs), p2: Some(rhs) }),
+            Self::And => ExprInstance::EAndBody(EAnd { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Or => ExprInstance::EOrBody(EOr { p1: Some(lhs), p2: Some(rhs) }),
+            Self::Concat => ExprInstance::EPlusPlusBody(EPlusPlus { p1: Some(lhs), p2: Some(rhs) }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RhoUnaryOp {
+    Not,
+    Neg,
+}
+
+impl RhoUnaryOp {
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Not => "not",
+            Self::Neg => "-",
+        }
+    }
+
+    fn expr(self, arg: Par) -> ExprInstance {
+        match self {
+            Self::Not => ExprInstance::ENotBody(ENot { p: Some(arg) }),
+            Self::Neg => ExprInstance::ENegBody(ENeg { p: Some(arg) }),
+        }
+    }
+}
+
+struct LoweredRule {
+    contract: Par,
+    text_annotation: String,
 }
 
 /// Map a calculator infix terminal to its Rholang binary operator, if Rholang
-/// has an exact `Expr` equivalent (`utils.rs` `BinaryExpr` set). `None` = no
-/// Rholang equivalent (e.g. `^`, `bitand`, `bitor`, `xor`).
-fn rho_binop(terminal: &str) -> Option<&'static str> {
+/// has an exact `Expr` equivalent. `None` = no Rholang equivalent (e.g. `^`,
+/// `bitand`, `bitor`, `xor`).
+fn rho_binop(terminal: &str) -> Option<RhoBinaryOp> {
     match terminal {
-        "+" => Some("+"),
-        "-" => Some("-"),
-        "*" => Some("*"),
-        "/" => Some("/"),
-        "%" => Some("%"),
-        "==" => Some("=="),
-        "!=" => Some("!="),
-        "<" => Some("<"),
-        ">" => Some(">"),
-        "<=" => Some("<="),
-        ">=" => Some(">="),
-        "and" => Some("and"),
-        "or" => Some("or"),
-        "++" => Some("++"),
+        "+" => Some(RhoBinaryOp::Add),
+        "-" => Some(RhoBinaryOp::Sub),
+        "*" => Some(RhoBinaryOp::Mul),
+        "/" => Some(RhoBinaryOp::Div),
+        "%" => Some(RhoBinaryOp::Mod),
+        "==" => Some(RhoBinaryOp::Eq),
+        "!=" => Some(RhoBinaryOp::Neq),
+        "<" => Some(RhoBinaryOp::Lt),
+        ">" => Some(RhoBinaryOp::Gt),
+        "<=" => Some(RhoBinaryOp::Lte),
+        ">=" => Some(RhoBinaryOp::Gte),
+        "and" => Some(RhoBinaryOp::And),
+        "or" => Some(RhoBinaryOp::Or),
+        "++" => Some(RhoBinaryOp::Concat),
         _ => None,
     }
 }
 
 /// Map a calculator prefix terminal to its Rholang unary operator, if any
-/// (`utils.rs` `UnaryExpr` set: `not`, unary `-`).
-fn rho_unop(terminal: &str) -> Option<&'static str> {
+/// (`not`, unary `-`).
+fn rho_unop(terminal: &str) -> Option<RhoUnaryOp> {
     match terminal {
-        "not" => Some("not"),
-        "-" => Some("-"),
+        "not" => Some(RhoUnaryOp::Not),
+        "-" => Some(RhoUnaryOp::Neg),
         _ => None,
     }
 }
@@ -81,9 +274,71 @@ fn param_is_rho_native_scalar(p: &TermParam) -> bool {
     }
 }
 
-/// Lower one rule to a Rholang contract, or `None` if it is out of the supported
+fn bitvec(indices: &[usize]) -> Vec<u8> {
+    if indices.is_empty() {
+        Vec::new()
+    } else {
+        create_bit_vector(indices)
+    }
+}
+
+fn binding_bitvec(bind_count: usize) -> Vec<u8> {
+    bitvec(&(0..bind_count).collect::<Vec<_>>())
+}
+
+fn bound_formal(total_formals: usize, formal_index: usize) -> Par {
+    debug_assert!(formal_index < total_formals);
+    new_boundvar_par((total_formals - 1 - formal_index) as i32, Vec::new(), false)
+}
+
+fn expr_par(expr_instance: ExprInstance, locally_free_indices: &[usize]) -> Par {
+    let mut par = Par::default().with_exprs(vec![Expr { expr_instance: Some(expr_instance) }]);
+    par.locally_free = bitvec(locally_free_indices);
+    par
+}
+
+fn contract_ast(
+    label: &str,
+    formal_count: usize,
+    result_expr: Par,
+    text_annotation: String,
+) -> LoweredRule {
+    let all_formals = binding_bitvec(formal_count);
+    let body = new_send_par(
+        bound_formal(formal_count, formal_count - 1),
+        vec![result_expr],
+        false,
+        all_formals.clone(),
+        false,
+        all_formals.clone(),
+        false,
+    );
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: (0..formal_count)
+                .map(|i| new_freevar_par(i as i32, Vec::new()))
+                .collect(),
+            source: Some(new_gstring_par(label.to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: formal_count as i32,
+        }],
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: formal_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    LoweredRule {
+        contract: Par::default().with_receives(vec![receive]),
+        text_annotation,
+    }
+}
+
+/// Lower one rule to a normalized Rholang contract, or `None` if it is out of the supported
 /// scalar-operator subset (→ to be recorded as rejected, never dropped).
-fn lower_rule(rule: &GrammarRule) -> Option<String> {
+fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
     let pattern = rule.syntax_pattern.as_ref()?;
     // Only lower rules whose operands are ALL Rholang-native scalar types — keying
     // on the terminal alone would mis-lower e.g. `AddBigInt` (`a:BigInt "+" b`).
@@ -96,17 +351,26 @@ fn lower_rule(rule: &GrammarRule) -> Option<String> {
         // Binary infix: `a <op> b` → contract @"L"(@a, @b, ret) = { ret!(a <op> b) }
         [SyntaxExpr::Param(a), SyntaxExpr::Literal(op), SyntaxExpr::Param(b)] => {
             let rop = rho_binop(op)?;
-            Some(format!(
-                "contract @\"{label}\"(@{a}, @{b}, ret) = {{ ret!({a} {rop} {b}) }}"
-            ))
-        }
+            let formal_count = 3;
+            let lhs = bound_formal(formal_count, 0);
+            let rhs = bound_formal(formal_count, 1);
+            let result_expr = expr_par(rop.expr(lhs, rhs), &[1, 2]);
+            let text_annotation = format!(
+                "contract @\"{label}\"(@{a}, @{b}, ret) = {{ ret!({a} {} {b}) }}",
+                rop.symbol()
+            );
+            Some(contract_ast(&label, formal_count, result_expr, text_annotation))
+        },
         // Unary prefix: `<op> a` → contract @"L"(@a, ret) = { ret!(<op> a) }
         [SyntaxExpr::Literal(op), SyntaxExpr::Param(a)] => {
             let rop = rho_unop(op)?;
-            Some(format!(
-                "contract @\"{label}\"(@{a}, ret) = {{ ret!({rop} {a}) }}"
-            ))
-        }
+            let formal_count = 2;
+            let arg = bound_formal(formal_count, 0);
+            let result_expr = expr_par(rop.expr(arg), &[1]);
+            let text_annotation =
+                format!("contract @\"{label}\"(@{a}, ret) = {{ ret!({} {a}) }}", rop.symbol());
+            Some(contract_ast(&label, formal_count, result_expr, text_annotation))
+        },
         _ => None,
     }
 }
@@ -117,26 +381,35 @@ fn lower_rule(rule: &GrammarRule) -> Option<String> {
 pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
     let mut lowered = Vec::new();
     let mut rejected = Vec::new();
-    let mut contracts = Vec::new();
+    let mut program = Par::default();
+    let mut annotations = Vec::new();
+    let mut network = ChannelNetwork::new();
     for rule in &def.terms {
         match lower_rule(rule) {
-            Some(contract) => {
-                lowered.push(rule.label.to_string());
-                contracts.push(contract);
-            }
+            Some(lowered_rule) => {
+                let label = rule.label.to_string();
+                lowered.push(label.clone());
+                program = program.append(lowered_rule.contract);
+                annotations.push(lowered_rule.text_annotation);
+                network = network.with_external(label.clone()).with_contract(
+                    ContractFlow::exported_service(label, std::iter::empty::<String>()),
+                );
+            },
             None => rejected.push(rule.label.to_string()),
         }
     }
-    // A Rholang program is a single process; parallel-compose the contracts. An
-    // empty program is the inert process `Nil`.
-    let source = if contracts.is_empty() {
+    // A Rholang program is a single process; parallel-compose the contracts in
+    // the AST. The annotation mirrors that shape for readers only.
+    let text_annotation = if annotations.is_empty() {
         "Nil".to_string()
     } else {
-        contracts.join(" |\n")
+        annotations.join(" |\n")
     };
+    let deadlock_report = analyze_channel_deadlocks(&network);
     RhoLowering {
-        source,
+        program: RhoProgram::Ast(RhoAstProgram::new(program, text_annotation)),
         lowered,
         rejected,
+        deadlock_report,
     }
 }

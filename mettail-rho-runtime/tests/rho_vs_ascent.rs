@@ -12,9 +12,13 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;
-use mettail_rho_codegen::lower_language_def;
-use mettail_rho_runtime::run_and_read_ints;
+use mettail_rho_codegen::{
+    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence, ValidatedRhoProgram,
+};
+use mettail_rho_runtime::run_validated_program_with_call_and_read_ints;
 use mettail_runtime::Language;
+use models::rhoapi::Par;
+use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
 
 const CALC_RUN_FRAGMENT: &str = r#"
     name: CalcRun,
@@ -28,10 +32,31 @@ const CALC_RUN_FRAGMENT: &str = r#"
     }
 "#;
 
-fn calculator_contracts() -> String {
+fn quoted_channel(name: &str) -> Par {
+    new_gstring_par(name.to_string(), Vec::new(), false)
+}
+
+fn passing_evidence() -> RhoDefaultBackendEvidence {
+    RhoDefaultBackendEvidence {
+        proofs_passed: true,
+        oracle_parity_passed: true,
+        coverage_audit_passed: true,
+        coverage: RhoCoverageEvidence::AllRulesLowered,
+    }
+}
+
+fn calculator_contracts() -> ValidatedRhoProgram {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    lower_language_def(&def).source
+    let plan = plan_rho_default_backend(&def, passing_evidence())
+        .expect("all calculator Int scalar ops must pass the Rho-default gate");
+    assert_eq!(
+        plan.lowering.lowered,
+        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt"],
+        "all five Int binary scalar ops must lower"
+    );
+    assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
+    plan.program().clone()
 }
 
 /// The Ascent backend's normal-form display strings for `input`.
@@ -45,12 +70,22 @@ fn ascent_normal_forms(lang: &CalculatorLanguage, input: &str) -> Vec<String> {
         .collect()
 }
 
-/// The rho backend's result of `@"op"(a, b)` on a real RhoRuntime.
-async fn rho_binary(contracts: &str, op: &str, a: i64, b: i64) -> i64 {
-    let program = format!(
-        "new ret in {{\n{contracts} |\n@\"{op}\"!({a}, {b}, *ret) |\nfor (@v <- ret) {{ @\"OUT\"!(v) }}\n}}"
+/// The rho backend's result of `@"op"!(a, b, @"OUT")` on a real RhoRuntime.
+async fn rho_binary(contracts: &ValidatedRhoProgram, op: &str, a: i64, b: i64) -> i64 {
+    let call = new_send_par(
+        quoted_channel(op),
+        vec![
+            new_gint_par(a, Vec::new(), false),
+            new_gint_par(b, Vec::new(), false),
+            quoted_channel("OUT"),
+        ],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
     );
-    let result = run_and_read_ints(&program, "OUT")
+    let result = run_validated_program_with_call_and_read_ints(contracts, &call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("rho {op}({a},{b}): {e}"));
     assert_eq!(result.len(), 1, "rho {op}({a},{b}) must yield exactly one int");

@@ -1,0 +1,49 @@
+@startuml
+title Correctness Dependency Graph
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam ArrowColor #374151
+
+rectangle "Language inventory\nand coverage" as Inventory #DBEAFE
+rectangle "Dovetail saturation\nsoundness" as DS #DCFCE7
+rectangle "Dovetail saturation\ncompleteness" as DC #DCFCE7
+rectangle "Exact-key\ndeduplication" as EK #BBF7D0
+rectangle "RhoNet lowering\nsoundness" as RS #FEF3C7
+rectangle "RhoNet lowering\ncompleteness" as RC #FEF3C7
+rectangle "Guard atomicity" as GA #FDE68A
+rectangle "Parallel permutation\nindependence" as PI #FBCFE8
+rectangle "Observation\ncorrectness" as OC #EDE9FE
+rectangle "Host Rho-machine\nreuse boundary" as HR #F3E8FF
+rectangle "Backend semantic\npreservation" as SP #FCE7F3
+
+Inventory --> DS
+Inventory --> DC
+DS --> RS
+DC --> RC
+EK --> RS
+EK --> RC
+GA --> RS
+GA --> RC
+PI --> RC
+RS --> SP
+RC --> SP
+OC --> SP
+HR --> SP
+
+legend right
+  <#DBEAFE> coverage inputs
+  <#DCFCE7> Dovetail facts
+  <#BBF7D0> identity preservation
+  <#FEF3C7> Rho lowering
+  <#FDE68A> guard behavior
+  <#FBCFE8> parallel scheduling
+  <#EDE9FE> oracle
+  <#F3E8FF> host runtime boundary
+  <#FCE7F3> final theorem
+endlegend
+@enduml

@@ -1,0 +1,23 @@
+--- Generated from formal/process/rho_comm_slice.json.
+--- Executable rewrite-logic projection for a finite RhoNet COMM
+--- fragment with internal RSpace-style reserve/commit phases.
+
+mod RHO-NET-COMM is
+  protecting BOOL .
+
+  sorts Fact State .
+  subsort Fact < State .
+
+  ops a b c reservedA reservedB reservedC firedA firedB firedC reservedJoin completed : -> Fact [ctor] .
+  op empty : -> State [ctor] .
+  op __ : State State -> State [ctor assoc comm id: empty] .
+
+  rl [reserveA] : a => reservedA .
+  rl [fireA] : reservedA => firedA .
+  rl [reserveB] : b => reservedB .
+  rl [fireB] : reservedB => firedB .
+  rl [reserveC] : c => reservedC .
+  rl [fireC] : reservedC => firedC .
+  rl [reserveJoin] : firedA firedB firedC => reservedJoin .
+  rl [complete] : reservedJoin => completed .
+endm

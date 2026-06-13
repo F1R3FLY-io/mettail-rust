@@ -21,15 +21,30 @@
 //! guard test `mettail_rust_is_not_a_cargo_dependency`).
 //!
 //! ## Status
-//! Skeleton — fully integrated, NOT feature-gated (no f1r3node deps yet; they land
-//! with the code that uses them). Ascent remains the differential oracle until the
-//! per-language flip (M-RHO.4). Later substages add: the
-//! `RhoBackend { fn rho_source(&self) -> String }` seam + `assert_oracle_agree`
-//! (M-RHO.0.4, `rholang`/`dovetail` deps), and a real `RhoRuntime::evaluate` run of
-//! the lowered calculator (M-RHO.0.5 — the substage that links
-//! `rspace_plus_plus`/`casper`/Tokio).
+//! Integrated bridge runtime. It injects generated normalized `rhoapi::Par`
+//! programs directly through `RhoRuntime::inj`, exposes a `ValidatedRhoProgram`
+//! entry point for generated backend execution, keeps source-text evaluation
+//! only for hand-authored host oracle tests, reads public resting data for oracle
+//! checks, runs lowered calculator contracts against the Ascent baseline, and
+//! hosts the M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language
+//! flip baseline until a language's proof, oracle, coverage, artifact-validation,
+//! and deadlock gates pass.
 
 #![forbid(unsafe_code)]
 
 pub mod run;
-pub use run::run_and_read_ints;
+#[allow(deprecated)]
+pub use run::{
+    run_and_read_ints, run_and_read_strings, run_program, run_program_then_consume_strings,
+    run_sequence_and_read_ints, run_sequence_and_read_strings,
+};
+pub use run::{
+    run_par, run_par_and_read_ints, run_par_and_read_strings, run_rholang_source_for_oracle,
+    run_rholang_source_for_oracle_and_read_ints, run_rholang_source_for_oracle_and_read_strings,
+    run_rholang_source_for_oracle_then_consume_strings,
+    run_rholang_source_sequence_for_oracle_and_read_ints,
+    run_rholang_source_sequence_for_oracle_and_read_strings, run_validated_program,
+    run_validated_program_and_read_ints, run_validated_program_and_read_strings,
+    run_validated_program_with_call, run_validated_program_with_call_and_read_ints,
+    run_validated_program_with_call_and_read_strings,
+};

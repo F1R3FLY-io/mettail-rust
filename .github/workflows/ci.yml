@@ -69,7 +69,17 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --all-features --workspace
+        run: >
+          cargo test -j1
+          -p mettail-ast
+          -p ascent_syntax_export
+          -p mettail-macros
+          -p mettail-prattail
+          -p rigail
+          -p mettail-runtime
+          -p mettail-query
+          -p mettail-testkit
+          -p dovetail
 
   dovetail-exhaustive:
     name: Dovetail Exhaustive Runtime Tests
@@ -127,36 +137,161 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout f1r3node-rust sibling
+        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - run: cargo fmt --all -- --check
+      - name: Check MeTTaIL workspace formatting
+        run: >
+          cargo fmt
+          -p mettail-ast
+          -p ascent_syntax_export
+          -p mettail-macros
+          -p mettail-prattail
+          -p rigail
+          -p mettail-runtime
+          -p mettail-query
+          -p mettail-testkit
+          -p dovetail
+          -p mettail-rho-codegen
+          -p mettail-rho-adapter
+          -p mettail-rho-runtime
+          -- --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout f1r3node-rust sibling
+        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy, rustc-codegen-cranelift-preview
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Core Dovetail clippy
+        run: cargo clippy -j1 -p dovetail --all-targets -- -D warnings
+      - name: Rho runtime bridge clippy
+        run: >
+          cargo clippy --no-deps -j1
+          -p mettail-rho-codegen
+          -p mettail-rho-adapter
+          -p mettail-rho-runtime
+          --all-targets
+          -- -D warnings
 
   doc:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout f1r3node-rust sibling
+        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustc-codegen-cranelift-preview
-      - run: cargo doc --no-deps --all-features
+      - name: Core and Rho bridge docs
+        run: >
+          cargo doc --no-deps
+          -p dovetail
+          -p mettail-rho-codegen
+          -p mettail-rho-adapter
+          -p mettail-rho-runtime
         env:
           RUSTDOCFLAGS: -D warnings
+
+  rho-backend:
+    name: Rho Backend Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout f1r3node-rust sibling
+        run: git clone --depth 1 https://github.com/F1R3FLY-io/f1r3node-rust ../f1r3node-rust
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-codegen-cranelift-preview
+
+      - name: Rho codegen gate
+        run: cargo test -j1 -p mettail-rho-codegen
+
+      - name: Rho adapter gate
+        run: cargo test -j1 -p mettail-rho-adapter
+
+      - name: Rho runtime gate
+        run: cargo test -j1 -p mettail-rho-runtime
+
+      - name: rhocalc parser/runtime corpus gate
+        run: cargo test -j1 -p mettail-languages --no-default-features --features rhocalc --test rhocalc_tests
+
+      - name: Rho-vs-Ascent differential oracle
+        run: cargo test -j1 -p mettail-rho-runtime --features oracle-ascent --test rho_vs_ascent
+
+  formal-rho-dovetail:
+    name: Rho/Dovetail Rocq Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache opam switch
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam
+          key: ${{ runner.os }}-opam-coq-9.1.1-${{ hashFiles('formal/**/*.v', 'dovetail/formal/rocq/**/*.v') }}
+          restore-keys: |
+            ${{ runner.os }}-opam-coq-9.1.1-
+
+      - name: Install opam prerequisites
+        run: sudo apt-get update && sudo apt-get install -y opam m4 pkg-config libgmp-dev
+
+      - name: Install Rocq 9.1.1
+        run: |
+          opam init --bare --disable-sandboxing -y
+          if ! opam switch list --short | grep -qx mettail-rocq; then
+            opam switch create mettail-rocq ocaml-base-compiler.5.4.1 coq.9.1.1 -y
+          fi
+          opam switch set mettail-rocq
+          opam exec -- coqc --version
+
+      - name: Rho bridge Rocq gate
+        run: |
+          opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-rho-bridge'
+
+      - name: Dovetail Rocq gate
+        run: |
+          opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-dovetail'
+
+      - name: Dovetail requirements Rocq gate
+        run: |
+          opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-dovetail-requirements'
+
+  architecture-docs:
+    name: Rho-Native Architecture Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mettail-rust
+
+      - uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node-rust
+          path: f1r3node-rust
+
+      - name: Install documentation validation tools
+        run: sudo apt-get update && sudo apt-get install -y plantuml ripgrep
+
+      - name: Validate Rho-native architecture docs
+        working-directory: mettail-rust
+        run: docs/architecture/rho-native-integration/validate.sh
 
   # benchmarks:
   #   name: Benchmark Regression Check

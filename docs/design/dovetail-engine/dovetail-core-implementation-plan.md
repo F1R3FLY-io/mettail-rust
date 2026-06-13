@@ -1,8 +1,11 @@
 # Dovetail-Core — Implementation Plan (design of record)
 
 > Engine-primary foundation. `dovetail` = the standalone, substrate-agnostic, extractable
-> core of the off-Ascent GSLT reduction engine (generic-`W` WTA over a runtime e-graph =
-> DFTA, with N-best/set-valued demand-driven best-first enumeration extraction). Designed by a Plan agent against
+> core for MeTTaIL rewrite semantics on the CESK runtime-backend replacement path
+> (generic-`W` WTA over a runtime e-graph = DFTA, with N-best/set-valued
+> demand-driven best-first enumeration extraction). The active WPDA
+> parser/recognizer remains upstream, and Ascent remains available as a
+> reference/oracle path. Designed by a Plan agent against
 > the live codebase (2026-06-09). Tracked: pgmcp `dovetail-core-standalone-wta-egraph-crate`
 > (#279) under epic `dovetail-gslt-reduction-engine-f1r3node-target` (#278); session task #15.
 
@@ -69,8 +72,9 @@ the 30+ consumers; only non-test edits are `sppf.rs` re-export (~3-5 lines) + th
 op-suite **no regression past the 217 baseline** (commit `28d4d26`), `rocq` (SemiringLaws)
 green. For `tree_automaton.rs`/`egraph.rs`, dovetail-core grows its OWN clean modules (the
 generic WTA is small; the runtime e-graph is payload-generic + exact-keyed, distinct from
-prattail's compile-time `String`-keyed one) — prattail's copies stay put; convergence is a
-later optional refactor (Increment 9, deferred).
+prattail's compile-time `String`-keyed one) — prattail's copies stay put; convergence is an
+independent convergence refactor (Increment 9), not a prerequisite for the
+CESK runtime-backend replacement path.
 
 ## 2. Crate layout + public API
 
@@ -123,7 +127,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
    — **M-E.0 "inert" milestone = increments 1–6** (skeleton + WTA on runtime e-graph + N-best, engine gated off, no f1r3node binding, zero new mandatory deps).
 7. **rules-as-data + reduction driver** (`Sexpr`/`Rule`/`Program` + `saturate`).
 8. **tuplespace trait + in-mem impl.**
-9. **convergence pass** (prattail `tree_automaton.rs` generic core → `pub use dovetail::wta::*`) — DEFER if it risks the baseline.
+9. **convergence pass** (prattail `tree_automaton.rs` generic core → `pub use dovetail::wta::*`) — execute only as an independently proved no-regression refactor; it is not required for the CESK runtime-backend replacement path.
 
 ## 4. FV obligations (zero-Admitted/zero-Axiom; `rocq-dovetail` target in `formal/Makefile`)
 1. **`ExactKeys/ExactKeyDedup.v`** — exact-key dedup preserves every key, distinct keys are never conflated, add-with-budget never overshoots, and overflow reports refusal. Certifies Increment 3.
@@ -136,7 +140,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 - **Quick wins:** Inc 1 (mechanical move; 1 coupling point), Inc 2 (key), Inc 4 (WTA view), Inc 8 (trait).
 - **Moderate:** Inc 3 (payload-generic exact-keyed e-graph), Inc 7 (driver).
 - **Research-grade boundary:** full cyclic k>=2 enumeration remains bounded-by-design and surfaced by `had_cycle_cut`; cyclic inside weights and acyclic/bounded extraction correctness are proven.
-- **Out of scope here:** any f1r3node/RSpace binding; the Reified-RSpace concrete impl; flipping any evaluator off Ascent (M-RHO.4 / task #20); the prattail-egraph→dovetail convergence (Inc 9).
+- **Out of scope here:** any f1r3node/RSpace binding; the Reified-RSpace concrete impl; per-language CESK runtime-backend flips to Rho default (M-RHO.4 / task #20); the prattail-egraph→dovetail convergence (Inc 9).
 
 ## 6. Critical files
 Create: `rigail/src/{lib,traits,weights,closure}.rs`; `dovetail/src/{lib,key}.rs`,

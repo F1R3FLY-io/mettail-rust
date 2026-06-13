@@ -1,0 +1,27 @@
+@startuml
+title M-RHO Rollout
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  ArrowColor #374151
+}
+
+start
+:M-RHO.0\nbridge + scalar oracle; <<#DBEAFE>>
+:M-RHO.1\nrhocalc COMM\nRho-native dataflow; <<#DCFCE7>>
+:M-RHO.2\ngeneric CBN / need\nencoding; <<#FEF3C7>>
+:M-RHO.3\nΔ1 joins, guards,\nambiguity hardening; <<#FDE68A>>
+:M-RHO.4\nper-language flip\nto Rho default; <<#FCE7F3>>
+stop
+
+legend right
+  <#DBEAFE> shipped base
+  <#DCFCE7> first Rho-native semantics
+  <#FEF3C7> generic language support
+  <#FDE68A> cost and guard hardening
+  <#FCE7F3> production default
+endlegend
+@enduml

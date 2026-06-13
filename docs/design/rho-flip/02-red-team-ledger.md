@@ -87,4 +87,56 @@ Per `feedback_red_team_design_until_convergence`: after the contract was drafted
 
 Capped gate re-run after the landing: **GREEN** (`make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rho-bridge`; an initial failure was a race against the mid-write `RhoBackendFlipGate.v`, resolved on completion).
 
-## Round 3 — confirmation pass vs contract v3 → PENDING (required before implementation)
+## Round 3 (2026-06-13) — confirmation pass vs contract v3 → CLOSED
+
+The subsequent implementation pass discharged the active M-RHO.1 contract by
+adding the separate linear-communication model the round-2 audit required. This
+ledger remains a historical adversarial-design record; it is no longer an
+active pre-implementation blocker.
+
+Confirmation evidence:
+
+- `LinearCommCorrespondence.v` models the M-RHO.1 one-shot COMM path directly:
+  classifier totality and determinism, send/receive consumption, source/target
+  soundness and completeness, quote/drop name canonicalization, grounding/COMM
+  commutation, one-bind send-arrival coverage, and same-channel join boundary
+  theorems.
+- `CommReductionCorrespondence.v` remains classified as the monotone
+  persistent-contract model for Dovetail/RhoNet saturation and M-RHO.2+ style
+  rules-as-data; it is not over-claimed as the M-RHO.1 linear model.
+- `RhoObservationFingerprint.v`, `RhoGroundingAndNames.v`,
+  `AmbiguityWitnessEnumeration.v`, `AmbiguitySetPreservation.v`, and
+  `RhoBackendFlipGate.v` provide the comparison, name, ambiguity, and flip-gate
+  side conditions named by the critics.
+- Runtime gates now cover source-text COMM oracles, call-by-need observation,
+  guarded COMM, the Rho-vs-Ascent scalar oracle, and the codegen flip/deadlock
+  gate. Same-channel duplicate receives remain negative at the source-text
+  parser boundary and positive only through direct RSpace consume evidence, as
+  recorded in the execution contract.
+
+Scope note: all of this is for the Rho-machine replacement path for the CESK
+runtime backend. The WPDA parser/recognizer remains active upstream, and Ascent
+remains a reference/oracle path.
+
+## Round 4 (2026-06-13) — AST-first course correction → CLOSED
+
+The earlier D1 source-text boundary is superseded for generated MeTTaIL
+backends. It remains recorded above as the conservative bring-up decision that
+exposed the normalizer-invariant and cost-budget risks.
+
+Resolution evidence:
+
+- `mettail-rho-codegen::lower_language_def` now returns `RhoProgram::Ast` with a
+  normalized `models::rhoapi::Par` execution artifact and a Rholang-text reader
+  annotation.
+- The runtime path uses direct `RhoRuntime::inj(Par, Env<Par>, rand)` after
+  installing `Cost::unsafe_max()`, avoiding source parsing while keeping the old
+  source path available for hand-authored parser/regression oracles.
+- Rust tests inspect the generated AST for persistent contract receives,
+  operand-first / return-channel-last ABI, and de Bruijn binding order.
+- `run_calculator.rs` and the Rho-vs-Ascent oracle build invocation sends as
+  `Par` values and execute through direct AST injection.
+
+The design remains bytecode-ready: future Rholang bytecode should be another
+backend artifact variant, not a regression to source text as the execution
+boundary.

@@ -1,9 +1,9 @@
 (*
- * RhoLoweringTotalOrRejects: the M-RHO.0.3 spec→Rholang lowering
+ * RhoLoweringTotalOrRejects: the M-RHO.0.3 spec→Rholang AST lowering
  * (`mettail-rho-codegen` `lower_language_def`) MISSES NOTHING at the codegen
  * layer — every rule of a `LanguageDef` is accounted for: each is EITHER lowered
- * to a Rholang contract OR explicitly recorded as rejected (out of the supported
- * scalar-operator subset). No rule is ever silently dropped, and none is
+ * to a normalized Rho contract artifact OR explicitly recorded as rejected (out
+ * of the supported scalar-operator subset). No rule is ever silently dropped, and none is
  * fabricated.
  *
  * Model: a rule classifier `supported : Rule -> bool` (the Rust `lower_rule`
@@ -35,7 +35,7 @@ Import ListNotations.
 Section RhoLoweringTotalOrRejects.
 
   Variable Rule : Type.
-  (* `supported r = true` iff `lower_rule r` returns `Some` (a Rholang contract). *)
+  (* `supported r = true` iff `lower_rule r` returns `Some` (a normalized Rho contract). *)
   Variable supported : Rule -> bool.
 
   (* The Rust `lower_language_def` partition, modelled as filters over `def.terms`. *)

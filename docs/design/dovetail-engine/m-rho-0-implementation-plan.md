@@ -52,10 +52,15 @@ substrate-isolated, capped Rocq target).
   L: OslfResourceLogic<RhoGslt>` (`:483-492`); test logics `DenyLogic`/`ZeroDemandLogic`
   injected via it. **Seam is fixed to `RhoGslt`** — an external `…<MettaGslt>` is not
   directly consumable here (blocker B1).
-- **Runtime:** `RhoRuntime::evaluate(&self, &str, Cost, HashMap<String,Par>,
-  Blake2b512Random) -> Result<EvaluateResult, InterpreterError>`;
-  `RhoRuntimeImpl { reducer: Arc<DebruijnInterpreter>, .. }` (rho_runtime.rs);
-  `EvaluateResult { cost: Cost, errors: Vec<InterpreterError>, .. }` (interpreter.rs:26).
+- **Runtime:** historical source evaluation uses
+  `RhoRuntime::evaluate(&self, &str, Cost, HashMap<String,Par>,
+  Blake2b512Random) -> Result<EvaluateResult, InterpreterError>`. The current
+  generated-backend path builds normalized `models::rhoapi::Par` directly and
+  injects it with `RhoRuntime::inj(Par, Env<Par>, Blake2b512Random)` after
+  installing an explicit `Cost::unsafe_max()` budget. `RhoRuntimeImpl {
+  reducer: Arc<DebruijnInterpreter>, .. }` (rho_runtime.rs);
+  `EvaluateResult { cost: Cost, errors: Vec<InterpreterError>, .. }` remains the
+  source-path result type.
 - **Crates `publish = false`:** `rholang`, `rspace_plus_plus` (dir `rspace++`),
   `models`, `casper`. ⇒ one-way dep must be a **cross-repo `path` dep**, gated
   behind `engine` (blocker B2).
@@ -83,12 +88,13 @@ substrate-isolated, capped Rocq target).
 
 ## Blockers / user decisions
 
-- **B1 (decision, needed before .0.2):** the host conformance laws are test-private
-  and the gate seam is `RhoGslt`-fixed. **B1-a (chosen for .0):** re-host the 4
-  generic laws as a `pub fn` kit in `mettail-rho-adapter` and run them against
-  `OslfResourceLogic<MettaGslt>` — keeps .0 inert, no f1r3node change. **B1-b
-  (deferred to M-RHO.1):** upstream a `pub` conformance kit + a `G`-generic gate
-  seam in f1r3node-rust (a runtime-path change → Welch + upstream Rocq).
+- **B1 (resolved for .0):** the host conformance laws are test-private and the
+  gate seam is `RhoGslt`-fixed. **B1-a (chosen and shipped for .0):** re-host the
+  4 generic laws as a `pub fn` kit in `mettail-rho-adapter` and run them against
+  `OslfResourceLogic<MettaGslt>`; this is the MeTTaIL bridge contract. **B1-b
+  (host genericization option):** upstreaming a `pub` conformance kit plus a
+  `G`-generic gate seam in f1r3node-rust would be host-maintenance work, not an
+  active blocker for the CESK runtime-backend replacement path.
 - **B2 (resolved for .0):** core crates `publish=false` ⇒ cross-repo `path` deps,
   declared `optional` + pulled only by `engine`; default build f1r3node-free.
 - **B3 (not a .0 blocker):** the Reified-RSpace seam (Scala→Rust PRs) blocks
@@ -106,7 +112,7 @@ substrate-isolated, capped Rocq target).
 | **.0.0** ✅ | Inert gated crates + one-way-dep proof + guard verified | `mettail-rho-{codegen,runtime,adapter}/{Cargo.toml,src/lib.rs}`, workspace `Cargo.toml`, `formal/rocq/rho_bridge/*`, `formal/Makefile` | `BridgeInertness.v` (one-way acyclic dep graph) | default build f1r3node-free; guard green; `rocq-rho-bridge` green |
 | .0.1 | `MettaGslt` presentation + adapter trait surface (engine-gated, pure) | `mettail-rho-adapter/src/{gslt,logic}.rs` | `MettaGsltPresentation.v` (canonicalize total; `split_join` sound) | `cargo check --features engine` |
 | .0.2 | Delegate `demand`/`is_funded` to `delta_sigma`; 4-law conformance | `mettail-rho-adapter/src/{logic,conformance}.rs` | `MettaOslfLawsConformance.v` (2nd instance of capstone; reuse `LinearLogicResources.v`) | 4 laws green for `MettaResourceLogic` |
-| .0.3 | `generate_rho_vm`: calculator `LanguageDef` → Rholang source | `macros/.../rho_vm.rs`, `mettail-rho-codegen/src/lib.rs` | `RhoLoweringTotalOrRejects.v` (total-or-explicit-reject; miss nothing) | `rho_source()` parses to `Par` (Ok) |
+| .0.3 | `generate_rho_vm`: calculator `LanguageDef` → normalized Rholang AST (`Par`) | `macros/.../rho_vm.rs`, `mettail-rho-codegen/src/lib.rs` | `RhoLoweringTotalOrRejects.v` (total-or-explicit-reject; miss nothing) | generated `Par` has the expected contract/ABI shape |
 | .0.4 | Differential oracle vs Ascent on `gen_calculator_op` | `languages/tests/rho_oracle_calculator.rs`, `mettail-rho-runtime/src/oracle.rs` | `OracleQuotientEquivalence.v` (weight-erase ∘ eqrel-quotient is an exact equiv) | set-equality rho ≡ Ascent |
 | .0.5 (opt) | Run lowered calculator on a real `RhoRuntime` | `mettail-rho-runtime/src/run.rs`, `tests/run_calculator.rs` | `RhoRunPreservesFunding.v` (run-demand = charged-demand) | `evaluate` Ok + Welch |
 
@@ -119,7 +125,7 @@ number; `.0.5` isolates all Tokio/RSpace and is gated behind an explicit go/no-g
 |---|---|---|
 | #1 three bridge crates, one-way, gated OFF | .0.0 | `engine=[]`; `cargo tree` 0 f1r3node deps by default |
 | #2 `OslfResourceLogic<MettaGslt>` conformance | .0.1+.0.2 | 4 laws green (re-hosted, B1-a) + `delta_sigma` delegation |
-| #3 calculator→RhoRuntime, runnable | .0.3 (compile) + .0.5 (run) | `rho_source()` parses; `evaluate` Ok |
+| #3 calculator→RhoRuntime, runnable | .0.3 (compile) + .0.5 (run) | generated `Par` injects directly; no source parse gate |
 | #4 differential oracle vs Ascent | .0.4 | weight-erased/eqrel-quotiented set-equality |
 | #5 f1r3node guard green | .0.0 (+each) | 0 mettail refs in f1r3node manifests |
 | #6 axiom-free Rocq + Welch | every substage | `rocq-rho-bridge`; Welch in .0.5 |
@@ -169,17 +175,22 @@ only building the bridge crates (or `--workspace`) does.
   `MettaOslfLawsConformance.v` (the 4 laws over the modelled `is_funded`), both
   `Print Assumptions`-clean; `rocq-rho-bridge` green.
 - **M-RHO.0.3 — SHIPPED** (`9478e791`): `mettail-rho-codegen::lower_language_def`
-  (operand-type-gated; supported scalar ops → Rholang `contract`s; all else recorded
-  rejected) + 3/3 tests incl. `Compiler::source_to_adt` parse round-trip;
+  (operand-type-gated; supported scalar ops → normalized Rholang AST contracts;
+  all else recorded rejected) + AST-shape tests for contract count, operand-first
+  return-channel-last ABI, and de Bruijn binding order;
   `RhoLoweringTotalOrRejects.v` (total/sound/disjoint/count, zero-admission).
 - **M-RHO.0.4 — SHIPPED** (`168859e3` + `7629c828`): `OracleQuotientEquivalence.v`
   (the oracle is a sound exact equivalence) + the literal two-backend differential
   `rho_vs_ascent.rs` — lowered calculator on a real RhoRuntime ≡ `run_ascent` (5/5).
-- **M-RHO.0.5 — SHIPPED** (`bfe56c4b`): `run_and_read_ints` builds an in-memory
-  RhoRuntime and runs the lowered contracts to correct results (6/6). `RUST_MIN_STACK`
-  proved unnecessary for these shallow reductions (the speculative global config edit
-  was reverted).
-- **★ M-RHO.0 COMPLETE end-to-end** (tip `7629c828`): LanguageDef → lowered Rholang →
-  runs on f1r3node → differentially equals Ascent. Full ungated integration; 7
+- **M-RHO.0.5 — SHIPPED** (`bfe56c4b`, AST-first updated 2026-06-13):
+  `run_par_and_read_ints` builds an in-memory RhoRuntime, injects the lowered
+  `Par` contracts directly with an explicit max budget, and reads correct
+  results (6/6). `RUST_MIN_STACK` proved unnecessary for these shallow reductions
+  (the speculative global config edit was reverted).
+- **★ M-RHO.0 COMPLETE end-to-end** (tip `7629c828`, AST-first updated
+  2026-06-13): LanguageDef → lowered normalized Rholang AST → direct f1r3node
+  injection → differentially equals Ascent. Full ungated integration; 7
   zero-admission `rocq-rho-bridge` proofs. **Next: M-RHO.1** (rhocalc native fast
-  path, `Comm`→RSpace COMM) + the parser-FV track alongside.
+  path, `Comm`→RSpace COMM) and later per-language CESK runtime-backend flip
+  gates. Parser FV remains a separate active-parser track, not part of this
+  runtime-backend replacement.

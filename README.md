@@ -53,6 +53,14 @@ From a language definition, it generates:
 
 ---
 
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [System architecture](docs/architecture.md)
+- [Rho-native MeTTaIL / Dovetail / F1r3node integration](docs/architecture/rho-native-integration/README.md)
+
+---
+
 ## REPL Example
 
 The interactive REPL supports term exploration, step-by-step rewriting, and higher-order metaprogramming:
