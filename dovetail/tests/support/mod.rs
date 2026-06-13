@@ -146,6 +146,65 @@ pub fn generated_acyclic_spec(mut seed: u64, class_count: usize) -> AcyclicSpec 
     AcyclicSpec { classes }
 }
 
+pub fn generated_bounded_acyclic_spec(
+    seed: u64,
+    class_count: usize,
+    max_derivations: usize,
+) -> AcyclicSpec {
+    let mut candidate_seed = seed;
+    for _ in 0..128 {
+        let spec = generated_acyclic_spec(candidate_seed, class_count);
+        if derivation_count_upper_bound(&spec, max_derivations) <= max_derivations {
+            return spec;
+        }
+        candidate_seed = candidate_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    }
+
+    narrow_chain_spec(class_count)
+}
+
+pub fn derivation_count_upper_bound(spec: &AcyclicSpec, limit: usize) -> usize {
+    let limit = limit.max(1);
+    let mut class_counts = Vec::with_capacity(spec.classes.len());
+    for edges in &spec.classes {
+        let mut total = 0usize;
+        for edge in edges {
+            let mut edge_total = 1usize;
+            for &child in &edge.children {
+                edge_total = edge_total.saturating_mul(class_counts[child]);
+                if edge_total > limit {
+                    break;
+                }
+            }
+            total = total.saturating_add(edge_total);
+            if total > limit {
+                total = limit + 1;
+                break;
+            }
+        }
+        class_counts.push(total);
+    }
+    class_counts.last().copied().unwrap_or(0)
+}
+
+fn narrow_chain_spec(class_count: usize) -> AcyclicSpec {
+    let class_count = class_count.max(1);
+    let mut classes = Vec::with_capacity(class_count);
+    for class_idx in 0..class_count {
+        let children = if class_idx == 0 {
+            Vec::new()
+        } else {
+            vec![class_idx - 1]
+        };
+        classes.push(vec![EdgeSpec {
+            op: format!("bounded_fallback_c{class_idx}"),
+            weight: 1,
+            children,
+        }]);
+    }
+    AcyclicSpec { classes }
+}
+
 pub fn extractor_observations(eg: &EGraph<String>, root: EClassId) -> Vec<Observation> {
     let mut extractor = Extractor::new(eg, label_weight);
     collect_observations(&mut extractor, root)

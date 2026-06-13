@@ -9,9 +9,25 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
 
 use support::{
-    build_acyclic, extractor_observations, extractor_observations_with_heuristic,
-    generated_acyclic_spec, oracle_observations,
+    build_acyclic, derivation_count_upper_bound, extractor_observations,
+    extractor_observations_with_heuristic, generated_bounded_acyclic_spec, oracle_observations,
 };
+
+const MAX_PROPERTY_DERIVATIONS: usize = 2048;
+
+#[test]
+fn bounded_property_generator_respects_complete_output_cap() {
+    for class_count in 1..=6 {
+        for seed in 0..512u64 {
+            let spec = generated_bounded_acyclic_spec(seed, class_count, MAX_PROPERTY_DERIVATIONS);
+            assert!(
+                derivation_count_upper_bound(&spec, MAX_PROPERTY_DERIVATIONS)
+                    <= MAX_PROPERTY_DERIVATIONS,
+                "bounded generator exceeded cap for seed {seed}, classes {class_count}: {spec:?}"
+            );
+        }
+    }
+}
 
 fn env_cases(var: &str, default: u32) -> u32 {
     std::env::var(var)
@@ -31,7 +47,7 @@ fn prop_extractor_matches_bruteforce_acyclic_oracle() {
 
     runner
         .run(&strategy, |(class_count, seed)| {
-            let spec = generated_acyclic_spec(seed, class_count);
+            let spec = generated_bounded_acyclic_spec(seed, class_count, MAX_PROPERTY_DERIVATIONS);
             let (eg, roots) = build_acyclic(&spec);
             let root = roots[class_count - 1];
 
@@ -63,7 +79,7 @@ fn prop_heuristic_is_result_invariant() {
 
     runner
         .run(&strategy, |(class_count, seed)| {
-            let spec = generated_acyclic_spec(seed, class_count);
+            let spec = generated_bounded_acyclic_spec(seed, class_count, MAX_PROPERTY_DERIVATIONS);
             let (eg, roots) = build_acyclic(&spec);
             let root = roots[class_count - 1];
 
