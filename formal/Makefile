@@ -30,7 +30,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-rho-bridge rocq-rho-bridge-delta1-matching rocq-rho-bridge-schedule-family
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-critical-zero-admission rocq-rho-bridge rocq-rho-bridge-delta1-matching rocq-rho-bridge-schedule-family
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
@@ -93,7 +93,7 @@ rocq-support: require-capped prepare-tmp rocq-trampoline rocq-advanced-automata
 rocq-support: rocq-ascent-optimizations rocq-codegen-optimizations
 rocq-support: rocq-dovetail rocq-rho-bridge rocq-egraph rocq-lattice rocq-logict rocq-mathematical-analyses
 rocq-support: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
-rocq-support: rocq-sft rocq-unification
+rocq-support: rocq-sft rocq-unification rocq-critical-zero-admission
 
 rocq-prattail-wpda: require-capped
 	$(MAKE) -C rocq/prattail_wpda_runtime
@@ -125,6 +125,10 @@ rocq-dovetail-requirements: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/MeTTaILRewriteCoverage.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/LanguageDefInventory.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/PatternLoweringSoundness.vo
+
+rocq-critical-zero-admission: require-capped
+	python3 scripts/check_rocq_zero_admission.py --self-test
+	python3 scripts/check_rocq_zero_admission.py
 
 rocq-dovetail-cyclic-boundary: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/Extraction/CyclicEnumerationImpossibility.vo

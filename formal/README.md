@@ -72,6 +72,12 @@ The capped entry point runs:
   `rocq-rho-bridge-delta1-matching`,
   `rocq-rho-bridge-escrow-settlement`, and
   `rocq-rho-bridge-purse-determinism`
+- the critical Dovetail/Rho Rocq zero-admission gate:
+  `rocq-critical-zero-admission`, which first runs the scanner self-test, then
+  strips Rocq comments and rejects real `Admitted`, `admit.`, `Axiom`,
+  `Conjecture`, `Parameter`, or `Parameters` commands under
+  `dovetail/formal/rocq/theories` and
+  `formal/rocq/rho_bridge/theories`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests
