@@ -84,6 +84,48 @@ fn rocq_inventory_names(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
+fn rocq_current_requirement_names(source: &str) -> BTreeSet<String> {
+    let marker = "Definition current_mettail_rewrite_requirements";
+    let start = source
+        .find(marker)
+        .unwrap_or_else(|| panic!("Rocq coverage file missing `{marker}`"));
+    let list_source = &source[start..];
+    let open = list_source
+        .find('[')
+        .unwrap_or_else(|| panic!("Rocq current requirement list has no opening `[`"));
+    let close = list_source[open..]
+        .find(']')
+        .unwrap_or_else(|| panic!("Rocq current requirement list has no closing `]`"));
+
+    list_source[open + 1..open + close]
+        .split(|ch: char| ch == ';' || ch.is_whitespace())
+        .filter(|token| token.starts_with("Req"))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn rocq_requirement_name(requirement: Requirement) -> &'static str {
+    match requirement {
+        Requirement::Equation => "ReqEquation",
+        Requirement::DirectionalRewrite => "ReqDirectionalRewrite",
+        Requirement::CongruencePremise => "ReqCongruencePremise",
+        Requirement::FoldNativeHandler => "ReqFoldNativeHandler",
+        Requirement::FreshnessPremise => "ReqFreshnessPremise",
+        Requirement::EnvRelationPremise => "ReqEnvRelationPremise",
+        Requirement::ForAllPremise => "ReqForAllPremise",
+        Requirement::BehavioralGuard => "ReqBehavioralGuard",
+        Requirement::SyntheticInjectionGuard => "ReqSyntheticInjectionGuard",
+        Requirement::CollectionPattern => "ReqCollectionPattern",
+        Requirement::MapPattern => "ReqMapPattern",
+        Requirement::ZipPattern => "ReqZipPattern",
+        Requirement::BinderPattern => "ReqBinderPattern",
+        Requirement::SubstitutionPattern => "ReqSubstitutionPattern",
+        Requirement::ExactContentKey => "ReqExactContentKey",
+        Requirement::RhoCommHandlerContract => "ReqRhoCommHandlerContract",
+        Requirement::RhoResourceGuardContract => "ReqRhoResourceGuardContract",
+    }
+}
+
 fn collect_language_macros(items: &[Item], out: &mut Vec<LanguageDef>) {
     for item in items {
         match item {
@@ -390,5 +432,17 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
     assert!(
         !aggregate.is_empty(),
         "parsed LanguageDef inventory did not observe any Dovetail requirement"
+    );
+
+    let formal_coverage =
+        read_repo_file("dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v");
+    let formal_requirements = rocq_current_requirement_names(&formal_coverage);
+    let aggregate_requirements = aggregate
+        .iter()
+        .map(|requirement| rocq_requirement_name(*requirement).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        aggregate_requirements.is_subset(&formal_requirements),
+        "parsed LanguageDef requirements are not covered by Rocq current_mettail_rewrite_requirements: parsed={aggregate_requirements:?}, formal={formal_requirements:?}"
     );
 }

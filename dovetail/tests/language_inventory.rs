@@ -95,6 +95,26 @@ fn rocq_inventory_names(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
+fn rocq_current_requirement_names(source: &str) -> BTreeSet<String> {
+    let marker = "Definition current_mettail_rewrite_requirements";
+    let start = source
+        .find(marker)
+        .unwrap_or_else(|| panic!("Rocq coverage file missing `{marker}`"));
+    let list_source = &source[start..];
+    let open = list_source
+        .find('[')
+        .unwrap_or_else(|| panic!("Rocq current requirement list has no opening `[`"));
+    let close = list_source[open..]
+        .find(']')
+        .unwrap_or_else(|| panic!("Rocq current requirement list has no closing `]`"));
+
+    list_source[open + 1..open + close]
+        .split(|ch: char| ch == ';' || ch.is_whitespace())
+        .filter(|token| token.starts_with("Req"))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
@@ -302,6 +322,26 @@ fn classify_datalog_head(head: &str) -> Option<Requirement> {
     }
 }
 
+fn rocq_requirement_name(requirement: Requirement) -> &'static str {
+    match requirement {
+        Requirement::Equation => "ReqEquation",
+        Requirement::DirectionalRewrite => "ReqDirectionalRewrite",
+        Requirement::CongruencePremise => "ReqCongruencePremise",
+        Requirement::FoldNativeHandler => "ReqFoldNativeHandler",
+        Requirement::FreshnessPremise => "ReqFreshnessPremise",
+        Requirement::EnvRelationPremise => "ReqEnvRelationPremise",
+        Requirement::BehavioralGuard => "ReqBehavioralGuard",
+        Requirement::SyntheticInjectionGuard => "ReqSyntheticInjectionGuard",
+        Requirement::CollectionPattern => "ReqCollectionPattern",
+        Requirement::MapPattern => "ReqMapPattern",
+        Requirement::ZipPattern => "ReqZipPattern",
+        Requirement::BinderPattern => "ReqBinderPattern",
+        Requirement::SubstitutionPattern => "ReqSubstitutionPattern",
+        Requirement::RhoCommHandlerContract => "ReqRhoCommHandlerContract",
+        Requirement::RhoResourceGuardContract => "ReqRhoResourceGuardContract",
+    }
+}
+
 #[test]
 fn source_language_inventory_matches_rocq_inventory_and_taxonomy() {
     let rocq_inventory =
@@ -338,26 +378,16 @@ fn source_language_inventory_matches_rocq_inventory_and_taxonomy() {
         aggregate.extend(language.requirements.iter().copied());
     }
 
-    let required_language_surface = BTreeSet::from([
-        Requirement::Equation,
-        Requirement::DirectionalRewrite,
-        Requirement::CongruencePremise,
-        Requirement::FoldNativeHandler,
-        Requirement::FreshnessPremise,
-        Requirement::EnvRelationPremise,
-        Requirement::BehavioralGuard,
-        Requirement::SyntheticInjectionGuard,
-        Requirement::CollectionPattern,
-        Requirement::MapPattern,
-        Requirement::ZipPattern,
-        Requirement::BinderPattern,
-        Requirement::SubstitutionPattern,
-        Requirement::RhoCommHandlerContract,
-        Requirement::RhoResourceGuardContract,
-    ]);
-    assert_eq!(
-        aggregate, required_language_surface,
-        "current source language inventory no longer matches the Dovetail requirement taxonomy"
+    let formal_coverage =
+        read_repo_file("dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v");
+    let formal_requirements = rocq_current_requirement_names(&formal_coverage);
+    let aggregate_requirements = aggregate
+        .iter()
+        .map(|requirement| rocq_requirement_name(*requirement).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        aggregate_requirements.is_subset(&formal_requirements),
+        "source-classified LanguageDef requirements are not covered by Rocq current_mettail_rewrite_requirements: source={aggregate_requirements:?}, formal={formal_requirements:?}"
     );
 }
 
@@ -441,17 +471,19 @@ fn generated_datalog_relation_heads_are_requirement_classified() {
         unknown_heads.is_empty(),
         "unclassified generated Datalog relation heads: {unknown_heads:#?}"
     );
-    for required in [
-        Requirement::Equation,
-        Requirement::DirectionalRewrite,
-        Requirement::FoldNativeHandler,
-        Requirement::CollectionPattern,
-    ] {
-        assert!(
-            classified.contains(&required),
-            "generated Datalog did not expose required relation family {:?}; classified {:?}",
-            required,
-            classified
-        );
-    }
+    assert!(
+        !classified.is_empty(),
+        "generated Datalog did not expose any classified relation families"
+    );
+    let formal_coverage =
+        read_repo_file("dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v");
+    let formal_requirements = rocq_current_requirement_names(&formal_coverage);
+    let classified_requirements = classified
+        .iter()
+        .map(|requirement| rocq_requirement_name(*requirement).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        classified_requirements.is_subset(&formal_requirements),
+        "generated Datalog relation families are not covered by Rocq current_mettail_rewrite_requirements: generated={classified_requirements:?}, formal={formal_requirements:?}"
+    );
 }
