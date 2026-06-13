@@ -17,11 +17,72 @@ use crate::LanguageMetadata;
 /// at runtime.
 pub type SeedFacts = HashMap<String, Vec<Vec<String>>>;
 
+/// Exact observational key for a term in an extracted rewrite graph.
+///
+/// Generated languages populate this from their semantic hash write stream,
+/// not from a fixed-width digest. Legacy/manual result graphs may leave it
+/// absent, in which case traversal falls back to `term_id`.
+pub type ExactTermKey = Vec<u8>;
+
 /// Runtime seed id plus display text and priority weight.
 ///
 /// Lower weights are explored first by weighted prefix traversal. The display
 /// component is diagnostic only; it must not be used as an equivalence key.
 pub type WeightedSeedId = (u64, String, f64);
+
+/// Exact rewrite-graph seed.
+///
+/// `term_id` remains for compatibility and diagnostics. `exact_key`, when
+/// present, is the no-loss reachability key used by normal-form traversal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewriteSeed {
+    pub term_id: u64,
+    pub exact_key: Option<ExactTermKey>,
+    pub display: String,
+}
+
+impl RewriteSeed {
+    pub fn legacy(term_id: u64, display: String) -> Self {
+        Self { term_id, exact_key: None, display }
+    }
+
+    pub fn exact(term_id: u64, exact_key: ExactTermKey, display: String) -> Self {
+        Self {
+            term_id,
+            exact_key: Some(exact_key),
+            display,
+        }
+    }
+}
+
+/// Exact weighted rewrite-graph seed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeightedRewriteSeed {
+    pub term_id: u64,
+    pub exact_key: Option<ExactTermKey>,
+    pub display: String,
+    pub weight: f64,
+}
+
+impl WeightedRewriteSeed {
+    pub fn legacy(term_id: u64, display: String, weight: f64) -> Self {
+        Self {
+            term_id,
+            exact_key: None,
+            display,
+            weight,
+        }
+    }
+
+    pub fn exact(term_id: u64, exact_key: ExactTermKey, display: String, weight: f64) -> Self {
+        Self {
+            term_id,
+            exact_key: Some(exact_key),
+            display,
+            weight,
+        }
+    }
+}
 
 // =============================================================================
 // Type Inference Types
@@ -162,24 +223,43 @@ pub trait Term: fmt::Display + fmt::Debug + Send + Sync {
     /// Get this as Any for downcasting
     fn as_any(&self) -> &dyn Any;
 
-    /// Phase F.12.A (2026-05-20): return the `(term_id, Display)` pairs for
-    /// each single-category derivation this term represents.
+    /// Phase F.12.A (2026-05-20): return the rewrite-graph seeds for each
+    /// single-category derivation this term represents.
     ///
     /// For unambiguous terms this returns exactly one entry whose `term_id`
     /// equals `self.term_id()`. For `Ambiguous` wrappers, each inner alt
-    /// contributes one entry whose `term_id` MUST match the hash recipe
-    /// used to construct the corresponding `TermInfo` in `run_ascent`
-    /// (DefaultHasher applied to the single-category `Inner::Cat(t)`
-    /// variant — this is the load-bearing invariant that lets the
-    /// simulation runner and REPL seed multi-source BFS from the
-    /// post-parse Ambiguous set).
+    /// contributes one entry whose exact key, when present, MUST match the
+    /// corresponding `TermInfo.exact_key` in `run_ascent`.
     ///
-    /// Default impl: returns `vec![(self.term_id(), format!("{}", self))]`,
+    /// Default impl: returns a legacy `term_id` seed,
     /// which is correct for any language that has no `Ambiguous` variant.
     /// Generated `impl Term for <Lang>Term` blocks override this when the
     /// language has cross-category projection.
+    fn rewrite_seeds(&self) -> Vec<RewriteSeed> {
+        vec![RewriteSeed::legacy(self.term_id(), format!("{}", self))]
+    }
+
+    /// Compatibility surface for callers that still carry only a 64-bit graph
+    /// id. New code should prefer `rewrite_seeds` so the exact key survives
+    /// into reachability traversal.
     fn rewrite_seed_ids(&self) -> Vec<(u64, String)> {
-        vec![(self.term_id(), format!("{}", self))]
+        self.rewrite_seeds()
+            .into_iter()
+            .map(|seed| (seed.term_id, seed.display))
+            .collect()
+    }
+
+    /// Weighted variant of `rewrite_seeds`.
+    fn rewrite_weighted_seeds(&self) -> Vec<WeightedRewriteSeed> {
+        self.rewrite_seeds()
+            .into_iter()
+            .map(|seed| WeightedRewriteSeed {
+                term_id: seed.term_id,
+                exact_key: seed.exact_key,
+                display: seed.display,
+                weight: 0.0,
+            })
+            .collect()
     }
 
     /// Weighted variant of `rewrite_seed_ids`.
@@ -188,9 +268,9 @@ pub trait Term: fmt::Display + fmt::Debug + Send + Sync {
     /// exposes neutral weight. Parser surfaces that still have access to
     /// derivation weights should return their own weighted seed list.
     fn rewrite_weighted_seed_ids(&self) -> Vec<WeightedSeedId> {
-        self.rewrite_seed_ids()
+        self.rewrite_weighted_seeds()
             .into_iter()
-            .map(|(id, display)| (id, display, 0.0))
+            .map(|seed| (seed.term_id, seed.display, seed.weight))
             .collect()
     }
 }
@@ -220,8 +300,26 @@ pub trait Language: Send + Sync {
         &self,
         input: &str,
     ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
+        let (term, seeds) = self.parse_term_with_weighted_rewrite_seeds(input)?;
+        Ok((
+            term,
+            seeds
+                .into_iter()
+                .map(|seed| (seed.term_id, seed.display, seed.weight))
+                .collect(),
+        ))
+    }
+
+    /// Parse a term and return exact weighted rewrite seeds for lazy
+    /// evaluation. Generated languages override this to preserve parse/evidence
+    /// weights and exact semantic keys. Legacy implementations inherit exact
+    /// absence and neutral weights from `Term::rewrite_weighted_seeds`.
+    fn parse_term_with_weighted_rewrite_seeds(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedRewriteSeed>), String> {
         let term = self.parse_term(input)?;
-        let seeds = term.rewrite_weighted_seed_ids();
+        let seeds = term.rewrite_weighted_seeds();
         Ok((term, seeds))
     }
 
@@ -388,6 +486,7 @@ pub struct RelationData {
 #[derive(Debug, Clone)]
 pub struct TermInfo {
     pub term_id: u64,
+    pub exact_key: Option<ExactTermKey>,
     pub display: String,
     pub is_normal_form: bool,
 }
@@ -397,6 +496,8 @@ pub struct TermInfo {
 pub struct Rewrite {
     pub from_id: u64,
     pub to_id: u64,
+    pub from_key: Option<ExactTermKey>,
+    pub to_key: Option<ExactTermKey>,
     pub rule_name: Option<String>,
 }
 
@@ -404,6 +505,37 @@ pub struct Rewrite {
 #[derive(Debug, Clone)]
 pub struct EquivClass {
     pub term_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ReachKey {
+    Exact(ExactTermKey),
+    Legacy(u64),
+}
+
+impl TermInfo {
+    fn reach_key(&self) -> ReachKey {
+        self.exact_key
+            .clone()
+            .map(ReachKey::Exact)
+            .unwrap_or(ReachKey::Legacy(self.term_id))
+    }
+}
+
+impl Rewrite {
+    fn from_reach_key(&self) -> ReachKey {
+        self.from_key
+            .clone()
+            .map(ReachKey::Exact)
+            .unwrap_or(ReachKey::Legacy(self.from_id))
+    }
+
+    fn to_reach_key(&self) -> ReachKey {
+        self.to_key
+            .clone()
+            .map(ReachKey::Exact)
+            .unwrap_or(ReachKey::Legacy(self.to_id))
+    }
 }
 
 /// Lazy breadth-first iterator over normal forms reachable from one or more
@@ -416,19 +548,28 @@ pub struct EquivClass {
 /// rewrite relation.
 pub struct ReachableNormalForms<'a> {
     results: &'a AscentResults,
-    queue: VecDeque<u64>,
-    visited: HashSet<u64>,
-    term_index: Option<HashMap<u64, usize>>,
-    rewrites_by_from: Option<HashMap<u64, Vec<u64>>>,
+    queue: VecDeque<ReachKey>,
+    visited: HashSet<ReachKey>,
+    term_index: Option<HashMap<ReachKey, usize>>,
+    rewrites_by_from: Option<HashMap<ReachKey, Vec<ReachKey>>>,
 }
 
 impl<'a> ReachableNormalForms<'a> {
     fn new(results: &'a AscentResults, seed_ids: &[u64]) -> Self {
+        let seeds: Vec<RewriteSeed> = seed_ids
+            .iter()
+            .flat_map(|&id| results.rewrite_seeds_for_legacy_id(id))
+            .collect();
+        Self::new_exact(results, &seeds)
+    }
+
+    fn new_exact(results: &'a AscentResults, seeds: &[RewriteSeed]) -> Self {
         let mut queue = VecDeque::new();
         let mut visited = HashSet::new();
-        for &id in seed_ids {
-            if visited.insert(id) {
-                queue.push_back(id);
+        for seed in seeds {
+            let key = results.seed_reach_key(seed);
+            if visited.insert(key.clone()) {
+                queue.push_back(key);
             }
         }
         Self {
@@ -440,11 +581,11 @@ impl<'a> ReachableNormalForms<'a> {
         }
     }
 
-    fn term_info(&self, id: u64) -> Option<&'a TermInfo> {
+    fn term_info(&self, key: &ReachKey) -> Option<&'a TermInfo> {
         if let Some(index) = &self.term_index {
-            return index.get(&id).map(|&idx| &self.results.all_terms[idx]);
+            return index.get(key).map(|&idx| &self.results.all_terms[idx]);
         }
-        self.results.all_terms.iter().find(|t| t.term_id == id)
+        self.results.term_info_by_reach_key(key)
     }
 
     fn ensure_expansion_indexes(&mut self) {
@@ -454,17 +595,17 @@ impl<'a> ReachableNormalForms<'a> {
                     .all_terms
                     .iter()
                     .enumerate()
-                    .map(|(idx, term)| (term.term_id, idx))
+                    .map(|(idx, term)| (term.reach_key(), idx))
                     .collect(),
             );
         }
         if self.rewrites_by_from.is_none() {
-            let mut rewrites_by_from: HashMap<u64, Vec<u64>> = HashMap::new();
+            let mut rewrites_by_from: HashMap<ReachKey, Vec<ReachKey>> = HashMap::new();
             for rewrite in &self.results.rewrites {
                 rewrites_by_from
-                    .entry(rewrite.from_id)
+                    .entry(rewrite.from_reach_key())
                     .or_default()
-                    .push(rewrite.to_id);
+                    .push(rewrite.to_reach_key());
             }
             self.rewrites_by_from = Some(rewrites_by_from);
         }
@@ -475,8 +616,8 @@ impl<'a> Iterator for ReachableNormalForms<'a> {
     type Item = &'a TermInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(id) = self.queue.pop_front() {
-            let info = match self.term_info(id) {
+        while let Some(key) = self.queue.pop_front() {
+            let info = match self.term_info(&key) {
                 Some(info) => info,
                 None => continue,
             };
@@ -488,12 +629,12 @@ impl<'a> Iterator for ReachableNormalForms<'a> {
             let next_ids = self
                 .rewrites_by_from
                 .as_ref()
-                .and_then(|index| index.get(&id))
+                .and_then(|index| index.get(&key))
                 .cloned()
                 .unwrap_or_default();
-            for to_id in next_ids {
-                if self.visited.insert(to_id) {
-                    self.queue.push_back(to_id);
+            for to_key in next_ids {
+                if self.visited.insert(to_key.clone()) {
+                    self.queue.push_back(to_key);
                 }
             }
         }
@@ -503,14 +644,14 @@ impl<'a> Iterator for ReachableNormalForms<'a> {
 
 #[derive(Debug, Clone, Copy)]
 struct WeightedQueueEntry {
-    term_id: u64,
+    key_index: usize,
     weight: f64,
     sequence: usize,
 }
 
 impl PartialEq for WeightedQueueEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.term_id == other.term_id
+        self.key_index == other.key_index
             && self.weight.total_cmp(&other.weight) == Ordering::Equal
             && self.sequence == other.sequence
     }
@@ -532,7 +673,7 @@ impl Ord for WeightedQueueEntry {
             .weight
             .total_cmp(&self.weight)
             .then_with(|| other.sequence.cmp(&self.sequence))
-            .then_with(|| other.term_id.cmp(&self.term_id))
+            .then_with(|| other.key_index.cmp(&self.key_index))
     }
 }
 
@@ -545,23 +686,44 @@ impl Ord for WeightedQueueEntry {
 pub struct WeightedReachableNormalForms<'a> {
     results: &'a AscentResults,
     queue: BinaryHeap<WeightedQueueEntry>,
-    visited: HashSet<u64>,
-    term_index: Option<HashMap<u64, usize>>,
-    rewrites_by_from: Option<HashMap<u64, Vec<u64>>>,
+    keys: Vec<ReachKey>,
+    key_index: HashMap<ReachKey, usize>,
+    visited: HashSet<ReachKey>,
+    term_index: Option<HashMap<ReachKey, usize>>,
+    rewrites_by_from: Option<HashMap<ReachKey, Vec<ReachKey>>>,
     next_sequence: usize,
 }
 
 impl<'a> WeightedReachableNormalForms<'a> {
     fn new(results: &'a AscentResults, weighted_seed_ids: &[(u64, f64)]) -> Self {
-        let mut best_by_id: HashMap<u64, (f64, usize)> = HashMap::new();
-        for (sequence, &(term_id, weight)) in weighted_seed_ids.iter().enumerate() {
+        let seeds: Vec<WeightedRewriteSeed> = weighted_seed_ids
+            .iter()
+            .flat_map(|&(id, weight)| {
+                results
+                    .rewrite_seeds_for_legacy_id(id)
+                    .into_iter()
+                    .map(move |seed| WeightedRewriteSeed {
+                        term_id: seed.term_id,
+                        exact_key: seed.exact_key,
+                        display: seed.display,
+                        weight,
+                    })
+            })
+            .collect();
+        Self::new_exact(results, &seeds)
+    }
+
+    fn new_exact(results: &'a AscentResults, weighted_seeds: &[WeightedRewriteSeed]) -> Self {
+        let mut best_by_key: HashMap<ReachKey, (f64, usize)> = HashMap::new();
+        for (sequence, seed) in weighted_seeds.iter().enumerate() {
+            let weight = seed.weight;
             let weight = if weight.is_nan() {
                 f64::INFINITY
             } else {
                 weight
             };
-            best_by_id
-                .entry(term_id)
+            best_by_key
+                .entry(results.weighted_seed_reach_key(seed))
                 .and_modify(|best| {
                     if weight.total_cmp(&best.0) == Ordering::Less
                         || (weight.total_cmp(&best.0) == Ordering::Equal && sequence < best.1)
@@ -573,17 +735,24 @@ impl<'a> WeightedReachableNormalForms<'a> {
         }
 
         let mut queue = BinaryHeap::new();
+        let mut keys = Vec::with_capacity(best_by_key.len());
+        let mut key_index = HashMap::with_capacity(best_by_key.len());
         let mut visited = HashSet::new();
-        let mut next_sequence = weighted_seed_ids.len();
-        for (term_id, (weight, sequence)) in best_by_id {
-            visited.insert(term_id);
+        let mut next_sequence = weighted_seeds.len();
+        for (key, (weight, sequence)) in best_by_key {
+            let idx = keys.len();
+            key_index.insert(key.clone(), idx);
+            keys.push(key.clone());
+            visited.insert(key);
             next_sequence = next_sequence.max(sequence.saturating_add(1));
-            queue.push(WeightedQueueEntry { term_id, weight, sequence });
+            queue.push(WeightedQueueEntry { key_index: idx, weight, sequence });
         }
 
         Self {
             results,
             queue,
+            keys,
+            key_index,
             visited,
             term_index: None,
             rewrites_by_from: None,
@@ -591,11 +760,21 @@ impl<'a> WeightedReachableNormalForms<'a> {
         }
     }
 
-    fn term_info(&self, id: u64) -> Option<&'a TermInfo> {
-        if let Some(index) = &self.term_index {
-            return index.get(&id).map(|&idx| &self.results.all_terms[idx]);
+    fn key_index_for(&mut self, key: ReachKey) -> usize {
+        if let Some(&idx) = self.key_index.get(&key) {
+            return idx;
         }
-        self.results.all_terms.iter().find(|t| t.term_id == id)
+        let idx = self.keys.len();
+        self.keys.push(key.clone());
+        self.key_index.insert(key, idx);
+        idx
+    }
+
+    fn term_info(&self, key: &ReachKey) -> Option<&'a TermInfo> {
+        if let Some(index) = &self.term_index {
+            return index.get(key).map(|&idx| &self.results.all_terms[idx]);
+        }
+        self.results.term_info_by_reach_key(key)
     }
 
     fn ensure_expansion_indexes(&mut self) {
@@ -605,17 +784,17 @@ impl<'a> WeightedReachableNormalForms<'a> {
                     .all_terms
                     .iter()
                     .enumerate()
-                    .map(|(idx, term)| (term.term_id, idx))
+                    .map(|(idx, term)| (term.reach_key(), idx))
                     .collect(),
             );
         }
         if self.rewrites_by_from.is_none() {
-            let mut rewrites_by_from: HashMap<u64, Vec<u64>> = HashMap::new();
+            let mut rewrites_by_from: HashMap<ReachKey, Vec<ReachKey>> = HashMap::new();
             for rewrite in &self.results.rewrites {
                 rewrites_by_from
-                    .entry(rewrite.from_id)
+                    .entry(rewrite.from_reach_key())
                     .or_default()
-                    .push(rewrite.to_id);
+                    .push(rewrite.to_reach_key());
             }
             self.rewrites_by_from = Some(rewrites_by_from);
         }
@@ -627,7 +806,11 @@ impl<'a> Iterator for WeightedReachableNormalForms<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(entry) = self.queue.pop() {
-            let info = match self.term_info(entry.term_id) {
+            let key = match self.keys.get(entry.key_index) {
+                Some(key) => key.clone(),
+                None => continue,
+            };
+            let info = match self.term_info(&key) {
                 Some(info) => info,
                 None => continue,
             };
@@ -639,15 +822,16 @@ impl<'a> Iterator for WeightedReachableNormalForms<'a> {
             let next_ids = self
                 .rewrites_by_from
                 .as_ref()
-                .and_then(|index| index.get(&entry.term_id))
+                .and_then(|index| index.get(&key))
                 .cloned()
                 .unwrap_or_default();
-            for to_id in next_ids {
-                if self.visited.insert(to_id) {
+            for to_key in next_ids {
+                if self.visited.insert(to_key.clone()) {
                     let sequence = self.next_sequence;
                     self.next_sequence = self.next_sequence.saturating_add(1);
+                    let key_index = self.key_index_for(to_key);
                     self.queue.push(WeightedQueueEntry {
-                        term_id: to_id,
+                        key_index,
                         weight: entry.weight,
                         sequence,
                     });
@@ -674,6 +858,7 @@ impl AscentResults {
         Self {
             all_terms: vec![TermInfo {
                 term_id: term.term_id(),
+                exact_key: None,
                 display: format!("{}", term),
                 is_normal_form: true,
             }],
@@ -681,6 +866,50 @@ impl AscentResults {
             equivalences: Vec::new(),
             custom_relations: std::collections::HashMap::new(),
         }
+    }
+
+    fn term_info_by_reach_key(&self, key: &ReachKey) -> Option<&TermInfo> {
+        match key {
+            ReachKey::Exact(exact) => self
+                .all_terms
+                .iter()
+                .find(|term| term.exact_key.as_ref() == Some(exact)),
+            ReachKey::Legacy(id) => self.all_terms.iter().find(|term| term.term_id == *id),
+        }
+    }
+
+    fn seed_reach_key(&self, seed: &RewriteSeed) -> ReachKey {
+        seed.exact_key
+            .clone()
+            .map(ReachKey::Exact)
+            .unwrap_or_else(|| ReachKey::Legacy(seed.term_id))
+    }
+
+    fn weighted_seed_reach_key(&self, seed: &WeightedRewriteSeed) -> ReachKey {
+        seed.exact_key
+            .clone()
+            .map(ReachKey::Exact)
+            .unwrap_or_else(|| ReachKey::Legacy(seed.term_id))
+    }
+
+    fn rewrite_seeds_for_legacy_id(&self, id: u64) -> Vec<RewriteSeed> {
+        let mut seeds = Vec::new();
+        let mut seen = HashSet::new();
+        for term in self.all_terms.iter().filter(|term| term.term_id == id) {
+            let seed = RewriteSeed {
+                term_id: term.term_id,
+                exact_key: term.exact_key.clone(),
+                display: term.display.clone(),
+            };
+            let key = self.seed_reach_key(&seed);
+            if seen.insert(key) {
+                seeds.push(seed);
+            }
+        }
+        if seeds.is_empty() {
+            seeds.push(RewriteSeed::legacy(id, String::new()));
+        }
+        seeds
     }
 
     /// Lazily iterate normal forms (terms with no outgoing rewrites).
@@ -728,9 +957,31 @@ impl AscentResults {
         ReachableNormalForms::new(self, seed_ids)
     }
 
+    /// Exact multi-source normal-form traversal.
+    ///
+    /// Prefer this over `normal_forms_reachable_from_seeds_iter` when the
+    /// caller has parser/generated exact semantic keys. This is the
+    /// no-loss surface: traversal identity is the exact key, falling back to
+    /// `term_id` only for legacy seeds.
+    pub fn normal_forms_reachable_from_rewrite_seeds_iter<'a>(
+        &'a self,
+        seeds: &[RewriteSeed],
+    ) -> ReachableNormalForms<'a> {
+        ReachableNormalForms::new_exact(self, seeds)
+    }
+
     /// Collect all normal forms reachable from the given seeds.
     pub fn normal_forms_reachable_from_seeds(&self, seed_ids: &[u64]) -> Vec<&TermInfo> {
         self.normal_forms_reachable_from_seeds_iter(seed_ids)
+            .collect()
+    }
+
+    /// Collect all normal forms reachable from exact rewrite seeds.
+    pub fn normal_forms_reachable_from_rewrite_seeds(
+        &self,
+        seeds: &[RewriteSeed],
+    ) -> Vec<&TermInfo> {
+        self.normal_forms_reachable_from_rewrite_seeds_iter(seeds)
             .collect()
     }
 
@@ -740,6 +991,16 @@ impl AscentResults {
     /// deliberately does not choose by display length or any other heuristic.
     pub fn normal_form_reachable_from_seeds(&self, seed_ids: &[u64]) -> Option<&TermInfo> {
         self.normal_forms_reachable_from_seeds_iter(seed_ids).next()
+    }
+
+    /// Compatibility helper for callers that explicitly want one exact-seeded
+    /// witness.
+    pub fn normal_form_reachable_from_rewrite_seeds(
+        &self,
+        seeds: &[RewriteSeed],
+    ) -> Option<&TermInfo> {
+        self.normal_forms_reachable_from_rewrite_seeds_iter(seeds)
+            .next()
     }
 
     /// Multi-source normal-form traversal ordered by seed weight.
@@ -755,6 +1016,14 @@ impl AscentResults {
         WeightedReachableNormalForms::new(self, weighted_seed_ids)
     }
 
+    /// Exact weighted normal-form traversal.
+    pub fn normal_forms_reachable_from_weighted_rewrite_seeds_iter<'a>(
+        &'a self,
+        weighted_seeds: &[WeightedRewriteSeed],
+    ) -> WeightedReachableNormalForms<'a> {
+        WeightedReachableNormalForms::new_exact(self, weighted_seeds)
+    }
+
     /// Collect all normal forms reachable from weighted seeds.
     pub fn normal_forms_reachable_from_weighted_seeds(
         &self,
@@ -764,12 +1033,30 @@ impl AscentResults {
             .collect()
     }
 
+    /// Collect all normal forms reachable from exact weighted seeds.
+    pub fn normal_forms_reachable_from_weighted_rewrite_seeds(
+        &self,
+        weighted_seeds: &[WeightedRewriteSeed],
+    ) -> Vec<&TermInfo> {
+        self.normal_forms_reachable_from_weighted_rewrite_seeds_iter(weighted_seeds)
+            .collect()
+    }
+
     /// Return the first normal form from the lazy weighted traversal.
     pub fn normal_form_reachable_from_weighted_seeds(
         &self,
         weighted_seed_ids: &[(u64, f64)],
     ) -> Option<&TermInfo> {
         self.normal_forms_reachable_from_weighted_seeds_iter(weighted_seed_ids)
+            .next()
+    }
+
+    /// Return the first normal form from the exact lazy weighted traversal.
+    pub fn normal_form_reachable_from_weighted_rewrite_seeds(
+        &self,
+        weighted_seeds: &[WeightedRewriteSeed],
+    ) -> Option<&TermInfo> {
+        self.normal_forms_reachable_from_weighted_rewrite_seeds_iter(weighted_seeds)
             .next()
     }
 
@@ -790,16 +1077,19 @@ mod tests {
             all_terms: vec![
                 TermInfo {
                     term_id: 1,
+                    exact_key: None,
                     display: "start".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 2,
+                    exact_key: None,
                     display: "mid".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 3,
+                    exact_key: None,
                     display: "done".to_string(),
                     is_normal_form: true,
                 },
@@ -808,11 +1098,15 @@ mod tests {
                 Rewrite {
                     from_id: 1,
                     to_id: 2,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("step1".to_string()),
                 },
                 Rewrite {
                     from_id: 2,
                     to_id: 3,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("step2".to_string()),
                 },
             ],
@@ -872,21 +1166,25 @@ mod tests {
             all_terms: vec![
                 TermInfo {
                     term_id: 1,
+                    exact_key: None,
                     display: "first_seed".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 2,
+                    exact_key: None,
                     display: "second_seed".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 10,
+                    exact_key: None,
                     display: "longer-but-first".to_string(),
                     is_normal_form: true,
                 },
                 TermInfo {
                     term_id: 20,
+                    exact_key: None,
                     display: "a".to_string(),
                     is_normal_form: true,
                 },
@@ -895,11 +1193,15 @@ mod tests {
                 Rewrite {
                     from_id: 1,
                     to_id: 10,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("left".to_string()),
                 },
                 Rewrite {
                     from_id: 2,
                     to_id: 20,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("right".to_string()),
                 },
             ],
@@ -929,21 +1231,25 @@ mod tests {
             all_terms: vec![
                 TermInfo {
                     term_id: 1,
+                    exact_key: None,
                     display: "higher_weight_seed".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 2,
+                    exact_key: None,
                     display: "lower_weight_seed".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 10,
+                    exact_key: None,
                     display: "higher_weight_result".to_string(),
                     is_normal_form: true,
                 },
                 TermInfo {
                     term_id: 20,
+                    exact_key: None,
                     display: "lower_weight_result".to_string(),
                     is_normal_form: true,
                 },
@@ -952,11 +1258,15 @@ mod tests {
                 Rewrite {
                     from_id: 1,
                     to_id: 10,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("high".to_string()),
                 },
                 Rewrite {
                     from_id: 2,
                     to_id: 20,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("low".to_string()),
                 },
             ],
@@ -983,21 +1293,25 @@ mod tests {
             all_terms: vec![
                 TermInfo {
                     term_id: 1,
+                    exact_key: None,
                     display: "first_seed".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 2,
+                    exact_key: None,
                     display: "second_seed".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 10,
+                    exact_key: None,
                     display: "first_result".to_string(),
                     is_normal_form: true,
                 },
                 TermInfo {
                     term_id: 20,
+                    exact_key: None,
                     display: "second_result".to_string(),
                     is_normal_form: true,
                 },
@@ -1006,11 +1320,15 @@ mod tests {
                 Rewrite {
                     from_id: 1,
                     to_id: 10,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("first".to_string()),
                 },
                 Rewrite {
                     from_id: 2,
                     to_id: 20,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("second".to_string()),
                 },
             ],
@@ -1024,5 +1342,138 @@ mod tests {
             .map(|term| term.display.as_str())
             .collect();
         assert_eq!(all, vec!["first_result", "second_result"]);
+    }
+
+    #[test]
+    fn reachable_normal_forms_use_exact_keys_despite_term_id_collision() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 7,
+                    exact_key: Some(vec![0]),
+                    display: "left_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 7,
+                    exact_key: Some(vec![1]),
+                    display: "right_seed_same_u64".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 11,
+                    exact_key: Some(vec![10]),
+                    display: "left_nf".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 11,
+                    exact_key: Some(vec![20]),
+                    display: "right_nf_same_u64".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 7,
+                    to_id: 11,
+                    from_key: Some(vec![0]),
+                    to_key: Some(vec![10]),
+                    rule_name: Some("left".to_string()),
+                },
+                Rewrite {
+                    from_id: 7,
+                    to_id: 11,
+                    from_key: Some(vec![1]),
+                    to_key: Some(vec![20]),
+                    rule_name: Some("right".to_string()),
+                },
+            ],
+            equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let exact_seeds = vec![
+            RewriteSeed::exact(7, vec![0], "left_seed".to_string()),
+            RewriteSeed::exact(7, vec![1], "right_seed_same_u64".to_string()),
+        ];
+        let exact: Vec<_> = results
+            .normal_forms_reachable_from_rewrite_seeds(&exact_seeds)
+            .into_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(exact, vec!["left_nf", "right_nf_same_u64"]);
+
+        let legacy: Vec<_> = results
+            .normal_forms_reachable_from_seeds(&[7])
+            .into_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(
+            legacy,
+            vec!["left_nf", "right_nf_same_u64"],
+            "legacy seed ids must expand colliding ids rather than dropping a candidate"
+        );
+    }
+
+    #[test]
+    fn weighted_reachable_normal_forms_use_exact_keys_despite_term_id_collision() {
+        let results = AscentResults {
+            all_terms: vec![
+                TermInfo {
+                    term_id: 7,
+                    exact_key: Some(vec![0]),
+                    display: "slow_seed".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 7,
+                    exact_key: Some(vec![1]),
+                    display: "fast_seed_same_u64".to_string(),
+                    is_normal_form: false,
+                },
+                TermInfo {
+                    term_id: 11,
+                    exact_key: Some(vec![10]),
+                    display: "slow_nf".to_string(),
+                    is_normal_form: true,
+                },
+                TermInfo {
+                    term_id: 11,
+                    exact_key: Some(vec![20]),
+                    display: "fast_nf_same_u64".to_string(),
+                    is_normal_form: true,
+                },
+            ],
+            rewrites: vec![
+                Rewrite {
+                    from_id: 7,
+                    to_id: 11,
+                    from_key: Some(vec![0]),
+                    to_key: Some(vec![10]),
+                    rule_name: Some("slow".to_string()),
+                },
+                Rewrite {
+                    from_id: 7,
+                    to_id: 11,
+                    from_key: Some(vec![1]),
+                    to_key: Some(vec![20]),
+                    rule_name: Some("fast".to_string()),
+                },
+            ],
+            equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
+        };
+
+        let exact_seeds = vec![
+            WeightedRewriteSeed::exact(7, vec![0], "slow_seed".to_string(), 5.0),
+            WeightedRewriteSeed::exact(7, vec![1], "fast_seed_same_u64".to_string(), 1.0),
+        ];
+        let exact: Vec<_> = results
+            .normal_forms_reachable_from_weighted_rewrite_seeds(&exact_seeds)
+            .into_iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(exact, vec!["fast_nf_same_u64", "slow_nf"]);
     }
 }

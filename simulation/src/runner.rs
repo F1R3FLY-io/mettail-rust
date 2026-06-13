@@ -335,9 +335,9 @@ impl<'a> SimulationRunner<'a> {
         // would find no rewrites_from(wrapper_id), drain the queue,
         // and fall through to a non-deterministic `nfs.first()`.
         //
-        // Fix: seed the BFS from EACH alt's term_id via the
-        // `Term::rewrite_seed_ids()` trait method. For unambiguous
-        // inputs the default trait impl returns `[(self.term_id(), display)]`,
+        // Fix: seed the BFS from EACH alt via the exact `Term::rewrite_seeds()`
+        // trait method. For unambiguous inputs the default trait impl returns
+        // one legacy seed,
         // preserving the prior single-source behavior. For Ambiguous
         // wrappers, each alt contributes its own search frontier; we
         // pick the canonically-shortest NF across all reachable NFs.
@@ -346,32 +346,72 @@ impl<'a> SimulationRunner<'a> {
         //   1. `display.len()` — shorter wins ("0" beats "-0").
         //   2. `display` itself — lex-smallest as tie-break.
         //   3. seed index — declaration-order tie-break (deterministic).
-        let seeds = term.rewrite_seed_ids();
+        let seeds = term.rewrite_seeds();
+
+        #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+        enum SimReachKey {
+            Exact(Vec<u8>),
+            Legacy(u64),
+        }
+
+        let seed_key = |seed: &mettail_runtime::RewriteSeed| {
+            seed.exact_key
+                .clone()
+                .map(SimReachKey::Exact)
+                .unwrap_or(SimReachKey::Legacy(seed.term_id))
+        };
+        let term_key = |info: &mettail_runtime::TermInfo| {
+            info.exact_key
+                .clone()
+                .map(SimReachKey::Exact)
+                .unwrap_or(SimReachKey::Legacy(info.term_id))
+        };
+        let rewrite_from_key = |rw: &mettail_runtime::Rewrite| {
+            rw.from_key
+                .clone()
+                .map(SimReachKey::Exact)
+                .unwrap_or(SimReachKey::Legacy(rw.from_id))
+        };
+        let rewrite_to_key = |rw: &mettail_runtime::Rewrite| {
+            rw.to_key
+                .clone()
+                .map(SimReachKey::Exact)
+                .unwrap_or(SimReachKey::Legacy(rw.to_id))
+        };
 
         // Per-seed BFS, collecting (seed_idx, nf_term_id, path).
         let mut candidates: Vec<(usize, u64, Vec<u64>)> = Vec::new();
-        for (seed_idx, (seed_id, _seed_disp)) in seeds.iter().enumerate() {
+        for (seed_idx, seed) in seeds.iter().enumerate() {
             let mut visited = std::collections::HashSet::new();
             let mut queue = std::collections::VecDeque::new();
-            queue.push_back((*seed_id, Vec::<u64>::new()));
-            visited.insert(*seed_id);
-            while let Some((current_id, path)) = queue.pop_front() {
-                if let Some(info) = results.all_terms.iter().find(|t| t.term_id == current_id) {
-                    if info.is_normal_form {
-                        let mut full_path = path;
-                        full_path.push(current_id);
-                        candidates.push((seed_idx, current_id, full_path));
-                        break;
-                    }
+            let start_key = seed_key(seed);
+            queue.push_back((start_key.clone(), Vec::<u64>::new()));
+            visited.insert(start_key);
+            while let Some((current_key, path)) = queue.pop_front() {
+                let info = results
+                    .all_terms
+                    .iter()
+                    .find(|t| term_key(t) == current_key);
+                let current_id = info.map(|i| i.term_id).unwrap_or(seed.term_id);
+                if info.is_some_and(|i| i.is_normal_form) {
+                    let mut full_path = path;
+                    full_path.push(current_id);
+                    candidates.push((seed_idx, current_id, full_path));
+                    break;
                 }
                 if path.len() >= self.config.max_steps {
                     continue;
                 }
-                for rw in results.rewrites_from(current_id) {
-                    if visited.insert(rw.to_id) {
+                for rw in results
+                    .rewrites
+                    .iter()
+                    .filter(|rw| rewrite_from_key(rw) == current_key)
+                {
+                    let to_key = rewrite_to_key(rw);
+                    if visited.insert(to_key.clone()) {
                         let mut new_path = path.clone();
                         new_path.push(current_id);
-                        queue.push_back((rw.to_id, new_path));
+                        queue.push_back((to_key, new_path));
                     }
                 }
             }

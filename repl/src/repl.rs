@@ -1192,17 +1192,13 @@ impl Repl {
             // Phase F.12.A (2026-05-20): when the parsed term is an
             // `Ambiguous` wrapper, `initial_id` (the wrapper hash) is
             // structurally absent from `results.all_terms`. Use the
-            // multi-source helper which seeds from each `rewrite_seed_ids()`
+            // multi-source helper which seeds from each exact `rewrite_seeds()`
             // alt and preserves every reachable NF. For unambiguous inputs the default trait
-            // impl returns `[(initial_id, display)]` and behavior is
+            // impl returns one legacy seed and behavior is
             // identical to the prior single-source call.
-            let seed_ids: Vec<u64> = term
-                .rewrite_seed_ids()
-                .into_iter()
-                .map(|(id, _)| id)
-                .collect();
+            let seeds = term.rewrite_seeds();
             let reachable_nfs: Vec<(u64, String)> = results
-                .normal_forms_reachable_from_seeds(&seed_ids)
+                .normal_forms_reachable_from_rewrite_seeds(&seeds)
                 .into_iter()
                 .map(|nf| (nf.term_id, nf.display.clone()))
                 .collect();

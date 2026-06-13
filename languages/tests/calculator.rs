@@ -840,7 +840,7 @@ fn test_factorial_ambiguous_language_seeds_all_alternatives_for_ascent() {
         "expected at least the atomic-negative and prefix-negative alternatives"
     );
 
-    let seeds = term.rewrite_seed_ids();
+    let seeds = term.rewrite_seeds();
     assert!(
         seeds.len() <= alt_count,
         "rewrite seeds should be a semantic quotient of parse alternatives; seeds={:?}, alt_count={}",
@@ -853,22 +853,41 @@ fn test_factorial_ambiguous_language_seeds_all_alternatives_for_ascent() {
         seeds
     );
 
-    let unique_seed_ids: std::collections::HashSet<u64> =
-        seeds.iter().map(|(seed_id, _)| *seed_id).collect();
+    let unique_seed_keys: std::collections::HashSet<Vec<u8>> = seeds
+        .iter()
+        .map(|seed| {
+            seed.exact_key
+                .clone()
+                .unwrap_or_else(|| seed.term_id.to_be_bytes().to_vec())
+        })
+        .collect();
     assert_eq!(
-        unique_seed_ids.len(),
+        unique_seed_keys.len(),
         seeds.len(),
-        "ambiguous alternatives should not collapse to the same rewrite seed id: {:?}",
+        "ambiguous alternatives should not collapse to the same exact rewrite seed key: {:?}",
         seeds
     );
 
     let results = lang.run_ascent(&term).expect("run_ascent should succeed");
-    let result_ids: std::collections::HashSet<u64> =
-        results.all_terms.iter().map(|info| info.term_id).collect();
-    for (seed_id, display) in seeds {
+    let result_keys: std::collections::HashSet<Vec<u8>> = results
+        .all_terms
+        .iter()
+        .map(|info| {
+            info.exact_key
+                .clone()
+                .unwrap_or_else(|| info.term_id.to_be_bytes().to_vec())
+        })
+        .collect();
+    for seed in seeds {
+        let key = seed
+            .exact_key
+            .clone()
+            .unwrap_or_else(|| seed.term_id.to_be_bytes().to_vec());
         assert!(
-            result_ids.contains(&seed_id),
-            "Ascent result graph did not contain seed {seed_id} for alternative {display:?}"
+            result_keys.contains(&key),
+            "Ascent result graph did not contain seed {:?} for alternative {:?}",
+            seed.term_id,
+            seed.display
         );
     }
 }
@@ -885,6 +904,7 @@ fn weighted_parse_evidence_orders_evaluation_prefix() {
         .downcast_ref::<calc::CalculatorTerm>()
         .expect("calculator term");
     let plain_seeds = calc_term.rewrite_seed_ids();
+    let exact_plain_seeds = calc_term.rewrite_seeds();
     let weighted_ids_and_displays: Vec<_> = weighted_seeds
         .iter()
         .map(|(id, display, _)| (*id, display.clone()))
@@ -893,6 +913,21 @@ fn weighted_parse_evidence_orders_evaluation_prefix() {
     assert_eq!(
         weighted_ids_and_displays, plain_seeds,
         "weighted parse seeds must use the same extraction quotient as rewrite_seed_ids",
+    );
+    let (_exact_term, exact_weighted_seeds) = lang
+        .parse_term_with_weighted_rewrite_seeds("-3!")
+        .expect("exact weighted parse should succeed");
+    let exact_weighted_keys_and_displays: Vec<_> = exact_weighted_seeds
+        .iter()
+        .map(|seed| (seed.exact_key.clone(), seed.display.clone()))
+        .collect();
+    let exact_plain_keys_and_displays: Vec<_> = exact_plain_seeds
+        .iter()
+        .map(|seed| (seed.exact_key.clone(), seed.display.clone()))
+        .collect();
+    assert_eq!(
+        exact_weighted_keys_and_displays, exact_plain_keys_and_displays,
+        "exact weighted parse seeds must use the same extraction quotient as rewrite_seeds",
     );
     assert!(
         weighted_seeds.len() >= 2,

@@ -530,16 +530,19 @@ mod tests {
             all_terms: vec![
                 TermInfo {
                     term_id: 1,
+                    exact_key: None,
                     display: "(AddInt 3 5)".to_string(),
                     is_normal_form: false,
                 },
                 TermInfo {
                     term_id: 2,
+                    exact_key: None,
                     display: "8".to_string(),
                     is_normal_form: true,
                 },
                 TermInfo {
                     term_id: 3,
+                    exact_key: None,
                     display: "(SubInt 10 2)".to_string(),
                     is_normal_form: false,
                 },
@@ -548,14 +551,24 @@ mod tests {
                 Rewrite {
                     from_id: 1,
                     to_id: 2,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("fold_AddInt".to_string()),
                 },
                 Rewrite {
                     from_id: 3,
                     to_id: 2,
+                    from_key: None,
+                    to_key: None,
                     rule_name: Some("fold_SubInt".to_string()),
                 },
-                Rewrite { from_id: 1, to_id: 3, rule_name: None },
+                Rewrite {
+                    from_id: 1,
+                    to_id: 3,
+                    from_key: None,
+                    to_key: None,
+                    rule_name: None,
+                },
             ],
             equivalences: vec![],
             custom_relations: std::collections::HashMap::new(),

@@ -941,7 +941,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             /// `AscentResults.all_terms`, so the seed list must dedup the same
             /// way instead of emitting dangling seed ids for raw parser alts
             /// that were intentionally quotient-merged.
-            fn rewrite_seed_ids(&self) -> Vec<(u64, std::string::String)> {
+            fn rewrite_seeds(&self) -> Vec<mettail_runtime::RewriteSeed> {
                 use std::collections::hash_map::DefaultHasher;
                 use std::collections::HashSet;
                 use std::hash::{Hash, Hasher};
@@ -955,7 +955,11 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                         }
                         let mut h = DefaultHasher::new();
                         alt.hash(&mut h);
-                        Some((h.finish(), format!("{}", alt)))
+                        Some(mettail_runtime::RewriteSeed::exact(
+                            h.finish(),
+                            alt.extraction_semantic_fingerprint(),
+                            format!("{}", alt),
+                        ))
                     })
                     .collect()
             }
@@ -1313,6 +1317,91 @@ fn generate_language_struct(
                     }
                 }
 
+                #[derive(Default)]
+                struct __MettailFramedExactKeyHasher {
+                    bytes: Vec<u8>,
+                }
+
+                impl __MettailFramedExactKeyHasher {
+                    fn into_key(self) -> Vec<u8> {
+                        self.bytes
+                    }
+
+                    fn push_raw(&mut self, tag: u8, payload: &[u8]) {
+                        self.bytes.push(tag);
+                        self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+                        self.bytes.extend_from_slice(payload);
+                    }
+
+                    fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
+                        self.bytes.push(tag);
+                        self.bytes.extend_from_slice(payload);
+                    }
+                }
+
+                impl std::hash::Hasher for __MettailFramedExactKeyHasher {
+                    fn finish(&self) -> u64 {
+                        let mut h = 0xcbf29ce484222325u64;
+                        for b in &self.bytes {
+                            h ^= *b as u64;
+                            h = h.wrapping_mul(0x100000001b3);
+                        }
+                        h
+                    }
+
+                    fn write(&mut self, bytes: &[u8]) {
+                        self.push_raw(0, bytes);
+                    }
+
+                    fn write_u8(&mut self, i: u8) {
+                        self.push_fixed(1, &[i]);
+                    }
+
+                    fn write_u16(&mut self, i: u16) {
+                        self.push_fixed(2, &i.to_le_bytes());
+                    }
+
+                    fn write_u32(&mut self, i: u32) {
+                        self.push_fixed(3, &i.to_le_bytes());
+                    }
+
+                    fn write_u64(&mut self, i: u64) {
+                        self.push_fixed(4, &i.to_le_bytes());
+                    }
+
+                    fn write_u128(&mut self, i: u128) {
+                        self.push_fixed(5, &i.to_le_bytes());
+                    }
+
+                    fn write_usize(&mut self, i: usize) {
+                        self.push_fixed(6, &(i as u128).to_le_bytes());
+                    }
+
+                    fn write_i8(&mut self, i: i8) {
+                        self.push_fixed(7, &i.to_le_bytes());
+                    }
+
+                    fn write_i16(&mut self, i: i16) {
+                        self.push_fixed(8, &i.to_le_bytes());
+                    }
+
+                    fn write_i32(&mut self, i: i32) {
+                        self.push_fixed(9, &i.to_le_bytes());
+                    }
+
+                    fn write_i64(&mut self, i: i64) {
+                        self.push_fixed(10, &i.to_le_bytes());
+                    }
+
+                    fn write_i128(&mut self, i: i128) {
+                        self.push_fixed(11, &i.to_le_bytes());
+                    }
+
+                    fn write_isize(&mut self, i: isize) {
+                        self.push_fixed(12, &(i as i128).to_le_bytes());
+                    }
+                }
+
                 // Extract results
                 let all_terms: Vec<#primary_type> = prog.#primary_relation
                     .iter()
@@ -1335,9 +1424,15 @@ fn generate_language_struct(
                         t.hash(&mut hasher);
                         hasher.finish()
                     };
+                    let exact_key = {
+                        let mut __h = __MettailFramedExactKeyHasher::default();
+                        t.semantic_hash(&mut __h);
+                        __h.into_key()
+                    };
                     let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
                     term_infos.push(mettail_runtime::TermInfo {
                         term_id,
+                        exact_key: Some(exact_key),
                         display: format!("{}", t),
                         is_normal_form: !has_rewrites,
                     });
@@ -1352,22 +1447,11 @@ fn generate_language_struct(
                         // key — transparent-wrapper canonicalization), as
                         // at the multi-cat site.
                         let (__k_from, __k_to) = {
-                            struct __RwKeyHasher {
-                                bytes: Vec<u8>,
-                            }
-                            impl std::hash::Hasher for __RwKeyHasher {
-                                fn finish(&self) -> u64 {
-                                    0
-                                }
-                                fn write(&mut self, b: &[u8]) {
-                                    self.bytes.extend_from_slice(b);
-                                }
-                            }
-                            let mut __hf = __RwKeyHasher { bytes: Vec::new() };
+                            let mut __hf = __MettailFramedExactKeyHasher::default();
                             from.semantic_hash(&mut __hf);
-                            let mut __ht = __RwKeyHasher { bytes: Vec::new() };
+                            let mut __ht = __MettailFramedExactKeyHasher::default();
                             to.semantic_hash(&mut __ht);
-                            (__hf.bytes, __ht.bytes)
+                            (__hf.into_key(), __ht.into_key())
                         };
                         __k_from != __k_to
                     })
@@ -1378,9 +1462,21 @@ fn generate_language_struct(
                         let mut h2 = DefaultHasher::new();
                         from.hash(&mut h1);
                         to.hash(&mut h2);
+                        let from_key = {
+                            let mut __h = __MettailFramedExactKeyHasher::default();
+                            from.semantic_hash(&mut __h);
+                            __h.into_key()
+                        };
+                        let to_key = {
+                            let mut __h = __MettailFramedExactKeyHasher::default();
+                            to.semantic_hash(&mut __h);
+                            __h.into_key()
+                        };
                         mettail_runtime::Rewrite {
                             from_id: h1.finish(),
                             to_id: h2.finish(),
+                            from_key: Some(from_key),
+                            to_key: Some(to_key),
                             rule_name: Some("rewrite".to_string()),
                         }
                     })
@@ -2383,12 +2479,8 @@ fn generate_language_struct_multi(
                         // Display dedup. Equivalent terms share NF status
                         // (transparent casts are pure identity), so keeping
                         // the first-seen representative is sound.
-                        let __sem_key = {
-                            let mut __h = __MettailSemanticKeyHasher::default();
-                            t.semantic_hash(&mut __h);
-                            __h.into_key()
-                        };
-                        if !__seen_sem.insert(__sem_key) {
+                        let __sem_key = wrapped.extraction_semantic_fingerprint();
+                        if !__seen_sem.insert(__sem_key.clone()) {
                             continue;
                         }
                         // #307 eval-layer fix (2026-06-11): NF status
@@ -2402,27 +2494,18 @@ fn generate_language_struct_multi(
                                 return false;
                             }
                             let (__k_from, __k_to) = {
-                            struct __RwKeyHasher {
-                                bytes: Vec<u8>,
-                            }
-                            impl std::hash::Hasher for __RwKeyHasher {
-                                fn finish(&self) -> u64 {
-                                    0
-                                }
-                                fn write(&mut self, b: &[u8]) {
-                                    self.bytes.extend_from_slice(b);
-                                }
-                            }
-                                let mut __hf = __RwKeyHasher { bytes: Vec::new() };
-                                from.semantic_hash(&mut __hf);
-                                let mut __ht = __RwKeyHasher { bytes: Vec::new() };
-                                to.semantic_hash(&mut __ht);
-                                (__hf.bytes, __ht.bytes)
+                                let __w_from = #inner_enum_name::#variant(from.clone());
+                                let __w_to = #inner_enum_name::#variant(to.clone());
+                                (
+                                    __w_from.extraction_semantic_fingerprint(),
+                                    __w_to.extraction_semantic_fingerprint(),
+                                )
                             };
                             __k_from != __k_to
                         });
                         __all_term_infos.push(mettail_runtime::TermInfo {
                             term_id,
+                            exact_key: Some(__sem_key),
                             display: format!("{}", t),
                             is_normal_form: !has_rewrites,
                         });
@@ -2446,22 +2529,10 @@ fn generate_language_struct_multi(
                         // rewrites are untouched. This is the same exact-key
                         // observational quotient the term dedup uses.
                         let (__k_from, __k_to) = {
-                            struct __RwKeyHasher {
-                                bytes: Vec<u8>,
-                            }
-                            impl std::hash::Hasher for __RwKeyHasher {
-                                fn finish(&self) -> u64 {
-                                    0
-                                }
-                                fn write(&mut self, b: &[u8]) {
-                                    self.bytes.extend_from_slice(b);
-                                }
-                            }
-                            let mut __hf = __RwKeyHasher { bytes: Vec::new() };
-                            w_from.semantic_hash(&mut __hf);
-                            let mut __ht = __RwKeyHasher { bytes: Vec::new() };
-                            w_to.semantic_hash(&mut __ht);
-                            (__hf.bytes, __ht.bytes)
+                            (
+                                w_from.extraction_semantic_fingerprint(),
+                                w_to.extraction_semantic_fingerprint(),
+                            )
                         };
                         if __k_from == __k_to {
                             continue;
@@ -2470,9 +2541,17 @@ fn generate_language_struct_multi(
                         let mut h2 = DefaultHasher::new();
                         w_from.hash(&mut h1);
                         w_to.hash(&mut h2);
+                        let from_key = {
+                            w_from.extraction_semantic_fingerprint()
+                        };
+                        let to_key = {
+                            w_to.extraction_semantic_fingerprint()
+                        };
                         __all_rewrites.push(mettail_runtime::Rewrite {
                             from_id: h1.finish(),
                             to_id: h2.finish(),
+                            from_key: Some(from_key),
+                            to_key: Some(to_key),
                             // Category-tagged for diagnosability.
                             rule_name: Some(format!("rewrite:{}", stringify!(#cat))),
                         });
@@ -2565,7 +2644,13 @@ fn generate_language_struct_multi(
                         let wrapped = #inner_enum_name::#variant(t.clone());
                         let term_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut hasher = DefaultHasher::new(); wrapped.hash(&mut hasher); hasher.finish() };
                         let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
-                        mettail_runtime::TermInfo { term_id, display: format!("{}", t), is_normal_form: !has_rewrites }
+                        let exact_key = wrapped.extraction_semantic_fingerprint();
+                        mettail_runtime::TermInfo {
+                            term_id,
+                            exact_key: Some(exact_key),
+                            display: format!("{}", t),
+                            is_normal_form: !has_rewrites,
+                        }
                     }).collect();
                     let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites.iter().map(|(from, to)| {
                         use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher};
@@ -2573,7 +2658,15 @@ fn generate_language_struct_multi(
                         let w_to = #inner_enum_name::#variant(to.clone());
                         let mut h1 = DefaultHasher::new(); let mut h2 = DefaultHasher::new();
                         w_from.hash(&mut h1); w_to.hash(&mut h2);
-                        mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
+                        let from_key = w_from.extraction_semantic_fingerprint();
+                        let to_key = w_to.extraction_semantic_fingerprint();
+                        mettail_runtime::Rewrite {
+                            from_id: h1.finish(),
+                            to_id: h2.finish(),
+                            from_key: Some(from_key),
+                            to_key: Some(to_key),
+                            rule_name: Some("rewrite".to_string()),
+                        }
                     }).collect();
                     let equivalences = {
                         use std::collections::hash_map::DefaultHasher;
@@ -3022,7 +3115,13 @@ fn generate_language_struct_multi(
                             let wrapped = #inner_enum_name::#variant(t.clone());
                             let term_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut hasher = DefaultHasher::new(); wrapped.hash(&mut hasher); hasher.finish() };
                             let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
-                            mettail_runtime::TermInfo { term_id, display: format!("{}", t), is_normal_form: !has_rewrites }
+                            let exact_key = wrapped.extraction_semantic_fingerprint();
+                            mettail_runtime::TermInfo {
+                                term_id,
+                                exact_key: Some(exact_key),
+                                display: format!("{}", t),
+                                is_normal_form: !has_rewrites,
+                            }
                         }).collect();
                         let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites.iter().map(|(from, to)| {
                             use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher};
@@ -3030,7 +3129,15 @@ fn generate_language_struct_multi(
                             let w_to = #inner_enum_name::#variant(to.clone());
                             let mut h1 = DefaultHasher::new(); let mut h2 = DefaultHasher::new();
                             w_from.hash(&mut h1); w_to.hash(&mut h2);
-                            mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
+                            let from_key = w_from.extraction_semantic_fingerprint();
+                            let to_key = w_to.extraction_semantic_fingerprint();
+                            mettail_runtime::Rewrite {
+                                from_id: h1.finish(),
+                                to_id: h2.finish(),
+                                from_key: Some(from_key),
+                                to_key: Some(to_key),
+                                rule_name: Some("rewrite".to_string()),
+                            }
                         }).collect();
                         let equivalences = {
                             use std::collections::hash_map::DefaultHasher;
@@ -3288,15 +3395,15 @@ fn generate_language_struct_multi(
             }
 
             /// Parse without clearing var cache and retain WPDA parse/evidence
-            /// weights for lazy weighted evaluation.
+            /// weights plus exact semantic keys for lazy weighted evaluation.
             ///
-            /// The returned seed ids use the same extraction-semantic quotient
-            /// as `Term::rewrite_seed_ids`, so callers can feed them directly
-            /// to `AscentResults::normal_forms_reachable_from_weighted_seeds_iter`
-            /// without introducing dangling seed ids.
-            pub fn parse_preserving_vars_with_weighted_seed_ids(
+            /// The returned seeds use the same extraction-semantic quotient
+            /// as `Term::rewrite_seeds`, so callers can feed them directly
+            /// to `AscentResults::normal_forms_reachable_from_weighted_rewrite_seeds_iter`
+            /// without introducing dangling or lossy seed ids.
+            pub fn parse_preserving_vars_with_weighted_rewrite_seeds(
                 input: &str,
-            ) -> Result<(#term_name, Vec<mettail_runtime::WeightedSeedId>), std::string::String> {
+            ) -> Result<(#term_name, Vec<mettail_runtime::WeightedRewriteSeed>), std::string::String> {
                 #lexer_probe
 
                 let mut successes: Vec<(#inner_enum_name, f64)> = Vec::new();
@@ -3337,27 +3444,19 @@ fn generate_language_struct_multi(
                     return Err(first_err.unwrap_or_else(|| "Parse error".to_string()));
                 }
 
-                let mut seed_index_by_key: std::collections::HashMap<Vec<u8>, usize> =
+                let mut weight_by_seed_key: std::collections::HashMap<Vec<u8>, f64> =
                     std::collections::HashMap::with_capacity(successes.len());
-                let mut weighted_seeds: Vec<mettail_runtime::WeightedSeedId> =
-                    Vec::with_capacity(successes.len());
                 for (alt, weight) in successes.iter() {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-
                     let key = alt.extraction_semantic_fingerprint();
-                    let mut h = DefaultHasher::new();
-                    alt.hash(&mut h);
-                    let seed = (h.finish(), format!("{}", alt), *weight);
-                    if let Some(&idx) = seed_index_by_key.get(&key) {
-                        if weight.total_cmp(&weighted_seeds[idx].2) ==
-                            std::cmp::Ordering::Less
-                        {
-                            weighted_seeds[idx] = seed;
+                    match weight_by_seed_key.get_mut(&key) {
+                        Some(best) => {
+                            if weight.total_cmp(best) == std::cmp::Ordering::Less {
+                                *best = *weight;
+                            }
                         }
-                    } else {
-                        seed_index_by_key.insert(key, weighted_seeds.len());
-                        weighted_seeds.push(seed);
+                        None => {
+                            weight_by_seed_key.insert(key, *weight);
+                        }
                     }
                 }
 
@@ -3367,7 +3466,46 @@ fn generate_language_struct_multi(
                         successes.into_iter().map(|(s, _)| s).collect()
                     )),
                 };
+
+                let mut seen_seed_keys: std::collections::HashSet<Vec<u8>> =
+                    std::collections::HashSet::with_capacity(weight_by_seed_key.len());
+                let mut weighted_seeds: Vec<mettail_runtime::WeightedRewriteSeed> =
+                    Vec::with_capacity(weight_by_seed_key.len());
+                for alt in term.0.all_alts() {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+
+                    let key = alt.extraction_semantic_fingerprint();
+                    if !seen_seed_keys.insert(key.clone()) {
+                        continue;
+                    }
+                    let weight = *weight_by_seed_key
+                        .get(&key)
+                        .expect("weighted parse seed key should come from a retained alternative");
+                    let mut h = DefaultHasher::new();
+                    alt.hash(&mut h);
+                    weighted_seeds.push(mettail_runtime::WeightedRewriteSeed::exact(
+                        h.finish(),
+                        key,
+                        format!("{}", alt),
+                        weight,
+                    ));
+                }
                 Ok((term, weighted_seeds))
+            }
+
+            /// Compatibility wrapper for callers that still expect tuple seed ids.
+            pub fn parse_preserving_vars_with_weighted_seed_ids(
+                input: &str,
+            ) -> Result<(#term_name, Vec<mettail_runtime::WeightedSeedId>), std::string::String> {
+                let (term, seeds) = Self::parse_preserving_vars_with_weighted_rewrite_seeds(input)?;
+                Ok((
+                    term,
+                    seeds
+                        .into_iter()
+                        .map(|seed| (seed.term_id, seed.display, seed.weight))
+                        .collect(),
+                ))
             }
 
             /// Drain accumulated weight corrections from semantic disambiguation.
@@ -3923,6 +4061,14 @@ fn generate_language_trait_impl_multi(
                 input: &str,
             ) -> Result<(Box<dyn mettail_runtime::Term>, Vec<mettail_runtime::WeightedSeedId>), std::string::String> {
                 #language_name::parse_preserving_vars_with_weighted_seed_ids(input)
+                    .map(|(t, seeds)| (Box::new(t) as Box<dyn mettail_runtime::Term>, seeds))
+            }
+
+            fn parse_term_with_weighted_rewrite_seeds(
+                &self,
+                input: &str,
+            ) -> Result<(Box<dyn mettail_runtime::Term>, Vec<mettail_runtime::WeightedRewriteSeed>), std::string::String> {
+                #language_name::parse_preserving_vars_with_weighted_rewrite_seeds(input)
                     .map(|(t, seeds)| (Box::new(t) as Box<dyn mettail_runtime::Term>, seeds))
             }
 
@@ -4765,5 +4911,74 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
 
     quote! {
         #(#extractions)*
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    fn from_alternatives_generated_body() -> String {
+        let source = include_str!("language.rs");
+        let needle = "fn from_alternatives(alts: Vec<Self>) -> Self";
+        let start = source
+            .find(needle)
+            .expect("generated from_alternatives source is present");
+        let after_signature = &source[start..];
+        let open_rel = after_signature
+            .find('{')
+            .expect("from_alternatives has an opening brace");
+        let open = start + open_rel;
+
+        let mut depth = 0usize;
+        for (offset, ch) in source[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = open + offset + ch.len_utf8();
+                        return source[open..end].to_string();
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        panic!("from_alternatives body is balanced");
+    }
+
+    fn strip_line_comments(source: &str) -> String {
+        source
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn from_alternatives_deduplicates_only_by_semantic_fingerprint() {
+        let body = from_alternatives_generated_body();
+        let executable = strip_line_comments(&body);
+
+        assert!(
+            executable.contains("std::collections::HashSet<Vec<u8>>"),
+            "from_alternatives must keep exact semantic keys, not a lossy hash"
+        );
+        assert!(
+            executable.contains("a.semantic_fingerprint()"),
+            "from_alternatives must deduplicate by observational semantic fingerprint"
+        );
+        assert!(
+            executable.contains("seen_keys.insert(key)"),
+            "from_alternatives must retain the first alternative for each exact semantic key"
+        );
+
+        for forbidden in
+            ["weight", "aweight", "ground", "declaration", "display", "format!", "to_string"]
+        {
+            assert!(
+                !executable.contains(forbidden),
+                "from_alternatives executable body must not prune by `{forbidden}`"
+            );
+        }
     }
 }
