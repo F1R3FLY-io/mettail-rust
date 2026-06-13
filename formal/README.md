@@ -53,7 +53,8 @@ The capped entry point runs:
   (`FORMAL_CAPPED_TARGET=rocq-dovetail`)
 - focused Dovetail enrichment targets:
   `rocq-dovetail-refinement`, `rocq-dovetail-requirements`,
-  `why3-dovetail-budget`, and `creusot-dovetail-budget`
+  `rocq-dovetail-cyclic-boundary`, `why3-dovetail-budget`, and
+  `creusot-dovetail-budget`
 - focused Rho process-calculus targets:
   `mcrl2-rho-machine`, `maude-rho-machine`, `tla-rho-machine`, and
   `process-rho-comm-slice` (`process-rho-first-slice` remains as a

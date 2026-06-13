@@ -479,6 +479,25 @@ Verify Dovetail requirement coverage:
 ```
 
 ```text
+Verify Dovetail cyclic extraction boundary:
+
+  make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-dovetail-cyclic-boundary
+```
+
+```text
+Verify Dovetail budget contracts:
+
+  make -C formal check-capped FORMAL_CAPPED_TARGET=why3-dovetail-budget
+  make -C formal check-capped FORMAL_CAPPED_TARGET=creusot-dovetail-budget
+```
+
+```text
+Verify Dovetail/Rho proof-hole hygiene:
+
+  make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-critical-zero-admission
+```
+
+```text
 Verify finite Rho process-calculus projection:
 
   make -C formal check-capped FORMAL_CAPPED_TARGET=process-rho-comm-slice
