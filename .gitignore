@@ -93,6 +93,7 @@ target/tests/trybuild/
 
 # Formal verification build/model-checker artifacts
 **/_apalache-out/
+/formal/mcrl2/rho_machine/.build/
 /.formal-tmp/
 
 *.mm_profdata

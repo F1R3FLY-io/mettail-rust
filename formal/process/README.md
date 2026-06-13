@@ -36,14 +36,14 @@ rewrite-logic, and scheduler projections tied to the same finite lowering
 shape.
 
 `formal/mcrl2/rho_machine/` and `formal/maude/rho_machine/` model a bounded
-three-redex RhoNet COMM fragment and the corresponding Dovetail fact-step
+four-redex RhoNet COMM fragment and the corresponding Dovetail fact-step
 fragment. The Rho side includes internal reserve/commit phases; the Dovetail
-side exposes direct fact steps. This is a family-shaped executable projection
-over three independent redexes, not a full generated-backend proof. The checked
-properties are:
+side exposes direct fact steps. This is an arity-parametric generated
+projection, checked here at four independent redexes, not a full
+generated-backend proof. The checked properties are:
 
 1. every reachable state has an outgoing transition;
-2. all six visible fire-order permutations can complete;
+2. all 24 visible fire-order permutations can complete;
 3. after any complete visible firing order, completion is enabled;
 4. the RhoNet and Dovetail finite projections are branching-bisimilar when
    compared over the same visible fire/complete actions and Rho reserve actions
@@ -51,12 +51,12 @@ properties are:
 5. both rewrite projections have the same unique terminal observation and expose
    every one-step independent redex witness under AC fact-multiset
    normalization;
-6. Maude traced configurations realize the same six visible fire/complete
+6. Maude traced configurations realize the same 24 visible fire/complete
    schedules on the RhoNet and Dovetail sides while keeping Rho reserve steps
-   unobserved; every visible completion trace with fewer than all three fires is
+   unobserved; every visible completion trace with fewer than all four fires is
    unreachable on both sides.
 
 `formal/tla/rho_machine/` models the matching scheduler boundary for the same
-three independent redexes. Apalache checks bounded safety invariants, and TLC
-checks that weak fairness for `A`, `B`, `C`, and the completion action implies
-eventual completion.
+four independent redexes. Apalache checks bounded safety invariants, and TLC
+checks that weak fairness for `A`, `B`, `C`, `D`, and the completion action
+implies eventual completion.

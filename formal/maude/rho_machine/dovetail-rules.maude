@@ -9,14 +9,15 @@ mod DOVETAIL-FACT-STEPS is
   sorts Fact State .
   subsort Fact < State .
 
-  ops a b c firedA firedB firedC completed : -> Fact [ctor] .
+  ops a b c d firedA firedB firedC firedD completed : -> Fact [ctor] .
   op empty : -> State [ctor] .
   op __ : State State -> State [ctor assoc comm id: empty] .
 
   rl [fireA] : a => firedA .
   rl [fireB] : b => firedB .
   rl [fireC] : c => firedC .
-  rl [complete] : firedA firedB firedC => completed .
+  rl [fireD] : d => firedD .
+  rl [complete] : firedA firedB firedC firedD => completed .
 endm
 
 mod DOVETAIL-FACT-STEPS-TRACED is
@@ -25,8 +26,8 @@ mod DOVETAIL-FACT-STEPS-TRACED is
   sorts Fact State Trace Step Config .
   subsort Fact < State .
 
-  ops a b c firedA firedB firedC completed : -> Fact [ctor] .
-  ops fireA fireB fireC complete : -> Step [ctor] .
+  ops a b c d firedA firedB firedC firedD completed : -> Fact [ctor] .
+  ops fireA fireB fireC fireD complete : -> Step [ctor] .
   op empty : -> State [ctor] .
   op __ : State State -> State [ctor assoc comm id: empty] .
   op nil : -> Trace [ctor] .
@@ -39,5 +40,6 @@ mod DOVETAIL-FACT-STEPS-TRACED is
   rl [fireATraced] : < a REST ; T > => < firedA REST ; T then fireA > .
   rl [fireBTraced] : < b REST ; T > => < firedB REST ; T then fireB > .
   rl [fireCTraced] : < c REST ; T > => < firedC REST ; T then fireC > .
-  rl [completeTraced] : < firedA firedB firedC REST ; T > => < completed REST ; T then complete > .
+  rl [fireDTraced] : < d REST ; T > => < firedD REST ; T then fireD > .
+  rl [completeTraced] : < firedA firedB firedC firedD REST ; T > => < completed REST ; T then complete > .
 endm

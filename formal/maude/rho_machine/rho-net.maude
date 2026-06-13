@@ -8,7 +8,7 @@ mod RHO-NET-COMM is
   sorts Fact State .
   subsort Fact < State .
 
-  ops a b c reservedA reservedB reservedC firedA firedB firedC reservedJoin completed : -> Fact [ctor] .
+  ops a b c d reservedA reservedB reservedC reservedD firedA firedB firedC firedD reservedJoin completed : -> Fact [ctor] .
   op empty : -> State [ctor] .
   op __ : State State -> State [ctor assoc comm id: empty] .
 
@@ -18,7 +18,9 @@ mod RHO-NET-COMM is
   rl [fireB] : reservedB => firedB .
   rl [reserveC] : c => reservedC .
   rl [fireC] : reservedC => firedC .
-  rl [reserveJoin] : firedA firedB firedC => reservedJoin .
+  rl [reserveD] : d => reservedD .
+  rl [fireD] : reservedD => firedD .
+  rl [reserveJoin] : firedA firedB firedC firedD => reservedJoin .
   rl [complete] : reservedJoin => completed .
 endm
 
@@ -28,8 +30,8 @@ mod RHO-NET-COMM-TRACED is
   sorts Fact State Trace Step Config .
   subsort Fact < State .
 
-  ops a b c reservedA reservedB reservedC firedA firedB firedC reservedJoin completed : -> Fact [ctor] .
-  ops fireA fireB fireC complete : -> Step [ctor] .
+  ops a b c d reservedA reservedB reservedC reservedD firedA firedB firedC firedD reservedJoin completed : -> Fact [ctor] .
+  ops fireA fireB fireC fireD complete : -> Step [ctor] .
   op empty : -> State [ctor] .
   op __ : State State -> State [ctor assoc comm id: empty] .
   op nil : -> Trace [ctor] .
@@ -45,6 +47,8 @@ mod RHO-NET-COMM-TRACED is
   rl [fireBTraced] : < reservedB REST ; T > => < firedB REST ; T then fireB > .
   rl [reserveCTraced] : < c REST ; T > => < reservedC REST ; T > .
   rl [fireCTraced] : < reservedC REST ; T > => < firedC REST ; T then fireC > .
-  rl [reserveJoinTraced] : < firedA firedB firedC REST ; T > => < reservedJoin REST ; T > .
+  rl [reserveDTraced] : < d REST ; T > => < reservedD REST ; T > .
+  rl [fireDTraced] : < reservedD REST ; T > => < firedD REST ; T then fireD > .
+  rl [reserveJoinTraced] : < firedA firedB firedC firedD REST ; T > => < reservedJoin REST ; T > .
   rl [completeTraced] : < reservedJoin REST ; T > => < completed REST ; T then complete > .
 endm

@@ -11,40 +11,47 @@
 % treating reserve actions as internal tau steps.
 
 act
-  reserveA, reserveB, reserveC, reserveJoin, fireA, fireB, fireC, complete, done;
+  reserveA, reserveB, reserveC, reserveD, reserveJoin, fireA, fireB, fireC, fireD, complete, done;
 
 proc
   RhoNet(
     aIn: Bool,
     bIn: Bool,
     cIn: Bool,
+    dIn: Bool,
     aReserved: Bool,
     bReserved: Bool,
     cReserved: Bool,
+    dReserved: Bool,
     aOut: Bool,
     bOut: Bool,
     cOut: Bool,
+    dOut: Bool,
     joinReserved: Bool,
     completed: Bool
   ) =
        (aIn && !aReserved && !aOut && !completed)
-         -> reserveA . RhoNet(false, bIn, cIn, true, bReserved, cReserved, aOut, bOut, cOut, joinReserved, completed)
+         -> reserveA . RhoNet(false, bIn, cIn, dIn, true, bReserved, cReserved, dReserved, aOut, bOut, cOut, dOut, joinReserved, completed)
      + (aReserved && !completed)
-         -> fireA . RhoNet(aIn, bIn, cIn, false, bReserved, cReserved, true, bOut, cOut, joinReserved, completed)
+         -> fireA . RhoNet(aIn, bIn, cIn, dIn, false, bReserved, cReserved, dReserved, true, bOut, cOut, dOut, joinReserved, completed)
      + (bIn && !bReserved && !bOut && !completed)
-         -> reserveB . RhoNet(aIn, false, cIn, aReserved, true, cReserved, aOut, bOut, cOut, joinReserved, completed)
+         -> reserveB . RhoNet(aIn, false, cIn, dIn, aReserved, true, cReserved, dReserved, aOut, bOut, cOut, dOut, joinReserved, completed)
      + (bReserved && !completed)
-         -> fireB . RhoNet(aIn, bIn, cIn, aReserved, false, cReserved, aOut, true, cOut, joinReserved, completed)
+         -> fireB . RhoNet(aIn, bIn, cIn, dIn, aReserved, false, cReserved, dReserved, aOut, true, cOut, dOut, joinReserved, completed)
      + (cIn && !cReserved && !cOut && !completed)
-         -> reserveC . RhoNet(aIn, bIn, false, aReserved, bReserved, true, aOut, bOut, cOut, joinReserved, completed)
+         -> reserveC . RhoNet(aIn, bIn, false, dIn, aReserved, bReserved, true, dReserved, aOut, bOut, cOut, dOut, joinReserved, completed)
      + (cReserved && !completed)
-         -> fireC . RhoNet(aIn, bIn, cIn, aReserved, bReserved, false, aOut, bOut, true, joinReserved, completed)
-     + (aOut && bOut && cOut && !joinReserved && !completed)
-         -> reserveJoin . RhoNet(aIn, bIn, cIn, aReserved, bReserved, cReserved, false, false, false, true, completed)
+         -> fireC . RhoNet(aIn, bIn, cIn, dIn, aReserved, bReserved, false, dReserved, aOut, bOut, true, dOut, joinReserved, completed)
+     + (dIn && !dReserved && !dOut && !completed)
+         -> reserveD . RhoNet(aIn, bIn, cIn, false, aReserved, bReserved, cReserved, true, aOut, bOut, cOut, dOut, joinReserved, completed)
+     + (dReserved && !completed)
+         -> fireD . RhoNet(aIn, bIn, cIn, dIn, aReserved, bReserved, cReserved, false, aOut, bOut, cOut, true, joinReserved, completed)
+     + (aOut && bOut && cOut && dOut && !joinReserved && !completed)
+         -> reserveJoin . RhoNet(aIn, bIn, cIn, dIn, aReserved, bReserved, cReserved, dReserved, false, false, false, false, true, completed)
      + (joinReserved && !completed)
-         -> complete . RhoNet(aIn, bIn, cIn, aReserved, bReserved, cReserved, aOut, bOut, cOut, false, true)
+         -> complete . RhoNet(aIn, bIn, cIn, dIn, aReserved, bReserved, cReserved, dReserved, aOut, bOut, cOut, dOut, false, true)
      + completed
-         -> done . RhoNet(aIn, bIn, cIn, aReserved, bReserved, cReserved, aOut, bOut, cOut, joinReserved, true);
+         -> done . RhoNet(aIn, bIn, cIn, dIn, aReserved, bReserved, cReserved, dReserved, aOut, bOut, cOut, dOut, joinReserved, true);
 
 init
-  RhoNet(true, true, true, false, false, false, false, false, false, false, false);
+  RhoNet(true, true, true, true, false, false, false, false, false, false, false, false, false, false);

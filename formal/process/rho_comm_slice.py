@@ -676,6 +676,11 @@ def generated_files(spec: dict) -> dict[Path, str]:
     }
 
 
+def render_mcrl2_tau(spec: dict) -> str:
+    labels = [r["label"] for r in spec["redexes"]]
+    return ",".join([f"reserve{label}" for label in labels] + ["reserveJoin"])
+
+
 def check_files(files: dict[Path, str]) -> int:
     mismatches = []
     for path, expected in files.items():
@@ -703,16 +708,21 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="check generated files without writing")
     parser.add_argument("--write", action="store_true", help="rewrite generated files")
     parser.add_argument("--check-maude-log", type=Path, help="check a Maude comm-schedule log")
+    parser.add_argument("--mcrl2-tau", action="store_true", help="print reserve actions to hide for mCRL2 branching-bisim checks")
     args = parser.parse_args()
-    selected = sum(bool(flag) for flag in (args.check, args.write, args.check_maude_log))
+    selected = sum(bool(flag) for flag in (args.check, args.write, args.check_maude_log, args.mcrl2_tau))
     if selected != 1:
-        parser.error("choose exactly one of --check, --write, or --check-maude-log")
-    files = generated_files(load_spec())
+        parser.error("choose exactly one of --check, --write, --check-maude-log, or --mcrl2-tau")
+    spec = load_spec()
+    files = generated_files(spec)
     if args.check:
         return check_files(files)
     if args.write:
         return write_files(files)
-    return check_maude_log(load_spec(), args.check_maude_log)
+    if args.mcrl2_tau:
+        print(render_mcrl2_tau(spec))
+        return 0
+    return check_maude_log(spec, args.check_maude_log)
 
 
 if __name__ == "__main__":

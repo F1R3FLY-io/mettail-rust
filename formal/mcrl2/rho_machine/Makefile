@@ -9,6 +9,7 @@ LPS2PBES ?= lps2pbes
 LPS2PBES_FLAGS ?= --preprocess-modal-operators
 PBES2BOOL ?= pbes2bool
 LTSCOMPARE ?= ltscompare
+MCRL2_TAU ?= $(shell $(PYTHON) "$(GENERATOR)" --mcrl2-tau)
 
 FORMAL_CAPPED_TARGET_HINT := mcrl2-rho-machine
 FORMAL_CLEAN_GOALS := clean
@@ -57,7 +58,7 @@ check-dovetail-formulas: $(BUILD_DIR)/dovetail_no_deadlock.pbes $(BUILD_DIR)/dov
 	@test "$$($(PBES2BOOL) $(BUILD_DIR)/dovetail_direct_schedules.pbes)" = "true"
 
 compare: $(BUILD_DIR)/rho_net_comm.aut $(BUILD_DIR)/dovetail_fact_steps.aut
-	$(LTSCOMPARE) --equivalence=branching-bisim --tau=reserveA,reserveB,reserveC,reserveJoin $^
+	@test "$$($(LTSCOMPARE) --equivalence=branching-bisim --tau=$(MCRL2_TAU) $^)" = "true"
 
 clean:
 	rm -rf "$(BUILD_DIR)"

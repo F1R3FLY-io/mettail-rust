@@ -1,5 +1,5 @@
 {
-  "name": "rho_comm_three_redex",
+  "name": "rho_comm_four_redex",
   "completion_observation": "Q",
   "redexes": [
     {
@@ -13,6 +13,10 @@
     {
       "label": "C",
       "fact": "c"
+    },
+    {
+      "label": "D",
+      "fact": "d"
     }
   ]
 }

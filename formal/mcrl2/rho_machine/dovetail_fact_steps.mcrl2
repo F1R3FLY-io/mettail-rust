@@ -8,23 +8,26 @@
 % extra internal reserve actions; this model intentionally does not.
 
 act
-  fireA, fireB, fireC, complete, done;
+  fireA, fireB, fireC, fireD, complete, done;
 
 proc
   Dovetail(
     aIn: Bool,
     bIn: Bool,
     cIn: Bool,
+    dIn: Bool,
     aOut: Bool,
     bOut: Bool,
     cOut: Bool,
+    dOut: Bool,
     completed: Bool
   ) =
-       (aIn && !aOut && !completed) -> fireA . Dovetail(false, bIn, cIn, true, bOut, cOut, completed)
-     + (bIn && !bOut && !completed) -> fireB . Dovetail(aIn, false, cIn, aOut, true, cOut, completed)
-     + (cIn && !cOut && !completed) -> fireC . Dovetail(aIn, bIn, false, aOut, bOut, true, completed)
-     + (aOut && bOut && cOut && !completed) -> complete . Dovetail(aIn, bIn, cIn, false, false, false, true)
-     + completed -> done . Dovetail(aIn, bIn, cIn, aOut, bOut, cOut, true);
+       (aIn && !aOut && !completed) -> fireA . Dovetail(false, bIn, cIn, dIn, true, bOut, cOut, dOut, completed)
+     + (bIn && !bOut && !completed) -> fireB . Dovetail(aIn, false, cIn, dIn, aOut, true, cOut, dOut, completed)
+     + (cIn && !cOut && !completed) -> fireC . Dovetail(aIn, bIn, false, dIn, aOut, bOut, true, dOut, completed)
+     + (dIn && !dOut && !completed) -> fireD . Dovetail(aIn, bIn, cIn, false, aOut, bOut, cOut, true, completed)
+     + (aOut && bOut && cOut && dOut && !completed) -> complete . Dovetail(aIn, bIn, cIn, dIn, false, false, false, false, true)
+     + completed -> done . Dovetail(aIn, bIn, cIn, dIn, aOut, bOut, cOut, dOut, true);
 
 init
-  Dovetail(true, true, true, false, false, false, false);
+  Dovetail(true, true, true, true, false, false, false, false, false);

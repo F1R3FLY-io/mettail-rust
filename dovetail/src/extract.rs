@@ -734,8 +734,8 @@ mod tests {
     fn t8_cycle_safety_terminates_and_cuts() {
         // P = { leaf "base", g(P) } — a self-cycle. Extraction must TERMINATE,
         // yield the acyclic derivation, and report the back-edge cut (the
-        // documented sound-but-incomplete behavior; full closure is a later
-        // increment).
+        // documented bounded-by-cycle-cut contract for finitely reported
+        // evidence through productive cycles).
         let mut eg = EGraph::<String>::new();
         let base = eg.add(ENode::leaf("base".into()));
         let g = eg.add(ENode::new("g".into(), vec![base]));

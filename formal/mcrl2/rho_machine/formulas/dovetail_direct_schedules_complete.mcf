@@ -1,12 +1,48 @@
-<fireA . fireB . fireC . complete>true &&
-<fireA . fireC . fireB . complete>true &&
-<fireB . fireA . fireC . complete>true &&
-<fireB . fireC . fireA . complete>true &&
-<fireC . fireA . fireB . complete>true &&
-<fireC . fireB . fireA . complete>true &&
-[fireA . fireB . fireC]<complete>true &&
-[fireA . fireC . fireB]<complete>true &&
-[fireB . fireA . fireC]<complete>true &&
-[fireB . fireC . fireA]<complete>true &&
-[fireC . fireA . fireB]<complete>true &&
-[fireC . fireB . fireA]<complete>true
+<fireA . fireB . fireC . fireD . complete>true &&
+<fireA . fireB . fireD . fireC . complete>true &&
+<fireA . fireC . fireB . fireD . complete>true &&
+<fireA . fireC . fireD . fireB . complete>true &&
+<fireA . fireD . fireB . fireC . complete>true &&
+<fireA . fireD . fireC . fireB . complete>true &&
+<fireB . fireA . fireC . fireD . complete>true &&
+<fireB . fireA . fireD . fireC . complete>true &&
+<fireB . fireC . fireA . fireD . complete>true &&
+<fireB . fireC . fireD . fireA . complete>true &&
+<fireB . fireD . fireA . fireC . complete>true &&
+<fireB . fireD . fireC . fireA . complete>true &&
+<fireC . fireA . fireB . fireD . complete>true &&
+<fireC . fireA . fireD . fireB . complete>true &&
+<fireC . fireB . fireA . fireD . complete>true &&
+<fireC . fireB . fireD . fireA . complete>true &&
+<fireC . fireD . fireA . fireB . complete>true &&
+<fireC . fireD . fireB . fireA . complete>true &&
+<fireD . fireA . fireB . fireC . complete>true &&
+<fireD . fireA . fireC . fireB . complete>true &&
+<fireD . fireB . fireA . fireC . complete>true &&
+<fireD . fireB . fireC . fireA . complete>true &&
+<fireD . fireC . fireA . fireB . complete>true &&
+<fireD . fireC . fireB . fireA . complete>true &&
+[fireA . fireB . fireC . fireD]<complete>true &&
+[fireA . fireB . fireD . fireC]<complete>true &&
+[fireA . fireC . fireB . fireD]<complete>true &&
+[fireA . fireC . fireD . fireB]<complete>true &&
+[fireA . fireD . fireB . fireC]<complete>true &&
+[fireA . fireD . fireC . fireB]<complete>true &&
+[fireB . fireA . fireC . fireD]<complete>true &&
+[fireB . fireA . fireD . fireC]<complete>true &&
+[fireB . fireC . fireA . fireD]<complete>true &&
+[fireB . fireC . fireD . fireA]<complete>true &&
+[fireB . fireD . fireA . fireC]<complete>true &&
+[fireB . fireD . fireC . fireA]<complete>true &&
+[fireC . fireA . fireB . fireD]<complete>true &&
+[fireC . fireA . fireD . fireB]<complete>true &&
+[fireC . fireB . fireA . fireD]<complete>true &&
+[fireC . fireB . fireD . fireA]<complete>true &&
+[fireC . fireD . fireA . fireB]<complete>true &&
+[fireC . fireD . fireB . fireA]<complete>true &&
+[fireD . fireA . fireB . fireC]<complete>true &&
+[fireD . fireA . fireC . fireB]<complete>true &&
+[fireD . fireB . fireA . fireC]<complete>true &&
+[fireD . fireB . fireC . fireA]<complete>true &&
+[fireD . fireC . fireA . fireB]<complete>true &&
+[fireD . fireC . fireB . fireA]<complete>true

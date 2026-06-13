@@ -1,12 +1,48 @@
-<reserveA . fireA . reserveB . fireB . reserveC . fireC . reserveJoin . complete>true &&
-<reserveA . fireA . reserveC . fireC . reserveB . fireB . reserveJoin . complete>true &&
-<reserveB . fireB . reserveA . fireA . reserveC . fireC . reserveJoin . complete>true &&
-<reserveB . fireB . reserveC . fireC . reserveA . fireA . reserveJoin . complete>true &&
-<reserveC . fireC . reserveA . fireA . reserveB . fireB . reserveJoin . complete>true &&
-<reserveC . fireC . reserveB . fireB . reserveA . fireA . reserveJoin . complete>true &&
-[reserveA . fireA . reserveB . fireB . reserveC . fireC]<reserveJoin . complete>true &&
-[reserveA . fireA . reserveC . fireC . reserveB . fireB]<reserveJoin . complete>true &&
-[reserveB . fireB . reserveA . fireA . reserveC . fireC]<reserveJoin . complete>true &&
-[reserveB . fireB . reserveC . fireC . reserveA . fireA]<reserveJoin . complete>true &&
-[reserveC . fireC . reserveA . fireA . reserveB . fireB]<reserveJoin . complete>true &&
-[reserveC . fireC . reserveB . fireB . reserveA . fireA]<reserveJoin . complete>true
+<reserveA . fireA . reserveB . fireB . reserveC . fireC . reserveD . fireD . reserveJoin . complete>true &&
+<reserveA . fireA . reserveB . fireB . reserveD . fireD . reserveC . fireC . reserveJoin . complete>true &&
+<reserveA . fireA . reserveC . fireC . reserveB . fireB . reserveD . fireD . reserveJoin . complete>true &&
+<reserveA . fireA . reserveC . fireC . reserveD . fireD . reserveB . fireB . reserveJoin . complete>true &&
+<reserveA . fireA . reserveD . fireD . reserveB . fireB . reserveC . fireC . reserveJoin . complete>true &&
+<reserveA . fireA . reserveD . fireD . reserveC . fireC . reserveB . fireB . reserveJoin . complete>true &&
+<reserveB . fireB . reserveA . fireA . reserveC . fireC . reserveD . fireD . reserveJoin . complete>true &&
+<reserveB . fireB . reserveA . fireA . reserveD . fireD . reserveC . fireC . reserveJoin . complete>true &&
+<reserveB . fireB . reserveC . fireC . reserveA . fireA . reserveD . fireD . reserveJoin . complete>true &&
+<reserveB . fireB . reserveC . fireC . reserveD . fireD . reserveA . fireA . reserveJoin . complete>true &&
+<reserveB . fireB . reserveD . fireD . reserveA . fireA . reserveC . fireC . reserveJoin . complete>true &&
+<reserveB . fireB . reserveD . fireD . reserveC . fireC . reserveA . fireA . reserveJoin . complete>true &&
+<reserveC . fireC . reserveA . fireA . reserveB . fireB . reserveD . fireD . reserveJoin . complete>true &&
+<reserveC . fireC . reserveA . fireA . reserveD . fireD . reserveB . fireB . reserveJoin . complete>true &&
+<reserveC . fireC . reserveB . fireB . reserveA . fireA . reserveD . fireD . reserveJoin . complete>true &&
+<reserveC . fireC . reserveB . fireB . reserveD . fireD . reserveA . fireA . reserveJoin . complete>true &&
+<reserveC . fireC . reserveD . fireD . reserveA . fireA . reserveB . fireB . reserveJoin . complete>true &&
+<reserveC . fireC . reserveD . fireD . reserveB . fireB . reserveA . fireA . reserveJoin . complete>true &&
+<reserveD . fireD . reserveA . fireA . reserveB . fireB . reserveC . fireC . reserveJoin . complete>true &&
+<reserveD . fireD . reserveA . fireA . reserveC . fireC . reserveB . fireB . reserveJoin . complete>true &&
+<reserveD . fireD . reserveB . fireB . reserveA . fireA . reserveC . fireC . reserveJoin . complete>true &&
+<reserveD . fireD . reserveB . fireB . reserveC . fireC . reserveA . fireA . reserveJoin . complete>true &&
+<reserveD . fireD . reserveC . fireC . reserveA . fireA . reserveB . fireB . reserveJoin . complete>true &&
+<reserveD . fireD . reserveC . fireC . reserveB . fireB . reserveA . fireA . reserveJoin . complete>true &&
+[reserveA . fireA . reserveB . fireB . reserveC . fireC . reserveD . fireD]<reserveJoin . complete>true &&
+[reserveA . fireA . reserveB . fireB . reserveD . fireD . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveA . fireA . reserveC . fireC . reserveB . fireB . reserveD . fireD]<reserveJoin . complete>true &&
+[reserveA . fireA . reserveC . fireC . reserveD . fireD . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveA . fireA . reserveD . fireD . reserveB . fireB . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveA . fireA . reserveD . fireD . reserveC . fireC . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveA . fireA . reserveC . fireC . reserveD . fireD]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveA . fireA . reserveD . fireD . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveC . fireC . reserveA . fireA . reserveD . fireD]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveC . fireC . reserveD . fireD . reserveA . fireA]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveD . fireD . reserveA . fireA . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveB . fireB . reserveD . fireD . reserveC . fireC . reserveA . fireA]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveA . fireA . reserveB . fireB . reserveD . fireD]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveA . fireA . reserveD . fireD . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveB . fireB . reserveA . fireA . reserveD . fireD]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveB . fireB . reserveD . fireD . reserveA . fireA]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveD . fireD . reserveA . fireA . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveC . fireC . reserveD . fireD . reserveB . fireB . reserveA . fireA]<reserveJoin . complete>true &&
+[reserveD . fireD . reserveA . fireA . reserveB . fireB . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveD . fireD . reserveA . fireA . reserveC . fireC . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveD . fireD . reserveB . fireB . reserveA . fireA . reserveC . fireC]<reserveJoin . complete>true &&
+[reserveD . fireD . reserveB . fireB . reserveC . fireC . reserveA . fireA]<reserveJoin . complete>true &&
+[reserveD . fireD . reserveC . fireC . reserveA . fireA . reserveB . fireB]<reserveJoin . complete>true &&
+[reserveD . fireD . reserveC . fireC . reserveB . fireB . reserveA . fireA]<reserveJoin . complete>true
