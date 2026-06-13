@@ -129,6 +129,9 @@ rocq-dovetail-requirements: require-capped
 rocq-rho-bridge: require-capped
 	$(MAKE) -C rocq/rho_bridge
 
+rocq-rho-bridge-artifact-boundary: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/RhoArtifactBoundary.vo
+
 process-rho-generated-check: require-capped
 	python3 process/rho_comm_slice.py --check
 

@@ -334,6 +334,41 @@ Mechanized support:
 `accepted_backend_uses_host_rspace`, and
 `custom_machine_component_blocks_acceptance` theorems encode this boundary.
 
+## Theorem 12: Generated Artifact Boundary
+
+Statement:
+
+For generated backend execution, the executable artifact is a validated host
+artifact, not Rholang source text:
+
+`GeneratedAccepts(a) ⇒ ¬SourceText(a)`
+
+For the current implementation artifact family:
+
+`GeneratedAccepts(a) ⇒ ∃p. a = Ast(p) ∧ Validated(p)`
+
+Proof:
+
+The generated backend entry point is the planned Rho backend. A planned backend
+contains a flip-gated default-backend plan, and the plan contains a
+validation-gated execution artifact. The current artifact constructor is the
+normalized host AST `rhoapi::Par`; Rholang-looking text is carried only as a
+reader annotation. Since source text is not a validated execution artifact,
+introducing a source-text artifact into the artifact universe does not make it
+acceptable: the generated-backend acceptance predicate rejects it directly.
+Therefore generated execution can inject a validated host artifact into
+F1r3node, but cannot parse Rholang text as the generated backend's executable
+value.
+
+Mechanized support:
+[RHO-BRIDGE-FORMAL](references.md#rho-bridge-formal) includes
+`RhoArtifactBoundary.v`, whose
+`accepted_current_generated_artifact_not_source_text`,
+`accepted_current_generated_artifact_has_validated_ast`,
+`current_lowered_scalar_artifact_is_ast_not_source_text`, and
+`planned_current_execution_never_uses_source_text` theorems encode this
+boundary.
+
 ## Boundary Non-Claims
 
 These boundaries prevent over-claiming; they are not evidence gaps for the

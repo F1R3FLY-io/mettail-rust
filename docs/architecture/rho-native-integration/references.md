@@ -245,6 +245,8 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/MettaGsltPresentation.v`
 - `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`
 - `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
+- `formal/rocq/rho_bridge/theories/RhoParWellFormedness.v`
+- `formal/rocq/rho_bridge/theories/RhoArtifactBoundary.v`
 - `formal/rocq/rho_bridge/theories/CommReductionCorrespondence.v`
 - `formal/rocq/rho_bridge/theories/LinearCommCorrespondence.v`
 - `formal/rocq/rho_bridge/theories/RhoGroundingAndNames.v`
@@ -259,8 +261,9 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/OracleQuotientEquivalence.v`
 
 Used for: current M-RHO proof coverage from one-way bridge shape through
-Rho-machine reuse, COMM correspondence, exact observation, guard behavior,
-ambiguity preservation, cost separation, and backend flip gating.
+Rho-machine reuse, normalized-`Par` validation, generated-backend source-text
+exclusion, COMM correspondence, exact observation, guard behavior, ambiguity
+preservation, cost separation, and backend flip gating.
 
 ### RHO-PROCESS-FORMAL
 

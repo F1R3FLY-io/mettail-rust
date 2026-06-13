@@ -26,7 +26,7 @@ The current proof and coverage sources are
 | host Rho-machine reuse | `HostRhoMachineReuse.v` | proved accepted backend plans include host Rholang/RSpace and exclude custom reducer, tuple-space, matcher, and replay components |
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
-| normalized Rholang AST | `RhoParWellFormedness.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, and validation soundness/completeness |
+| normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, and generated-backend rejection of source-text artifacts |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
@@ -49,7 +49,8 @@ The current proof and coverage sources are
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
 guards, ambiguity preservation, cost-axis separation, normalized-`Par`
-well-formedness, backend flip gating, and fail-closed runtime dispatch.
+well-formedness, source-text artifact exclusion, backend flip gating, and
+fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
 than an Ascent-shaped success value. The handoff proof requires complete
 reports before emitting Rho-visible observations, preserves the extractor root
@@ -249,9 +250,10 @@ Flip condition for language `L`:
 
 `RhoBackendFlipGate.v` proves the Boolean flip gate is exactly this conjunction
 and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the
-shape proof for the current scalar-contract `Par` fragment, and the Rust
-validator is the executable gate for generated artifacts. `RhoBackendFlipGate.v`
-also models the Rust
+shape proof for the current scalar-contract `Par` fragment, `RhoArtifactBoundary.v`
+proves source-text artifacts are not accepted generated-backend artifacts, and
+the Rust validator is the executable gate for generated artifacts.
+`RhoBackendFlipGate.v` also models the Rust
 default-backend planner's coverage wrapper: every scalar-lowering rejection must
 be covered by an exact delegated-rule claim, and stale delegation claims block
 the plan. Its
