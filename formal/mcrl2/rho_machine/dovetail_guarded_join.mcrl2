@@ -1,0 +1,29 @@
+% Generated from formal/process/rho_comm_slice.json.
+% Guarded Dovetail fact-step projection. Failed guards are direct visible
+% facts and do not consume the candidate inputs.
+
+act
+  guardReject, guardCommit, observeBad, observeRejected, done;
+
+proc
+  DovetailGuard(
+    leftIn: Bool,
+    badIn: Bool,
+    goodIn: Bool,
+    guardOpen: Bool,
+    rejected: Bool,
+    completed: Bool
+  ) =
+       (leftIn && badIn && guardOpen && !completed)
+         -> guardReject . DovetailGuard(true, true, goodIn, false, true, completed)
+     + (leftIn && goodIn && !completed)
+         -> guardCommit . DovetailGuard(false, badIn, false, guardOpen, rejected, true)
+     + (completed && badIn)
+         -> observeBad . DovetailGuard(leftIn, badIn, goodIn, guardOpen, rejected, completed)
+     + (completed && rejected)
+         -> observeRejected . DovetailGuard(leftIn, badIn, goodIn, guardOpen, rejected, completed)
+     + completed
+         -> done . DovetailGuard(leftIn, badIn, goodIn, guardOpen, rejected, true);
+
+init
+  DovetailGuard(true, true, true, true, false, false);

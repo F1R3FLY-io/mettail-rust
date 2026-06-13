@@ -26,6 +26,19 @@ def load_spec() -> dict:
         raise ValueError("redex facts must be unique")
     if spec["completion_observation"] in labels:
         raise ValueError("completion observation must be distinct from redex labels")
+    guard = spec["guarded_join"]
+    guard_facts = [
+        guard["left_fact"],
+        guard["bad_fact"],
+        guard["good_fact"],
+        guard["open_fact"],
+        guard["rejected_fact"],
+        guard["completed_fact"],
+    ]
+    if len(guard_facts) != len(set(guard_facts)):
+        raise ValueError("guarded-join facts must be unique")
+    if set(facts).intersection(guard_facts):
+        raise ValueError("guarded-join facts must be distinct from COMM facts")
     return spec
 
 
@@ -198,6 +211,115 @@ def render_dovetail_formula(spec: dict) -> str:
     return " &&\n".join(diamonds + boxes) + "\n"
 
 
+def render_mcrl2_rho_guard(spec: dict) -> str:
+    guard = spec["guarded_join"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    return f"""% Generated from formal/process/rho_comm_slice.json.
+% Guarded RhoNet join projection with internal reservation and explicit
+% failed-guard release. The bad candidate must remain available after
+% `{reject}`, and the valid candidate must still be able to commit.
+
+act
+  reserveGuardBad, reserveGuardGood, {reject}, {commit}, observeBad, observeRejected, done;
+
+proc
+  RhoGuard(
+    leftIn: Bool,
+    badIn: Bool,
+    goodIn: Bool,
+    guardOpen: Bool,
+    badReserved: Bool,
+    goodReserved: Bool,
+    rejected: Bool,
+    completed: Bool
+  ) =
+       (leftIn && badIn && guardOpen && !badReserved && !goodReserved && !completed)
+         -> reserveGuardBad . RhoGuard(false, false, goodIn, false, true, goodReserved, rejected, completed)
+     + (badReserved && !completed)
+         -> {reject} . RhoGuard(true, true, goodIn, false, false, goodReserved, true, completed)
+     + (leftIn && goodIn && !badReserved && !goodReserved && !completed)
+         -> reserveGuardGood . RhoGuard(false, badIn, false, guardOpen, badReserved, true, rejected, completed)
+     + (goodReserved && !completed)
+         -> {commit} . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, false, rejected, true)
+     + (completed && badIn)
+         -> observeBad . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, goodReserved, rejected, completed)
+     + (completed && rejected)
+         -> observeRejected . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, goodReserved, rejected, completed)
+     + completed
+         -> done . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, goodReserved, rejected, true);
+
+init
+  RhoGuard(true, true, true, true, false, false, false, false);
+"""
+
+
+def render_mcrl2_dovetail_guard(spec: dict) -> str:
+    guard = spec["guarded_join"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    return f"""% Generated from formal/process/rho_comm_slice.json.
+% Guarded Dovetail fact-step projection. Failed guards are direct visible
+% facts and do not consume the candidate inputs.
+
+act
+  {reject}, {commit}, observeBad, observeRejected, done;
+
+proc
+  DovetailGuard(
+    leftIn: Bool,
+    badIn: Bool,
+    goodIn: Bool,
+    guardOpen: Bool,
+    rejected: Bool,
+    completed: Bool
+  ) =
+       (leftIn && badIn && guardOpen && !completed)
+         -> {reject} . DovetailGuard(true, true, goodIn, false, true, completed)
+     + (leftIn && goodIn && !completed)
+         -> {commit} . DovetailGuard(false, badIn, false, guardOpen, rejected, true)
+     + (completed && badIn)
+         -> observeBad . DovetailGuard(leftIn, badIn, goodIn, guardOpen, rejected, completed)
+     + (completed && rejected)
+         -> observeRejected . DovetailGuard(leftIn, badIn, goodIn, guardOpen, rejected, completed)
+     + completed
+         -> done . DovetailGuard(leftIn, badIn, goodIn, guardOpen, rejected, true);
+
+init
+  DovetailGuard(true, true, true, true, false, false);
+"""
+
+
+def render_rho_guard_formula(spec: dict) -> str:
+    guard = spec["guarded_join"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    return " &&\n".join(
+        [
+            f"<reserveGuardBad . {reject} . reserveGuardGood . {commit} . observeBad>true",
+            f"<reserveGuardBad . {reject} . reserveGuardGood . {commit} . observeRejected>true",
+            f"[reserveGuardBad . {reject}]<reserveGuardGood . {commit} . observeBad>true",
+            f"<reserveGuardGood . {commit} . observeBad>true",
+            f"[reserveGuardGood . {commit}]<observeBad>true",
+        ]
+    ) + "\n"
+
+
+def render_dovetail_guard_formula(spec: dict) -> str:
+    guard = spec["guarded_join"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    return " &&\n".join(
+        [
+            f"<{reject} . {commit} . observeBad>true",
+            f"<{reject} . {commit} . observeRejected>true",
+            f"[{reject}]<{commit} . observeBad>true",
+            f"<{commit} . observeBad>true",
+            f"[{commit}]<observeBad>true",
+        ]
+    ) + "\n"
+
+
 def render_maude_rho(spec: dict) -> str:
     labels = [r["label"] for r in spec["redexes"]]
     facts = [r["fact"] for r in spec["redexes"]]
@@ -255,6 +377,58 @@ def render_maude_rho(spec: dict) -> str:
     )
     lines.append("  rl [completeTraced] : < reservedJoin REST ; T > => < completed REST ; T then complete > .")
     lines.append("endm")
+    guard = spec["guarded_join"]
+    gl = guard["left_fact"]
+    bad = guard["bad_fact"]
+    good = guard["good_fact"]
+    open_fact = guard["open_fact"]
+    rejected = guard["rejected_fact"]
+    completed = guard["completed_fact"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    lines.extend(
+        [
+            "",
+            "mod RHO-GUARDED-JOIN is",
+            "  protecting BOOL .",
+            "",
+            "  sorts Fact State .",
+            "  subsort Fact < State .",
+            "",
+            f"  ops {gl} {bad} {good} {open_fact} {rejected} {completed} reservedGuardBad reservedGuardGood : -> Fact [ctor] .",
+            "  op empty : -> State [ctor] .",
+            "  op __ : State State -> State [ctor assoc comm id: empty] .",
+            "",
+            f"  rl [reserveGuardBad] : {gl} {bad} {open_fact} => reservedGuardBad .",
+            f"  rl [{reject}] : reservedGuardBad => {gl} {bad} {rejected} .",
+            f"  rl [reserveGuardGood] : {gl} {good} => reservedGuardGood .",
+            f"  rl [{commit}] : reservedGuardGood => {completed} .",
+            "endm",
+            "",
+            "mod RHO-GUARDED-JOIN-TRACED is",
+            "  protecting BOOL .",
+            "",
+            "  sorts Fact State Trace Step Config .",
+            "  subsort Fact < State .",
+            "",
+            f"  ops {gl} {bad} {good} {open_fact} {rejected} {completed} reservedGuardBad reservedGuardGood : -> Fact [ctor] .",
+            f"  ops {reject} {commit} : -> Step [ctor] .",
+            "  op empty : -> State [ctor] .",
+            "  op __ : State State -> State [ctor assoc comm id: empty] .",
+            "  op nil : -> Trace [ctor] .",
+            "  op _then_ : Trace Step -> Trace [ctor] .",
+            "  op <_;_> : State Trace -> Config [ctor] .",
+            "",
+            "  var REST : State .",
+            "  var T : Trace .",
+            "",
+            f"  rl [reserveGuardBadTraced] : < {gl} {bad} {open_fact} REST ; T > => < reservedGuardBad REST ; T > .",
+            f"  rl [{reject}Traced] : < reservedGuardBad REST ; T > => < {gl} {bad} {rejected} REST ; T then {reject} > .",
+            f"  rl [reserveGuardGoodTraced] : < {gl} {good} REST ; T > => < reservedGuardGood REST ; T > .",
+            f"  rl [{commit}Traced] : < reservedGuardGood REST ; T > => < {completed} REST ; T then {commit} > .",
+            "endm",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -312,6 +486,54 @@ def render_maude_dovetail(spec: dict) -> str:
         f"  rl [completeTraced] : < {' '.join(f'fired{label}' for label in labels)} REST ; T > => < completed REST ; T then complete > ."
     )
     lines.append("endm")
+    guard = spec["guarded_join"]
+    gl = guard["left_fact"]
+    bad = guard["bad_fact"]
+    good = guard["good_fact"]
+    open_fact = guard["open_fact"]
+    rejected = guard["rejected_fact"]
+    completed = guard["completed_fact"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    lines.extend(
+        [
+            "",
+            "mod DOVETAIL-GUARDED-JOIN is",
+            "  protecting BOOL .",
+            "",
+            "  sorts Fact State .",
+            "  subsort Fact < State .",
+            "",
+            f"  ops {gl} {bad} {good} {open_fact} {rejected} {completed} : -> Fact [ctor] .",
+            "  op empty : -> State [ctor] .",
+            "  op __ : State State -> State [ctor assoc comm id: empty] .",
+            "",
+            f"  rl [{reject}] : {gl} {bad} {open_fact} => {gl} {bad} {rejected} .",
+            f"  rl [{commit}] : {gl} {good} => {completed} .",
+            "endm",
+            "",
+            "mod DOVETAIL-GUARDED-JOIN-TRACED is",
+            "  protecting BOOL .",
+            "",
+            "  sorts Fact State Trace Step Config .",
+            "  subsort Fact < State .",
+            "",
+            f"  ops {gl} {bad} {good} {open_fact} {rejected} {completed} : -> Fact [ctor] .",
+            f"  ops {reject} {commit} : -> Step [ctor] .",
+            "  op empty : -> State [ctor] .",
+            "  op __ : State State -> State [ctor assoc comm id: empty] .",
+            "  op nil : -> Trace [ctor] .",
+            "  op _then_ : Trace Step -> Trace [ctor] .",
+            "  op <_;_> : State Trace -> Config [ctor] .",
+            "",
+            "  var REST : State .",
+            "  var T : Trace .",
+            "",
+            f"  rl [{reject}Traced] : < {gl} {bad} {open_fact} REST ; T > => < {gl} {bad} {rejected} REST ; T then {reject} > .",
+            f"  rl [{commit}Traced] : < {gl} {good} REST ; T > => < {completed} REST ; T then {commit} > .",
+            "endm",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -366,6 +588,72 @@ def maude_visible_schedule_queries(spec: dict) -> list[tuple[str, str]]:
     return queries
 
 
+def maude_guard_queries(spec: dict) -> list[tuple[str, str]]:
+    guard = spec["guarded_join"]
+    gl = guard["left_fact"]
+    bad = guard["bad_fact"]
+    good = guard["good_fact"]
+    open_fact = guard["open_fact"]
+    rejected = guard["rejected_fact"]
+    completed = guard["completed_fact"]
+    reject = guard["bad_reject_observation"]
+    commit = guard["good_commit_observation"]
+    initial = f"{gl} {bad} {good} {open_fact}"
+    reject_trace = maude_trace([reject])
+    reject_commit_trace = maude_trace([reject, commit])
+    commit_trace = maude_trace([commit])
+    return [
+        (
+            f"search [1] in RHO-GUARDED-JOIN : {initial} =>* {gl} {bad} {good} {rejected} .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in DOVETAIL-GUARDED-JOIN : {initial} =>* {gl} {bad} {good} {rejected} .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in RHO-GUARDED-JOIN : {initial} =>! {bad} {rejected} {completed} .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in DOVETAIL-GUARDED-JOIN : {initial} =>! {bad} {rejected} {completed} .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in RHO-GUARDED-JOIN : {initial} =>! {bad} {open_fact} {completed} .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in DOVETAIL-GUARDED-JOIN : {initial} =>! {bad} {open_fact} {completed} .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in RHO-GUARDED-JOIN-TRACED : < {initial} ; nil > =>* < {bad} {rejected} {completed} ; {reject_commit_trace} > .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in DOVETAIL-GUARDED-JOIN-TRACED : < {initial} ; nil > =>* < {bad} {rejected} {completed} ; {reject_commit_trace} > .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in RHO-GUARDED-JOIN-TRACED : < {initial} ; nil > =>* < {bad} {open_fact} {completed} ; {commit_trace} > .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in DOVETAIL-GUARDED-JOIN-TRACED : < {initial} ; nil > =>* < {bad} {open_fact} {completed} ; {commit_trace} > .",
+            "Solution 1",
+        ),
+        (
+            f"search [1] in RHO-GUARDED-JOIN-TRACED : < {initial} ; nil > =>* < {bad} {rejected} {completed} ; {reject_trace} > .",
+            "No solution.",
+        ),
+        (
+            f"search [1] in DOVETAIL-GUARDED-JOIN-TRACED : < {initial} ; nil > =>* < {bad} {rejected} {completed} ; {reject_trace} > .",
+            "No solution.",
+        ),
+    ]
+
+
 def render_maude_checks(spec: dict) -> str:
     labels = [r["label"] for r in spec["redexes"]]
     facts = [r["fact"] for r in spec["redexes"]]
@@ -394,6 +682,11 @@ def render_maude_checks(spec: dict) -> str:
     lines.append("--- Visible schedule equivalence checks.")
     lines.append("--- Rho internal reserve steps are intentionally not recorded in the trace.")
     for query, _ in maude_visible_schedule_queries(spec):
+        lines.append(query)
+    lines.append("")
+    lines.append("--- Guarded join checks.")
+    lines.append("--- Failed guards release their data; valid joins can still commit later.")
+    for query, _ in maude_guard_queries(spec):
         lines.append(query)
     lines.extend(["", "quit", ""])
     return "\n".join(lines)
@@ -510,6 +803,8 @@ def check_maude_log(spec: dict, log_path: Path) -> int:
             )
         )
     for query, expected in maude_visible_schedule_queries(spec):
+        expectations.append((query, expected, query))
+    for query, expected in maude_guard_queries(spec):
         expectations.append((query, expected, query))
 
     failures = []
@@ -667,8 +962,12 @@ def generated_files(spec: dict) -> dict[Path, str]:
     return {
         ROOT / "formal/mcrl2/rho_machine/rho_net_comm.mcrl2": render_mcrl2_rho(spec),
         ROOT / "formal/mcrl2/rho_machine/dovetail_fact_steps.mcrl2": render_mcrl2_dovetail(spec),
+        ROOT / "formal/mcrl2/rho_machine/rho_guarded_join.mcrl2": render_mcrl2_rho_guard(spec),
+        ROOT / "formal/mcrl2/rho_machine/dovetail_guarded_join.mcrl2": render_mcrl2_dovetail_guard(spec),
         ROOT / "formal/mcrl2/rho_machine/formulas/rho_internal_schedules_complete.mcf": render_rho_formula(spec),
         ROOT / "formal/mcrl2/rho_machine/formulas/dovetail_direct_schedules_complete.mcf": render_dovetail_formula(spec),
+        ROOT / "formal/mcrl2/rho_machine/formulas/rho_guard_nonconsuming.mcf": render_rho_guard_formula(spec),
+        ROOT / "formal/mcrl2/rho_machine/formulas/dovetail_guard_nonconsuming.mcf": render_dovetail_guard_formula(spec),
         ROOT / "formal/maude/rho_machine/rho-net.maude": render_maude_rho(spec),
         ROOT / "formal/maude/rho_machine/dovetail-rules.maude": render_maude_dovetail(spec),
         ROOT / "formal/maude/rho_machine/checks/comm-schedule.maude": render_maude_checks(spec),

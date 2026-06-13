@@ -15,9 +15,9 @@ FORMAL_CAPPED_TARGET_HINT := mcrl2-rho-machine
 FORMAL_CLEAN_GOALS := clean
 include ../../capped.mk
 
-.PHONY: check clean check-generated check-rho-formulas check-dovetail-formulas compare
+.PHONY: check clean check-generated check-rho-formulas check-dovetail-formulas check-guard-formulas compare
 
-check: check-generated check-rho-formulas check-dovetail-formulas compare
+check: check-generated check-rho-formulas check-dovetail-formulas check-guard-formulas compare
 
 check-generated:
 	$(PYTHON) "$(GENERATOR)" --check
@@ -29,6 +29,12 @@ $(BUILD_DIR)/rho_net_comm.lps: rho_net_comm.mcrl2 | $(BUILD_DIR)
 	$(MCRL22LPS) $< $@
 
 $(BUILD_DIR)/dovetail_fact_steps.lps: dovetail_fact_steps.mcrl2 | $(BUILD_DIR)
+	$(MCRL22LPS) $< $@
+
+$(BUILD_DIR)/rho_guarded_join.lps: rho_guarded_join.mcrl2 | $(BUILD_DIR)
+	$(MCRL22LPS) $< $@
+
+$(BUILD_DIR)/dovetail_guarded_join.lps: dovetail_guarded_join.mcrl2 | $(BUILD_DIR)
 	$(MCRL22LPS) $< $@
 
 $(BUILD_DIR)/rho_net_comm.aut: $(BUILD_DIR)/rho_net_comm.lps
@@ -49,6 +55,18 @@ $(BUILD_DIR)/dovetail_no_deadlock.pbes: $(BUILD_DIR)/dovetail_fact_steps.lps for
 $(BUILD_DIR)/dovetail_direct_schedules.pbes: $(BUILD_DIR)/dovetail_fact_steps.lps formulas/dovetail_direct_schedules_complete.mcf
 	$(LPS2PBES) $(LPS2PBES_FLAGS) --formula=formulas/dovetail_direct_schedules_complete.mcf $< $@
 
+$(BUILD_DIR)/rho_guard_no_deadlock.pbes: $(BUILD_DIR)/rho_guarded_join.lps formulas/no_deadlock.mcf
+	$(LPS2PBES) $(LPS2PBES_FLAGS) --formula=formulas/no_deadlock.mcf $< $@
+
+$(BUILD_DIR)/rho_guard_nonconsuming.pbes: $(BUILD_DIR)/rho_guarded_join.lps formulas/rho_guard_nonconsuming.mcf
+	$(LPS2PBES) $(LPS2PBES_FLAGS) --formula=formulas/rho_guard_nonconsuming.mcf $< $@
+
+$(BUILD_DIR)/dovetail_guard_no_deadlock.pbes: $(BUILD_DIR)/dovetail_guarded_join.lps formulas/no_deadlock.mcf
+	$(LPS2PBES) $(LPS2PBES_FLAGS) --formula=formulas/no_deadlock.mcf $< $@
+
+$(BUILD_DIR)/dovetail_guard_nonconsuming.pbes: $(BUILD_DIR)/dovetail_guarded_join.lps formulas/dovetail_guard_nonconsuming.mcf
+	$(LPS2PBES) $(LPS2PBES_FLAGS) --formula=formulas/dovetail_guard_nonconsuming.mcf $< $@
+
 check-rho-formulas: $(BUILD_DIR)/rho_no_deadlock.pbes $(BUILD_DIR)/rho_internal_schedules.pbes
 	@test "$$($(PBES2BOOL) $(BUILD_DIR)/rho_no_deadlock.pbes)" = "true"
 	@test "$$($(PBES2BOOL) $(BUILD_DIR)/rho_internal_schedules.pbes)" = "true"
@@ -56,6 +74,12 @@ check-rho-formulas: $(BUILD_DIR)/rho_no_deadlock.pbes $(BUILD_DIR)/rho_internal_
 check-dovetail-formulas: $(BUILD_DIR)/dovetail_no_deadlock.pbes $(BUILD_DIR)/dovetail_direct_schedules.pbes
 	@test "$$($(PBES2BOOL) $(BUILD_DIR)/dovetail_no_deadlock.pbes)" = "true"
 	@test "$$($(PBES2BOOL) $(BUILD_DIR)/dovetail_direct_schedules.pbes)" = "true"
+
+check-guard-formulas: $(BUILD_DIR)/rho_guard_no_deadlock.pbes $(BUILD_DIR)/rho_guard_nonconsuming.pbes $(BUILD_DIR)/dovetail_guard_no_deadlock.pbes $(BUILD_DIR)/dovetail_guard_nonconsuming.pbes
+	@test "$$($(PBES2BOOL) $(BUILD_DIR)/rho_guard_no_deadlock.pbes)" = "true"
+	@test "$$($(PBES2BOOL) $(BUILD_DIR)/rho_guard_nonconsuming.pbes)" = "true"
+	@test "$$($(PBES2BOOL) $(BUILD_DIR)/dovetail_guard_no_deadlock.pbes)" = "true"
+	@test "$$($(PBES2BOOL) $(BUILD_DIR)/dovetail_guard_nonconsuming.pbes)" = "true"
 
 compare: $(BUILD_DIR)/rho_net_comm.aut $(BUILD_DIR)/dovetail_fact_steps.aut
 	@test "$$($(LTSCOMPARE) --equivalence=branching-bisim --tau=$(MCRL2_TAU) $^)" = "true"

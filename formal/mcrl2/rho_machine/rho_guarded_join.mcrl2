@@ -1,0 +1,36 @@
+% Generated from formal/process/rho_comm_slice.json.
+% Guarded RhoNet join projection with internal reservation and explicit
+% failed-guard release. The bad candidate must remain available after
+% `guardReject`, and the valid candidate must still be able to commit.
+
+act
+  reserveGuardBad, reserveGuardGood, guardReject, guardCommit, observeBad, observeRejected, done;
+
+proc
+  RhoGuard(
+    leftIn: Bool,
+    badIn: Bool,
+    goodIn: Bool,
+    guardOpen: Bool,
+    badReserved: Bool,
+    goodReserved: Bool,
+    rejected: Bool,
+    completed: Bool
+  ) =
+       (leftIn && badIn && guardOpen && !badReserved && !goodReserved && !completed)
+         -> reserveGuardBad . RhoGuard(false, false, goodIn, false, true, goodReserved, rejected, completed)
+     + (badReserved && !completed)
+         -> guardReject . RhoGuard(true, true, goodIn, false, false, goodReserved, true, completed)
+     + (leftIn && goodIn && !badReserved && !goodReserved && !completed)
+         -> reserveGuardGood . RhoGuard(false, badIn, false, guardOpen, badReserved, true, rejected, completed)
+     + (goodReserved && !completed)
+         -> guardCommit . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, false, rejected, true)
+     + (completed && badIn)
+         -> observeBad . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, goodReserved, rejected, completed)
+     + (completed && rejected)
+         -> observeRejected . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, goodReserved, rejected, completed)
+     + completed
+         -> done . RhoGuard(leftIn, badIn, goodIn, guardOpen, badReserved, goodReserved, rejected, true);
+
+init
+  RhoGuard(true, true, true, true, false, false, false, false);

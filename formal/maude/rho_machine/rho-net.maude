@@ -52,3 +52,42 @@ mod RHO-NET-COMM-TRACED is
   rl [reserveJoinTraced] : < firedA firedB firedC firedD REST ; T > => < reservedJoin REST ; T > .
   rl [completeTraced] : < reservedJoin REST ; T > => < completed REST ; T then complete > .
 endm
+
+mod RHO-GUARDED-JOIN is
+  protecting BOOL .
+
+  sorts Fact State .
+  subsort Fact < State .
+
+  ops gl gbad gok guardOpen rejectedGuard completedGuard reservedGuardBad reservedGuardGood : -> Fact [ctor] .
+  op empty : -> State [ctor] .
+  op __ : State State -> State [ctor assoc comm id: empty] .
+
+  rl [reserveGuardBad] : gl gbad guardOpen => reservedGuardBad .
+  rl [guardReject] : reservedGuardBad => gl gbad rejectedGuard .
+  rl [reserveGuardGood] : gl gok => reservedGuardGood .
+  rl [guardCommit] : reservedGuardGood => completedGuard .
+endm
+
+mod RHO-GUARDED-JOIN-TRACED is
+  protecting BOOL .
+
+  sorts Fact State Trace Step Config .
+  subsort Fact < State .
+
+  ops gl gbad gok guardOpen rejectedGuard completedGuard reservedGuardBad reservedGuardGood : -> Fact [ctor] .
+  ops guardReject guardCommit : -> Step [ctor] .
+  op empty : -> State [ctor] .
+  op __ : State State -> State [ctor assoc comm id: empty] .
+  op nil : -> Trace [ctor] .
+  op _then_ : Trace Step -> Trace [ctor] .
+  op <_;_> : State Trace -> Config [ctor] .
+
+  var REST : State .
+  var T : Trace .
+
+  rl [reserveGuardBadTraced] : < gl gbad guardOpen REST ; T > => < reservedGuardBad REST ; T > .
+  rl [guardRejectTraced] : < reservedGuardBad REST ; T > => < gl gbad rejectedGuard REST ; T then guardReject > .
+  rl [reserveGuardGoodTraced] : < gl gok REST ; T > => < reservedGuardGood REST ; T > .
+  rl [guardCommitTraced] : < reservedGuardGood REST ; T > => < completedGuard REST ; T then guardCommit > .
+endm

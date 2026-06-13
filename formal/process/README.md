@@ -46,7 +46,10 @@ four-redex RhoNet COMM fragment and the corresponding Dovetail fact-step
 fragment. The Rho side includes internal reserve/commit phases; the Dovetail
 side exposes direct fact steps. This is an arity-parametric generated
 projection, checked here at four independent redexes, not a full
-generated-backend proof. The checked properties are:
+generated-backend proof. The same generated suite also includes a guarded-join
+fragment with one invalid candidate and one valid candidate. In that fragment a
+failed guard is visible, releases its reserved data, and leaves the valid join
+able to commit later. The checked properties are:
 
 1. every reachable state has an outgoing transition;
 2. all 24 visible fire-order permutations can complete;
@@ -61,6 +64,13 @@ generated-backend proof. The checked properties are:
    schedules on the RhoNet and Dovetail sides while keeping Rho reserve steps
    unobserved; every visible completion trace with fewer than all four fires is
    unreachable on both sides.
+7. mCRL2 modal checks prove the guarded RhoNet and Dovetail fragments have no
+   deadlock, that reject-then-commit is reachable, that commit remains enabled
+   after a failed guard, and that the rejected bad datum remains observable after
+   the valid commit.
+8. Maude reachability checks prove both guarded rewrite projections can reach
+   the reject-then-commit normal form and the commit-first normal form, and that
+   a reject-only trace cannot reach the completed observation.
 
 The bounded executable slice is backed by `RhoCommScheduleFamily.v`, which
 proves for every finite schedule that Rho reserve steps erase to `τ`, Rho

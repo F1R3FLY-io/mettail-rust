@@ -1,0 +1,5 @@
+<guardReject . guardCommit . observeBad>true &&
+<guardReject . guardCommit . observeRejected>true &&
+[guardReject]<guardCommit . observeBad>true &&
+<guardCommit . observeBad>true &&
+[guardCommit]<observeBad>true

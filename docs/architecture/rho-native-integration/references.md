@@ -285,9 +285,13 @@ Repository-local finite process-calculus projections:
 - `formal/process/rho_comm_slice.py`
 - `formal/mcrl2/rho_machine/rho_net_comm.mcrl2`
 - `formal/mcrl2/rho_machine/dovetail_fact_steps.mcrl2`
+- `formal/mcrl2/rho_machine/rho_guarded_join.mcrl2`
+- `formal/mcrl2/rho_machine/dovetail_guarded_join.mcrl2`
 - `formal/mcrl2/rho_machine/formulas/no_deadlock.mcf`
 - `formal/mcrl2/rho_machine/formulas/rho_internal_schedules_complete.mcf`
 - `formal/mcrl2/rho_machine/formulas/dovetail_direct_schedules_complete.mcf`
+- `formal/mcrl2/rho_machine/formulas/rho_guard_nonconsuming.mcf`
+- `formal/mcrl2/rho_machine/formulas/dovetail_guard_nonconsuming.mcf`
 - `formal/maude/rho_machine/rho-net.maude`
 - `formal/maude/rho_machine/dovetail-rules.maude`
 - `formal/maude/rho_machine/checks/comm-schedule.maude`

@@ -18,5 +18,15 @@
       "label": "D",
       "fact": "d"
     }
-  ]
+  ],
+  "guarded_join": {
+    "left_fact": "gl",
+    "bad_fact": "gbad",
+    "good_fact": "gok",
+    "open_fact": "guardOpen",
+    "rejected_fact": "rejectedGuard",
+    "completed_fact": "completedGuard",
+    "bad_reject_observation": "guardReject",
+    "good_commit_observation": "guardCommit"
+  }
 }

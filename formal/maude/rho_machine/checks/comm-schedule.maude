@@ -152,4 +152,19 @@ search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c d ; nil > =>* < completed ; (
 search [1] in RHO-NET-COMM-TRACED : < a b c d ; nil > =>* < completed ; ((((nil then fireD) then fireC) then fireB) then complete) > .
 search [1] in DOVETAIL-FACT-STEPS-TRACED : < a b c d ; nil > =>* < completed ; ((((nil then fireD) then fireC) then fireB) then complete) > .
 
+--- Guarded join checks.
+--- Failed guards release their data; valid joins can still commit later.
+search [1] in RHO-GUARDED-JOIN : gl gbad gok guardOpen =>* gl gbad gok rejectedGuard .
+search [1] in DOVETAIL-GUARDED-JOIN : gl gbad gok guardOpen =>* gl gbad gok rejectedGuard .
+search [1] in RHO-GUARDED-JOIN : gl gbad gok guardOpen =>! gbad rejectedGuard completedGuard .
+search [1] in DOVETAIL-GUARDED-JOIN : gl gbad gok guardOpen =>! gbad rejectedGuard completedGuard .
+search [1] in RHO-GUARDED-JOIN : gl gbad gok guardOpen =>! gbad guardOpen completedGuard .
+search [1] in DOVETAIL-GUARDED-JOIN : gl gbad gok guardOpen =>! gbad guardOpen completedGuard .
+search [1] in RHO-GUARDED-JOIN-TRACED : < gl gbad gok guardOpen ; nil > =>* < gbad rejectedGuard completedGuard ; ((nil then guardReject) then guardCommit) > .
+search [1] in DOVETAIL-GUARDED-JOIN-TRACED : < gl gbad gok guardOpen ; nil > =>* < gbad rejectedGuard completedGuard ; ((nil then guardReject) then guardCommit) > .
+search [1] in RHO-GUARDED-JOIN-TRACED : < gl gbad gok guardOpen ; nil > =>* < gbad guardOpen completedGuard ; (nil then guardCommit) > .
+search [1] in DOVETAIL-GUARDED-JOIN-TRACED : < gl gbad gok guardOpen ; nil > =>* < gbad guardOpen completedGuard ; (nil then guardCommit) > .
+search [1] in RHO-GUARDED-JOIN-TRACED : < gl gbad gok guardOpen ; nil > =>* < gbad rejectedGuard completedGuard ; (nil then guardReject) > .
+search [1] in DOVETAIL-GUARDED-JOIN-TRACED : < gl gbad gok guardOpen ; nil > =>* < gbad rejectedGuard completedGuard ; (nil then guardReject) > .
+
 quit

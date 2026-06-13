@@ -1,0 +1,5 @@
+<reserveGuardBad . guardReject . reserveGuardGood . guardCommit . observeBad>true &&
+<reserveGuardBad . guardReject . reserveGuardGood . guardCommit . observeRejected>true &&
+[reserveGuardBad . guardReject]<reserveGuardGood . guardCommit . observeBad>true &&
+<reserveGuardGood . guardCommit . observeBad>true &&
+[reserveGuardGood . guardCommit]<observeBad>true
