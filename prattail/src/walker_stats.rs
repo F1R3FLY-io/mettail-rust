@@ -2487,8 +2487,7 @@ impl fmt::Display for WalkerStats {
                 }
                 if self.apply_action_calls > 0 {
                     let pct = (steps_after as f64) * 100.0 / (self.apply_action_calls as f64);
-                    let pct_off =
-                        (rec_off_steps as f64) * 100.0 / (self.apply_action_calls as f64);
+                    let pct_off = (rec_off_steps as f64) * 100.0 / (self.apply_action_calls as f64);
                     writeln!(
                         f,
                         "    steps_after_would_refute = {:.2}% of apply_action_calls ({:.2}% recovery-off) — gate ≥ 20% to proceed, < 5% STOP",

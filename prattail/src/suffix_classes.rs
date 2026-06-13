@@ -477,10 +477,7 @@ mod tests {
             nodes: vec![
                 LexDagNode {
                     byte_start: 0,
-                    edges: vec![
-                        edge(TokenKind::Ident, 1, 1, 0),
-                        edge(TokenKind::Ident, 2, 1, 1),
-                    ],
+                    edges: vec![edge(TokenKind::Ident, 1, 1, 0), edge(TokenKind::Ident, 2, 1, 1)],
                 },
                 LexDagNode {
                     byte_start: 1,
@@ -578,10 +575,7 @@ mod tests {
             nodes: vec![
                 LexDagNode {
                     byte_start: 0,
-                    edges: vec![
-                        edge(TokenKind::Ident, 1, 1, 0),
-                        edge(TokenKind::Ident, 2, 1, 1),
-                    ],
+                    edges: vec![edge(TokenKind::Ident, 1, 1, 0), edge(TokenKind::Ident, 2, 1, 1)],
                 },
                 LexDagNode {
                     byte_start: 1,

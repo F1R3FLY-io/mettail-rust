@@ -2056,8 +2056,10 @@ fn generate_beta_apply_assemble_arm(
     // first for readability, the behavior is identical across arms.
     let mut ordered: Vec<&String> = lam_doms.iter().collect();
     ordered.sort_by_key(|d| (d.as_str() != dom_str, d.as_str().to_string()));
-    let lam_variants: Vec<Ident> =
-        ordered.iter().map(|d| format_ident!("Lam{}", d.as_str())).collect();
+    let lam_variants: Vec<Ident> = ordered
+        .iter()
+        .map(|d| format_ident!("Lam{}", d.as_str()))
+        .collect();
 
     quote! {
         NormTask::#assemble_variant { slot, lam_slot, arg_slot } => {
@@ -2130,8 +2132,10 @@ fn generate_beta_mapply_assemble_arm(
     // binding information; the typed multi-substitution does).
     let mut ordered: Vec<&String> = lam_doms.iter().collect();
     ordered.sort_by_key(|d| (d.as_str() != dom_str, d.as_str().to_string()));
-    let mlam_variants: Vec<Ident> =
-        ordered.iter().map(|d| format_ident!("MLam{}", d.as_str())).collect();
+    let mlam_variants: Vec<Ident> = ordered
+        .iter()
+        .map(|d| format_ident!("MLam{}", d.as_str()))
+        .collect();
 
     quote! {
         NormTask::#assemble_variant { slot, lam_slot, args_start, args_count } => {

@@ -1227,8 +1227,11 @@ pub fn measure_shared_nonterminal_suffixes(
             }
         }
     }
-    let shared_depth1 =
-        buckets1.values().filter(|ls| ls.len() >= 2).map(|ls| ls.len()).sum::<usize>();
+    let shared_depth1 = buckets1
+        .values()
+        .filter(|ls| ls.len() >= 2)
+        .map(|ls| ls.len())
+        .sum::<usize>();
     let mut shared_depth2 = 0usize;
     let mut groups_depth2 = Vec::new();
     for ((cat, key), labels) in &buckets2 {
@@ -1237,7 +1240,12 @@ pub fn measure_shared_nonterminal_suffixes(
             groups_depth2.push(format!("{cat}: {key} ← [{}]", labels.join(", ")));
         }
     }
-    SharedSuffixMeasurement { eligible, shared_depth1, shared_depth2, groups_depth2 }
+    SharedSuffixMeasurement {
+        eligible,
+        shared_depth1,
+        shared_depth2,
+        groups_depth2,
+    }
 }
 
 /// Format a `SharedNonterminalPrefix` as a human-readable diagnostic string.
@@ -4195,7 +4203,8 @@ mod tests {
         match tree.dispatch_strategy("KwIf", &token_ids) {
             DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
                 assert!(
-                    rule_labels.iter().any(|l| l == "IfInt") && rule_labels.iter().any(|l| l == "IfFloat"),
+                    rule_labels.iter().any(|l| l == "IfInt")
+                        && rule_labels.iter().any(|l| l == "IfFloat"),
                     "boundary-only token must surface ALL reachable rules: {rule_labels:?}"
                 );
             },

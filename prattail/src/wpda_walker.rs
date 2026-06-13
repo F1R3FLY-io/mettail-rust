@@ -658,7 +658,11 @@ pub enum WpdaStepAction<W: SemiringRef> {
     /// target (`next_pos`), never the alt-0 hardwired advance (FV:
     /// CollectionForkEvidence.consume_at_and_pop_sound/complete;
     /// alt0_close_lands_on_wrong_target is the defect this prevents).
-    ConsumeAtAndPop { weight: W, new_state: WpdaState, next_pos: usize },
+    ConsumeAtAndPop {
+        weight: W,
+        new_state: WpdaState,
+        next_pos: usize,
+    },
     /// Phase 4: consume the current token (advance `pos` by 1) without
     /// touching the stack, then transition to `new_state`. Used by the
     /// `CollectionLoop` separator arm: consume the separator and re-enter
@@ -1051,10 +1055,8 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// so its parked members are released mid-parse as independent
     /// Proceed-lineages. Keyed so the scan is per-key; cleared at the
     /// parse boundary.
-    crosscat_lhs_key_edges: rustc_hash::FxHashMap<
-        crate::dispatch_cohort::DispatchKey,
-        Vec<crate::gss::GssEdgeId>,
-    >,
+    crosscat_lhs_key_edges:
+        rustc_hash::FxHashMap<crate::dispatch_cohort::DispatchKey, Vec<crate::gss::GssEdgeId>>,
     /// EP-P1 v3.1 (led_chain root fix, 2026-06-12): once the EOI/no-progress
     /// backstop has begun releasing CrossCatLhs members stranded on
     /// never-resolved InFlight keys, further CrossCatLhs InFlightCollision
@@ -3601,7 +3603,13 @@ impl ProjDescriptorKey {
 
     #[inline(always)]
     pub fn new(gss_node: u32, sppf_stack: u32, pos: u32, cat_src: u16, cur_bp: u8) -> Self {
-        ProjDescriptorKey { gss_node, sppf_stack, pos, cat_src, cur_bp }
+        ProjDescriptorKey {
+            gss_node,
+            sppf_stack,
+            pos,
+            cat_src,
+            cur_bp,
+        }
     }
 }
 
@@ -3636,7 +3644,11 @@ fn extract_proj_descriptor<W: SemiringRef>(
             .node(cursor.node)
             .map(|n| n.symbol.kind == SymbolKind::CollectionMarker)
             .unwrap_or(false);
-        let pos_key = if node_is_marker { cursor.pos as u32 } else { ProjDescriptorKey::NO_POS };
+        let pos_key = if node_is_marker {
+            cursor.pos as u32
+        } else {
+            ProjDescriptorKey::NO_POS
+        };
         Some(ProjDescriptorKey::new(
             cursor.node,
             cursor.sppf_stack_id.0,
@@ -5225,14 +5237,22 @@ where
                 },
             }
         }
-        self.stats.p5_residual_dead_steps_own =
-            self.stats.p5_residual_dead_steps_own.saturating_add(dead_own);
-        self.stats.p5_residual_dead_steps_lineage =
-            self.stats.p5_residual_dead_steps_lineage.saturating_add(dead_lineage);
-        self.stats.p5_accepted_steps_own =
-            self.stats.p5_accepted_steps_own.saturating_add(accepted_own);
-        self.stats.p5_accepted_steps_lineage =
-            self.stats.p5_accepted_steps_lineage.saturating_add(accepted_lineage);
+        self.stats.p5_residual_dead_steps_own = self
+            .stats
+            .p5_residual_dead_steps_own
+            .saturating_add(dead_own);
+        self.stats.p5_residual_dead_steps_lineage = self
+            .stats
+            .p5_residual_dead_steps_lineage
+            .saturating_add(dead_lineage);
+        self.stats.p5_accepted_steps_own = self
+            .stats
+            .p5_accepted_steps_own
+            .saturating_add(accepted_own);
+        self.stats.p5_accepted_steps_lineage = self
+            .stats
+            .p5_accepted_steps_lineage
+            .saturating_add(accepted_lineage);
         self.stats.p5_eoi_cursors_examined =
             self.stats.p5_eoi_cursors_examined.saturating_add(examined);
         self.stats.p5_eoi_dead_cursors =
@@ -5335,8 +5355,7 @@ where
         // explosion the budget was meant to avoid.
         if let WpdaState::Error { ref message } = self.state {
             if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
-                let frontier_ess_x1000 =
-                    parse_ambiguity_budget_sentinel_ess(message).unwrap_or(0);
+                let frontier_ess_x1000 = parse_ambiguity_budget_sentinel_ess(message).unwrap_or(0);
                 return WpdaResolveResult::AmbiguityBudget {
                     budget,
                     actual,
@@ -5444,8 +5463,7 @@ where
         // retained as a defensive backstop for future control-flow changes.
         if let WpdaState::Error { ref message } = self.state {
             if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
-                let frontier_ess_x1000 =
-                    parse_ambiguity_budget_sentinel_ess(message).unwrap_or(0);
+                let frontier_ess_x1000 = parse_ambiguity_budget_sentinel_ess(message).unwrap_or(0);
                 return WpdaResolveResult::AmbiguityBudget {
                     budget,
                     actual,
@@ -5502,14 +5520,12 @@ where
         #[cfg(feature = "walker-stats")]
         if self.ep_p2_mode == EpP2Mode::Shadow {
             for i in 0..crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2 {
-                self.stats.eoi_dead_cursors_parikh_refutable[i] = self
-                    .stats
-                    .eoi_dead_cursors_parikh_refutable[i]
-                    .saturating_add(snapshot.ep_p2_eoi_dead_refutable[i]);
-                self.stats.parikh_shadow_refuted_then_accepted[i] = self
-                    .stats
-                    .parikh_shadow_refuted_then_accepted[i]
-                    .saturating_add(snapshot.ep_p2_refuted_then_accepted[i]);
+                self.stats.eoi_dead_cursors_parikh_refutable[i] =
+                    self.stats.eoi_dead_cursors_parikh_refutable[i]
+                        .saturating_add(snapshot.ep_p2_eoi_dead_refutable[i]);
+                self.stats.parikh_shadow_refuted_then_accepted[i] =
+                    self.stats.parikh_shadow_refuted_then_accepted[i]
+                        .saturating_add(snapshot.ep_p2_refuted_then_accepted[i]);
             }
         }
         // No further work if every logical cursor would have been removed
@@ -7356,7 +7372,8 @@ where
             return false;
         };
         for &packing_id in self.sppf.packings_of(top_sid) {
-            if let Some(crate::sppf::SppfNode::Packing { rule_idx, .. }) = self.sppf.node(packing_id)
+            if let Some(crate::sppf::SppfNode::Packing { rule_idx, .. }) =
+                self.sppf.node(packing_id)
             {
                 let cat = (*rule_idx >> 16) as u16;
                 let rule = (*rule_idx & 0xFFFF) as u16;
@@ -7399,9 +7416,9 @@ where
             WpdaStepAction::ConsumeAndPush { symbol, new_state, .. } => {
                 Self::category_changing_infix_source(symbol, new_state)?
             },
-            WpdaStepAction::Fork { branches, .. } => {
-                branches.iter().find_map(Self::branch_category_changing_infix_source)?
-            },
+            WpdaStepAction::Fork { branches, .. } => branches
+                .iter()
+                .find_map(Self::branch_category_changing_infix_source)?,
             _ => return None,
         };
         // (3) only the broken case — no existing cross-cat-LHS evidence.
@@ -7546,17 +7563,17 @@ where
                     // (under-a-cast-delegate work); the OFF baseline is
                     // RE-PINNED under this widened predicate (ledger
                     // §P1 Step-0 row).
-                    let contains = self
-                        .incoming_edge_stack_arena
-                        .to_vec(sid)
-                        .iter()
-                        .any(|edge_id| {
-                            matches!(
-                                self.gss.edge_kind(*edge_id),
-                                Some(crate::gss::EdgeKind::CrossCatLhs { .. })
-                                    | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
-                            )
-                        });
+                    let contains =
+                        self.incoming_edge_stack_arena
+                            .to_vec(sid)
+                            .iter()
+                            .any(|edge_id| {
+                                matches!(
+                                    self.gss.edge_kind(*edge_id),
+                                    Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                                        | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+                                )
+                            });
                     self.stats.crosscat_lhs_stack_memo.insert(sid, contains);
                     contains
                 },
@@ -7834,8 +7851,7 @@ where
                                 // that site).
                             },
                             crate::dispatch_cohort::RegisterOutcome::ResolvedHit {
-                                bodies,
-                                ..
+                                bodies, ..
                             } if __quiescent && !bodies.is_empty() => {
                                 // SYNCHRONOUS CONSUME. Weight contract
                                 // (R7-3): cursor.weight becomes
@@ -7986,8 +8002,9 @@ where
                     // On (flip-run root cause: a Measure-only table left
                     // On's resolve keys mismatched, so entries never
                     // resolved and every arrival parked/overflowed).
-                    if let Some(__eid) =
-                        self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id)
+                    if let Some(__eid) = self
+                        .incoming_edge_stack_arena
+                        .top(cursor.incoming_edge_stack_id)
                     {
                         self.crosscat_lhs_wrap.insert(__eid, (__host, u16::MAX));
                         // (On-mode key-edges/lineage bookkeeping lives in
@@ -7995,8 +8012,8 @@ where
                         // chokepoint shared by both producers.)
                     }
                 }
-                if let Some((__source, __host)) = __ep_p1_measure_ccl
-                    .filter(|_| self.ep_p1_mode == EpP1Mode::Measure)
+                if let Some((__source, __host)) =
+                    __ep_p1_measure_ccl.filter(|_| self.ep_p1_mode == EpP1Mode::Measure)
                 {
                     let __key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                         __ep_p1_dispatch_pos,
@@ -8005,7 +8022,10 @@ where
                         __host,
                         u16::MAX,
                     );
-                    match self.dispatch_cohort_cache.register(__key, cursor.weight.clone()) {
+                    match self
+                        .dispatch_cohort_cache
+                        .register(__key, cursor.weight.clone())
+                    {
                         crate::dispatch_cohort::RegisterOutcome::WorkerInserted => {
                             crate::stats_inc!(self, ep_p1_measure_workers);
                         },
@@ -9520,8 +9540,8 @@ where
                             // #307 ROOT-F coverage backstop: count the consumed
                             // separator on the innermost active slot.
                             {
-                                let slot = (child.collection_stack_depth as usize)
-                                    .saturating_sub(1);
+                                let slot =
+                                    (child.collection_stack_depth as usize).saturating_sub(1);
                                 let counts = Arc::make_mut(&mut child.collection_sep_counts);
                                 while counts.len() <= slot {
                                     counts.push(0);
@@ -12312,11 +12332,7 @@ where
         // MUST stay 0 (the model's load-bearing tripwire; deep-dive, never
         // tune away). Cheap: one comparison per `step_fanout`.
         if ep_p4_demoted_pending > 0 {
-            crate::stats_add!(
-                self,
-                demoted_member_unstepped_at_exit,
-                ep_p4_demoted_pending
-            );
+            crate::stats_add!(self, demoted_member_unstepped_at_exit, ep_p4_demoted_pending);
         }
         // Phase F.13 H12 Stage 1.5 (2026-05-21): end-of-step cohort
         // drain. For each dispatch key whose worker resolved during
@@ -12476,9 +12492,7 @@ where
         // projection drain feeds (pre-replacement) so prune+merge see
         // them like every other revived cursor. Empty on cast-free
         // inputs → byte-identical hot path.
-        if self.ep_p1_mode == EpP1Mode::On
-            && !self.pending_crosscat_lhs_drain_keys.is_empty()
-        {
+        if self.ep_p1_mode == EpP1Mode::On && !self.pending_crosscat_lhs_drain_keys.is_empty() {
             let ccl_keys = std::mem::take(&mut self.pending_crosscat_lhs_drain_keys);
             for key in ccl_keys {
                 for drain_job in self.dispatch_cohort_cache.take_pending_for_drain_all(&key) {
@@ -15290,7 +15304,9 @@ where
         if trace_actions_enabled() && !collection_ids.is_empty() {
             eprintln!(
                 "[wpds-action] fire-arena pos={} ids={:?} arena={:?} seps={:?}",
-                cursor.pos, collection_ids, cursor.sppf_collection_arena,
+                cursor.pos,
+                collection_ids,
+                cursor.sppf_collection_arena,
                 cursor.collection_sep_counts,
             );
         }
@@ -16198,8 +16214,9 @@ where
         let body_w = self.sppf.symbol_weight_sum(symbol_id);
         cursor.weight = cursor.weight.times_ref(&body_w);
         // (2) the body onto the cursor's OWN sppf stack; position to hi.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, symbol_id);
+        cursor.sppf_stack_id = self
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, symbol_id);
         cursor.pos = hi_pos;
         // (3) the body-owned data fields (R7-1/R7-2).
         cursor.last_action_output_cat = worker_last_action_output_cat;
@@ -16216,10 +16233,7 @@ where
             None => WpdaState::Unwinding,
         };
         let reentry_fires = pred != crate::gss::GSS_NODE_NONE
-            && matches!(
-                effective,
-                WpdaState::InfixLoop { .. } | WpdaState::Unwinding
-            );
+            && matches!(effective, WpdaState::InfixLoop { .. } | WpdaState::Unwinding);
         if reentry_fires {
             // The reentry (mirrors the pop path verbatim):
             // category_entry(source) at the body end, weight one,
@@ -16297,8 +16311,9 @@ where
         let mut released: Vec<BranchCursor<W>> = Vec::new();
         for key in &dead_keys {
             let members = self.dispatch_cohort_cache.take_inflight_members(key);
-            self.parked_crosscat_lhs_outstanding =
-                self.parked_crosscat_lhs_outstanding.saturating_sub(members.len());
+            self.parked_crosscat_lhs_outstanding = self
+                .parked_crosscat_lhs_outstanding
+                .saturating_sub(members.len());
             // The key's lineage is gone; stop tracking its edges either way
             // (a Resolved key returns no members but is also no longer a
             // body producer for the dead-worker purpose).
@@ -16383,9 +16398,8 @@ where
                     .or_insert(0u32);
                 *seen += 1;
                 if *seen > 1 {
-                    let part_idx =
-                        crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
-                            + (self.recovery_config.max_recovery_depth > 0) as usize;
+                    let part_idx = crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2
+                        + (self.recovery_config.max_recovery_depth > 0) as usize;
                     crate::stats_inc_idx!(self, ep_p1_shadow_would_share_total, part_idx);
                 }
             }
@@ -16422,7 +16436,11 @@ where
         if let Some((ccl_source, ccl_host)) = ep_p1_ccl_push {
             self.crosscat_lhs_wrap.insert(edge_id, (ccl_host, u16::MAX));
             let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
-                pos, ccl_source, 0, ccl_host, u16::MAX,
+                pos,
+                ccl_source,
+                0,
+                ccl_host,
+                u16::MAX,
             );
             self.crosscat_lhs_key_edges
                 .entry(key.clone())
@@ -17133,8 +17151,7 @@ where
         // happens inside cursor_gss_push_with_kind (the consolidated
         // chokepoint), so workers here need no extra wiring.
         if self.ep_p1_mode == EpP1Mode::On {
-            if let Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) = &push_edge_kind
-            {
+            if let Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) = &push_edge_kind {
                 let ccl_source = *source_src_idx;
                 // R5-7: the HOST is the parent's GSS-top category — NEVER
                 // branch.symbol.category_src_idx (that is the SOURCE: the
@@ -17145,7 +17162,11 @@ where
                     .map(|n| n.symbol.category_src_idx)
                     .unwrap_or(u16::MAX);
                 let ccl_key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
-                    pos_after, ccl_source, 0, ccl_host, u16::MAX,
+                    pos_after,
+                    ccl_source,
+                    0,
+                    ccl_host,
+                    u16::MAX,
                 );
                 let ccl_quiescent = self
                     .crosscat_lhs_live_lineages
@@ -17169,8 +17190,7 @@ where
                         // SYNCHRONOUS CONSUME: one child per body, built
                         // from the fork-metadata frame WITHOUT the push.
                         crate::stats_inc!(self, ep_p1_consumed_in_place);
-                        let mut children: Vec<BranchCursor<W>> =
-                            Vec::with_capacity(bodies.len());
+                        let mut children: Vec<BranchCursor<W>> = Vec::with_capacity(bodies.len());
                         for b in &bodies {
                             let mut child = self.parent_frame_with_fork_metadata(
                                 parent,
@@ -18554,9 +18574,7 @@ where
                 // sign hazard (N sibling pops of one shared edge
                 // decrement once). At quiescence schedule the drain (a
                 // no-op when nothing is parked).
-                if self.ep_p1_mode == EpP1Mode::On
-                    && self.popped_crosscat_lhs_edges.insert(eid)
-                {
+                if self.ep_p1_mode == EpP1Mode::On && self.popped_crosscat_lhs_edges.insert(eid) {
                     let host_for_key = self
                         .crosscat_lhs_wrap
                         .get(&eid)
@@ -18564,17 +18582,14 @@ where
                         .map(|(h, _)| h)
                         .unwrap_or(u16::MAX);
                     if let Some(node) = self.gss.node(cursor.node) {
-                        let quiesce_key =
-                            crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
-                                node.pos,
-                                source_src_idx,
-                                0,
-                                host_for_key,
-                                u16::MAX,
-                            );
-                        if let Some(n) =
-                            self.crosscat_lhs_live_lineages.get_mut(&quiesce_key)
-                        {
+                        let quiesce_key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+                            node.pos,
+                            source_src_idx,
+                            0,
+                            host_for_key,
+                            u16::MAX,
+                        );
+                        if let Some(n) = self.crosscat_lhs_live_lineages.get_mut(&quiesce_key) {
                             crate::stats_inc!(self, dbg_ccl_lineage_dec);
                             *n = n.saturating_sub(1);
                             if *n == 0 {
@@ -19689,8 +19704,7 @@ mod tests {
             pos: 0,
             symbol: StackSymbolV2::rule_at(7, 0, 1, None),
         });
-        let class_of =
-            |kind: &TokenKind| -> Option<u8> { walker.engine.parikh_class_of(kind) };
+        let class_of = |kind: &TokenKind| -> Option<u8> { walker.engine.parikh_class_of(kind) };
 
         // CASE A — suffix HAS `==`: ident "==" ident Eof. The obligation
         // {==, coarse} ⊆ S[0]; the gate does NOT refute.
@@ -19700,8 +19714,7 @@ mod tests {
             TokenKind::Ident,
             TokenKind::Eof,
         ];
-        walker.ep_p2_suffix_masks =
-            Some(SuffixClassMasks::from_linear(&kinds_with_eq, &class_of));
+        walker.ep_p2_suffix_masks = Some(SuffixClassMasks::from_linear(&kinds_with_eq, &class_of));
         assert!(
             !walker.ep_p2_would_refute_at(node_id, 0),
             "obligated `==` IS in the suffix → must NOT refute",
@@ -19718,8 +19731,7 @@ mod tests {
             TokenKind::Ident,
             TokenKind::Eof,
         ];
-        walker.ep_p2_suffix_masks =
-            Some(SuffixClassMasks::from_linear(&kinds_no_eq, &class_of));
+        walker.ep_p2_suffix_masks = Some(SuffixClassMasks::from_linear(&kinds_no_eq, &class_of));
         assert!(
             walker.ep_p2_would_refute_at(node_id, 0),
             "obligated `==` is ABSENT from the suffix → MUST would-refute",

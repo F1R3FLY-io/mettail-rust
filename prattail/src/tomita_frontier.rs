@@ -690,8 +690,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                     // outcome attributes ALL spent work: own SUMS (disjoint
                     // past apply_action work), lineage MAXes (longer ancestry).
                     existing.p5_steps_own = existing.p5_steps_own.saturating_add(arc.p5_steps_own);
-                    existing.p5_steps_lineage =
-                        existing.p5_steps_lineage.max(arc.p5_steps_lineage);
+                    existing.p5_steps_lineage = existing.p5_steps_lineage.max(arc.p5_steps_lineage);
                     self.dedup_hits = self.dedup_hits.saturating_add(1);
                     node.generation = gen;
                     node.arc_count()

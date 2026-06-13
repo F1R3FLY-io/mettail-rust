@@ -1214,8 +1214,7 @@ pub fn generate_base_rewrites(
             // exclude these value-preserving cast lifts from the
             // user-visible rewrite list (see relations.rs).
             if rw.is_auto_injected && rw.name.to_string().starts_with("NormCast") {
-                let canon_rel =
-                    format_ident!("__canon_{}", category.to_string().to_lowercase());
+                let canon_rel = format_ident!("__canon_{}", category.to_string().to_lowercase());
                 rules.push(generate_rule_clause(
                     &rw.left,
                     &rw.right,

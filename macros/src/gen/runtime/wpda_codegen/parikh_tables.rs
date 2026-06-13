@@ -322,8 +322,7 @@ fn compute_category_must(
     }
 
     // ── must: greatest fixpoint, start all ⊤, monotone-decreasing. ──
-    let mut cat_must: HashMap<String, Mask> =
-        categories.iter().map(|c| (c.clone(), top)).collect();
+    let mut cat_must: HashMap<String, Mask> = categories.iter().map(|c| (c.clone(), top)).collect();
     loop {
         let mut changed = false;
         for (i, cat) in categories.iter().enumerate() {
@@ -415,8 +414,7 @@ pub(crate) fn build_parikh_model(
             }
             let params = param_categories(rule);
             for pos in 0..sp.len() {
-                let mask =
-                    rule_suffix_must(sp, pos, &params, &cat_must, &cat_nullable, &alpha);
+                let mask = rule_suffix_must(sp, pos, &params, &cat_must, &cat_nullable, &alpha);
                 if mask != 0 {
                     must_entries.insert((cat_idx, rule_idx, pos as u8), mask);
                 }
