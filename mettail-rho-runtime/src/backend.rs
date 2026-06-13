@@ -114,6 +114,13 @@ impl PlannedRhoBackend {
         self.program().text_annotation()
     }
 
+    /// Evidence references inherited from the flip-gated backend plan. Generated
+    /// language metadata can use this list when advertising `RhoMachine` as an
+    /// executable default backend.
+    pub fn evidence_refs(&self) -> &[String] {
+        self.plan.evidence_refs()
+    }
+
     /// Run the generated backend artifact to quiescence.
     pub async fn run(&self) -> Result<(), String> {
         run_validated_program(self.program()).await

@@ -390,6 +390,10 @@ blank-rule, or blank-evidence dispositions block the default-backend gate.
 gate, including the `invalid_dispositions` counter. Its
 `deadlock_diagnostic_blocks_flip` theorem models the codegen analyzer output:
 any non-empty channel-deadlock diagnostic list makes `NoNewDeadlocks(L)` false.
+The same theory also models Rust-side evidence-reference hygiene with
+`default_backend_gate_with_refs`: if a positive proof, oracle, coverage-audit,
+or scheduler-fairness gate has zero stable evidence references, or if any gate
+evidence reference is blank, the default-backend gate is false.
 The `missing_scheduler_fairness_blocks_flip` theorem proves that a language
 cannot flip while the scheduler-fairness obligation is open. The
 `clean_deadlock_report_reduces_to_other_gates` theorem proves that an empty
@@ -401,6 +405,11 @@ The `default_backend_gate_iff_all_evidence` theorem models
 `plan_rho_default_backend`: proof, oracle, scheduler fairness, coverage audit,
 no uncovered rejected rules, no extraneous disposition claims, no invalid
 dispositions, and no deadlock diagnostics are jointly necessary and sufficient.
+The Rust planner strengthens that Boolean model by requiring non-empty,
+nonblank evidence-reference lists for every positive externally supplied gate.
+Accepted `RhoDefaultBackendPlan` values expose the resulting sorted
+`evidence_refs` vector so generated language metadata can populate
+`BackendCapabilityDef::evidence_refs` without inventing claims after the fact.
 
 Rust flip-gate evidence:
 
@@ -414,7 +423,9 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::validate_rho_program`
 - `mettail_rho_codegen::RhoValidationError`
 - `mettail_rho_codegen::RhoDefaultBackendEvidence`
-- `mettail_rho_codegen::RhoDefaultBackendEvidence::scheduler_fairness_passed`
+- `mettail_rho_codegen::RhoDefaultBackendEvidenceGate`
+- `mettail_rho_codegen::RhoGateEvidenceDiagnostic`
+- `mettail_rho_codegen::RhoDefaultBackendPlan::evidence_refs`
 - `mettail_rho_codegen::RhoCoverageEvidence`
 - `mettail_rho_codegen::RhoRejectedRuleDisposition`
 - `mettail_rho_codegen::RhoRejectedRuleDispositionKind`

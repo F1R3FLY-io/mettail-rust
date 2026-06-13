@@ -37,9 +37,19 @@ const CALC_RUN_FRAGMENT: &str = r#"
 fn passing_evidence() -> RhoDefaultBackendEvidence {
     RhoDefaultBackendEvidence {
         proofs_passed: true,
+        proof_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string()
+        ],
         oracle_parity_passed: true,
+        oracle_parity_evidence_refs: vec!["mettail-rho-runtime/tests/run_calculator.rs".to_string()],
         coverage_audit_passed: true,
+        coverage_audit_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
+        ],
         scheduler_fairness_passed: true,
+        scheduler_fairness_evidence_refs: vec![
+            "formal/tla/rho_machine/RhoMachineFairness.tla".to_string()
+        ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
     }
 }
@@ -86,6 +96,14 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
     assert!(
         backend.text_annotation().contains("contract @\"AddInt\""),
         "reader annotation remains available but is not the execution boundary"
+    );
+    assert!(
+        backend
+            .evidence_refs()
+            .iter()
+            .any(|evidence_ref| evidence_ref
+                == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
+        "planned runtime backend must expose flip-gate evidence refs for metadata"
     );
 
     let cases: &[(&str, i64, i64, i64)] = &[

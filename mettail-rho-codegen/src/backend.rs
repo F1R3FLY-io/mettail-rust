@@ -156,10 +156,31 @@ impl RhoCoverageEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhoDefaultBackendEvidence {
     pub proofs_passed: bool,
+    pub proof_evidence_refs: Vec<String>,
     pub oracle_parity_passed: bool,
+    pub oracle_parity_evidence_refs: Vec<String>,
     pub coverage_audit_passed: bool,
+    pub coverage_audit_evidence_refs: Vec<String>,
     pub scheduler_fairness_passed: bool,
+    pub scheduler_fairness_evidence_refs: Vec<String>,
     pub coverage: RhoCoverageEvidence,
+}
+
+/// Named evidence gate whose positive result must be backed by stable
+/// references before a Rho-default backend plan can be emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoDefaultBackendEvidenceGate {
+    Proofs,
+    OracleParity,
+    CoverageAudit,
+    SchedulerFairness,
+}
+
+/// Evidence-reference hygiene diagnostics for the Rust image of the flip gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoGateEvidenceDiagnostic {
+    MissingEvidenceRefs { gate: RhoDefaultBackendEvidenceGate },
+    BlankEvidenceRef { gate: RhoDefaultBackendEvidenceGate },
 }
 
 /// Concrete plan for a language that passed the Rho-default flip gate.
@@ -168,6 +189,7 @@ pub struct RhoDefaultBackendPlan {
     pub lowering: RhoLowering,
     pub validated_program: ValidatedRhoProgram,
     pub rejected_rule_dispositions: Vec<RhoRejectedRuleDisposition>,
+    pub evidence_refs: Vec<String>,
 }
 
 impl RhoDefaultBackendPlan {
@@ -185,6 +207,13 @@ impl RhoDefaultBackendPlan {
     pub fn text_annotation(&self) -> &str {
         self.program().text_annotation()
     }
+
+    /// Stable proof, oracle, coverage, validation, scheduler-fairness,
+    /// deadlock-analysis, and handler evidence references that justified
+    /// exposing this plan as a default runtime backend.
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
+    }
 }
 
 /// Rejected Rho-default plan with complete diagnostic state for callers.
@@ -195,7 +224,62 @@ pub struct RhoDefaultBackendPlanError {
     pub uncovered_rejections: Vec<String>,
     pub extraneous_dispositions: Vec<String>,
     pub invalid_dispositions: Vec<RhoRejectedRuleDispositionDiagnostic>,
+    pub invalid_gate_evidence_refs: Vec<RhoGateEvidenceDiagnostic>,
     pub validation_errors: Vec<RhoValidationError>,
+}
+
+fn gate_evidence_diagnostics(
+    gate: RhoDefaultBackendEvidenceGate,
+    passed: bool,
+    refs: &[String],
+) -> Vec<RhoGateEvidenceDiagnostic> {
+    let mut diagnostics = Vec::new();
+    if passed && refs.is_empty() {
+        diagnostics.push(RhoGateEvidenceDiagnostic::MissingEvidenceRefs { gate });
+    }
+    for evidence_ref in refs {
+        if evidence_ref.trim().is_empty() {
+            diagnostics.push(RhoGateEvidenceDiagnostic::BlankEvidenceRef { gate });
+        }
+    }
+    diagnostics
+}
+
+fn gate_passes_with_refs(passed: bool, diagnostics: &[RhoGateEvidenceDiagnostic]) -> bool {
+    passed && diagnostics.is_empty()
+}
+
+fn push_refs(out: &mut BTreeSet<String>, refs: &[String]) {
+    for evidence_ref in refs {
+        let trimmed = evidence_ref.trim();
+        if !trimmed.is_empty() {
+            out.insert(trimmed.to_string());
+        }
+    }
+}
+
+fn accepted_evidence_refs(
+    evidence: &RhoDefaultBackendEvidence,
+    validated_program: &ValidatedRhoProgram,
+    dispositions: &[RhoRejectedRuleDisposition],
+) -> Vec<String> {
+    let mut refs = BTreeSet::new();
+    push_refs(&mut refs, &evidence.proof_evidence_refs);
+    push_refs(&mut refs, &evidence.oracle_parity_evidence_refs);
+    push_refs(&mut refs, &evidence.coverage_audit_evidence_refs);
+    push_refs(&mut refs, &evidence.scheduler_fairness_evidence_refs);
+    refs.insert(format!(
+        "mettail-rho-codegen:artifact-validation:{:?}",
+        validated_program.artifact_kind()
+    ));
+    refs.insert("mettail-rho-codegen:channel-deadlock-analysis:no-new-deadlocks".to_string());
+    for disposition in dispositions {
+        let trimmed = disposition.evidence_ref.trim();
+        if !trimmed.is_empty() {
+            refs.insert(trimmed.to_string());
+        }
+    }
+    refs.into_iter().collect()
 }
 
 /// Lower `def` and build the Rho-default backend plan if every flip gate passes.
@@ -209,24 +293,66 @@ pub fn plan_rho_default_backend(
     let uncovered_rejections = evidence.coverage.uncovered_rejections(&lowering);
     let extraneous_dispositions = evidence.coverage.extraneous_dispositions(&lowering);
     let invalid_dispositions = evidence.coverage.invalid_dispositions();
+    let proof_evidence_diagnostics = gate_evidence_diagnostics(
+        RhoDefaultBackendEvidenceGate::Proofs,
+        evidence.proofs_passed,
+        &evidence.proof_evidence_refs,
+    );
+    let oracle_evidence_diagnostics = gate_evidence_diagnostics(
+        RhoDefaultBackendEvidenceGate::OracleParity,
+        evidence.oracle_parity_passed,
+        &evidence.oracle_parity_evidence_refs,
+    );
+    let coverage_audit_evidence_diagnostics = gate_evidence_diagnostics(
+        RhoDefaultBackendEvidenceGate::CoverageAudit,
+        evidence.coverage_audit_passed,
+        &evidence.coverage_audit_evidence_refs,
+    );
+    let scheduler_fairness_evidence_diagnostics = gate_evidence_diagnostics(
+        RhoDefaultBackendEvidenceGate::SchedulerFairness,
+        evidence.scheduler_fairness_passed,
+        &evidence.scheduler_fairness_evidence_refs,
+    );
+    let invalid_gate_evidence_refs = proof_evidence_diagnostics
+        .iter()
+        .chain(oracle_evidence_diagnostics.iter())
+        .chain(coverage_audit_evidence_diagnostics.iter())
+        .chain(scheduler_fairness_evidence_diagnostics.iter())
+        .cloned()
+        .collect::<Vec<_>>();
     let coverage_passed =
-        evidence.coverage_audit_passed && evidence.coverage.exactly_covers(&lowering);
+        gate_passes_with_refs(evidence.coverage_audit_passed, &coverage_audit_evidence_diagnostics)
+            && evidence.coverage.exactly_covers(&lowering);
     let decision = decide_rho_flip(
         RhoFlipGates {
-            proofs_passed: evidence.proofs_passed,
-            oracle_parity_passed: evidence.oracle_parity_passed,
+            proofs_passed: gate_passes_with_refs(
+                evidence.proofs_passed,
+                &proof_evidence_diagnostics,
+            ),
+            oracle_parity_passed: gate_passes_with_refs(
+                evidence.oracle_parity_passed,
+                &oracle_evidence_diagnostics,
+            ),
             coverage_passed,
             artifact_validated: validation_errors.is_empty(),
-            scheduler_fairness_passed: evidence.scheduler_fairness_passed,
+            scheduler_fairness_passed: gate_passes_with_refs(
+                evidence.scheduler_fairness_passed,
+                &scheduler_fairness_evidence_diagnostics,
+            ),
         },
         &lowering.deadlock_report,
     );
 
     if decision.can_flip_to_rho() {
+        let validated_program =
+            validated_program.expect("flip decision requires successful artifact validation");
+        let rejected_rule_dispositions = evidence.coverage.accepted_dispositions();
+        let evidence_refs =
+            accepted_evidence_refs(&evidence, &validated_program, &rejected_rule_dispositions);
         Ok(RhoDefaultBackendPlan {
-            rejected_rule_dispositions: evidence.coverage.accepted_dispositions(),
-            validated_program: validated_program
-                .expect("flip decision requires successful artifact validation"),
+            rejected_rule_dispositions,
+            validated_program,
+            evidence_refs,
             lowering,
         })
     } else {
@@ -236,6 +362,7 @@ pub fn plan_rho_default_backend(
             uncovered_rejections,
             extraneous_dispositions,
             invalid_dispositions,
+            invalid_gate_evidence_refs,
             validation_errors,
         })
     }
@@ -273,9 +400,21 @@ mod tests {
     fn passing_evidence(coverage: RhoCoverageEvidence) -> RhoDefaultBackendEvidence {
         RhoDefaultBackendEvidence {
             proofs_passed: true,
+            proof_evidence_refs: vec![
+                "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string()
+            ],
             oracle_parity_passed: true,
+            oracle_parity_evidence_refs: vec![
+                "mettail-rho-runtime/tests/rho_vs_ascent.rs".to_string()
+            ],
             coverage_audit_passed: true,
+            coverage_audit_evidence_refs: vec![
+                "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string(),
+            ],
             scheduler_fairness_passed: true,
+            scheduler_fairness_evidence_refs: vec![
+                "formal/tla/rho_machine/RhoMachineFairness.tla".to_string()
+            ],
             coverage,
         }
     }
@@ -301,6 +440,17 @@ mod tests {
         assert_eq!(plan.rejected_rule_dispositions, Vec::new());
         assert_eq!(plan.ast_par().expect("plan must carry AST").receives.len(), 3);
         assert!(plan.text_annotation().contains("contract @\"AddInt\""));
+        assert_eq!(
+            plan.evidence_refs(),
+            &[
+                "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string(),
+                "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string(),
+                "formal/tla/rho_machine/RhoMachineFairness.tla".to_string(),
+                "mettail-rho-codegen:artifact-validation:NormalizedAst".to_string(),
+                "mettail-rho-codegen:channel-deadlock-analysis:no-new-deadlocks".to_string(),
+                "mettail-rho-runtime/tests/rho_vs_ascent.rs".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -334,6 +484,14 @@ mod tests {
             plan.rejected_rule_dispositions,
             vec![native_disposition("PowInt"), native_disposition("AddBigInt")]
         );
+        assert!(plan
+            .evidence_refs()
+            .iter()
+            .any(|evidence_ref| evidence_ref == "native-handler:PowInt"));
+        assert!(plan
+            .evidence_refs()
+            .iter()
+            .any(|evidence_ref| evidence_ref == "native-handler:AddBigInt"));
     }
 
     #[test]
@@ -377,6 +535,7 @@ mod tests {
                 rule: "AddBigInt".to_string()
             }]
         );
+        assert_eq!(err.invalid_gate_evidence_refs, Vec::new());
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
@@ -400,6 +559,7 @@ mod tests {
                 rule: "AddBigInt".to_string()
             }]
         );
+        assert_eq!(err.invalid_gate_evidence_refs, Vec::new());
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
@@ -409,9 +569,15 @@ mod tests {
             &parse(ALL_LOWERED_FRAGMENT),
             RhoDefaultBackendEvidence {
                 proofs_passed: false,
+                proof_evidence_refs: Vec::new(),
                 oracle_parity_passed: false,
+                oracle_parity_evidence_refs: Vec::new(),
                 coverage_audit_passed: true,
+                coverage_audit_evidence_refs: vec![
+                    "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string(),
+                ],
                 scheduler_fairness_passed: false,
+                scheduler_fairness_evidence_refs: Vec::new(),
                 coverage: RhoCoverageEvidence::AllRulesLowered,
             },
         )
@@ -427,5 +593,60 @@ mod tests {
                 RhoFlipBlocker::SchedulerFairness
             ]
         );
+        assert_eq!(err.invalid_gate_evidence_refs, Vec::new());
+    }
+
+    #[test]
+    fn default_backend_plan_rejects_passed_gate_without_evidence_refs() {
+        let err = plan_rho_default_backend(
+            &parse(ALL_LOWERED_FRAGMENT),
+            RhoDefaultBackendEvidence {
+                proofs_passed: true,
+                proof_evidence_refs: Vec::new(),
+                oracle_parity_passed: true,
+                oracle_parity_evidence_refs: vec!["oracle:ok".to_string()],
+                coverage_audit_passed: true,
+                coverage_audit_evidence_refs: vec!["coverage:ok".to_string()],
+                scheduler_fairness_passed: true,
+                scheduler_fairness_evidence_refs: vec!["fairness:ok".to_string()],
+                coverage: RhoCoverageEvidence::AllRulesLowered,
+            },
+        )
+        .expect_err("passed proof gate without evidence refs must block Rho default");
+
+        assert_eq!(
+            err.invalid_gate_evidence_refs,
+            vec![RhoGateEvidenceDiagnostic::MissingEvidenceRefs {
+                gate: RhoDefaultBackendEvidenceGate::Proofs,
+            }]
+        );
+        assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Proofs]);
+    }
+
+    #[test]
+    fn default_backend_plan_rejects_blank_gate_evidence_refs() {
+        let err = plan_rho_default_backend(
+            &parse(ALL_LOWERED_FRAGMENT),
+            RhoDefaultBackendEvidence {
+                proofs_passed: true,
+                proof_evidence_refs: vec!["proof:ok".to_string()],
+                oracle_parity_passed: true,
+                oracle_parity_evidence_refs: vec![" ".to_string()],
+                coverage_audit_passed: true,
+                coverage_audit_evidence_refs: vec!["coverage:ok".to_string()],
+                scheduler_fairness_passed: true,
+                scheduler_fairness_evidence_refs: vec!["fairness:ok".to_string()],
+                coverage: RhoCoverageEvidence::AllRulesLowered,
+            },
+        )
+        .expect_err("blank oracle evidence ref must block Rho default");
+
+        assert_eq!(
+            err.invalid_gate_evidence_refs,
+            vec![RhoGateEvidenceDiagnostic::BlankEvidenceRef {
+                gate: RhoDefaultBackendEvidenceGate::OracleParity,
+            }]
+        );
+        assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::OracleParity]);
     }
 }

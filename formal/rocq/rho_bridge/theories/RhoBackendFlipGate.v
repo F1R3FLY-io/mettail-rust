@@ -339,4 +339,122 @@ Section RhoBackendFlipGate.
         split; assumption.
   Qed.
 
+  Record EvidenceRefState : Type := {
+    proof_evidence_ref_count : nat;
+    oracle_evidence_ref_count : nat;
+    coverage_audit_evidence_ref_count : nat;
+    scheduler_fairness_evidence_ref_count : nat;
+    blank_gate_evidence_ref_count : nat
+  }.
+
+  Definition passed_gate_has_evidence_ref (passed : bool) (count : nat) : bool :=
+    if passed then negb (Nat.eqb count 0) else true.
+
+  Definition evidence_refs_present
+      (proofs oracle coverage_audit fairness : bool)
+      (refs : EvidenceRefState) : bool :=
+    passed_gate_has_evidence_ref proofs (proof_evidence_ref_count refs)
+    && passed_gate_has_evidence_ref oracle (oracle_evidence_ref_count refs)
+    && passed_gate_has_evidence_ref coverage_audit (coverage_audit_evidence_ref_count refs)
+    && passed_gate_has_evidence_ref fairness (scheduler_fairness_evidence_ref_count refs)
+    && Nat.eqb (blank_gate_evidence_ref_count refs) 0.
+
+  Definition default_backend_gate_with_refs
+      (proofs oracle artifact fairness : bool)
+      (coverage : CoverageState)
+      (diagnostics : nat)
+      (refs : EvidenceRefState) : bool :=
+    default_backend_gate proofs oracle artifact fairness coverage diagnostics
+    && evidence_refs_present proofs oracle (coverage_audit_passed coverage) fairness refs.
+
+  Theorem missing_proof_evidence_ref_blocks_default_backend_with_refs :
+    forall oracle artifact fairness coverage diagnostics refs,
+    proof_evidence_ref_count refs = 0 ->
+    default_backend_gate_with_refs true oracle artifact fairness coverage diagnostics refs = false.
+  Proof.
+    intros oracle artifact fairness coverage diagnostics
+      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs] Hmissing.
+    simpl in Hmissing. subst proof_refs.
+    unfold default_backend_gate_with_refs, evidence_refs_present,
+      passed_gate_has_evidence_ref. simpl.
+    destruct (default_backend_gate true oracle artifact fairness coverage diagnostics);
+      reflexivity.
+  Qed.
+
+  Theorem missing_oracle_evidence_ref_blocks_default_backend_with_refs :
+    forall proofs artifact fairness coverage diagnostics refs,
+    oracle_evidence_ref_count refs = 0 ->
+    default_backend_gate_with_refs proofs true artifact fairness coverage diagnostics refs = false.
+  Proof.
+    intros proofs artifact fairness coverage diagnostics
+      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs] Hmissing.
+    simpl in Hmissing. subst oracle_refs.
+    unfold default_backend_gate_with_refs, evidence_refs_present,
+      passed_gate_has_evidence_ref. simpl.
+    destruct (default_backend_gate proofs true artifact fairness coverage diagnostics);
+      destruct proofs; destruct (Nat.eqb proof_refs 0); reflexivity.
+  Qed.
+
+  Theorem missing_coverage_audit_evidence_ref_blocks_default_backend_with_refs :
+    forall proofs oracle artifact fairness uncovered extra invalid diagnostics refs,
+    coverage_audit_evidence_ref_count refs = 0 ->
+    default_backend_gate_with_refs proofs oracle artifact fairness
+      {| coverage_audit_passed := true;
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid |}
+      diagnostics refs = false.
+  Proof.
+    intros proofs oracle artifact fairness uncovered extra invalid diagnostics
+      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs] Hmissing.
+    simpl in Hmissing. subst coverage_refs.
+    unfold default_backend_gate_with_refs, evidence_refs_present,
+      passed_gate_has_evidence_ref. simpl.
+    destruct (default_backend_gate proofs oracle artifact fairness
+      {| coverage_audit_passed := true;
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid |} diagnostics);
+      destruct proofs; destruct oracle;
+      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
+      reflexivity.
+  Qed.
+
+  Theorem missing_scheduler_fairness_evidence_ref_blocks_default_backend_with_refs :
+    forall proofs oracle artifact coverage diagnostics refs,
+    scheduler_fairness_evidence_ref_count refs = 0 ->
+    default_backend_gate_with_refs proofs oracle artifact true coverage diagnostics refs = false.
+  Proof.
+    intros proofs oracle artifact coverage diagnostics
+      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs] Hmissing.
+    simpl in Hmissing. subst fairness_refs.
+    unfold default_backend_gate_with_refs, evidence_refs_present,
+      passed_gate_has_evidence_ref. simpl.
+    destruct (default_backend_gate proofs oracle artifact true coverage diagnostics);
+      destruct proofs; destruct oracle; destruct (coverage_audit_passed coverage);
+      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
+      destruct (Nat.eqb coverage_refs 0); reflexivity.
+  Qed.
+
+  Theorem blank_gate_evidence_ref_blocks_default_backend_with_refs :
+    forall proofs oracle artifact fairness coverage diagnostics refs,
+    blank_gate_evidence_ref_count refs <> 0 ->
+    default_backend_gate_with_refs proofs oracle artifact fairness coverage diagnostics refs = false.
+  Proof.
+    intros proofs oracle artifact fairness coverage diagnostics
+      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs] Hnonzero.
+    simpl in Hnonzero.
+    unfold default_backend_gate_with_refs, evidence_refs_present,
+      passed_gate_has_evidence_ref. simpl.
+    assert (Hblank : Nat.eqb blank_refs 0 = false).
+    { rewrite Nat.eqb_neq. assumption. }
+    rewrite Hblank.
+    destruct (default_backend_gate proofs oracle artifact fairness coverage diagnostics);
+      destruct proofs; destruct oracle; destruct (coverage_audit_passed coverage);
+      destruct fairness;
+      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
+      destruct (Nat.eqb coverage_refs 0); destruct (Nat.eqb fairness_refs 0);
+      reflexivity.
+  Qed.
+
 End RhoBackendFlipGate.

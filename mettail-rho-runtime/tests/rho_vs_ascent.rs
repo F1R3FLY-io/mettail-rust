@@ -35,9 +35,19 @@ const CALC_RUN_FRAGMENT: &str = r#"
 fn passing_evidence() -> RhoDefaultBackendEvidence {
     RhoDefaultBackendEvidence {
         proofs_passed: true,
+        proof_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string()
+        ],
         oracle_parity_passed: true,
+        oracle_parity_evidence_refs: vec!["mettail-rho-runtime/tests/rho_vs_ascent.rs".to_string()],
         coverage_audit_passed: true,
+        coverage_audit_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
+        ],
         scheduler_fairness_passed: true,
+        scheduler_fairness_evidence_refs: vec![
+            "formal/tla/rho_machine/RhoMachineFairness.tla".to_string()
+        ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
     }
 }

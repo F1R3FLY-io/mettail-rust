@@ -45,8 +45,9 @@ pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
     plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
-    RhoDefaultBackendPlan, RhoDefaultBackendPlanError, RhoRejectedRuleDisposition,
-    RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
+    RhoDefaultBackendEvidenceGate, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
+    RhoGateEvidenceDiagnostic, RhoRejectedRuleDisposition, RhoRejectedRuleDispositionDiagnostic,
+    RhoRejectedRuleDispositionKind,
 };
 pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,

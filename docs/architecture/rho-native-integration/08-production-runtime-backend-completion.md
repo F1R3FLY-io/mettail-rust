@@ -139,7 +139,7 @@ string.
 | extraction completeness honesty | complete reports and cycle-bounded reports are distinguishable at the API and proof boundary |
 | oracle agreement | Rho observations match Ascent oracle observations for the language corpus selected for rollout |
 | memory bound | capped tests and stress workloads stay within the agreed RSS envelope |
-| backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, and deadlock gates all pass |
+| backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, and deadlock gates all pass, and every positive external gate carries nonblank stable evidence references for generated metadata |
 
 ## Diagram Tooling Policy
 
