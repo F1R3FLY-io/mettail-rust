@@ -145,6 +145,9 @@ rocq-rho-bridge-schedule-family: require-capped
 rocq-rho-bridge-cbn-budget: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoCallByNeedBudget.vo
 
+rocq-rho-bridge-escrow-settlement: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/RhoEscrowSettlement.vo
+
 process-rho-generated-check: require-capped
 	python3 process/rho_comm_slice.py --check
 

@@ -60,7 +60,8 @@ The capped entry point runs:
   `formal/process/rho_comm_slice.py --check` before model checking.
 - focused Rho bridge targets:
   `rocq-rho-bridge-artifact-boundary`, `rocq-rho-bridge-rejected-coverage`,
-  `rocq-rho-bridge-schedule-family`, and `rocq-rho-bridge-cbn-budget`
+  `rocq-rho-bridge-schedule-family`, `rocq-rho-bridge-cbn-budget`, and
+  `rocq-rho-bridge-escrow-settlement`
 - Apalache checks in `formal/tla/prattail_wpda`
 - the wrap-sensitive expected-counterexample harness
 - the feature-gated Prattail WPDA walker Rust regression tests

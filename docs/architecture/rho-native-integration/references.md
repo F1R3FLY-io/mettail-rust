@@ -263,6 +263,7 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/GuardedCommSoundness.v`
 - `formal/rocq/rho_bridge/theories/AmbiguitySetPreservation.v`
 - `formal/rocq/rho_bridge/theories/RhoCostAxisSeparation.v`
+- `formal/rocq/rho_bridge/theories/RhoEscrowSettlement.v`
 - `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`
 - `formal/rocq/rho_bridge/theories/OracleQuotientEquivalence.v`
 
@@ -270,8 +271,8 @@ Used for: current M-RHO proof coverage from one-way bridge shape through
 Rho-machine reuse, exact rejected-rule delegation, normalized-`Par` validation,
 generated-backend source-text exclusion, COMM correspondence, exact observation,
 guard behavior, ambiguity preservation, cost separation, arity-parametric
-independent-redex COMM schedules, call-by-need budget admission, and backend
-flip gating.
+independent-redex COMM schedules, call-by-need budget admission,
+escrow/refund settlement, and backend flip gating.
 
 ### RHO-PROCESS-FORMAL
 

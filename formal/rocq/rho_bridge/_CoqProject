@@ -30,6 +30,7 @@ theories/DeltaOneMinCostJoin.v
 theories/GuardedCommSoundness.v
 theories/AmbiguitySetPreservation.v
 theories/RhoCostAxisSeparation.v
+theories/RhoEscrowSettlement.v
 theories/RhoBackendFlipGate.v
 theories/RhoPlannedExecutionBoundary.v
 theories/RhoObservationReportBoundary.v

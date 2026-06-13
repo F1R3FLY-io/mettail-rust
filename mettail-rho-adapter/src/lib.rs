@@ -25,6 +25,8 @@
 //!   `MettaSig` (`ResourceSignature` over the host lane algebra), `MettaProgram`.
 //! - [`logic`] — `MettaResourceLogic` (`OslfResourceLogic<MettaGslt>`),
 //!   delegating to the verified `delta_sigma::{demand,is_funded}`.
+//! - [`settlement`] — Δ4 escrow/refund settlement for guarded candidates:
+//!   reserve before commit, charge only on commit, refund on failure.
 //! - [`conformance`] — the four OSLF linear-logic laws (re-hosted, decision B1-a),
 //!   proven green for `MettaResourceLogic`; mirrored by
 //!   `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`.
@@ -41,10 +43,15 @@ pub mod conformance;
 pub mod delta1;
 pub mod gslt;
 pub mod logic;
+pub mod settlement;
 
 pub use delta1::{delta1_selects_index, select_delta1_minima, DeltaOneCandidate};
 pub use gslt::{MettaGslt, MettaProgram, MettaSig};
 pub use logic::MettaResourceLogic;
+pub use settlement::{
+    commit_escrow, refund_escrow, reserve_escrow, EscrowState, EscrowTicket, PurseId,
+    SettlementBlocker, SettlementStep,
+};
 
 #[cfg(test)]
 mod tests {

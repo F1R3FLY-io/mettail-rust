@@ -39,6 +39,7 @@ The current proof and coverage sources are
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
+| escrow/refund settlement | `RhoEscrowSettlement.v`, `mettail-rho-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
@@ -49,9 +50,9 @@ The current proof and coverage sources are
 
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
-guards, ambiguity preservation, cost-axis separation, exact rejected-rule
-delegation, normalized-`Par` well-formedness, source-text artifact exclusion,
-backend flip gating, and fail-closed runtime dispatch.
+guards, ambiguity preservation, cost-axis separation, escrow/refund settlement,
+exact rejected-rule delegation, normalized-`Par` well-formedness, source-text
+artifact exclusion, backend flip gating, and fail-closed runtime dispatch.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
 than an Ascent-shaped success value. The handoff proof requires complete
 reports before emitting Rho-visible observations, preserves the extractor root
@@ -217,6 +218,8 @@ Gate clauses:
 
 - `Δ1` min-cost matching for n-ary joins;
 - two-axis cost model: refutation versus ordering;
+- escrow settlement: reserve before candidate commit, charge only committed
+  winners, and refund failed or abandoned candidates;
 - guarded-COMM soundness;
 - ambiguity-set preservation under nondeterministic schedules;
 - mergeable-channel optimization only when the algebraic contract matches.
@@ -227,15 +230,23 @@ Mechanized evidence:
 - `GuardedCommSoundness.v`
 - `AmbiguitySetPreservation.v`
 - `RhoCostAxisSeparation.v`
+- `RhoEscrowSettlement.v`
 
 Rust adapter evidence:
 
 - `mettail_rho_adapter::DeltaOneCandidate`
 - `mettail_rho_adapter::select_delta1_minima`
+- `mettail_rho_adapter::{reserve_escrow, commit_escrow, refund_escrow}`
 - `mettail_rho_adapter::delta1_selects_index`
 - `delta1_selects_all_enabled_minimal_ties`
 - `delta1_refutation_precedes_ordering`
 - `delta1_returns_empty_when_no_candidate_is_enabled`
+- `settlement::reserve_moves_available_to_escrow_and_returns_ticket`
+- `settlement::commit_moves_escrow_to_charged_and_preserves_total`
+- `settlement::refund_reverses_a_successful_reserve`
+- `settlement::reserve_overflow_preserves_state`
+- `settlement::commit_overflow_preserves_state`
+- `settlement::refund_overflow_preserves_state`
 - `rho_guard_oracle::false_single_bind_guard_leaves_data_and_emits_no_output`
 - `rho_guard_oracle::guard_filters_multiple_messages_without_consuming_failed_candidate`
 - `rho_guard_oracle::false_cross_bind_guard_leaves_all_join_inputs`
@@ -247,6 +258,13 @@ Acceptance:
 
 `cost_orders(c₁, c₂)` may rank enabled candidates but must not remove either
 candidate when their ordering costs are equal.
+
+`reserve(c)` moves funds from available balance into escrow and returns a
+ticket. `commit(ticket)` moves exactly the ticket amount from escrow to charged.
+`refund(ticket)` returns exactly the ticket amount from escrow to available.
+Mismatched purses, insufficient available funds, insufficient escrow, and
+bounded-machine arithmetic overflow preserve the input state and report an
+explicit blocker.
 
 `guard(σ) = false` behaves as no match: no guarded body is emitted, and every
 datum considered by the failed match remains resting for a later satisfying

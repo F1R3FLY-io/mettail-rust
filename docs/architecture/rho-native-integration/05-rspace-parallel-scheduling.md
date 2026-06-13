@@ -228,6 +228,20 @@ The cost split is:
 The refutation axis decides whether a candidate is admissible. The ordering axis
 ranks candidates. Ranking must not prune valid candidates.
 
+Funding settlement is candidate-local:
+
+`reserve(c, amount) = available ⇢ escrow`
+
+`commit(ticket) = escrow ⇢ charged`
+
+`refund(ticket) = escrow ⇢ available`
+
+The generated backend reserves before a candidate can commit, commits only the
+winning ticket, and refunds failed or abandoned candidates. The settlement API
+does not schedule RSpace; it only makes candidate admission, charging, and
+refunds explicit so RSpace can continue to expose enabled COMM actions in
+parallel.
+
 ## Failure Modes and Safeguards
 
 | Risk | Safeguard |
