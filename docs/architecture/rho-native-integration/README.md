@@ -62,6 +62,7 @@ For implementers:
 2. [Dovetail Rewrite Semantics](03-dovetail-rewrite-semantics.md)
 3. [RSpace Parallel Scheduling](05-rspace-parallel-scheduling.md)
 4. [Verification and Rollout](07-verification-and-rollout.md)
+5. [Production Runtime Backend Completion Guide](08-production-runtime-backend-completion.md)
 
 For reviewers checking claims and citations:
 
@@ -82,6 +83,7 @@ For reviewers checking claims and citations:
 | [05 — RSpace Parallel Scheduling](05-rspace-parallel-scheduling.md) | Why does RSpace naturally schedule enabled rewrites in parallel? |
 | [06 — Correctness and Coverage](06-correctness-and-coverage.md) | What is proved, under which assumptions, and what is not claimed? |
 | [07 — Verification and Rollout](07-verification-and-rollout.md) | How does M-RHO.0 through M-RHO.4 land safely? |
+| [08 — Production Runtime Backend Completion Guide](08-production-runtime-backend-completion.md) | What evidence, gates, and exact AST contracts let another agent complete the runtime backend replacement? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

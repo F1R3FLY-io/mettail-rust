@@ -1,0 +1,51 @@
+@startuml
+title Production Runtime Backend Replacement Scope
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.4
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "Frontend boundary\nretained" as Frontend #DBEAFE {
+  component "WPDA parser /\nrecognizer" as WPDA #BFDBFE
+  component "Typed MeTTaIL\nterms" as Terms #BFDBFE
+}
+
+rectangle "Legacy runtime\nretirement scope" as Legacy #FEE2E2 {
+  component "Ascent production\nrewrite execution" as AscentProd #FCA5A5
+  component "CESK runtime\nbackend" as CESK #FCA5A5
+}
+
+rectangle "Production runtime\ntarget" as Target #DCFCE7 {
+  component "Dovetail rewrite\nengine" as Dovetail #BBF7D0
+  component "Rho AST backend\nrhoapi::Par" as RhoAst #BBF7D0
+  component "F1r3node\nRhoRuntime + RSpace" as RhoRuntime #BBF7D0
+}
+
+rectangle "Evidence retained\nfor rollout" as Evidence #FEF3C7 {
+  component "Ascent oracle" as AscentOracle #FDE68A
+  component "Differential\nreports" as Diff #FDE68A
+}
+
+WPDA --> Terms : parsed typed terms
+Terms --> Dovetail : seed facts
+AscentProd -[#991B1B,dashed]-> Dovetail : replacement
+CESK -[#991B1B,dashed]-> RhoRuntime : replacement
+Dovetail --> RhoAst : complete checked report
+RhoAst --> RhoRuntime : normalized AST artifact
+Dovetail --> AscentOracle : oracle comparison input
+AscentOracle --> Diff : reference observations
+RhoRuntime --> Diff : RSpace observations
+
+legend right
+  <#DBEAFE> Parser boundary: retained
+  <#FEE2E2> Runtime backend surface being retired
+  <#DCFCE7> Production runtime target
+  <#FEF3C7> Evidence path retained during rollout
+endlegend
+@enduml

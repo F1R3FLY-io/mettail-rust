@@ -43,6 +43,7 @@ require_tool rm
 require_tool sort
 require_tool wc
 require_tool plantuml
+require_tool dot
 require_tool git
 
 anchor_exists() {
@@ -144,6 +145,17 @@ while IFS= read -r puml; do
   cmp -s "$puml" "$figure_puml" || fail "PlantUML fence differs from figure source: $figure_puml"
 done < <(find "$tmpdir" -type f -name '*.puml' | sort)
 
+printf 'checking rendered Graphviz DOT assets...\n'
+while IFS= read -r dot_source; do
+  name="$(basename -- "$dot_source")"
+  stem="${name%.dot}"
+  figure_svg="$figures_dir/$stem.svg"
+  [[ -s "$figure_svg" ]] || fail "missing or empty rendered SVG asset: $figure_svg"
+  rg -q '<svg([[:space:]>])' "$figure_svg" || fail "rendered asset is missing an SVG root: $figure_svg"
+  rg -q '</svg>' "$figure_svg" || fail "rendered asset is missing an SVG close tag: $figure_svg"
+  dot -Tsvg "$dot_source" -o "$tmpdir/$stem.svg"
+done < <(find "$figures_dir" -type f -name '*.dot' | sort)
+
 printf 'checking math-symbol literal formatting...\n'
 awk '
   /^```/ { in_fence = !in_fence; next }
@@ -173,7 +185,7 @@ while IFS=: read -r file line match; do
       link_errors=1
     fi
   fi
-done < <(rg -n -o '\[[^]]+\]\([^)]*\.(md|puml|svg)[^)]*\)' "${all_files[@]}")
+done < <(rg -n -o '\[[^]]+\]\([^)]*\.(md|puml|dot|svg)[^)]*\)' "${all_files[@]}")
 if (( link_errors != 0 )); then
   fail "relative Markdown link check failed"
 fi

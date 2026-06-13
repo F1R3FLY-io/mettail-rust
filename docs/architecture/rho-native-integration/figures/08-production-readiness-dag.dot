@@ -1,0 +1,50 @@
+digraph RuntimeBackendReadiness {
+  graph [
+    bgcolor="transparent",
+    rankdir=LR,
+    splines=ortho,
+    pad=0.25,
+    nodesep=0.55,
+    ranksep=0.75
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#1F2937",
+    fontname="DejaVu Sans",
+    fontsize=12,
+    margin="0.12,0.08"
+  ];
+
+  edge [
+    color="#374151",
+    arrowsize=0.7,
+    penwidth=1.4,
+    fontname="DejaVu Sans",
+    fontsize=10
+  ];
+
+  coverage [label="Rewrite\ncoverage", fillcolor="#DBEAFE"];
+  dovetail [label="Dovetail\nproofs", fillcolor="#DCFCE7"];
+  ast [label="AST artifact\npurity", fillcolor="#FEF3C7"];
+  scheduler [label="RSpace schedule\ncorrectness", fillcolor="#FCE7F3"];
+  guards [label="Guarded join\ncorrectness", fillcolor="#EDE9FE"];
+  extraction [label="Extraction\nhonesty", fillcolor="#CCFBF1"];
+  oracle [label="Ascent oracle\nagreement", fillcolor="#FFEDD5"];
+  memory [label="Bounded RSS\nstress gate", fillcolor="#FEE2E2"];
+  flip [label="Flip-gated\nbackend plan", fillcolor="#DCFCE7"];
+  production [label="Dovetail/Rho\nproduction runtime", fillcolor="#BBF7D0", penwidth=2.2];
+
+  coverage -> dovetail;
+  coverage -> ast;
+  dovetail -> extraction;
+  ast -> scheduler;
+  ast -> guards;
+  scheduler -> oracle;
+  guards -> oracle;
+  extraction -> oracle;
+  oracle -> memory;
+  memory -> flip;
+  flip -> production;
+}
