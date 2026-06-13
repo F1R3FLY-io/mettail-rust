@@ -11,8 +11,28 @@ These documents are actively maintained and should always reflect the current st
 - **`main_goals.md`** - Project vision, objectives, and roadmap
 - **`getting_started.md`** - Quick start guide for new users
 - **`architecture.md`** - System design and implementation overview
+- **`architecture/dovetail/README.md`** - Standalone Dovetail rewrite engine architecture, design, proof, and handoff suite
 - **`architecture/rho-native-integration/README.md`** - Rho-native MeTTaIL / Dovetail / F1r3node integration architecture
 - **`contributing.md`** - How to contribute to the project
+
+---
+
+## Dovetail Rewrite Engine Architecture
+
+Pedagogical standalone design suite for Dovetail itself, independent of the Rho
+machine backend:
+
+- **`architecture/dovetail/README.md`** - Overview, reading paths, diagrams, and validation
+- **`architecture/dovetail/00-executive-brief.md`** - One-page decision brief for principals
+- **`architecture/dovetail/01-concepts-and-glossary.md`** - Symbols, acronyms, and key terms
+- **`architecture/dovetail/02-engine-architecture.md`** - Layers, lifecycle, and component rationale
+- **`architecture/dovetail/03-data-model-and-exact-keys.md`** - E-graph model, content keys, framing, and reports
+- **`architecture/dovetail/04-rules-and-saturation.md`** - Rules-as-data, matching, instantiation, and budgeted saturation
+- **`architecture/dovetail/05-extraction-and-weights.md`** - Best-first derivation extraction and semiring ordering
+- **`architecture/dovetail/06-cyclic-closure-and-boundedness.md`** - SCC inside weights, cycle cuts, and completeness reporting
+- **`architecture/dovetail/07-formal-verification-and-tests.md`** - Mechanized proof and test coverage matrix
+- **`architecture/dovetail/08-engineering-handoff.md`** - Maintenance guide for future agents and implementers
+- **`architecture/dovetail/09-worked-example.md`** - End-to-end example from rewrite rules to checked extraction
 
 ---
 

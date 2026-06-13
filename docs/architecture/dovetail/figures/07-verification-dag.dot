@@ -1,0 +1,38 @@
+digraph dovetail_verification {
+  graph [
+    rankdir=LR,
+    bgcolor="#FEFEFE",
+    fontname="DejaVu Sans",
+    label="Dovetail Verification Dependency Graph",
+    labelloc=t,
+    fontsize=18
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#1F2937",
+    fontcolor="#111827",
+    fontname="DejaVu Sans"
+  ];
+  edge [color="#374151", arrowsize=0.8];
+
+  exact_keys [label="Exact keys", fillcolor="#DBEAFE"];
+  saturation [label="Saturation outcomes", fillcolor="#DCFCE7"];
+  frontier [label="Lazy frontier order", fillcolor="#FEF3C7"];
+  enumeration [label="Enumeration completeness", fillcolor="#FEF3C7"];
+  cycles [label="Cycle-cut boundary", fillcolor="#FDE68A"];
+  inside [label="SCC inside closure", fillcolor="#FDE68A"];
+  reports [label="Runtime report bridge", fillcolor="#EDE9FE"];
+  requirements [label="MeTTaIL requirement coverage", fillcolor="#FBCFE8"];
+  production [label="Dovetail production evidence", fillcolor="#FCE7F3"];
+
+  exact_keys -> frontier;
+  exact_keys -> reports;
+  saturation -> requirements;
+  frontier -> enumeration;
+  enumeration -> reports;
+  cycles -> reports;
+  inside -> frontier;
+  requirements -> production;
+  reports -> production;
+}

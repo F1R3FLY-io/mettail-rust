@@ -4,6 +4,8 @@ Last updated: 2026-06-13
 
 This documentation explains how MeTTaIL, Dovetail, Rholang, F1r3node, RSpace,
 and the Rho machine fit together.
+For Dovetail's standalone rewrite-engine architecture, see
+[../dovetail/README.md](../dovetail/README.md).
 
 Scope note: this integration is a replacement path for the CESK runtime backend.
 It is not a replacement for the active WPDA parser/recognizer, and it does not

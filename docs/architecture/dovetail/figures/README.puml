@@ -1,0 +1,61 @@
+@startuml
+title Dovetail Standalone Rewrite Engine - Component View
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "Inputs" as Inputs #DBEAFE {
+  component "Typed seed terms" as Seeds #BFDBFE
+  component "Rewrite rules as data" as RuleData #BFDBFE
+  component "Weight function" as Weigh #BFDBFE
+}
+
+rectangle "Dovetail core" as Core #DCFCE7 {
+  component "Exact keys" as Keys #BBF7D0
+  component "Runtime e-graph" as EGraph #BBF7D0
+  component "Saturation driver" as Saturation #BBF7D0
+  component "WTA view" as Wta #BBF7D0
+  component "Lazy extractor" as Extractor #BBF7D0
+  component "Run report" as Report #BBF7D0
+}
+
+rectangle "Algebra" as Algebra #FEF3C7 {
+  component "Semiring weights" as Weights #FDE68A
+  component "Newton-SCC solver" as Newton #FDE68A
+}
+
+rectangle "Consumers" as Consumers #FCE7F3 {
+  component "Differential oracle" as Oracle #FBCFE8
+  component "Rho backend" as Rho #FBCFE8
+  component "Local tooling" as Tooling #FBCFE8
+}
+
+Seeds --> EGraph : insert exact nodes
+RuleData --> Saturation : match and instantiate
+Keys --> EGraph : identity and dedup
+EGraph --> Saturation : current classes
+Saturation --> Wta : saturated graph
+Weigh --> Wta : transition weights
+Weights --> Wta : semiring operations
+Newton --> Wta : cyclic closure
+Wta --> Extractor : states and transitions
+Extractor --> Report : checked derivations
+Report --> Oracle
+Report --> Rho
+Report --> Tooling
+
+legend right
+|= Color |= Role |
+|<#DBEAFE> | inputs |
+|<#DCFCE7> | Dovetail-owned core |
+|<#FEF3C7> | rigail algebra |
+|<#FCE7F3> | downstream consumers |
+endlegend
+@enduml

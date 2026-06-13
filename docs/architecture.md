@@ -46,18 +46,23 @@ Technical overview of MeTTaIL's implementation architecture.
 ## Rewrite Engine Architecture Tracks
 
 The diagram above describes the existing generated Ascent execution path, which
-is legacy for production rewrite execution. The Dovetail and Rho-native
-execution design is documented separately in
+is legacy for production rewrite execution. Dovetail itself is documented in
+[architecture/dovetail/README.md](architecture/dovetail/README.md). That suite
+covers the standalone rewrite engine: exact-key equality saturation, rules as
+data, weighted-tree-automaton interpretation, checked extraction, cyclic
+boundedness, formal verification, tests, and engineering handoff.
+
+The downstream Rho-native execution design is documented separately in
 [architecture/rho-native-integration/README.md](architecture/rho-native-integration/README.md).
-That design is scoped to replacement of the CESK runtime backend path and the
+That suite is scoped to replacement of the CESK runtime backend path and the
 Ascent production rewrite backend; it does not make the active WPDA
 parser/recognizer legacy, and it retains Ascent only as a reference/oracle path
 for differential evidence during rollout.
 
-That suite explains how MeTTaIL source snippets are parsed into typed terms,
-how Dovetail supplies substrate-neutral rewrite semantics, how the Rho backend
-lowers rewrite networks into Rholang/RSpace dataflow, and how F1r3node's Rho
-machine schedules enabled rewrites in parallel.
+Together, the two suites explain how MeTTaIL source snippets are parsed into
+typed terms, how Dovetail supplies substrate-neutral rewrite semantics, how the
+Rho backend lowers rewrite networks into Rholang/RSpace dataflow, and how
+F1r3node's Rho machine schedules enabled rewrites in parallel.
 
 ---
 

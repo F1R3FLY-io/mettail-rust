@@ -1,0 +1,32 @@
+@startuml
+title Dovetail Lazy Best-First Extraction Frontier
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+start
+:Initialize class state;
+:Seed heap with zero-rank candidate\nfor each e-node;
+repeat
+  :Pop best candidate by\n(weight, exact key);
+  :Generate successors by bumping\none child rank at a time;
+  :Compose derivation tree;
+  if (cycle back-edge?) then (yes)
+    :Mark cycle cut;\nskip this candidate;
+  elseif (weight is zero?) then (yes)
+    :Treat as refuted;\nkeep successors available;
+  elseif (exact key already emitted?) then (yes)
+    :Skip duplicate tree;
+  else (no)
+    :Emit derivation item;
+  endif
+repeat while (heap has candidates?) is (yes)
+:Return Done(completeness);
+stop
+@enduml

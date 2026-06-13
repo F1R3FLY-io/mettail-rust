@@ -1,0 +1,34 @@
+@startuml
+title Dovetail Engine Lifecycle
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+start
+:Receive typed seed terms\nand rewrite rules;
+:Build exact-keyed e-graph;
+:Run saturation iterations;
+if (terminal outcome?) then (Converged)
+  :Use saturated graph as complete\nfor the chosen bounds;
+elseif (NodeLimit)
+  :Report node budget boundary;
+elseif (IterationLimit)
+  :Report iteration boundary;
+endif
+:View e-graph as weighted tree automaton;
+:Compute inside weights\nand cyclic SCC closure when requested;
+:Extract derivations through checked stream;
+if (cycle cut?) then (yes)
+  :Return BoundedByCycleCut;
+else (no)
+  :Return Complete;
+endif
+:Build substrate-neutral run report;
+stop
+@enduml
