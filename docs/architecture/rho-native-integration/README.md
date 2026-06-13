@@ -7,7 +7,9 @@ and the Rho machine fit together.
 
 Scope note: this integration is a replacement path for the CESK runtime backend.
 It is not a replacement for the active WPDA parser/recognizer, and it does not
-delete the Ascent reference/oracle path used for differential evidence.
+delete the Ascent reference/oracle path used for differential evidence. Ascent
+is legacy for production rewrite execution; its retained role here is oracle
+evidence during rollout.
 
 The theoretical background is the Rho calculus
 ([RHO-2005](references.md#rho-2005)), mobile-process calculi

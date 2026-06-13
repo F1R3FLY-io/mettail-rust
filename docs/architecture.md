@@ -45,12 +45,14 @@ Technical overview of MeTTaIL's implementation architecture.
 
 ## Rewrite Engine Architecture Tracks
 
-The diagram above describes the existing generated Ascent execution path. The
-Dovetail and Rho-native execution design is documented separately in
+The diagram above describes the existing generated Ascent execution path, which
+is legacy for production rewrite execution. The Dovetail and Rho-native
+execution design is documented separately in
 [architecture/rho-native-integration/README.md](architecture/rho-native-integration/README.md).
-That design is scoped to replacement of the CESK runtime backend path; it does
-not make the active WPDA parser/recognizer legacy and it does not remove Ascent
-as a reference/oracle path.
+That design is scoped to replacement of the CESK runtime backend path and the
+Ascent production rewrite backend; it does not make the active WPDA
+parser/recognizer legacy, and it retains Ascent only as a reference/oracle path
+for differential evidence during rollout.
 
 That suite explains how MeTTaIL source snippets are parsed into typed terms,
 how Dovetail supplies substrate-neutral rewrite semantics, how the Rho backend
@@ -348,14 +350,15 @@ Theory → IR → Cranelift → Native Code
 - New `ir/` module for intermediate representation
 - Cranelift backend in `codegen/native/`
 - WASM backend in `codegen/wasm/`
-- Keep Ascent backend for rapid development
+- Keep Ascent only as a reference/oracle backend for differential regression
+  evidence while Dovetail/Rho becomes the production rewrite path
 
 ### Long-Term: Distributed Runtime
 
 ```
 ┌─────────┐   ┌─────────┐   ┌─────────┐
 │  Node 1 │───│  Node 2 │───│  Node 3 │
-│ (Ascent)│   │ (Ascent)│   │ (Ascent)│
+│  (Rho)  │   │  (Rho)  │   │  (Rho)  │
 └────┬────┘   └────┬────┘   └────┬────┘
      └─────────────┼─────────────┘
                    │
@@ -366,7 +369,7 @@ Theory → IR → Cranelift → Native Code
 ```
 
 **Changes**:
-- Distributed Ascent backend
+- Distributed Rho-native backend driven by Dovetail semantics
 - Network protocol for term exchange
 - Consensus on reduction order
 - Fault tolerance and recovery

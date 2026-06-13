@@ -4,8 +4,8 @@
 > core for MeTTaIL rewrite semantics on the CESK runtime-backend replacement path
 > (generic-`W` WTA over a runtime e-graph = DFTA, with N-best/set-valued
 > demand-driven best-first enumeration extraction). The active WPDA
-> parser/recognizer remains upstream, and Ascent remains available as a
-> reference/oracle path. Designed by a Plan agent against
+> parser/recognizer remains upstream. Ascent is legacy for production rewrite
+> execution and remains only as a reference/oracle path. Designed by a Plan agent against
 > the live codebase (2026-06-09). Tracked: pgmcp `dovetail-core-standalone-wta-egraph-crate`
 > (#279) under epic `dovetail-gslt-reduction-engine-f1r3node-target` (#278); session task #15.
 

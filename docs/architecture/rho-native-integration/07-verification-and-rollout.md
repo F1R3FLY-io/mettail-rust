@@ -298,7 +298,8 @@ Rust flip-gate evidence:
 The CESK runtime backend remains selectable until this gate passes for a
 language. After a language flip, Rho becomes that language's default runtime
 backend; the active WPDA parser/recognizer remains upstream, and Ascent remains
-available as a reference/oracle path and is not deleted.
+available only as the legacy reference/oracle path for differential evidence
+and is not deleted by the flip itself.
 
 ## Formal Verification Commands
 

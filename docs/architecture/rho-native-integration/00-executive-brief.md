@@ -37,8 +37,8 @@ and never:
 
 This design replaces only the CESK runtime backend path after a language passes
 its flip gate. The active WPDA parser/recognizer remains the parser front end,
-and Ascent remains available as a reference/oracle path for differential
-evidence.
+and the Ascent production rewrite backend is legacy. Ascent remains available
+only as a reference/oracle path for differential evidence.
 
 ## Why This Design
 
@@ -102,7 +102,7 @@ That means:
 | Question | Answer |
 |---|---|
 | Does this create a custom Rho machine in MeTTaIL? | No. It reuses F1r3node's Rholang interpreter and RSpace. |
-| Does the Rho path replace the CESK runtime backend immediately? | No. A language flips only after proof, oracle, coverage, artifact-validation, and deadlock gates pass; WPDA parsing remains active, and Ascent remains available as a reference/oracle path. |
+| Does the Rho path replace the CESK runtime backend immediately? | No. A language flips only after proof, oracle, coverage, artifact-validation, and deadlock gates pass; WPDA parsing remains active, and Ascent remains available only as a reference/oracle path. |
 | Does RSpace scheduling change semantics? | It must not. Scheduler order is quotiented away; semantic alternatives are represented as data. |
 | Can snippets modeled by MeTTaIL run on F1r3node? | Yes, after MeTTaIL/WPDA parsing and after the language's Rho lowering fragment satisfies its gates. |
 | Where is the detailed design? | Start with [End-to-End Architecture](02-end-to-end-architecture.md), [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md), and [Correctness and Coverage](06-correctness-and-coverage.md). |

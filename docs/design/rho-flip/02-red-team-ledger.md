@@ -116,7 +116,8 @@ Confirmation evidence:
 
 Scope note: all of this is for the Rho-machine replacement path for the CESK
 runtime backend. The WPDA parser/recognizer remains active upstream, and Ascent
-remains a reference/oracle path.
+is legacy for production rewrite execution while remaining available only as a
+reference/oracle path.
 
 ## Round 4 (2026-06-13) — AST-first course correction → CLOSED
 

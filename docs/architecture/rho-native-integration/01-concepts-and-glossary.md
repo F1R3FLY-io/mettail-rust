@@ -20,7 +20,7 @@ is used formally elsewhere.
 | Rho backend | The MeTTaIL bridge that lowers Dovetail rewrite semantics into Rho-native Rholang/RSpace programs. |
 | CESK runtime backend | The existing MeTTaIL evaluator backend organized around control, environment, store, and continuation state. The Rho-native path is a candidate replacement for this runtime backend only, not for parsing or oracle infrastructure. |
 | WPDA parser/recognizer | The active weighted-pushdown-automaton parser and recognizer path. It remains upstream of runtime backend selection and is not made legacy by the Rho-native design. |
-| Ascent reference/oracle path | The generated Ascent/Datalog rewrite path retained for differential testing and reference evidence during Rho rollout. It is not deleted by a CESK runtime-backend flip. |
+| Ascent reference/oracle path | The generated Ascent/Datalog rewrite path retained for differential testing and reference evidence during Rho rollout. Ascent is legacy for production rewrite execution; this oracle role is the retained verification role, and it is not deleted by a CESK runtime-backend flip. |
 | RhoNet | A small intermediate calculus introduced by this design. RhoNet contains only contracts, facts, joins, guards, private names, and observation. It is easier to prove correct than full generated Rholang AST. |
 
 ## Language and Rewrite Terms
