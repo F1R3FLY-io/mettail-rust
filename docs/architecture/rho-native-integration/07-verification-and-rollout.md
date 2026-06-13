@@ -418,7 +418,7 @@ proofs; it does not replace them.
 | claim hygiene | M-RHO.2/.3/.4 claims name the proof/test gates that discharged them; per-language Rho-default flips still require the M-RHO.4 gate |
 | exactness | no identity comparison based only on lossy hashes |
 | ambiguity | no semantic alternatives represented by scheduler `select` |
-| boundedness | no bounded cyclic extraction reported as complete |
+| boundedness | no bounded cyclic extraction reported as complete; `CyclicEnumerationImpossibility.v` explains why productive cyclic spaces cannot be finitely exhausted |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
 | runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; observations return `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |

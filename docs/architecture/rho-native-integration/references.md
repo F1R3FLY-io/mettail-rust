@@ -215,6 +215,7 @@ Repository-local Dovetail formal suite:
 - `dovetail/formal/rocq/theories/Extraction/EnumerationCompleteness.v`
 - `dovetail/formal/rocq/theories/Extraction/LazyFrontierOrder.v`
 - `dovetail/formal/rocq/theories/Extraction/OrderPreservingFraming.v`
+- `dovetail/formal/rocq/theories/Extraction/CyclicEnumerationImpossibility.v`
 - `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`
 - `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v`
 - `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v`
@@ -224,8 +225,10 @@ Repository-local Dovetail formal suite:
 - `dovetail/formal/rocq/theories/Refinement/RhoReportHandoff.v`
 
 Used for: current Dovetail proof coverage, including the checked runtime report
-boundary and the Rho handoff rule that complete reports expose exactly their
-root exact keys while bounded cycle-cut reports expose no Rho observations.
+boundary, the finite-exhaustiveness impossibility result for productive cyclic
+enumeration, and the Rho handoff rule that complete reports expose exactly
+their root exact keys while bounded cycle-cut reports expose no Rho
+observations.
 
 ### METTAIL-RUNTIME-FORMAL
 

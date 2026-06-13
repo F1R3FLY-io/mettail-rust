@@ -393,7 +393,7 @@ stated backend-correctness theorem.
 |---|---|
 | strong bisimulation for generic CBN | force/thunk channels introduce internal behavior not present in the source |
 | full abstraction | arbitrary Rholang contexts can observe or interfere beyond the generated boundary unless restricted |
-| unbounded cyclic k-best enumeration | arbitrary cyclic derivation spaces may be infinite; Dovetail reports bounded cycle cuts explicitly |
+| finite complete enumeration of productive cyclic k-best spaces | `CyclicEnumerationImpossibility.v` proves a productive self-cycle has more derivations than any finite list can exhaust; Dovetail reports bounded cycle cuts explicitly |
 | host Rholang compiler correctness | the backend relies on the host compiler and verifies the bridge contract |
 | unconditional production flip for every language | the proved flip gate requires that language's oracle, coverage, and deadlock evidence |
 

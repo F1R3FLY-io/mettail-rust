@@ -126,6 +126,10 @@ rocq-dovetail-requirements: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/LanguageDefInventory.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/PatternLoweringSoundness.vo
 
+rocq-dovetail-cyclic-boundary: require-capped
+	$(MAKE) -C ../dovetail/formal/rocq theories/Extraction/CyclicEnumerationImpossibility.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Extraction/ExtractionOutcome.vo
+
 rocq-rho-bridge: require-capped
 	$(MAKE) -C rocq/rho_bridge
 

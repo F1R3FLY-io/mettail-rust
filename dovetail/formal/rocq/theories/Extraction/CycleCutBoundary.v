@@ -2,9 +2,11 @@
  * CycleCutBoundary: Dovetail does not silently claim full cyclic k>=2
  * derivation enumeration.
  *
- * Cyclic inside weights are closed by the SCC/Newton proof, but full k>=2
- * derivation enumeration on cyclic hypergraphs is intentionally bounded by the
- * extractor cycle guard. The Rust result is `Extraction<T> { value,
+ * Cyclic inside weights are closed by the SCC/Newton proof. Productive cyclic
+ * derivation spaces are not finitely exhaustible in general (proved by
+ * CyclicEnumerationImpossibility.v), so k>=2 derivation enumeration across
+ * back-edges is intentionally bounded by the extractor cycle guard. The Rust
+ * result is `Extraction<T> { value,
  * completeness }`, where `completeness()` is determined directly by the
  * extractor's `cycle_cut` flag. This file proves the abstract reporting
  * contract: a cycle cut is reported as bounded, not as complete.

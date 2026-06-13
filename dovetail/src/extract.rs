@@ -22,10 +22,13 @@
 //! ## Cycles
 //! Cyclic INSIDE weights / the 1-best are EXACT (Newton-SCC closed, via
 //! [`Extractor::with_heuristic`] / `wta::compute_inside_closed`). Exhaustive
-//! k-best ENUMERATION across back-edges remains CUT by a recursion guard:
-//! cyclic e-graphs are SAFE (no infinite loop / no panic), but k≥2
-//! cycle-unrolled derivations are not enumerated and [`Extractor::had_cycle_cut`]
-//! reports it. Full cyclic k-best enumeration is a later increment.
+//! finite k-best ENUMERATION across productive back-edges is impossible in
+//! general: a self-cycle with an acyclic exit has one distinct derivation for
+//! every unrolling depth. Dovetail therefore cuts back-edges with a recursion
+//! guard, remains safe (no infinite loop / no panic), returns the finite
+//! acyclic evidence it found, and reports [`Extractor::had_cycle_cut`] /
+//! [`ExtractionCompleteness::BoundedByCycleCut`] instead of claiming complete
+//! cyclic exhaustion.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};

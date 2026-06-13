@@ -277,12 +277,17 @@ The Newton-style least-fixed-point background is
 [NEWTON-MONOTONE-2010](references.md#newton-monotone-2010); the repository-local
 formal boundary is listed in [DOVETAIL-FORMAL](references.md#dovetail-formal).
 
-Enumeration is more delicate. Full k-best enumeration through arbitrary cycles
-may be infinite. Dovetail therefore exposes cyclic boundedness:
+Enumeration is more delicate. Full finite k-best enumeration through arbitrary
+productive cycles is impossible in general: a self-cycle with one acyclic exit
+has one distinct derivation for each finite unrolling depth. Dovetail therefore
+exposes cyclic boundedness:
 
 `cycle_cut_detected ⇒ completeness = BoundedByCycleCut`
 
-This is a correctness feature, not a limitation hidden from callers.
+`CyclicEnumerationImpossibility.v` proves the finite-exhaustiveness boundary:
+no finite list contains every unrolling of a productive self-cycle, so a finite
+cyclic extraction must not claim `Complete`. This is a correctness feature, not
+a limitation hidden from callers.
 
 ## Coverage Taxonomy
 
