@@ -155,6 +155,7 @@ rocq-rho-bridge-purse-determinism: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoPurseDeterminism.vo
 
 process-rho-generated-check: require-capped
+	python3 process/rho_comm_slice.py --self-test
 	python3 process/rho_comm_slice.py --check
 
 mcrl2-rho-machine: require-capped

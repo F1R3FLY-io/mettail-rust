@@ -7,43 +7,88 @@ import argparse
 from collections import Counter
 import itertools
 import json
+import math
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC_PATH = Path(__file__).with_name("rho_comm_slice.json")
+IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def require_identifier(value: str, field: str) -> None:
+    if not isinstance(value, str) or not IDENT_RE.fullmatch(value):
+        raise ValueError(f"{field} must be an ASCII identifier, got {value!r}")
+
+
+def require_distinct(values: list[str], field: str) -> None:
+    duplicates = sorted(value for value, count in Counter(values).items() if count > 1)
+    if duplicates:
+        raise ValueError(f"{field} must be unique; duplicates: {duplicates}")
+
+
+def lower(label: str) -> str:
+    return label.lower()
+
+
+def validate_spec(spec: dict) -> dict:
+    redexes = spec["redexes"]
+    if not redexes:
+        raise ValueError("redexes must be nonempty")
+    labels = [redex["label"] for redex in redexes]
+    facts = [redex["fact"] for redex in redexes]
+    for index, label in enumerate(labels):
+        require_identifier(label, f"redexes[{index}].label")
+    for index, fact in enumerate(facts):
+        require_identifier(fact, f"redexes[{index}].fact")
+    require_distinct(labels, "redex labels")
+    require_distinct(
+        [lower(label) for label in labels],
+        "redex labels after mCRL2 field-name lowering",
+    )
+    require_distinct(facts, "redex facts")
+
+    completion = spec["completion_observation"]
+    require_identifier(completion, "completion_observation")
+    if completion in labels:
+        raise ValueError("completion observation must be distinct from redex labels")
+
+    guard = spec["guarded_join"]
+    guard_fact_fields = [
+        "left_fact",
+        "bad_fact",
+        "good_fact",
+        "open_fact",
+        "rejected_fact",
+        "completed_fact",
+    ]
+    guard_facts = [guard[field] for field in guard_fact_fields]
+    for field, fact in zip(guard_fact_fields, guard_facts):
+        require_identifier(fact, f"guarded_join.{field}")
+    require_distinct(guard_facts, "guarded-join facts")
+    if set(facts).intersection(guard_facts):
+        raise ValueError("guarded-join facts must be distinct from COMM facts")
+
+    guard_observation_fields = [
+        "bad_reject_observation",
+        "good_commit_observation",
+    ]
+    guard_observations = [guard[field] for field in guard_observation_fields]
+    for field, observation in zip(guard_observation_fields, guard_observations):
+        require_identifier(observation, f"guarded_join.{field}")
+    require_distinct(guard_observations, "guarded-join observations")
+    if set(guard_facts).intersection(guard_observations):
+        raise ValueError(
+            "guarded-join observations must be distinct from guarded-join facts"
+        )
+    return spec
 
 
 def load_spec() -> dict:
     with SPEC_PATH.open(encoding="utf-8") as handle:
         spec = json.load(handle)
-    redexes = spec["redexes"]
-    labels = [redex["label"] for redex in redexes]
-    facts = [redex["fact"] for redex in redexes]
-    if len(labels) != len(set(labels)):
-        raise ValueError("redex labels must be unique")
-    if len(facts) != len(set(facts)):
-        raise ValueError("redex facts must be unique")
-    if spec["completion_observation"] in labels:
-        raise ValueError("completion observation must be distinct from redex labels")
-    guard = spec["guarded_join"]
-    guard_facts = [
-        guard["left_fact"],
-        guard["bad_fact"],
-        guard["good_fact"],
-        guard["open_fact"],
-        guard["rejected_fact"],
-        guard["completed_fact"],
-    ]
-    if len(guard_facts) != len(set(guard_facts)):
-        raise ValueError("guarded-join facts must be unique")
-    if set(facts).intersection(guard_facts):
-        raise ValueError("guarded-join facts must be distinct from COMM facts")
-    return spec
-
-
-def lower(label: str) -> str:
-    return label.lower()
+    return validate_spec(spec)
 
 
 def state_args(fields: list[str]) -> str:
@@ -588,6 +633,16 @@ def maude_visible_schedule_queries(spec: dict) -> list[tuple[str, str]]:
     return queries
 
 
+def expected_visible_schedule_query_counts(redex_count: int) -> tuple[int, int]:
+    positive = 2 * math.factorial(redex_count)
+    premature_prefixes = sum(
+        math.factorial(redex_count) // math.factorial(redex_count - length)
+        for length in range(redex_count)
+    )
+    negative = 2 * premature_prefixes
+    return positive, negative
+
+
 def maude_guard_queries(spec: dict) -> list[tuple[str, str]]:
     guard = spec["guarded_join"]
     gl = guard["left_fact"]
@@ -995,6 +1050,132 @@ def check_files(files: dict[Path, str]) -> int:
     return 0
 
 
+def sample_spec(redex_count: int = 4) -> dict:
+    labels = [chr(ord("A") + index) for index in range(redex_count)]
+    return {
+        "name": f"rho_comm_{redex_count}_redex",
+        "completion_observation": "Q",
+        "redexes": [
+            {
+                "label": label,
+                "fact": f"fact{label}",
+            }
+            for label in labels
+        ],
+        "guarded_join": {
+            "left_fact": "gl",
+            "bad_fact": "gbad",
+            "good_fact": "gok",
+            "open_fact": "guardOpen",
+            "rejected_fact": "rejectedGuard",
+            "completed_fact": "completedGuard",
+            "bad_reject_observation": "guardReject",
+            "good_commit_observation": "guardCommit",
+        },
+    }
+
+
+def expect_invalid(spec: dict, expected: str) -> None:
+    try:
+        validate_spec(spec)
+    except ValueError as err:
+        if expected not in str(err):
+            raise AssertionError(f"expected validation error containing {expected!r}, got {err!r}") from err
+        return
+    raise AssertionError(f"expected validation error containing {expected!r}")
+
+
+def run_self_test() -> int:
+    for redex_count in range(1, 6):
+        spec = validate_spec(sample_spec(redex_count))
+        labels = [redex["label"] for redex in spec["redexes"]]
+        positive_count, negative_count = expected_visible_schedule_query_counts(redex_count)
+        visible_queries = maude_visible_schedule_queries(spec)
+        expected_total = positive_count + negative_count
+        if len(visible_queries) != expected_total:
+            raise AssertionError(
+                f"{redex_count} redexes produced {len(visible_queries)} "
+                f"visible Maude schedule queries, expected {expected_total}"
+            )
+        if sum(expected == "Solution 1" for _, expected in visible_queries) != positive_count:
+            raise AssertionError(
+                f"{redex_count} redexes produced the wrong number of positive visible schedules"
+            )
+        if sum(expected == "No solution." for _, expected in visible_queries) != negative_count:
+            raise AssertionError(
+                f"{redex_count} redexes produced the wrong number of premature-completion negatives"
+            )
+        normalized_queries = [normalize_maude_query(query) for query, _ in visible_queries]
+        if len(normalized_queries) != len(set(normalized_queries)):
+            raise AssertionError(
+                f"{redex_count} redexes produced duplicate visible Maude schedule queries"
+            )
+        rho_clauses = [line for line in render_rho_formula(spec).split("&&") if line.strip()]
+        dovetail_clauses = [line for line in render_dovetail_formula(spec).split("&&") if line.strip()]
+        if len(rho_clauses) != math.factorial(redex_count) * 2:
+            raise AssertionError(
+                f"{redex_count} redexes produced the wrong number of Rho mCRL2 schedule clauses"
+            )
+        if len(dovetail_clauses) != math.factorial(redex_count) * 2:
+            raise AssertionError(
+                f"{redex_count} redexes produced the wrong number of Dovetail mCRL2 schedule clauses"
+            )
+        tau_actions = render_mcrl2_tau(spec).split(",")
+        if tau_actions != [f"reserve{label}" for label in labels] + ["reserveJoin"]:
+            raise AssertionError(
+                f"{redex_count} redexes produced the wrong mCRL2 tau action set"
+            )
+        render_tla(spec)
+
+    duplicate_label = sample_spec()
+    duplicate_label["redexes"][1]["label"] = duplicate_label["redexes"][0]["label"]
+    expect_invalid(duplicate_label, "redex labels")
+
+    duplicate_lowered_label = sample_spec()
+    duplicate_lowered_label["redexes"][1]["label"] = duplicate_lowered_label[
+        "redexes"
+    ][0]["label"].lower()
+    expect_invalid(duplicate_lowered_label, "field-name lowering")
+
+    duplicate_fact = sample_spec()
+    duplicate_fact["redexes"][1]["fact"] = duplicate_fact["redexes"][0]["fact"]
+    expect_invalid(duplicate_fact, "redex facts")
+
+    empty_redexes = sample_spec()
+    empty_redexes["redexes"] = []
+    expect_invalid(empty_redexes, "redexes must be nonempty")
+
+    invalid_label = sample_spec()
+    invalid_label["redexes"][0]["label"] = "bad-label"
+    expect_invalid(invalid_label, "ASCII identifier")
+
+    duplicate_completion = sample_spec()
+    duplicate_completion["completion_observation"] = duplicate_completion["redexes"][0][
+        "label"
+    ]
+    expect_invalid(duplicate_completion, "completion observation")
+
+    duplicate_guard_fact = sample_spec()
+    duplicate_guard_fact["guarded_join"]["good_fact"] = duplicate_guard_fact[
+        "guarded_join"
+    ]["bad_fact"]
+    expect_invalid(duplicate_guard_fact, "guarded-join facts")
+
+    overlapping_guard_fact = sample_spec()
+    overlapping_guard_fact["guarded_join"]["bad_fact"] = overlapping_guard_fact[
+        "redexes"
+    ][0]["fact"]
+    expect_invalid(overlapping_guard_fact, "distinct from COMM facts")
+
+    overlapping_guard_observation = sample_spec()
+    overlapping_guard_observation["guarded_join"][
+        "good_commit_observation"
+    ] = overlapping_guard_observation["guarded_join"]["completed_fact"]
+    expect_invalid(overlapping_guard_observation, "distinct from guarded-join facts")
+
+    return 0
+
+
 def write_files(files: dict[Path, str]) -> int:
     for path, content in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1007,11 +1188,30 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="check generated files without writing")
     parser.add_argument("--write", action="store_true", help="rewrite generated files")
     parser.add_argument("--check-maude-log", type=Path, help="check a Maude comm-schedule log")
-    parser.add_argument("--mcrl2-tau", action="store_true", help="print reserve actions to hide for mCRL2 branching-bisim checks")
+    parser.add_argument(
+        "--mcrl2-tau",
+        action="store_true",
+        help="print reserve actions to hide for mCRL2 branching-bisim checks",
+    )
+    parser.add_argument("--self-test", action="store_true", help="run generator invariant tests")
     args = parser.parse_args()
-    selected = sum(bool(flag) for flag in (args.check, args.write, args.check_maude_log, args.mcrl2_tau))
+    selected = sum(
+        bool(flag)
+        for flag in (
+            args.check,
+            args.write,
+            args.check_maude_log,
+            args.mcrl2_tau,
+            args.self_test,
+        )
+    )
     if selected != 1:
-        parser.error("choose exactly one of --check, --write, --check-maude-log, or --mcrl2-tau")
+        parser.error(
+            "choose exactly one of --check, --write, --check-maude-log, "
+            "--mcrl2-tau, or --self-test"
+        )
+    if args.self_test:
+        return run_self_test()
     spec = load_spec()
     files = generated_files(spec)
     if args.check:

@@ -57,9 +57,12 @@ The capped entry point runs:
   `process-rho-comm-slice` (`process-rho-first-slice` remains as a
   compatibility alias). The mCRL2, Maude, and TLA+ files are generated from
   `formal/process/rho_comm_slice.json`, and the formal targets run
+  `formal/process/rho_comm_slice.py --self-test` and
   `formal/process/rho_comm_slice.py --check` before model checking. The
-  generated mCRL2 and Maude slices cover both independent COMM schedules and
-  guarded-join non-consumption after failed guard attempts.
+  self-test validates malformed-spec rejection and the arity-parametric schedule
+  derivation used by the generated finite projections. The generated mCRL2 and
+  Maude slices cover both independent COMM schedules and guarded-join
+  non-consumption after failed guard attempts.
 - focused Rho settlement scheduler target:
   `tla-rho-settlement`, which TLC-checks bounded per-purse settlement
   commutation and fail-closed duplicate/missing-purse rejects.

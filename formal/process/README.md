@@ -39,7 +39,12 @@ slice. `rho_comm_slice.py` generates the mCRL2, Maude, and TLA+ model files
 from that specification and the formal Makefiles run it in `--check` mode
 before invoking the model checkers. This keeps the process-algebra,
 rewrite-logic, and scheduler projections tied to the same finite lowering
-shape.
+shape. The generated-check target also runs `rho_comm_slice.py --self-test`,
+which rejects malformed source specifications and checks the generator's
+arity-parametric schedule derivation over one through five independent redexes:
+positive visible schedules, premature-completion negatives, duplicate-query
+absence, mCRL2 schedule-formula clause counts, and the hidden-reserve action set
+used for branching-bisimulation comparison.
 
 `formal/mcrl2/rho_machine/` and `formal/maude/rho_machine/` model a bounded
 four-redex RhoNet COMM fragment and the corresponding Dovetail fact-step
