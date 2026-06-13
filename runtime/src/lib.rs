@@ -4,7 +4,7 @@
 //! - Variable binding support (via moniker wrappers)
 //! - Collection types (HashBag for associative-commutative operations)
 //! - Language metadata types for REPL introspection
-//! - Core language traits (Term, AscentResults)
+//! - Core language traits and runtime-neutral backend reports
 //! - Utility functions for parsing and variable management
 
 // Variable binding support

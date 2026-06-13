@@ -18,7 +18,7 @@ The target state is:
 
 The runtime path is therefore:
 
-`typed MeTTaIL term -> Dovetail report -> RhoNet plan -> rhoapi::Par -> RhoRuntime -> RSpace observations`
+`typed MeTTaIL term -> Dovetail report -> RhoNet plan -> rhoapi::Par -> RhoRuntime -> RSpace observations -> RuntimeBackendReport`
 
 ## Runtime Scope Diagram
 

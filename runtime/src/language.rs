@@ -4,7 +4,7 @@
 
 use std::any::Any;
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt;
 
 use crate::LanguageMetadata;
@@ -49,6 +49,178 @@ impl fmt::Display for RuntimeBackend {
             RuntimeBackend::Ascent => write!(f, "Ascent"),
             RuntimeBackend::Dovetail => write!(f, "Dovetail"),
             RuntimeBackend::RhoMachine => write!(f, "RhoMachine"),
+        }
+    }
+}
+
+/// Executable artifact boundary used by a runtime backend report.
+///
+/// This is deliberately substrate-neutral. `RhoNormalizedAst` corresponds to a
+/// direct `rhoapi::Par` value, not Rholang source text; `RhoBytecode` is the
+/// forward-compatible execution artifact for the planned bytecode path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RuntimeBackendArtifact {
+    /// Legacy/reference Ascent fixpoint facts.
+    AscentFixpoint,
+    /// Dovetail's checked, substrate-neutral rewrite report.
+    DovetailRunReport,
+    /// Normalized Rholang AST (`rhoapi::Par`) injected directly into RhoRuntime.
+    RhoNormalizedAst,
+    /// Rholang bytecode artifact, once the host runtime exposes bytecode.
+    RhoBytecode,
+}
+
+impl fmt::Display for RuntimeBackendArtifact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeBackendArtifact::AscentFixpoint => write!(f, "AscentFixpoint"),
+            RuntimeBackendArtifact::DovetailRunReport => write!(f, "DovetailRunReport"),
+            RuntimeBackendArtifact::RhoNormalizedAst => write!(f, "RhoNormalizedAst"),
+            RuntimeBackendArtifact::RhoBytecode => write!(f, "RhoBytecode"),
+        }
+    }
+}
+
+/// Ground observation value returned by a non-Ascent runtime backend.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum RuntimeObservationValue {
+    Int(i64),
+    Bool(bool),
+    Text(String),
+    TermDisplay(String),
+    Bytes(Vec<u8>),
+}
+
+impl fmt::Display for RuntimeObservationValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeObservationValue::Int(value) => write!(f, "{}", value),
+            RuntimeObservationValue::Bool(value) => write!(f, "{}", value),
+            RuntimeObservationValue::Text(value) => write!(f, "{:?}", value),
+            RuntimeObservationValue::TermDisplay(value) => write!(f, "{}", value),
+            RuntimeObservationValue::Bytes(value) => write!(f, "0x{}", hex_bytes(value)),
+        }
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// Values observed on one runtime output channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeChannelObservation {
+    pub channel: String,
+    pub values: Vec<RuntimeObservationValue>,
+}
+
+impl RuntimeChannelObservation {
+    pub fn new(channel: impl Into<String>, values: Vec<RuntimeObservationValue>) -> Self {
+        Self { channel: channel.into(), values }
+    }
+
+    /// Number of values observed before any order-insensitive projection.
+    pub fn observed_count(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Order-insensitive exact-membership fingerprint for set-semantics checks.
+    pub fn membership_fingerprint(&self) -> BTreeSet<RuntimeObservationValue> {
+        self.values.iter().cloned().collect()
+    }
+
+    /// Order-insensitive counted fingerprint for bag-sensitive checks.
+    pub fn multiplicity_fingerprint(&self) -> BTreeMap<RuntimeObservationValue, usize> {
+        self.values
+            .iter()
+            .cloned()
+            .fold(BTreeMap::new(), |mut counts, value| {
+                *counts.entry(value).or_insert(0) += 1;
+                counts
+            })
+    }
+}
+
+/// Runtime-neutral output of an installed backend.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum RuntimeBackendOutput {
+    /// Legacy/reference rewrite graph materialized as Ascent facts.
+    Ascent(AscentResults),
+    /// Resting observations from a substrate such as RSpace.
+    Observations(Vec<RuntimeChannelObservation>),
+}
+
+impl RuntimeBackendOutput {
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            RuntimeBackendOutput::Ascent(_) => "AscentResults",
+            RuntimeBackendOutput::Observations(_) => "runtime observations",
+        }
+    }
+}
+
+/// Runtime-neutral report returned by a selected backend.
+#[derive(Debug, Clone)]
+pub struct RuntimeBackendReport {
+    pub backend: RuntimeBackend,
+    pub artifact: RuntimeBackendArtifact,
+    pub output: RuntimeBackendOutput,
+    pub evidence_refs: Vec<String>,
+}
+
+impl RuntimeBackendReport {
+    pub fn ascent(results: AscentResults) -> Self {
+        Self {
+            backend: RuntimeBackend::Ascent,
+            artifact: RuntimeBackendArtifact::AscentFixpoint,
+            output: RuntimeBackendOutput::Ascent(results),
+            evidence_refs: Vec::new(),
+        }
+    }
+
+    pub fn observations(
+        backend: RuntimeBackend,
+        artifact: RuntimeBackendArtifact,
+        observations: Vec<RuntimeChannelObservation>,
+        evidence_refs: Vec<String>,
+    ) -> Self {
+        Self {
+            backend,
+            artifact,
+            output: RuntimeBackendOutput::Observations(observations),
+            evidence_refs,
+        }
+    }
+
+    pub fn as_ascent_results(&self) -> Option<&AscentResults> {
+        match &self.output {
+            RuntimeBackendOutput::Ascent(results) => Some(results),
+            RuntimeBackendOutput::Observations(_) => None,
+        }
+    }
+
+    pub fn into_ascent_results(self) -> Result<AscentResults, Self> {
+        match self.output {
+            RuntimeBackendOutput::Ascent(results) => Ok(results),
+            RuntimeBackendOutput::Observations(_) => Err(self),
+        }
+    }
+
+    pub fn observations_for_channel(&self, channel: &str) -> Option<&RuntimeChannelObservation> {
+        match &self.output {
+            RuntimeBackendOutput::Ascent(_) => None,
+            RuntimeBackendOutput::Observations(observations) => observations
+                .iter()
+                .find(|observation| observation.channel == channel),
         }
     }
 }
@@ -373,23 +545,53 @@ pub trait Language: Send + Sync {
             .any(|capability| capability.backend == backend)
     }
 
+    /// Run the selected backend and return a runtime-neutral report.
+    ///
+    /// This is the production backend surface for Dovetail/Rho integration.
+    /// `run_with_backend` remains as an Ascent-shaped compatibility wrapper and
+    /// rejects non-Ascent report shapes instead of pretending that Rho
+    /// observations are Ascent facts.
+    fn run_backend_report(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
+            other => {
+                Err(format!("{} backend is not installed for language {}", other, self.name()))
+            },
+        }
+    }
+
+    /// Run the language's selected default backend and return a runtime-neutral
+    /// report.
+    fn run_default_backend_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
+        self.run_backend_report(self.default_runtime_backend(), term)
+    }
+
     /// Run the selected backend on a term and return results.
     ///
     /// `Ascent` remains available as an explicit reference/oracle backend. Other
     /// backends must be wired by a language only after their proof and runtime
-    /// gates pass; the default implementation fails closed rather than silently
-    /// falling back.
+    /// gates pass. This compatibility method is intentionally Ascent-shaped;
+    /// callers that may select Dovetail/Rho should use
+    /// [`Language::run_backend_report`] instead.
     fn run_with_backend(
         &self,
         backend: RuntimeBackend,
         term: &dyn Term,
     ) -> Result<AscentResults, String> {
-        match backend {
-            RuntimeBackend::Ascent => self.run_ascent(term),
-            other => {
-                Err(format!("{} backend is not installed for language {}", other, self.name()))
-            },
-        }
+        let report = self.run_backend_report(backend, term)?;
+        let output_kind = report.output.kind_name();
+        report.into_ascent_results().map_err(|report| {
+            format!(
+                "{} backend for language {} returned {}; use run_backend_report for this backend",
+                report.backend,
+                self.name(),
+                output_kind
+            )
+        })
     }
 
     /// Run the language's selected default backend.
@@ -419,6 +621,26 @@ pub trait Language: Send + Sync {
         self.run_ascent(term)
     }
 
+    /// Run the selected backend with pre-seeded relation facts and return a
+    /// runtime-neutral report.
+    fn run_backend_report_with_facts(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::Ascent => self
+                .run_ascent_with_facts(term, facts)
+                .map(RuntimeBackendReport::ascent),
+            other => Err(format!(
+                "{} backend with seeded facts is not installed for language {}",
+                other,
+                self.name()
+            )),
+        }
+    }
+
     /// Run the selected backend with pre-seeded relation facts.
     ///
     /// Relation facts are currently an Ascent-shaped compatibility surface; a
@@ -430,14 +652,16 @@ pub trait Language: Send + Sync {
         term: &dyn Term,
         facts: &SeedFacts,
     ) -> Result<AscentResults, String> {
-        match backend {
-            RuntimeBackend::Ascent => self.run_ascent_with_facts(term, facts),
-            other => Err(format!(
-                "{} backend with seeded facts is not installed for language {}",
-                other,
-                self.name()
-            )),
-        }
+        let report = self.run_backend_report_with_facts(backend, term, facts)?;
+        let output_kind = report.output.kind_name();
+        report.into_ascent_results().map_err(|report| {
+            format!(
+                "{} backend with seeded facts for language {} returned {}; use run_backend_report_with_facts for this backend",
+                report.backend,
+                self.name(),
+                output_kind
+            )
+        })
     }
 
     /// Run the language's selected default backend with pre-seeded relation
@@ -448,6 +672,16 @@ pub trait Language: Send + Sync {
         facts: &SeedFacts,
     ) -> Result<AscentResults, String> {
         self.run_with_backend_with_facts(self.default_runtime_backend(), term, facts)
+    }
+
+    /// Run the language's selected default backend with pre-seeded relation
+    /// facts and return a runtime-neutral report.
+    fn run_default_backend_report_with_facts(
+        &self,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<RuntimeBackendReport, String> {
+        self.run_backend_report_with_facts(self.default_runtime_backend(), term, facts)
     }
 
     /// If the term is fully evaluable (no free variables), evaluate it and return the result term.
@@ -1383,24 +1617,22 @@ mod tests {
             Ok(AscentResults::empty())
         }
 
-        fn run_with_backend(
+        fn run_backend_report(
             &self,
             backend: RuntimeBackend,
             term: &dyn Term,
-        ) -> Result<AscentResults, String> {
+        ) -> Result<RuntimeBackendReport, String> {
             match backend {
-                RuntimeBackend::Ascent => self.run_ascent(term),
-                RuntimeBackend::RhoMachine => Ok(AscentResults {
-                    all_terms: vec![TermInfo {
-                        term_id: 7,
-                        exact_key: None,
-                        display: "rho-default".to_string(),
-                        is_normal_form: true,
-                    }],
-                    rewrites: Vec::new(),
-                    equivalences: Vec::new(),
-                    custom_relations: HashMap::new(),
-                }),
+                RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
+                RuntimeBackend::RhoMachine => Ok(RuntimeBackendReport::observations(
+                    RuntimeBackend::RhoMachine,
+                    RuntimeBackendArtifact::RhoNormalizedAst,
+                    vec![RuntimeChannelObservation::new(
+                        "OUT",
+                        vec![RuntimeObservationValue::Text("rho-default".to_string())],
+                    )],
+                    vec!["runtime-test:rho-dispatch".to_string()],
+                )),
                 other => {
                     Err(format!("{} backend is not installed for language {}", other, self.name()))
                 },
@@ -1532,10 +1764,31 @@ mod tests {
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
 
-        let results = language
-            .run_default_backend(&term)
+        let report = language
+            .run_default_backend_report(&term)
             .expect("metadata-selected Rho backend must dispatch");
-        assert_eq!(results.normal_forms()[0].display, "rho-default");
+        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+        assert_eq!(report.evidence_refs, vec!["runtime-test:rho-dispatch"]);
+
+        let out = report
+            .observations_for_channel("OUT")
+            .expect("Rho report must expose the OUT channel");
+        assert_eq!(out.observed_count(), 1);
+        assert_eq!(
+            out.membership_fingerprint(),
+            BTreeSet::from([RuntimeObservationValue::Text("rho-default".to_string())])
+        );
+
+        let err = language
+            .run_default_backend(&term)
+            .expect_err("Ascent-shaped compatibility API must reject Rho observations");
+        assert!(
+            err.contains(
+                "RhoMachine backend for language RhoDispatch returned runtime observations"
+            ),
+            "{err}"
+        );
     }
 
     #[test]

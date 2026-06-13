@@ -45,7 +45,7 @@ The current proof and coverage sources are
 | per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
-| runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
+| runtime backend dispatch | `RuntimeBackendDispatch.v`, `mettail_runtime::RuntimeBackendReport` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Rho defaults return observation-shaped reports and are rejected by the legacy Ascent-shaped compatibility wrapper |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
 | COMM schedule family and guarded joins | `RhoCommScheduleFamily.v`, `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | proves every finite independent-redex Rho reserve/fire schedule erases to the same visible observations as the direct Dovetail fire schedule, full permutation schedules enable completion, missing-redex prefixes reject completion, and permutation schedules preserve the fired-redex set; the generated process-calculus suite independently checks no deadlock, all 24 visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, weak-fair scheduler completion, and guarded-join non-consumption: a failed guard releases data, a valid join can commit afterward, and the rejected bad datum remains observable |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
@@ -73,11 +73,16 @@ rhocalc process bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with
 transport-pure rhocalc programs cross the runtime boundary as normalized `Par`
 values. Their Rholang-looking strings are annotations for logs, tests, and
 documentation, not executable source.
-Generated Rho observations now use `RhoObservationReport<T>` rather than
-`AscentResults`: the report carries the planned execution boundary, the artifact
-kind, the observed channel, the read-order values, an order-insensitive
-set-membership fingerprint for set-semantics oracle comparison, and an
-order-insensitive counted fingerprint for bag-sensitive observations.
+Generated Rho observations now use typed `RhoObservationReport<T>` at the
+Rho-runtime boundary and `mettail_runtime::RuntimeBackendReport` at the generic
+`Language` boundary rather than forcing Rho results into `AscentResults`.
+The typed report carries the planned execution boundary, the artifact kind, the
+observed channel, the read-order values, an order-insensitive set-membership
+fingerprint for set-semantics oracle comparison, and an order-insensitive
+counted fingerprint for bag-sensitive observations. The generic report carries
+the selected backend, artifact kind, evidence references, and channel
+observations so callers can select `RhoMachine` without depending on
+Ascent-shaped fact materialization.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
@@ -441,6 +446,9 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::plan_rho_default_backend`
 - `mettail_rho_codegen::RhoDefaultBackendPlan`
 - `mettail_rho_codegen::RhoDefaultBackendPlanError`
+- `mettail_runtime::RuntimeBackendReport`
+- `mettail_runtime::RuntimeBackendArtifact`
+- `mettail_runtime::RuntimeChannelObservation`
 - `mettail_rho_runtime::PlannedRhoBackend`
 - `mettail_rho_runtime::RhoObservationReport`
 - `mettail_rho_runtime::RhoExecutionBoundary`
@@ -612,7 +620,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete; `CyclicEnumerationImpossibility.v` explains why productive cyclic spaces cannot be finitely exhausted |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; observations return `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; the generic `Language` path returns `RuntimeBackendReport` for selected backends, and the Rho boundary returns `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 
