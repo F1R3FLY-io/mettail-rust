@@ -17,6 +17,7 @@ theories/RhoLoweringTotalOrRejects.v
 theories/RhoRejectedCoverage.v
 theories/RhoParWellFormedness.v
 theories/RhoArtifactBoundary.v
+theories/RhoAstSendBoundary.v
 theories/RuntimeBackendDispatch.v
 theories/CommReductionCorrespondence.v
 theories/RhoCommScheduleFamily.v

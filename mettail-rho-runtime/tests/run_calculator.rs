@@ -11,11 +11,11 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoArtifactKind, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    plan_rho_default_backend, RhoArtifactKind, RhoAstSend, RhoCoverageEvidence,
+    RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
-use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
 use std::collections::{BTreeMap, BTreeSet};
 
 // The calculator's Int scalar-op fragment, body-less (the lowering keys on the
@@ -33,10 +33,6 @@ const CALC_RUN_FRAGMENT: &str = r#"
         Neg . a:Int |- "-" a : Int ;
     }
 "#;
-
-fn quoted_channel(name: &str) -> Par {
-    new_gstring_par(name.to_string(), Vec::new(), false)
-}
 
 fn passing_evidence() -> RhoDefaultBackendEvidence {
     RhoDefaultBackendEvidence {
@@ -64,32 +60,18 @@ fn calculator_backend() -> PlannedRhoBackend {
 
 /// `@"OP"!(a, b, @"OUT")`
 fn binary_call(op: &str, a: i64, b: i64) -> Par {
-    new_send_par(
-        quoted_channel(op),
-        vec![
-            new_gint_par(a, Vec::new(), false),
-            new_gint_par(b, Vec::new(), false),
-            quoted_channel("OUT"),
-        ],
-        false,
-        Vec::new(),
-        false,
-        Vec::new(),
-        false,
-    )
+    RhoAstSend::binary_int_call(op, a, b, "OUT")
+        .expect("binary calculator call must build")
+        .par()
+        .clone()
 }
 
 /// `@"OP"!(a, @"OUT")`
 fn unary_call(op: &str, a: i64) -> Par {
-    new_send_par(
-        quoted_channel(op),
-        vec![new_gint_par(a, Vec::new(), false), quoted_channel("OUT")],
-        false,
-        Vec::new(),
-        false,
-        Vec::new(),
-        false,
-    )
+    RhoAstSend::unary_int_call(op, a, "OUT")
+        .expect("unary calculator call must build")
+        .par()
+        .clone()
 }
 
 #[tokio::test]

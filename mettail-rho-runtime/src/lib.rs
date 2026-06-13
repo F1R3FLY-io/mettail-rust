@@ -44,6 +44,7 @@ pub use run::{
 };
 pub use run::{
     run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_ints,
+    run_normalized_par_for_oracle_and_read_string_tuples,
     run_normalized_par_for_oracle_and_read_strings, run_rholang_source_for_oracle,
     run_rholang_source_for_oracle_and_read_ints, run_rholang_source_for_oracle_and_read_strings,
     run_rholang_source_for_oracle_then_consume_strings,

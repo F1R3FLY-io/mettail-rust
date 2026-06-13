@@ -27,7 +27,7 @@ The current proof and coverage sources are
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
 | exact rejected-rule delegation | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set, delegated rejection evidence names exactly the rejected rule set, and omitted or stale delegated rules block the default-backend gate |
-| normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, and generated-backend rejection of source-text artifacts |
+| normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
@@ -47,7 +47,8 @@ The current proof and coverage sources are
 | runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
 | COMM schedule family | `RhoCommScheduleFamily.v`, `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | proves every finite independent-redex Rho reserve/fire schedule erases to the same visible observations as the direct Dovetail fire schedule, full permutation schedules enable completion, missing-redex prefixes reject completion, and permutation schedules preserve the fired-redex set; the generated four-redex process slice independently checks no deadlock, all 24 visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, and weak-fair scheduler completion |
-| runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime |
+| runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
+| AST ambiguity witness smoke | `mettail-rho-runtime/tests/rho_ambiguity_ast.rs` | injects receive-less ambiguity witness facts as normalized AST, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet` |
 | differential oracle | `mettail-rho-runtime/tests/rho_vs_ascent.rs` | compares a validated Rho-default backend plan with Ascent results |
 
 The Rho bridge now has mechanized model contracts for pure COMM, name
@@ -64,7 +65,11 @@ order as the observed exact-key sequence, and rejects `BoundedByCycleCut`
 reports without observations.
 Generated Rho execution now starts from `PlannedRhoBackend`, which wraps the
 `RhoDefaultBackendPlan` produced by the flip gate; raw validated artifacts remain
-available for oracle/debug helpers only.
+available for oracle/debug helpers only. Dynamic contract calls and ambiguity
+witnesses are constructed with `mettail_rho_codegen::RhoAstSend`, so they also
+cross the runtime boundary as normalized `Par` values. Their Rholang-looking
+strings are annotations for logs, tests, and documentation, not executable
+source.
 Generated Rho observations now use `RhoObservationReport<T>` rather than
 `AscentResults`: the report carries the planned execution boundary, the artifact
 kind, the observed channel, the read-order values, an order-insensitive
@@ -247,6 +252,7 @@ ambiguity-preserving completion step. This matching frontier is a normalized
 
 Mechanized evidence:
 
+- `RhoAstSendBoundary.v`
 - `DeltaOneMinCostJoin.v`
 - `DeltaOneMinCostMatching.v`
 - `GuardedCommSoundness.v`
@@ -259,6 +265,8 @@ Mechanized evidence:
 
 Rust adapter evidence:
 
+- `mettail_rho_codegen::RhoAstSend`
+- `mettail_rho_codegen::RhoAstLiteral`
 - `mettail_rho_adapter::DeltaOneCandidate`
 - `mettail_rho_adapter::DeltaOneMatchEdge`
 - `mettail_rho_adapter::DeltaOneMatching`
@@ -290,6 +298,9 @@ Rust adapter evidence:
 - `ambiguity::duplicate_key_with_different_payload_is_rejected`
 - `ambiguity::disabled_conflicting_payload_is_ignored`
 - `ambiguity::observes_key_only_when_enabled_and_conflict_free`
+- `rho_ambiguity_ast::ast_witness_facts_preserve_ambiguity_set_across_schedule_order`
+- `rho_ambiguity_ast::ast_witness_exact_duplicates_are_idempotent_after_runtime_observation`
+- `rho_ambiguity_ast::ast_witness_conflicting_payload_rejects_after_runtime_observation`
 - `settlement::located_ledger_rejects_duplicate_purse_states`
 - `settlement::located_ledger_missing_purse_preserves_ledger`
 - `settlement::located_ledger_updates_only_matching_purse`
@@ -319,7 +330,10 @@ candidate when their ordering costs are equal.
 Scheduler order may change the sequence in which witnesses arrive, but not the
 observed set. Exact duplicate witnesses are idempotent; the same exact key with
 a different payload rejects as `AmbiguityWitnessConflict` rather than
-overwriting one semantic alternative with another.
+overwriting one semantic alternative with another. Generated witness facts are
+receive-less normalized AST sends of the shape `@"witness"!("key", "payload")`;
+runtime observation reads the key/payload tuple as one fact before handing it to
+`AmbiguityWitnessSet`.
 
 `located(action)` first selects the unique purse named by the action. If no
 purse exists, the ledger is preserved with `MissingPurse`. If duplicate purse

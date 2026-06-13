@@ -35,12 +35,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ast;
 pub mod backend;
 pub mod deadlock;
 pub mod flip;
 pub mod lower;
 pub mod need;
 pub mod validate;
+pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
     plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
     RhoDefaultBackendPlan, RhoDefaultBackendPlanError,

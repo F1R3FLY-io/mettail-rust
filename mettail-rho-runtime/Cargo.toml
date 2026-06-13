@@ -36,6 +36,7 @@ mettail-runtime = { path = "../runtime", optional = true }
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
 # the RhoRuntime run / differential oracle.
 mettail-ast = { path = "../ast" }
+mettail-rho-adapter = { path = "../mettail-rho-adapter" }
 syn = { workspace = true }
 
 [[test]]

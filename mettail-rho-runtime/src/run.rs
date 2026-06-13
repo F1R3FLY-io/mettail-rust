@@ -79,6 +79,10 @@ fn matched_strings(data: &[ListParWithRandom]) -> Option<Vec<String>> {
     Some(out)
 }
 
+fn matched_string_tuple(data: &ListParWithRandom) -> Option<Vec<String>> {
+    data.pars.iter().map(par_as_string).collect()
+}
+
 async fn build_runtime() -> Result<impl RhoRuntime, String> {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm
@@ -138,6 +142,21 @@ where
             if let Some(value) = reader(par) {
                 out.push(value);
             }
+        }
+    }
+    out
+}
+
+async fn read_string_tuples_from_runtime<R>(runtime: &R, out_channel: &str) -> Vec<Vec<String>>
+where
+    R: RhoRuntime,
+{
+    let channel = quoted_channel(out_channel);
+    let data = runtime.get_data(&channel).await;
+    let mut out = Vec::new();
+    for datum in data {
+        if let Some(tuple) = matched_string_tuple(&datum.a) {
+            out.push(tuple);
         }
     }
     out
@@ -353,6 +372,17 @@ pub async fn run_normalized_par_for_oracle_and_read_strings(
     out_channel: &str,
 ) -> Result<Vec<String>, String> {
     run_par_and_read_ground(program, out_channel, par_as_string).await
+}
+
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every all-string tuple left resting on the
+/// quoted channel `@"<out_channel>"`.
+pub async fn run_normalized_par_for_oracle_and_read_string_tuples(
+    program: &Par,
+    out_channel: &str,
+) -> Result<Vec<Vec<String>>, String> {
+    let runtime = evaluate_par(program).await?;
+    Ok(read_string_tuples_from_runtime(&runtime, out_channel).await)
 }
 
 /// Evaluate hand-authored Rholang source, then directly ask RSpace to consume

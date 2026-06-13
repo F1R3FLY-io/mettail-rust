@@ -312,6 +312,19 @@ Correct lowering:
 The first representation chooses one. The second represents both. Therefore the
 Rho backend represents ambiguity as explicit facts on candidate channels.
 
+In the implementation, an enabled ambiguity witness is a receive-less AST send:
+
+`@"mtl:ambiguity"!("exact-key", "payload")`
+
+The expression above is reader notation. The generated value is
+`models::rhoapi::Par`, constructed by `mettail_rho_codegen::RhoAstSend`; it is
+not Rholang source text. Runtime observation reads the resting datum as the
+tuple `("exact-key", "payload")`, then the adapter inserts it into
+`AmbiguityWitnessSet`. Exact duplicate tuples are idempotent, while the same
+key with a different payload rejects as an explicit conflict. This keeps RSpace
+free to schedule enabled communications in any order without letting the
+scheduler erase semantic alternatives.
+
 ## Name and Capability Discipline
 
 Every evaluation receives a private namespace:

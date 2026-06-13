@@ -14,12 +14,10 @@
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    plan_rho_default_backend, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::PlannedRhoBackend;
 use mettail_runtime::Language;
-use models::rhoapi::Par;
-use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
 use std::collections::BTreeSet;
 
 const CALC_RUN_FRAGMENT: &str = r#"
@@ -33,10 +31,6 @@ const CALC_RUN_FRAGMENT: &str = r#"
         ModInt . a:Int, b:Int |- a "%" b : Int ;
     }
 "#;
-
-fn quoted_channel(name: &str) -> Par {
-    new_gstring_par(name.to_string(), Vec::new(), false)
-}
 
 fn passing_evidence() -> RhoDefaultBackendEvidence {
     RhoDefaultBackendEvidence {
@@ -75,21 +69,9 @@ fn ascent_normal_forms(lang: &CalculatorLanguage, input: &str) -> Vec<String> {
 
 /// The rho backend's result of `@"op"!(a, b, @"OUT")` on a real RhoRuntime.
 async fn rho_binary(backend: &PlannedRhoBackend, op: &str, a: i64, b: i64) -> i64 {
-    let call = new_send_par(
-        quoted_channel(op),
-        vec![
-            new_gint_par(a, Vec::new(), false),
-            new_gint_par(b, Vec::new(), false),
-            quoted_channel("OUT"),
-        ],
-        false,
-        Vec::new(),
-        false,
-        Vec::new(),
-        false,
-    );
+    let call = RhoAstSend::binary_int_call(op, a, b, "OUT").expect("rho binary call must build");
     let report = backend
-        .run_with_call_and_observe_ints(&call, "OUT")
+        .run_with_call_and_observe_ints(call.par(), "OUT")
         .await
         .unwrap_or_else(|e| panic!("rho {op}({a},{b}): {e}"));
     assert_eq!(report.observed_count(), 1, "rho {op}({a},{b}) must yield exactly one int");
