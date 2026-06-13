@@ -252,6 +252,7 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/RhoParWellFormedness.v`
 - `formal/rocq/rho_bridge/theories/RhoArtifactBoundary.v`
 - `formal/rocq/rho_bridge/theories/CommReductionCorrespondence.v`
+- `formal/rocq/rho_bridge/theories/RhoCommScheduleFamily.v`
 - `formal/rocq/rho_bridge/theories/LinearCommCorrespondence.v`
 - `formal/rocq/rho_bridge/theories/RhoGroundingAndNames.v`
 - `formal/rocq/rho_bridge/theories/RhoObservationFingerprint.v`
@@ -267,8 +268,8 @@ Repository-local Rho bridge formal suite:
 Used for: current M-RHO proof coverage from one-way bridge shape through
 Rho-machine reuse, exact rejected-rule delegation, normalized-`Par` validation,
 generated-backend source-text exclusion, COMM correspondence, exact observation,
-guard behavior, ambiguity preservation, cost separation, and backend flip
-gating.
+guard behavior, ambiguity preservation, cost separation, arity-parametric
+independent-redex COMM schedules, and backend flip gating.
 
 ### RHO-PROCESS-FORMAL
 
@@ -292,12 +293,11 @@ Repository-local finite process-calculus projections:
 Used for: finite executable projections of the RhoNet/Dovetail COMM bridge.
 The mCRL2, Maude, and TLA+ models are generated from the same JSON slice
 specification and checked for drift before model checking. These checks
-complement the Rocq bridge proof by model-checking and rewrite-checking a
+complement `RhoCommScheduleFamily.v` by model-checking and rewrite-checking a
 bounded four-redex process fragment and the matching scheduler boundary. The
 Maude projection records visible fire/complete traces while leaving Rho reserve
 steps internal, checks all 24 full schedules on both projections, and rejects
-every visible completion trace with fewer than all four fires. These bounded
-models are not a replacement for the unbounded Rocq obligations.
+every visible completion trace with fewer than all four fires.
 
 ### COVERAGE-MATRIX
 

@@ -30,7 +30,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
-.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-rho-bridge
+.PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-rho-bridge rocq-rho-bridge-schedule-family
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
 .PHONY: rocq-sft rocq-unification
@@ -138,6 +138,9 @@ rocq-rho-bridge-artifact-boundary: require-capped
 
 rocq-rho-bridge-rejected-coverage: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoRejectedCoverage.vo
+
+rocq-rho-bridge-schedule-family: require-capped
+	$(MAKE) -C rocq/rho_bridge theories/RhoCommScheduleFamily.vo
 
 process-rho-generated-check: require-capped
 	python3 process/rho_comm_slice.py --check

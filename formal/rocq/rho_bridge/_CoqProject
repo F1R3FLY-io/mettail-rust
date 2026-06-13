@@ -19,6 +19,7 @@ theories/RhoParWellFormedness.v
 theories/RhoArtifactBoundary.v
 theories/RuntimeBackendDispatch.v
 theories/CommReductionCorrespondence.v
+theories/RhoCommScheduleFamily.v
 theories/LinearCommCorrespondence.v
 theories/RhoGroundingAndNames.v
 theories/RhoObservationFingerprint.v

@@ -7,14 +7,20 @@ unbounded Rocq Rho bridge proofs.
 
 Rocq remains authoritative for unbounded semantic claims such as lowering
 soundness, observation equivalence, artifact-validation gates, name grounding,
-and the Rust model bridge. The process-calculus models here are deliberately
-finite. They are used for independent counterexample search and process-level
-sanity checks over selected RhoNet fragments.
+the Rust model bridge, and the arity-parametric COMM schedule-family theorem in
+`formal/rocq/rho_bridge/theories/RhoCommScheduleFamily.v`. The process-calculus
+models here are deliberately finite. They are used for independent
+counterexample search and process-level sanity checks over selected RhoNet
+fragments.
 
 These finite checks establish that the modeled fragments have the stated
-deadlock, schedule-independence, and bisimulation properties. They do not, by
-themselves, verify the full f1r3node RSpace implementation, the full Rholang
-language, Rholang bytecode, or every MeTTaIL language backend.
+deadlock, schedule-independence, and bisimulation properties. The unbounded
+Rocq schedule-family proof establishes the corresponding visible-trace and
+premature-completion boundary for every finite list of independent redexes.
+Host-level RSpace, full Rholang, Rholang bytecode, and per-language backend
+obligations are covered by their own bridge, runtime, and flip-gate suites; this
+directory covers the process-level COMM schedule projection and its executable
+counterexample-search models.
 
 ## Tool Roles
 
@@ -55,6 +61,12 @@ generated-backend proof. The checked properties are:
    schedules on the RhoNet and Dovetail sides while keeping Rho reserve steps
    unobserved; every visible completion trace with fewer than all four fires is
    unreachable on both sides.
+
+The bounded executable slice is backed by `RhoCommScheduleFamily.v`, which
+proves for every finite schedule that Rho reserve steps erase to `τ`, Rho
+reserve/fire traces have the same visible observations as direct Dovetail fire
+traces, full permutation schedules enable completion, missing-redex prefixes
+reject completion, and permutation schedules observe the same fired redex set.
 
 `formal/tla/rho_machine/` models the matching scheduler boundary for the same
 four independent redexes. Apalache checks bounded safety invariants, and TLC
