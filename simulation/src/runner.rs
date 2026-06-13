@@ -302,23 +302,26 @@ impl<'a> SimulationRunner<'a> {
 
         step_index += 1;
 
-        // Step 2: Run Ascent (rewrite to saturation).
+        // Step 2: Run the selected backend (rewrite to saturation).
         mettail_runtime::clear_var_cache();
-        let results = match self.language.run_ascent(term.as_ref()) {
+        let backend = self.language.default_runtime_backend();
+        let results = match self.language.run_default_backend(term.as_ref()) {
             Ok(r) => r,
             Err(e) => {
                 let trace = ExecutionTrace {
                     seed: seed_str.clone(),
                     language: language_name.clone(),
                     steps,
-                    outcome: TraceOutcome::Error { message: format!("Ascent error: {}", e) },
+                    outcome: TraceOutcome::Error {
+                        message: format!("{} backend error: {}", backend, e),
+                    },
                     morphology: morphology_tracker.as_ref().map(|t| t.summary()),
                 };
                 return Err(SimulationFailure {
                     seed: seed_str,
                     input: input.to_string(),
                     trace,
-                    error: format!("Ascent error: {}", e),
+                    error: format!("{} backend error: {}", backend, e),
                 });
             },
         };

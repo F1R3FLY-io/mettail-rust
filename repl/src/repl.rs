@@ -1144,17 +1144,19 @@ impl Repl {
                                 return Ok(());
                             }
                         },
-                        Err(_) => {}, // Fall through to Ascent
+                        Err(_) => {}, // Fall through to the selected rewrite backend
                     }
                 }
             }
         }
 
-        // Full Ascent rewrite graph (always for step, fallback for exec)
-        print!("Running Ascent... ");
+        // Full rewrite graph using the language's selected backend (always for
+        // step, fallback for exec).
+        let backend = language.default_runtime_backend();
+        print!("Running {} backend... ", backend);
         let start_time = Instant::now();
         let results = language
-            .run_ascent(term.as_ref())
+            .run_default_backend(term.as_ref())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         let end_time = Instant::now();
         println!("Time taken: {:?}", end_time.duration_since(start_time));

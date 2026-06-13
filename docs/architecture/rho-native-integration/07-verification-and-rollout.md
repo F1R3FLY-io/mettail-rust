@@ -26,7 +26,7 @@ The current proof and coverage sources are
 | host Rho-machine reuse | `HostRhoMachineReuse.v` | proved accepted backend plans include host Rholang/RSpace and exclude custom reducer, tuple-space, matcher, and replay components |
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
-| normalized Rholang AST | `RhoParWellFormedness.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, and return-channel convention |
+| normalized Rholang AST | `RhoParWellFormedness.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, and validation soundness/completeness |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
@@ -39,6 +39,7 @@ The current proof and coverage sources are
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, and deadlock gates |
+| runtime backend dispatch | `RuntimeBackendDispatch.v` | proved default execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent |
 | finite process projection | `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | generates, model-checks, and rewrite-checks a bounded three-redex RhoNet/Dovetail COMM fragment with Rho-internal reserve phases for no deadlock, all six visible fire schedules, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, and weak-fair scheduler completion |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime |
 | differential oracle | `mettail-rho-runtime/tests/rho_vs_ascent.rs` | compares a validated Rho-default backend plan with Ascent results |
@@ -46,8 +47,8 @@ The current proof and coverage sources are
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal joins,
 guards, ambiguity preservation, cost-axis separation, normalized-`Par`
-well-formedness, and backend flip gating. Per-language production flips still
-require the runtime gates listed below.
+well-formedness, backend flip gating, and fail-closed runtime dispatch.
+Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
 

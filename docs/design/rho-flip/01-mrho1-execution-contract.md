@@ -63,6 +63,11 @@ production backend target. It is now superseded for generated MeTTaIL backends:
 - **MeTTaIL parser replaces the Rholang parser for this path**: source snippets
   in the design remain pedagogical. The execution artifact is AST today and can
   evolve to Rholang bytecode later without making source text the boundary again.
+- **Runtime selection is explicit and fail-closed**: user-facing execution calls
+  `Language::run_default_backend`, whose inherited default is the legacy Ascent
+  reference backend. A language may override that default only when its Dovetail
+  or Rho gate installs the backend; `RuntimeBackendDispatch.v` proves absent
+  Dovetail/Rho defaults do not silently fall back to Ascent.
 
 Hand-authored source-text oracle tests remain useful regressions for historical
 host compiler/parser behavior, especially duplicate receive-channel negative

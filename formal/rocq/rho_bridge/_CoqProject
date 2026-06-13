@@ -15,6 +15,7 @@ theories/MettaGsltPresentation.v
 theories/MettaOslfLawsConformance.v
 theories/RhoLoweringTotalOrRejects.v
 theories/RhoParWellFormedness.v
+theories/RuntimeBackendDispatch.v
 theories/CommReductionCorrespondence.v
 theories/LinearCommCorrespondence.v
 theories/RhoGroundingAndNames.v

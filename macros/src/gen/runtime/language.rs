@@ -3671,6 +3671,10 @@ fn generate_language_trait_impl(
                 Ok(#language_name::run_ascent_typed(typed_term))
             }
 
+            fn default_runtime_backend(&self) -> mettail_runtime::RuntimeBackend {
+                mettail_runtime::RuntimeBackend::Ascent
+            }
+
             fn run_ascent_with_facts(
                 &self,
                 term: &dyn mettail_runtime::Term,
@@ -4024,6 +4028,10 @@ fn generate_language_trait_impl_multi(
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
+            }
+
+            fn default_runtime_backend(&self) -> mettail_runtime::RuntimeBackend {
+                mettail_runtime::RuntimeBackend::Ascent
             }
 
             fn run_ascent_with_facts(

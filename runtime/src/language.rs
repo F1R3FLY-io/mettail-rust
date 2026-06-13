@@ -30,6 +30,29 @@ pub type ExactTermKey = Vec<u8>;
 /// component is diagnostic only; it must not be used as an equivalence key.
 pub type WeightedSeedId = (u64, String, f64);
 
+/// Runtime backend selected for a language evaluation.
+///
+/// `Ascent` is the legacy/reference rewrite backend. `Dovetail` and
+/// `RhoMachine` are explicit targets so user-facing execution can be routed by a
+/// verified flip gate instead of hard-coding Ascent forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RuntimeBackend {
+    Ascent,
+    Dovetail,
+    RhoMachine,
+}
+
+impl fmt::Display for RuntimeBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeBackend::Ascent => write!(f, "Ascent"),
+            RuntimeBackend::Dovetail => write!(f, "Dovetail"),
+            RuntimeBackend::RhoMachine => write!(f, "RhoMachine"),
+        }
+    }
+}
+
 /// Exact rewrite-graph seed.
 ///
 /// `term_id` remains for compatibility and diagnostics. `exact_key`, when
@@ -326,6 +349,46 @@ pub trait Language: Send + Sync {
     /// Run Ascent on a term and return results
     fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String>;
 
+    /// Backend used by user-facing evaluation when no backend is requested
+    /// explicitly.
+    ///
+    /// Generated languages inherit `Ascent` until their Dovetail/Rho flip gates
+    /// produce proof, oracle, coverage, artifact-validation, and deadlock
+    /// evidence strong enough to override this method.
+    fn default_runtime_backend(&self) -> RuntimeBackend {
+        RuntimeBackend::Ascent
+    }
+
+    /// Whether this language currently exposes the selected backend through the
+    /// generic runtime trait.
+    fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
+        matches!(backend, RuntimeBackend::Ascent)
+    }
+
+    /// Run the selected backend on a term and return results.
+    ///
+    /// `Ascent` remains available as an explicit reference/oracle backend. Other
+    /// backends must be wired by a language only after their proof and runtime
+    /// gates pass; the default implementation fails closed rather than silently
+    /// falling back.
+    fn run_with_backend(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+    ) -> Result<AscentResults, String> {
+        match backend {
+            RuntimeBackend::Ascent => self.run_ascent(term),
+            other => {
+                Err(format!("{} backend is not installed for language {}", other, self.name()))
+            },
+        }
+    }
+
+    /// Run the language's selected default backend.
+    fn run_default_backend(&self, term: &dyn Term) -> Result<AscentResults, String> {
+        self.run_with_backend(self.default_runtime_backend(), term)
+    }
+
     /// Run Ascent on a term with pre-seeded relation facts.
     ///
     /// The `facts` map keys are relation names (e.g., `"certified"`)
@@ -346,6 +409,37 @@ pub trait Language: Send + Sync {
     ) -> Result<AscentResults, String> {
         let _ = facts;
         self.run_ascent(term)
+    }
+
+    /// Run the selected backend with pre-seeded relation facts.
+    ///
+    /// Relation facts are currently an Ascent-shaped compatibility surface; a
+    /// future Dovetail/Rho implementation must override this method rather than
+    /// inheriting an accidental fallback.
+    fn run_with_backend_with_facts(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<AscentResults, String> {
+        match backend {
+            RuntimeBackend::Ascent => self.run_ascent_with_facts(term, facts),
+            other => Err(format!(
+                "{} backend with seeded facts is not installed for language {}",
+                other,
+                self.name()
+            )),
+        }
+    }
+
+    /// Run the language's selected default backend with pre-seeded relation
+    /// facts.
+    fn run_default_backend_with_facts(
+        &self,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<AscentResults, String> {
+        self.run_with_backend_with_facts(self.default_runtime_backend(), term, facts)
     }
 
     /// If the term is fully evaluable (no free variables), evaluate it and return the result term.
@@ -1072,6 +1166,135 @@ impl AscentResults {
 mod tests {
     use super::*;
 
+    #[derive(Debug, Clone)]
+    struct DispatchTerm;
+
+    impl fmt::Display for DispatchTerm {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "dispatch")
+        }
+    }
+
+    impl Term for DispatchTerm {
+        fn clone_box(&self) -> Box<dyn Term> {
+            Box::new(self.clone())
+        }
+
+        fn term_id(&self) -> u64 {
+            1
+        }
+
+        fn term_eq(&self, other: &dyn Term) -> bool {
+            other.as_any().is::<DispatchTerm>()
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    struct DispatchMetadata;
+
+    impl LanguageMetadata for DispatchMetadata {
+        fn name(&self) -> &'static str {
+            "Dispatch"
+        }
+
+        fn types(&self) -> &'static [crate::metadata::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [crate::metadata::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [crate::metadata::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [crate::metadata::RewriteDef] {
+            &[]
+        }
+    }
+
+    static DISPATCH_METADATA: DispatchMetadata = DispatchMetadata;
+
+    struct DispatchLanguage;
+
+    impl Language for DispatchLanguage {
+        fn name(&self) -> &'static str {
+            "Dispatch"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &DISPATCH_METADATA
+        }
+
+        fn parse_term(&self, _input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(DispatchTerm))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            Ok(AscentResults::empty())
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
     fn sample_results() -> AscentResults {
         AscentResults {
             all_terms: vec![
@@ -1113,6 +1336,23 @@ mod tests {
             equivalences: Vec::new(),
             custom_relations: std::collections::HashMap::new(),
         }
+    }
+
+    #[test]
+    fn runtime_backend_dispatch_defaults_to_ascent_and_fails_closed() {
+        let language = DispatchLanguage;
+        let term = DispatchTerm;
+
+        assert_eq!(language.default_runtime_backend(), RuntimeBackend::Ascent);
+        assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+        assert!(language.run_default_backend(&term).is_ok());
+
+        let err = language
+            .run_with_backend(RuntimeBackend::Dovetail, &term)
+            .expect_err("absent Dovetail backend must not fall back to Ascent");
+        assert!(err.contains("Dovetail backend is not installed for language Dispatch"));
     }
 
     #[test]
