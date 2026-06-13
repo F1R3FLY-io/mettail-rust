@@ -9,11 +9,13 @@ use std::sync::Arc;
 use mettail_languages::rhocalc::{Bag, Int, List, Map, Proc, Str};
 use mettail_rho_runtime::{
     lower_rhocalc_proc, run_normalized_par_for_oracle,
-    run_normalized_par_for_oracle_and_read_strings, RhocalcAstLowerError,
+    run_normalized_par_for_oracle_and_read_strings, RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::expr::ExprInstance;
+use models::rhoapi::EList;
 use models::rhoapi::Par;
+use models::rust::rholang::implicits::GPrivateBuilder;
 
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
@@ -139,13 +141,28 @@ fn map_literal_lowers_to_emap_ast() {
 }
 
 #[test]
-fn bag_literal_remains_fail_closed_without_exact_rholang_multiset_node() {
-    let proc = Proc::CastBag(Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+fn bag_literal_lowers_to_tagged_elist_preserving_multiplicity() {
+    let alpha = Proc::CastStr(Arc::new(Str::StringLit("alpha".to_string())));
+    let beta = Proc::CastStr(Arc::new(Str::StringLit("beta".to_string())));
+    let mut bag = mettail_runtime::HashBag::new();
+    bag.insert(beta.clone());
+    bag.insert(alpha.clone());
+    bag.insert(alpha);
+    let proc = Proc::CastBag(Arc::new(Bag::BagLit(bag)));
 
+    let par = lower_rhocalc_proc(&proc).expect("bag literal should lower");
+    let outer = only_list(&par);
+
+    assert_eq!(outer.ps.len(), 2);
     assert_eq!(
-        lower_rhocalc_proc(&proc),
-        Err(RhocalcAstLowerError::UnsupportedProc("bag literal process"))
+        outer.ps[0],
+        GPrivateBuilder::new_par_from_string(RHOCALC_BAG_ABI_TAG.to_string())
     );
+
+    let entries = only_list(&outer.ps[1]);
+    assert_eq!(entries.ps.len(), 2);
+    assert_list_count_pair(&entries.ps[0], "alpha", 2);
+    assert_list_count_pair(&entries.ps[1], "beta", 1);
 }
 
 fn only_expr(par: &Par) -> &ExprInstance {
@@ -154,4 +171,24 @@ fn only_expr(par: &Par) -> &ExprInstance {
         .expr_instance
         .as_ref()
         .expect("expression instance")
+}
+
+fn only_list(par: &Par) -> &EList {
+    let ExprInstance::EListBody(list) = only_expr(par) else {
+        panic!("expected EListBody");
+    };
+    list
+}
+
+fn assert_list_count_pair(par: &Par, expected_value: &str, expected_count: i64) {
+    let pair = only_list(par);
+    assert_eq!(pair.ps.len(), 2);
+    assert!(matches!(
+        only_expr(&pair.ps[0]),
+        ExprInstance::GString(value) if value == expected_value
+    ));
+    assert!(matches!(
+        only_expr(&pair.ps[1]),
+        ExprInstance::GInt(count) if *count == expected_count
+    ));
 }

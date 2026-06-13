@@ -39,7 +39,9 @@ pub mod rhocalc_ast;
 pub mod run;
 pub use backend::{PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport};
 #[cfg(feature = "oracle-rhocalc")]
-pub use rhocalc_ast::{lower_rhocalc_name, lower_rhocalc_proc, RhocalcAstLowerError};
+pub use rhocalc_ast::{
+    lower_rhocalc_name, lower_rhocalc_proc, RhocalcAstLowerError, RHOCALC_BAG_ABI_TAG,
+};
 #[allow(deprecated)]
 pub use run::{
     run_and_read_ints, run_and_read_strings, run_par, run_par_and_read_ints,

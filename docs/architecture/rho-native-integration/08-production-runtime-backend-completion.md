@@ -120,10 +120,12 @@ oracle.
 | ground scalar literals | corresponding `ExprInstance` ground node |
 | `List::ListLit` | `ExprInstance::EListBody` |
 | `Map::MapLit` | `ExprInstance::EMapBody` |
-| `Bag::BagLit` | fail-closed until an exact multiset ABI is defined |
+| `Bag::BagLit` | tagged `EList` ABI: private tag plus ordered `[element, count]` entries |
 
-Fail-closed behavior is part of the contract. Mapping a MeTTaIL bag to a
-Rholang set is incorrect because set lowering discards multiplicity.
+Mapping a MeTTaIL bag to a Rholang set is incorrect because set lowering
+discards multiplicity. The tagged list ABI preserves multiplicity and keeps the
+representation nominal by using a private unforgeable tag rather than a user
+string.
 
 ## Production Gates
 

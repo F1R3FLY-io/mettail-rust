@@ -7,9 +7,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use mettail_languages::rhocalc::{List, Map, Name, Proc};
+use mettail_languages::rhocalc::{Bag, List, Map, Name, Proc};
 use mettail_runtime::{Binder, FreeVar, OrdVar, Var};
 use models::rhoapi::{Expr, Par, ReceiveBind};
+use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_emap_par, new_freevar_par, new_gbigint_expr,
     new_gbigrat_expr, new_gbool_par, new_gdouble_expr, new_gfixedpoint_expr, new_gint_par,
@@ -18,6 +19,7 @@ use models::rust::utils::{
 
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
+pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 
 type BoundEnv = HashMap<FreeVar<String>, usize>;
 
@@ -167,9 +169,59 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             .map(|value| new_gint_par(i64::from(value), Vec::new(), false))
             .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground u32 process")),
         Proc::CastList(value) => lower_list(value.as_ref(), env),
-        Proc::CastBag(_) => Err(RhocalcAstLowerError::UnsupportedProc("bag literal process")),
+        Proc::CastBag(value) => lower_bag(value.as_ref(), env),
         Proc::CastMap(value) => lower_map(value.as_ref(), env),
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
+    }
+}
+
+fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    match bag {
+        Bag::BagLit(entries) => {
+            let mut entries = entries.iter().collect::<Vec<_>>();
+            entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+
+            let mut pairs = Vec::with_capacity(entries.len());
+            for (item, count) in entries {
+                let count = i64::try_from(count).map_err(|_| {
+                    RhocalcAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
+                })?;
+                let item = lower_proc(item, env)?;
+                let count = new_gint_par(count, Vec::new(), false);
+                let pair_locally_free =
+                    union(item.locally_free.clone(), count.locally_free.clone());
+                pairs.push(new_elist_par(
+                    vec![item, count],
+                    pair_locally_free.clone(),
+                    false,
+                    None,
+                    pair_locally_free,
+                    false,
+                ));
+            }
+
+            let pairs_locally_free = locally_free_union(&pairs);
+            let pairs = new_elist_par(
+                pairs,
+                pairs_locally_free.clone(),
+                false,
+                None,
+                pairs_locally_free,
+                false,
+            );
+            let tag = GPrivateBuilder::new_par_from_string(RHOCALC_BAG_ABI_TAG.to_string());
+            let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
+
+            Ok(new_elist_par(
+                vec![tag, pairs],
+                locally_free.clone(),
+                false,
+                None,
+                locally_free,
+                false,
+            ))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed bag process")),
     }
 }
 
@@ -181,14 +233,7 @@ fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
                 .map(|item| lower_proc(item, env))
                 .collect::<Result<Vec<_>, _>>()?;
             let locally_free = locally_free_union(&items);
-            Ok(new_elist_par(
-                items,
-                locally_free.clone(),
-                false,
-                None,
-                locally_free,
-                false,
-            ))
+            Ok(new_elist_par(items, locally_free.clone(), false, None, locally_free, false))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list process")),
     }
@@ -210,14 +255,7 @@ fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 pairs.push(new_key_value_pair(key, value));
             }
 
-            Ok(new_emap_par(
-                pairs,
-                locally_free.clone(),
-                false,
-                None,
-                locally_free,
-                false,
-            ))
+            Ok(new_emap_par(pairs, locally_free.clone(), false, None, locally_free, false))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map process")),
     }

@@ -36,7 +36,7 @@ Section RhocalcAstLowering.
     | PString : Value -> Proc
     | PList : ProcList -> Proc
     | PMap : ProcPairList -> Proc
-    | PBag : ProcList -> Proc
+    | PBag : ProcBagList -> Proc
     | PBoundProc : nat -> Proc
   with Name : Type :=
     | NQuote : Proc -> Name
@@ -47,15 +47,19 @@ Section RhocalcAstLowering.
     | ProcCons : Proc -> ProcList -> ProcList
   with ProcPairList : Type :=
     | ProcPairNil : ProcPairList
-    | ProcPairCons : Proc -> Proc -> ProcPairList -> ProcPairList.
+    | ProcPairCons : Proc -> Proc -> ProcPairList -> ProcPairList
+  with ProcBagList : Type :=
+    | ProcBagNil : ProcBagList
+    | ProcBagCons : Proc -> nat -> ProcBagList -> ProcBagList.
 
   Scheme Proc_ind' := Induction for Proc Sort Prop
   with Name_ind' := Induction for Name Sort Prop
   with ProcList_ind' := Induction for ProcList Sort Prop
-  with ProcPairList_ind' := Induction for ProcPairList Sort Prop.
+  with ProcPairList_ind' := Induction for ProcPairList Sort Prop
+  with ProcBagList_ind' := Induction for ProcBagList Sort Prop.
 
   Combined Scheme proc_name_list_pair_ind
-    from Proc_ind', Name_ind', ProcList_ind', ProcPairList_ind'.
+    from Proc_ind', Name_ind', ProcList_ind', ProcPairList_ind', ProcBagList_ind'.
 
   Inductive Ast : Type :=
     | ANil : Ast
@@ -67,6 +71,7 @@ Section RhocalcAstLowering.
     | ANew : nat -> Ast -> Ast
     | AList : list Ast -> Ast
     | AMap : list (Ast * Ast) -> Ast
+    | ABag : list (Ast * nat) -> Ast
     | APar : Ast -> Ast -> Ast.
 
   Inductive Artifact : Type :=
@@ -114,6 +119,8 @@ Section RhocalcAstLowering.
     | AList items => AList (map (subst_ast env) items)
     | AMap pairs =>
         AMap (map (fun '(key, value) => (subst_ast env key, subst_ast env value)) pairs)
+    | ABag pairs =>
+        ABag (map (fun '(item, count) => (subst_ast env item, count)) pairs)
     | APar lhs rhs => APar (subst_ast env lhs) (subst_ast env rhs)
     end.
 
@@ -157,7 +164,11 @@ Section RhocalcAstLowering.
         | Some asts => Lowered (AMap asts)
         | None => Rejected
         end
-    | PBag _ => Rejected
+    | PBag entries =>
+        match lower_proc_bag entries with
+        | Some asts => Lowered (ABag asts)
+        | None => Rejected
+        end
     | PBoundProc index => Lowered (ABound index)
     end
   with lower_name (name : Name) : LowerResult :=
@@ -182,6 +193,15 @@ Section RhocalcAstLowering.
         match lower_result_pair (lower_proc key) (lower_proc value),
               lower_proc_pairs rest with
         | Some pair_ast, Some rest_ast => Some (pair_ast :: rest_ast)
+        | _, _ => None
+        end
+    end
+  with lower_proc_bag (entries : ProcBagList) : option (list (Ast * nat)) :=
+    match entries with
+    | ProcBagNil => Some []
+    | ProcBagCons item count rest =>
+        match lower_proc item, lower_proc_bag rest with
+        | Lowered item_ast, Some rest_ast => Some ((item_ast, count) :: rest_ast)
         | _, _ => None
         end
     end.
@@ -245,10 +265,15 @@ Section RhocalcAstLowering.
     simpl. rewrite Hkey, Hvalue. reflexivity.
   Qed.
 
-  Theorem bag_literal_lowering_is_fail_closed :
-    forall items,
-      lower_proc (PBag items) = Rejected.
-  Proof. intros items. reflexivity. Qed.
+  Theorem bag_literal_lowering_preserves_multiplicity :
+    forall item item_ast count,
+      lower_proc item = Lowered item_ast ->
+      lower_proc (PBag (ProcBagCons item count ProcBagNil)) =
+        Lowered (ABag [(item_ast, count)]).
+  Proof.
+    intros item item_ast count Hitem.
+    simpl. rewrite Hitem. reflexivity.
+  Qed.
 
   Theorem one_input_comm_lowering_fires_payload :
     forall channel payload payload_ast,
