@@ -239,6 +239,55 @@ fn declared_relation_head(line: &str) -> Option<&str> {
     .then_some(head)
 }
 
+fn category_relation_heads_from_datalog(source: &str) -> BTreeSet<String> {
+    let relation_prelude = source.split("// Category rules").next().unwrap_or(source);
+    relation_prelude
+        .lines()
+        .filter_map(declared_relation_head)
+        .filter(|head| *head != "step_term" && classify_datalog_head(head).is_none())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn generated_category_heads(source: &str) -> BTreeSet<String> {
+    let mut in_category_info = false;
+    let mut brace_depth = 0usize;
+    let mut heads = BTreeSet::new();
+
+    for line in source.lines() {
+        if !in_category_info {
+            if line.contains("export const categoryInfo = {") {
+                in_category_info = true;
+                brace_depth = 1;
+            }
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if brace_depth == 1 && trimmed.ends_with('{') {
+            if let Some((head, _)) = trimmed.split_once(':') {
+                let head = head.trim().trim_matches('"').trim_matches('\'');
+                if !head.is_empty() {
+                    heads.insert(head.to_ascii_lowercase());
+                }
+            }
+        }
+
+        for ch in line.chars() {
+            match ch {
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                _ => {},
+            }
+        }
+        if brace_depth == 0 {
+            break;
+        }
+    }
+
+    heads
+}
+
 fn classify_datalog_head(head: &str) -> Option<Requirement> {
     if head.starts_with("rw_") {
         Some(Requirement::DirectionalRewrite)
@@ -329,6 +378,7 @@ fn generated_datalog_relation_heads_are_requirement_classified() {
 
     let mut classified = BTreeSet::new();
     let mut unknown_heads = Vec::new();
+    let mut category_metadata_pairs = 0usize;
     for path in datalog_files {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"));
@@ -355,8 +405,38 @@ fn generated_datalog_relation_heads_are_requirement_classified() {
                 unknown_heads.push(format!("{}:{head}", path.display()));
             }
         }
+
+        let category_path = path.with_file_name(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .expect("generated Datalog file name")
+                .replace("-datalog.rs", "-categories.ts"),
+        );
+        if category_path.exists() {
+            category_metadata_pairs += 1;
+            let category_source = fs::read_to_string(&category_path)
+                .unwrap_or_else(|err| panic!("failed to read {category_path:?}: {err}"));
+            let category_heads = generated_category_heads(&category_source);
+            assert!(
+                !category_heads.is_empty(),
+                "{} has no generated category metadata heads to audit",
+                category_path.display()
+            );
+            let relation_category_heads = category_relation_heads_from_datalog(&source);
+            assert!(
+                category_heads.is_subset(&relation_category_heads),
+                "{} category metadata contains heads with no generated Datalog category relation: metadata={:?}, datalog={:?}",
+                path.display(),
+                category_heads,
+                relation_category_heads
+            );
+        }
     }
 
+    assert!(
+        category_metadata_pairs > 0,
+        "no generated Datalog/category metadata pairs found"
+    );
     assert!(
         unknown_heads.is_empty(),
         "unclassified generated Datalog relation heads: {unknown_heads:#?}"
