@@ -10,11 +10,19 @@ one answer." Dovetail must preserve ambiguity, exact identity, derivation
 structure, ordering, and terminal completeness across the boundary to an
 oracle, a local test, or the Rho-native runtime backend.
 
+Put differently: a report is the machine-readable certificate for what the
+rewrite engine just proved, enumerated, and bounded. It is called a report
+because it reports checked facts to another component, not because it is a
+diagnostic transcript for a human.
+
 ## Definitions
 
 | Term | Meaning |
 |---|---|
-| report | The structured artifact produced by `report_from_extraction`. |
+| report | A typed, machine-readable artifact that carries checked facts across a Dovetail phase boundary. |
+| `SatReport` | The saturation terminal-status artifact: `Converged`, `NodeLimit`, or `IterationLimit`, plus saturation statistics. |
+| `Extraction<T>` | The checked extraction envelope: extracted value plus terminal completeness. |
+| `DovetailRunReport` | The runtime-facing artifact produced by `report_from_extraction`. |
 | root | A top-level derivation selected by the extractor for the requested e-class. |
 | term record | A unique derivation node, recorded once under exact `ContentKey` identity. |
 | derivation edge | A parent-to-child dependency edge inside a derivation tree. |
@@ -30,6 +38,33 @@ The core distinction is:
 
 `RhoObservationReport = Rho-runtime observation artifact`
 
+## Report Means Certificate, Not Debug Output
+
+The word "report" is used in Dovetail in the engineering sense of a typed
+result artifact. The artifact is part of the API contract. It can be stored,
+compared, checked by proofs, converted into a runtime envelope, or lowered by a
+backend.
+
+It is not:
+
+| Not a report meaning | Why Dovetail rejects that interpretation |
+|---|---|
+| debug log | logs are optional narration; Dovetail reports are semantic artifacts |
+| pretty-printed output | display text can conflate distinct exact derivations |
+| Boolean success flag | a rewrite run can be bounded, cyclic, partial, or converged |
+| single normal form | MeTTaIL rewrite semantics can preserve multiple valid alternatives |
+| Rho observation | observations are produced after a runtime consumes a report |
+
+A report answers questions that a plain return value cannot answer:
+
+| Question | Where the answer lives |
+|---|---|
+| Did saturation converge, or did a bound stop it? | `SatReport::outcome` |
+| Which extracted roots were produced, and in what order? | `DovetailRunReport::roots` |
+| Which exact derivation tree does each root identify? | `DovetailRunReport::terms` and `derivation_edges` |
+| Is the extracted set exhaustive? | `DovetailRunReport::completeness` |
+| May a downstream runtime treat the result as complete? | `DovetailRunReport::assert_complete()` |
+
 ## Why Reports Exist
 
 A plain result shape such as `rewrite(input) -> value` is too weak for
@@ -44,6 +79,21 @@ Dovetail therefore uses the following boundary:
 `extract(root) -> Extraction(derivations, completeness)`
 
 `report_from_extraction(extraction) -> DovetailRunReport`
+
+These are three different boundaries:
+
+| Boundary | Producer | Main claim |
+|---|---|---|
+| saturation | `EGraph::saturate` | equality evidence reached a terminal outcome under configured bounds |
+| extraction | `Extractor` / `Derivations` | derivations were emitted with terminal completeness metadata |
+| runtime-facing report | `report_from_extraction` | checked extraction was frozen into exact-keyed data for consumers |
+
+The runtime-facing report does not replace `SatReport`. A complete
+`DovetailRunReport` says extraction was complete for the saturated graph it was
+given. `SatReport` says how that graph was produced. Consumers that need an
+end-to-end production claim should check both:
+
+`EndToEndComplete = SaturationConverged ∧ ExtractionComplete`
 
 The report carries the facts that later components are allowed to rely on:
 

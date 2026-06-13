@@ -24,7 +24,10 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | SCC | Strongly connected component in the e-class dependency graph. |
 | extraction | Enumeration of derivation trees from an e-class. |
 | derivation | A chosen e-node plus one derivation for each child e-class. |
-| report | A runtime-facing, proof-preserving artifact built from checked extraction output. |
+| report | A typed, proof-preserving artifact that carries checked facts across a Dovetail phase boundary. |
+| `SatReport` | The saturation report carrying terminal outcome and statistics. |
+| `Extraction<T>` | The extraction report envelope carrying a value and terminal completeness. |
+| `DovetailRunReport` | The runtime-facing report built from checked extraction output. |
 | report consumer | An adapter or oracle that reads a report without depending on Dovetail internals. |
 | term record | A unique derivation node recorded once in a report under its exact `ContentKey`. |
 | derivation edge | A report edge from parent key to child key, preserving child order and repeated child uses. |

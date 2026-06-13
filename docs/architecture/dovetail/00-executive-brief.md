@@ -18,6 +18,12 @@ completeness. It is not a debug log. See
 [Runtime-Facing Reports](10-runtime-facing-reports.md) for the engineering
 contract.
 
+In Dovetail vocabulary, a report is a typed certificate-shaped value at a
+phase boundary. `SatReport` certifies how saturation ended. `Extraction<T>`
+certifies what extraction emitted and whether it was complete. The
+runtime-facing `DovetailRunReport` certifies the exact-keyed derivation forest
+that a runtime backend, oracle, or test may consume.
+
 ## Design Thesis
 
 Ascent materializes relation facts through generated Datalog. Dovetail instead

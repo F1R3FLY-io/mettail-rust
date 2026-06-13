@@ -83,6 +83,16 @@ Weights rank derivations; they do not delete derivations. A
 [runtime-facing report](10-runtime-facing-reports.md) then packages the checked
 extraction as a proof-preserving artifact rather than a human-facing log.
 
+In these documents, "report" means a typed engineering artifact, not a prose
+diagnostic. Dovetail uses reports at phase boundaries so later components know
+exactly what was proved, what was enumerated, and where bounds applied:
+
+| Artifact | Boundary | Main question answered |
+|---|---|---|
+| `SatReport` | saturation | Did equality growth converge, hit the node bound, or hit the iteration bound? |
+| `Extraction<T>` | extraction | What value was extracted, and is it complete or bounded by a cycle cut? |
+| `DovetailRunReport` | runtime handoff | Which exact roots, term records, derivation edges, and completeness status may a consumer rely on? |
+
 The theoretical basis is equality saturation over e-graphs
 ([EGG-2021](references.md#egg-2021)), k-best style lazy enumeration
 ([HUANG-CHIANG-2005](references.md#huang-chiang-2005)), and semiring fixed-point
