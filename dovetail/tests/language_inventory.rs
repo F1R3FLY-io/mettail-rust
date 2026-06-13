@@ -21,189 +21,12 @@ enum Requirement {
     RhoResourceGuardContract,
 }
 
-struct LanguageSpec {
-    rocq_name: &'static str,
-    source_path: &'static str,
-    display_name: &'static str,
-    expected: &'static [Requirement],
+#[derive(Debug)]
+struct DiscoveredLanguage {
+    rocq_name: String,
+    source_path: PathBuf,
+    requirements: BTreeSet<Requirement>,
 }
-
-const CURRENT_LANGUAGE_SOURCES: &[LanguageSpec] = &[
-    LanguageSpec {
-        rocq_name: "ambient",
-        source_path: "languages/src/ambient.rs",
-        display_name: "Ambient",
-        expected: &[
-            Requirement::Equation,
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FreshnessPremise,
-            Requirement::CollectionPattern,
-            Requirement::BinderPattern,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "calculator",
-        source_path: "languages/src/calculator.rs",
-        display_name: "Calculator",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-            Requirement::CollectionPattern,
-            Requirement::MapPattern,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "class2hashmapsmoke",
-        source_path: "languages/src/class2hashmapsmoke.rs",
-        display_name: "Class2HashMapSmoke",
-        expected: &[Requirement::MapPattern],
-    },
-    LanguageSpec {
-        rocq_name: "class2multi",
-        source_path: "languages/src/class2multi.rs",
-        display_name: "Class2Multi",
-        expected: &[Requirement::CollectionPattern],
-    },
-    LanguageSpec {
-        rocq_name: "class2optsmoke",
-        source_path: "languages/src/class2optsmoke.rs",
-        display_name: "Class2OptSmoke",
-        expected: &[Requirement::CollectionPattern],
-    },
-    LanguageSpec {
-        rocq_name: "class2smoke",
-        source_path: "languages/src/class2smoke.rs",
-        display_name: "Class2Smoke",
-        expected: &[Requirement::CollectionPattern],
-    },
-    LanguageSpec {
-        rocq_name: "class3multi",
-        source_path: "languages/src/class3multi.rs",
-        display_name: "Class3Multi",
-        expected: &[
-            Requirement::CollectionPattern,
-            Requirement::ZipPattern,
-            Requirement::BinderPattern,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "class3opt",
-        source_path: "languages/src/class3opt.rs",
-        display_name: "Class3Opt",
-        expected: &[
-            Requirement::CollectionPattern,
-            Requirement::ZipPattern,
-            Requirement::BinderPattern,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "guardedrho",
-        source_path: "languages/src/guarded_rho.rs",
-        display_name: "GuardedRho",
-        expected: &[
-            Requirement::BehavioralGuard,
-            Requirement::SyntheticInjectionGuard,
-            Requirement::EnvRelationPremise,
-            Requirement::RhoCommHandlerContract,
-            Requirement::RhoResourceGuardContract,
-            Requirement::CollectionPattern,
-            Requirement::BinderPattern,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "lambda",
-        source_path: "languages/src/lambda.rs",
-        display_name: "Lambda",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::BinderPattern,
-            Requirement::SubstitutionPattern,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "ledtest",
-        source_path: "languages/src/led_test.rs",
-        display_name: "LedTest",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "optsmoke",
-        source_path: "languages/src/optsmoke.rs",
-        display_name: "OptSmoke",
-        expected: &[Requirement::FoldNativeHandler, Requirement::CollectionPattern],
-    },
-    LanguageSpec {
-        rocq_name: "refinementsmoke",
-        source_path: "languages/src/refinementsmoke.rs",
-        display_name: "RefinementSmoke",
-        expected: &[Requirement::EnvRelationPremise],
-    },
-    LanguageSpec {
-        rocq_name: "rhocalc",
-        source_path: "languages/src/rhocalc.rs",
-        display_name: "RhoCalc",
-        expected: &[
-            Requirement::Equation,
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-            Requirement::FreshnessPremise,
-            Requirement::CollectionPattern,
-            Requirement::MapPattern,
-            Requirement::ZipPattern,
-            Requirement::BinderPattern,
-            Requirement::SubstitutionPattern,
-            Requirement::RhoCommHandlerContract,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "basemath",
-        source_path: "languages/src/composition/base_lang.rs",
-        display_name: "BaseMath",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "extmath",
-        source_path: "languages/src/composition/extended_lang.rs",
-        display_name: "ExtMath",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "importedmath",
-        source_path: "languages/src/composition/grammar_import_lang.rs",
-        display_name: "ImportedMath",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-        ],
-    },
-    LanguageSpec {
-        rocq_name: "mixedmath",
-        source_path: "languages/src/composition/mixed_lang.rs",
-        display_name: "MixedMath",
-        expected: &[
-            Requirement::DirectionalRewrite,
-            Requirement::CongruencePremise,
-            Requirement::FoldNativeHandler,
-        ],
-    },
-];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -215,6 +38,116 @@ fn repo_root() -> PathBuf {
 fn read_repo_file(relative: &str) -> String {
     let path = repo_root().join(relative);
     fs::read_to_string(&path).unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"))
+}
+
+fn repo_relative(path: &Path) -> String {
+    path.strip_prefix(repo_root())
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn is_language_macro_source(source: &str) -> bool {
+    source
+        .lines()
+        .any(|line| line.trim_start().starts_with("language!"))
+}
+
+fn declared_language_names(source: &str) -> Vec<String> {
+    let mut waiting_for_name = false;
+    let mut names = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("language!") {
+            waiting_for_name = true;
+            continue;
+        }
+        if !waiting_for_name {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("name:") else {
+            continue;
+        };
+        if let Some(name) = rest
+            .trim()
+            .trim_end_matches(',')
+            .split(|ch: char| ch.is_whitespace() || ch == ',')
+            .next()
+            .filter(|name| !name.is_empty())
+        {
+            names.push(name.to_owned());
+            waiting_for_name = false;
+        }
+    }
+    names
+}
+
+fn rocq_inventory_names(source: &str) -> BTreeSet<String> {
+    let marker = "inventory_name := \"";
+    source
+        .lines()
+        .filter_map(|line| {
+            let start = line.find(marker)? + marker.len();
+            let rest = &line[start..];
+            let end = rest.find('"')?;
+            Some(rest[..end].to_owned())
+        })
+        .collect()
+}
+
+fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(path) = pending.pop() {
+        let metadata =
+            fs::metadata(&path).unwrap_or_else(|err| panic!("failed to stat {path:?}: {err}"));
+        if metadata.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if matches!(name, "bin" | "generated") {
+                continue;
+            }
+            for entry in fs::read_dir(&path)
+                .unwrap_or_else(|err| panic!("failed to read directory {path:?}: {err}"))
+            {
+                pending.push(entry.expect("source directory entry").path());
+            }
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
+fn discover_language_sources() -> Vec<DiscoveredLanguage> {
+    discover_rust_files(&repo_root().join("languages/src"))
+        .into_iter()
+        .flat_map(|path| {
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"));
+            if !is_language_macro_source(&source) {
+                return Vec::new();
+            }
+            let display_names = declared_language_names(&source);
+            assert!(
+                !display_names.is_empty(),
+                "{} contains a language! macro without a `name:` declaration",
+                repo_relative(&path)
+            );
+            let requirements = classify_source(&source);
+            display_names
+                .into_iter()
+                .map(|display_name| DiscoveredLanguage {
+                    rocq_name: display_name.to_ascii_lowercase(),
+                    source_path: path.clone(),
+                    requirements: requirements.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn classify_source(source: &str) -> BTreeSet<Requirement> {
@@ -324,40 +257,36 @@ fn classify_datalog_head(head: &str) -> Option<Requirement> {
 fn source_language_inventory_matches_rocq_inventory_and_taxonomy() {
     let rocq_inventory =
         read_repo_file("dovetail/formal/rocq/theories/Requirements/LanguageDefInventory.v");
+    let rocq_names = rocq_inventory_names(&rocq_inventory);
+    let discovered_languages = discover_language_sources();
+    assert!(
+        !discovered_languages.is_empty(),
+        "no in-repo language! macro sources discovered"
+    );
+
+    let discovered_names = discovered_languages
+        .iter()
+        .map(|language| language.rocq_name.clone())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        discovered_names, rocq_names,
+        "Rocq LanguageDefInventory must exactly match discovered language! sources"
+    );
+
     let mut aggregate = BTreeSet::new();
 
-    for spec in CURRENT_LANGUAGE_SOURCES {
-        let source = read_repo_file(spec.source_path);
+    for language in &discovered_languages {
         assert!(
-            source.contains("language!")
-                || source.contains("extends:")
-                || source.contains("mixins:"),
-            "{} is not a language source",
-            spec.source_path
+            !language.requirements.is_empty(),
+            "{} did not classify any Dovetail rewrite requirement",
+            repo_relative(&language.source_path)
         );
         assert!(
-            source.contains(&format!("name: {}", spec.display_name)),
-            "{} does not declare expected language name {}",
-            spec.source_path,
-            spec.display_name
-        );
-        assert!(
-            rocq_inventory.contains(&format!("inventory_name := \"{}\"", spec.rocq_name)),
+            rocq_inventory.contains(&format!("inventory_name := \"{}\"", language.rocq_name)),
             "Rocq LanguageDefInventory is missing {}",
-            spec.rocq_name
+            language.rocq_name
         );
-
-        let observed = classify_source(&source);
-        for expected in spec.expected {
-            assert!(
-                observed.contains(expected),
-                "{} did not classify expected requirement {:?}; observed {:?}",
-                spec.source_path,
-                expected,
-                observed
-            );
-        }
-        aggregate.extend(observed);
+        aggregate.extend(language.requirements.iter().copied());
     }
 
     let required_language_surface = BTreeSet::from([
