@@ -125,7 +125,8 @@ for file in "${suite_files[@]}"; do
   ' "$file"
 done
 puml_count="$(find "$tmpdir" -type f -name '*.puml' | wc -l)"
-if [[ "$puml_count" == "0" ]]; then
+figure_puml_count="$(find "$figures_dir" -type f -name '*.puml' | wc -l)"
+if [[ "$figure_puml_count" == "0" ]]; then
   fail "no PlantUML diagrams found"
 fi
 while IFS= read -r puml; do
@@ -144,6 +145,16 @@ while IFS= read -r puml; do
   rg -q '</svg>' "$figure_svg" || fail "rendered asset is missing an SVG close tag: $figure_svg"
   cmp -s "$puml" "$figure_puml" || fail "PlantUML fence differs from figure source: $figure_puml"
 done < <(find "$tmpdir" -type f -name '*.puml' | sort)
+
+printf 'checking standalone PlantUML figure assets...\n'
+while IFS= read -r puml; do
+  stem="${puml%.puml}"
+  figure_svg="$stem.svg"
+  JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -checkonly -failfast2 "$puml" >/dev/null
+  [[ -s "$figure_svg" ]] || fail "missing or empty rendered SVG asset: $figure_svg"
+  rg -q '<svg([[:space:]>])' "$figure_svg" || fail "rendered asset is missing an SVG root: $figure_svg"
+  rg -q '</svg>' "$figure_svg" || fail "rendered asset is missing an SVG close tag: $figure_svg"
+done < <(find "$figures_dir" -type f -name '*.puml' | sort)
 
 printf 'checking rendered Graphviz DOT assets...\n'
 while IFS= read -r dot_source; do
@@ -246,4 +257,4 @@ fi
 printf 'checking whitespace with git diff --check...\n'
 git -C "$repo_root" diff --check -- README.md docs/README.md docs/architecture.md docs/architecture/rho-native-integration
 
-printf 'rho-native integration documentation validation passed (%s PlantUML diagrams).\n' "$puml_count"
+printf 'rho-native integration documentation validation passed (%s PlantUML figure assets, %s embedded blocks).\n' "$figure_puml_count" "$puml_count"
