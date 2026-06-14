@@ -5,12 +5,15 @@
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::{CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int};
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    plan_rho_default_backend_with_evidence_audit, RhoAstSend, RhoCoverageEvidence,
+    RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
 use mettail_runtime::{
     Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue, SeedFacts, Term,
 };
+
+mod support;
 
 const CALC_RUN_FRAGMENT: &str = r#"
     name: CalcRun,
@@ -50,8 +53,10 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
 fn calculator_backend() -> PlannedRhoBackend {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_evidence())
-        .expect("calculator Int scalar ops must pass the Rho-default gate");
+    let audit_policy = support::strict_evidence_audit_policy();
+    let plan =
+        plan_rho_default_backend_with_evidence_audit(&def, passing_evidence(), &audit_policy)
+            .expect("calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
         vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt"],

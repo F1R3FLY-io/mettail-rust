@@ -11,12 +11,14 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoArtifactKind, RhoAstSend, RhoCoverageEvidence,
+    plan_rho_default_backend_with_evidence_audit, RhoArtifactKind, RhoAstSend, RhoCoverageEvidence,
     RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod support;
 
 // The calculator's Int scalar-op fragment, body-less (the lowering keys on the
 // concrete-syntax operator + operand types). Every rule here lowers to a Rholang
@@ -57,8 +59,10 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
 fn calculator_backend() -> PlannedRhoBackend {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_evidence())
-        .expect("all calculator Int scalar ops must pass the Rho-default gate");
+    let audit_policy = support::strict_evidence_audit_policy();
+    let plan =
+        plan_rho_default_backend_with_evidence_audit(&def, passing_evidence(), &audit_policy)
+            .expect("all calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
         vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg"],

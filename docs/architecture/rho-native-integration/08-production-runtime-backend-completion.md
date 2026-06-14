@@ -27,76 +27,6 @@ The runtime path is therefore:
 PlantUML source:
 [figures/08-production-runtime-backend-completion.puml](figures/08-production-runtime-backend-completion.puml).
 
-```plantuml
-@startuml
-title Production Runtime Backend Replacement Scope
-
-skinparam backgroundColor #FEFEFE
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam ArrowColor #374151
-skinparam ArrowThickness 1.4
-skinparam component {
-  BorderColor #1F2937
-  FontColor #111827
-}
-
-rectangle "Frontend boundary\nretained" as Frontend #DBEAFE {
-  component "WPDA parser /\nrecognizer" as WPDA #BFDBFE
-  component "Typed MeTTaIL\nterms" as Terms #BFDBFE
-  component "Language metadata\nruntime capability" as Metadata #BFDBFE
-}
-
-rectangle "Legacy runtime\nretirement scope" as Legacy #FEE2E2 {
-  component "Ascent production\nrewrite execution" as AscentProd #FCA5A5
-  component "CESK runtime\nbackend" as CESK #FCA5A5
-}
-
-rectangle "Production runtime\ntarget" as Target #DCFCE7 {
-  component "Dovetail rewrite\nengine" as Dovetail #BBF7D0
-  component "RhoNet\nexecution plan" as RhoNet #BBF7D0
-  component "Rho AST backend\nrhoapi::Par" as RhoAst #BBF7D0
-  component "Bytecode-ready\nartifact boundary" as Artifact #CCFBF1
-  component "F1r3node\nRhoRuntime + RSpace" as RhoRuntime #BBF7D0
-}
-
-rectangle "Evidence retained\nfor rollout" as Evidence #FEF3C7 {
-  component "Formal proof\nsuite" as Formal #FDE68A
-  component "Ascent oracle" as AscentOracle #FDE68A
-  component "Differential\nreports" as Diff #FDE68A
-  component "Resource and\nfairness stress" as Stress #FDE68A
-  component "Rho default\nflip gate" as Gate #DDD6FE
-}
-
-WPDA --> Terms : parsed typed terms
-Terms --> Dovetail : seed facts
-Metadata --> Dovetail : rule inventory
-AscentProd -[#991B1B,dashed]-> Dovetail : replacement
-CESK -[#991B1B,dashed]-> RhoRuntime : replacement
-Dovetail --> RhoNet : complete checked report
-RhoNet --> RhoAst : guarded contracts
-RhoAst --> Artifact : normalized AST artifact
-Artifact --> RhoRuntime : direct AST injection
-Dovetail --> AscentOracle : oracle comparison input
-AscentOracle --> Diff : reference observations
-RhoRuntime --> Diff : RSpace observations
-Formal --> Gate : proof evidence refs
-Diff --> Gate : oracle parity refs
-Stress --> Gate : scheduler and RSS refs
-Gate --> Metadata : advertise Rho default
-
-legend right
-|= Area |= Meaning |
-|<#DBEAFE> Frontend | retained WPDA parser and metadata boundary |
-|<#FEE2E2> Legacy runtime | backend surfaces being retired |
-|<#DCFCE7> Target runtime | Dovetail plus Rho machine |
-|<#CCFBF1> Artifact | AST now, bytecode-ready edge |
-|<#FEF3C7> Evidence | proofs, oracle parity, stress gates |
-|<#DDD6FE> Flip gate | auditable runtime metadata update |
-endlegend
-@enduml
-```
-
 ## Completion Evidence DAG
 
 ![Runtime backend production readiness DAG](figures/08-production-readiness-dag.svg)
@@ -182,6 +112,9 @@ a Cargo cycle with `mettail-rho-runtime` while still allowing a verified
 language instance to become Rho-default. The wrapper does not parse generated
 Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
 future bytecode variants can use the same report boundary.
+The runtime integration tests share a strict evidence-audit policy helper, so
+stale proof, scheduler, or oracle evidence paths fail before a
+`PlannedRhoBackend` is constructed.
 
 For the RhoCalc process path, the reusable mapper is
 `mettail_rho_runtime::rhocalc_observe_strings_invocation` or

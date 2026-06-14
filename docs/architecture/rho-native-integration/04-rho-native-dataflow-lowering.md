@@ -78,58 +78,6 @@ If `guard(σ) = false`, no fact is consumed and no body is emitted.
 PlantUML source:
 [figures/04-rho-native-dataflow-lowering.puml](figures/04-rho-native-dataflow-lowering.puml).
 
-```plantuml
-@startuml
-title Dovetail Rule to RhoNet / Rholang Dataflow
-
-skinparam backgroundColor #FEFEFE
-skinparam shadowing false
-skinparam activity {
-  BorderColor #1F2937
-  FontColor #111827
-  ArrowColor #374151
-}
-
-start
-:Dovetail rule\n`p₁ ∧ ... ∧ pₙ ∧ g ⇒ q`; <<#DBEAFE>>
-:Check requirement coverage\nand rejection inventory; <<#DBEAFE>>
-:Normalize premise and result\npatterns into fact schemas; <<#BFDBFE>>
-:Compute exact framed keys\nfor premise channels; <<#BFDBFE>>
-if (premise arity?) then (single)
-  :Create unary RhoNet\nreceive contract; <<#DCFCE7>>
-elseif (multi)
-  :Create RhoNet join\nfor `p₁ ... pₙ`; <<#BBF7D0>>
-else (external)
-  :Route to native handler\nwith evidence ref; <<#FDE68A>>
-endif
-if (guard class?) then (same-bind pure)
-  :Lower to RSpace\n`where` guard; <<#FEF3C7>>
-elseif (cross-bind or external)
-  :Lower to native\nguard handler; <<#FDE68A>>
-else (none)
-  :Use `true`; <<#CCFBF1>>
-endif
-:Validate channel namespace,\nhandler coverage, and deadlock budget; <<#EDE9FE>>
-:Emit persistent contract AST\nas `rhoapi::Par`; <<#FCE7F3>>
-:Attach Rholang-text\nreader annotation; <<#FBCFE8>>
-:Seal bytecode-ready\nartifact boundary; <<#CCFBF1>>
-:Inject normalized `Par`\ninto RhoRuntime; <<#EDE9FE>>
-:Observe RSpace facts\nfor differential oracle; <<#DDD6FE>>
-stop
-
-legend right
-|= Area |= Meaning |
-|<#DBEAFE> Dovetail | source rewrite semantics and coverage |
-|<#DCFCE7> RhoNet | receive and join construction |
-|<#FEF3C7> RSpace guard | direct guard check |
-|<#FDE68A> Native handler | host-supported external behavior |
-|<#CCFBF1> Artifact boundary | unconditional rules and bytecode-ready edge |
-|<#FCE7F3> AST artifact | generated `rhoapi::Par` value |
-|<#EDE9FE> Validation | namespace, deadlock, runtime observation |
-endlegend
-@enduml
-```
-
 ## Example: Unary Rewrite
 
 Source rule:

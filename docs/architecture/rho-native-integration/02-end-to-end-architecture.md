@@ -53,8 +53,7 @@ parsing hooks, equations, rewrites, native folds, guards, predicates, and
 metadata. Its expansion produces typed Rust AST values and language inventory
 that other crates can consume. When the category set changes, that inventory is
 the authority; downstream backends should discover the categories from the
-generated metadata instead of keeping hard-coded lists such as
-`is_known_category_head`.
+generated metadata instead of keeping hard-coded category whitelists.
 
 Dovetail is not a competing specification macro. It is the rewrite engine that
 consumes the inventory emitted by `language!`. It gives the declared equations
@@ -121,66 +120,6 @@ execution contract ([RHO-FLIP-DESIGN](references.md#rho-flip-design)).
 
 PlantUML source:
 [figures/02-end-to-end-architecture.puml](figures/02-end-to-end-architecture.puml).
-
-```plantuml
-@startuml
-title Source Snippet to Rho Machine Execution
-
-skinparam backgroundColor #FEFEFE
-skinparam shadowing false
-skinparam sequence {
-  ArrowColor #374151
-  LifeLineBorderColor #64748B
-  LifeLineBackgroundColor #F8FAFC
-  ParticipantBorderColor #1F2937
-  ParticipantFontColor #111827
-}
-
-participant "User" as User #E0F2FE
-participant "MeTTaIL\nParser" as Parser #DBEAFE
-participant "MeTTaIL\nTyped AST" as AST #BFDBFE
-participant "Dovetail\nRewrite Model" as Dovetail #DCFCE7
-participant "Rho Backend\nRhoNet Lowerer" as Lowerer #FEF3C7
-participant "Rholang AST\nrhoapi::Par" as Rholang #FDE68A
-participant "Artifact\nBoundary" as Artifact #CCFBF1
-participant "F1r3node\nRhoRuntime" as Runtime #FCE7F3
-participant "RSpace" as RSpace #FBCFE8
-participant "Observation\nOracle" as Oracle #EDE9FE
-
-User -> Parser : source snippet or bootstrapped Rholang form
-Parser -> AST : parsed typed term graph
-AST -> Dovetail : seed facts + language metadata
-Dovetail -> Dovetail : exact-key saturation + checked extraction
-Dovetail -> Lowerer : coverage-checked rewrite report
-Lowerer -> Lowerer : classify joins, guards, native handlers
-Lowerer -> Rholang : persistent contracts + initial sends
-Rholang -> Artifact : normalized AST value, reader text annotation
-Artifact -> Runtime : inject executable `Par` artifact
-Runtime -> RSpace : install persistent receives
-Runtime -> RSpace : produce initial facts
-par independent enabled join on channel family A
-  RSpace -> Runtime : COMM event
-  Runtime -> RSpace : derived facts
-else independent enabled join on channel family B
-  RSpace -> Runtime : COMM event
-  Runtime -> RSpace : derived facts
-end
-RSpace -> Oracle : resting-space snapshot + event log
-Oracle -> Dovetail : differential semantic check
-Oracle -> User : canonical observation report
-
-legend right
-|= Area |= Meaning |
-|<#E0F2FE> User | source snippet owner |
-|<#DBEAFE> MeTTaIL | parser, recognizer, typed AST |
-|<#DCFCE7> Dovetail | exact rewrite semantics |
-|<#FEF3C7> Rho lowering | RhoNet and guard classification |
-|<#CCFBF1> Artifact | AST today, bytecode-ready boundary |
-|<#FCE7F3> F1r3node | RhoRuntime, RSpace, COMM scheduling |
-|<#EDE9FE> Observation | oracle and result projection |
-endlegend
-@enduml
-```
 
 ## Component Contracts
 

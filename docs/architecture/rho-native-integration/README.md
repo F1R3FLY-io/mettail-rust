@@ -72,6 +72,19 @@ For reviewers checking claims and citations:
 2. [Correctness and Coverage](06-correctness-and-coverage.md)
 3. [References](references.md)
 
+## Cohesive Reading Model
+
+Read the suite as one artifact chain, not as independent subsystems:
+
+`language! specification → generated semantic inventory → DovetailRunReport → RhoNet plan → rhoapi::Par → RSpace observations`
+
+The first two artifacts are MeTTaIL-owned. The middle report is Dovetail-owned:
+it is the exact-keyed, completeness-checked rewrite result. The Rho backend
+owns the plan and normalized AST artifact. F1r3node owns execution and
+observations. Each document in this suite explains one handoff in that chain,
+and the correctness documents prove that a downstream artifact does not claim
+more than its upstream artifact established.
+
 ## Document Map
 
 | Document | Question answered |

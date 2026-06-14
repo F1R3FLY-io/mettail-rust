@@ -115,6 +115,25 @@ Here `0̄` is the semiring zero, meaning semantic refutation for the chosen
 weight algebra, and `key(d) = key(d′)` means exact byte-for-byte derivation-tree
 identity.
 
+## Cohesive Integration View
+
+Dovetail's standalone contract is the middle of the runtime replacement chain:
+
+`language! specification → generated semantic inventory → DovetailRunReport → backend artifact`
+
+The upstream `language!` expansion remains the authority for categories,
+constructors, syntax, rewrites, guards, predicates, and native-handler
+declarations. Dovetail consumes that inventory and produces a checked report.
+It does not invent category lists, parse source text, or select a runtime.
+Downstream consumers then choose their own artifact: the Rho backend lowers a
+complete report to normalized `rhoapi::Par`, an oracle compares exact keys with
+a reference backend, and tests inspect the same roots and derivation edges.
+
+This separation is the main cohesiveness rule for the documentation: when a
+page describes a term before the report, it is talking about MeTTaIL inventory
+or Dovetail internals; when it describes `rhoapi::Par` or RSpace observations,
+it is talking about a downstream consumer of a complete report.
+
 ## Relation To Other Subsystems
 
 | Subsystem | Relationship |

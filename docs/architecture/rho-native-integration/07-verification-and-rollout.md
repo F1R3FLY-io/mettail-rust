@@ -104,62 +104,6 @@ Per-language production flips still require the runtime gates listed below.
 PlantUML source:
 [figures/07-verification-and-rollout.puml](figures/07-verification-and-rollout.puml).
 
-```plantuml
-@startuml
-title M-RHO Verification and Runtime Flip Rollout
-
-skinparam backgroundColor #FEFEFE
-skinparam shadowing false
-skinparam activity {
-  BorderColor #1F2937
-  FontColor #111827
-  ArrowColor #374151
-}
-
-start
-:Inventory runtime requirements\nfor one language; <<#DBEAFE>>
-:M-RHO.0\nbridge + scalar oracle; <<#DBEAFE>>
-if (proof refs and oracle refs?) then (present)
-  :M-RHO.1\nRho-native COMM dataflow; <<#DCFCE7>>
-else (missing)
-  :Keep Ascent as default\nand record blockers; <<#FEE2E2>>
-  stop
-endif
-if (scheduler and artifact gates?) then (pass)
-  :M-RHO.2\ngeneric CBN / need encoding; <<#FEF3C7>>
-else (fail)
-  :Keep Rho behind explicit\nbackend selection; <<#FFEDD5>>
-  stop
-endif
-if (coverage and rejected-rule\ncontracts complete?) then (yes)
-  :M-RHO.3\njoins, guards, replay,\nambiguity hardening; <<#FDE68A>>
-else (no)
-  :Generate native-handler\ncoverage obligations; <<#FFEDD5>>
-  stop
-endif
-if (oracle, stress, and deadlock\nevidence accepted?) then (yes)
-  :M-RHO.4\nper-language flip\nto Rho default; <<#FCE7F3>>
-else (no)
-  :Publish evidence report\nwithout default flip; <<#FEE2E2>>
-  stop
-endif
-:Emit `BackendCapabilityDef`\nwith evidence refs; <<#DDD6FE>>
-:Retire production Ascent/CESK\nruntime path for that language; <<#BBF7D0>>
-stop
-
-legend right
-|= Area |= Meaning |
-|<#DBEAFE> M-RHO.0 | bridge, scalar oracle, evidence refs |
-|<#DCFCE7> M-RHO.1 | Rho-native COMM semantics |
-|<#FEF3C7> M-RHO.2 | generic call-by-need encoding |
-|<#FDE68A> M-RHO.3 | joins, guards, replay hardening |
-|<#FCE7F3> M-RHO.4 | production default flip |
-|<#DDD6FE> Metadata | auditable runtime capability record |
-|<#FEE2E2> Blocker | default stays on verified oracle path |
-endlegend
-@enduml
-```
-
 ## M-RHO.1: rhocalc COMM Fast Path
 
 Verified statement:

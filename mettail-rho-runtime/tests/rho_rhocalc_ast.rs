@@ -9,7 +9,7 @@ use std::sync::Arc;
 use mettail_ast::language::LanguageDef;
 use mettail_languages::rhocalc::{Bag, Int, List, Map, Proc, Str};
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{
     lower_rhocalc_proc, rho_runtime_backed_rhocalc_strings, run_normalized_par_for_oracle,
@@ -22,6 +22,8 @@ use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::EList;
 use models::rhoapi::Par;
 use models::rust::rholang::implicits::GPrivateBuilder;
+
+mod support;
 
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
@@ -63,8 +65,13 @@ fn passing_dynamic_evidence() -> RhoDefaultBackendEvidence {
 fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
     let def = syn::parse_str::<LanguageDef>(RHOCALC_DYNAMIC_PLAN_FRAGMENT)
         .expect("dynamic rhocalc runtime fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_dynamic_evidence())
-        .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
+    let audit_policy = support::strict_evidence_audit_policy();
+    let plan = plan_rho_default_backend_with_evidence_audit(
+        &def,
+        passing_dynamic_evidence(),
+        &audit_policy,
+    )
+    .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
     assert!(
         plan.lowering.lowered.is_empty(),
         "dynamic RhoCalc plan should not need static scalar contracts"

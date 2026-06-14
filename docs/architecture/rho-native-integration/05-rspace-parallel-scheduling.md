@@ -43,64 +43,6 @@ This is the practical convergence of tuple-space coordination
 PlantUML source:
 [figures/05-rspace-parallel-scheduling.puml](figures/05-rspace-parallel-scheduling.puml).
 
-```plantuml
-@startuml
-title RSpace Scheduling of Lowered Rewrite Rules
-
-skinparam backgroundColor #FEFEFE
-skinparam shadowing false
-skinparam state {
-  BorderColor #1F2937
-  FontColor #111827
-  ArrowColor #374151
-}
-
-[*] --> ContractsInstalled : inject normalized `Par`
-
-state ContractsInstalled #DBEAFE {
-  [*] --> PersistentReceives
-}
-state FactArrives #FEF3C7
-state MatchIndex #DCFCE7
-state GuardCheck #FDE68A
-state EnabledJoin #CCFBF1
-state Commit #FBCFE8
-state FireBody #FCE7F3
-state EmitFacts #EDE9FE
-state ReplayLog #DDD6FE
-state Snapshot #CFFAFE
-state Quiescent #E5E7EB
-
-ContractsInstalled --> FactArrives : seed or derived fact send
-FactArrives --> MatchIndex : update channel index
-MatchIndex --> EnabledJoin : all premise patterns match
-MatchIndex --> ContractsInstalled : no enabled join
-EnabledJoin --> GuardCheck : bind substitution
-GuardCheck --> Commit : guard true
-GuardCheck --> ContractsInstalled : guard false\n(no consumption)
-Commit --> FireBody : atomically consume selected inputs
-FireBody --> EmitFacts : continuation sends outputs
-EmitFacts --> ReplayLog : record COMM event
-ReplayLog --> FactArrives : emitted delta wakes\nindependent joins
-ReplayLog --> Snapshot : frontier empty
-Snapshot --> Quiescent : resting-space observation
-Quiescent --> [*]
-
-legend right
-|= Area |= Meaning |
-|<#DBEAFE> Contracts | persistent rule receives |
-|<#FEF3C7> Data | seed and derived fact arrival |
-|<#DCFCE7> Match | indexed spatial pattern search |
-|<#CCFBF1> Enabled join | complete premise vector |
-|<#FDE68A> Guard | non-consuming decision |
-|<#FBCFE8> Commit | atomic consume step |
-|<#FCE7F3> Body | continuation execution |
-|<#EDE9FE> Delta | derived fact emission and replay |
-|<#CFFAFE> Snapshot | observable resting space |
-endlegend
-@enduml
-```
-
 ## Parallelism Sources
 
 | Source of parallelism | Rho/RSpace mechanism | Why it helps |
