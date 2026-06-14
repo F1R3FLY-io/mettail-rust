@@ -109,7 +109,7 @@ execution.
 
 For generic call-by-need execution, the Rho generation segment is:
 
-`generated-language computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
+`generated-language computation → CallByNeedThunkSpec → audited CallByNeedThunkPlan → rhoapi::Par`
 
 This segment is still AST-first. The spec carries the generated-language value
 as a closed `RhoAstLiteral`, names the evaluation marker, output channel, and
@@ -143,7 +143,7 @@ The quickest way to stay oriented is to separate the static and dynamic tracks:
 | dynamic snippet execution | `source snippet → WPDA parser → typed AST → selected runtime backend` | parsing remains upstream; runtime backends consume typed terms and generated metadata |
 | direct Dovetail runtime | `typed AST + metadata → SatReport → DovetailRunReport → RuntimeBackendOutput::Dovetail` | the runtime result is report-shaped rewrite evidence |
 | Rho-native runtime | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → observations → RuntimeBackendReport` | the runtime result is observation-shaped evidence after host Rho execution |
-| generic call-by-need runtime | `typed computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par → observations` | generated-language computations are parameterized into an AST-first Rho thunk, not lowered through text |
+| generic call-by-need runtime | `typed computation → CallByNeedThunkSpec → audited CallByNeedThunkPlan → rhoapi::Par → observations` | generated-language computations are parameterized into an AST-first Rho thunk and proof/oracle/budget refs are audited before runtime execution, not lowered through text |
 
 This separation is deliberately repetitive across the suite. It prevents three
 common misreadings:

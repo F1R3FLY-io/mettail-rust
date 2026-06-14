@@ -7,10 +7,10 @@ use mettail_languages::calculator::{
     Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
 use mettail_rho_codegen::{
-    plan_call_by_need_thunk_with_spec, plan_rho_default_backend_with_evidence_audit,
-    CallByNeedBudget, CallByNeedInitialState, CallByNeedPlanEvidence, CallByNeedThunkSpec,
-    RhoAstLiteral, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
-    RhoGuardCoverageEvidence,
+    plan_call_by_need_thunk_with_spec_and_evidence_audit,
+    plan_rho_default_backend_with_evidence_audit, CallByNeedBudget, CallByNeedInitialState,
+    CallByNeedPlanEvidence, CallByNeedThunkSpec, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
+    RhoDefaultBackendEvidence, RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
 use mettail_runtime::{
@@ -496,9 +496,14 @@ fn plan_need(value: RhoAstLiteral, eval_marker: &str) -> Result<RhoBackendInvoca
         "NEED_EVAL",
     )
     .map_err(|err| format!("failed to build calculator CBN thunk spec: {err:?}"))?;
-    let plan =
-        plan_call_by_need_thunk_with_spec(spec, CallByNeedBudget::new(2, 1), need_evidence())
-            .map_err(|err| format!("failed to plan calculator CBN thunk: {err:?}"))?;
+    let audit_policy = support::strict_evidence_audit_policy();
+    let plan = plan_call_by_need_thunk_with_spec_and_evidence_audit(
+        spec,
+        CallByNeedBudget::new(2, 1),
+        need_evidence(),
+        &audit_policy,
+    )
+    .map_err(|err| format!("failed to plan calculator CBN thunk: {err:?}"))?;
     Ok(RhoBackendInvocation::RunCallByNeedThunk { plan: Box::new(plan) })
 }
 

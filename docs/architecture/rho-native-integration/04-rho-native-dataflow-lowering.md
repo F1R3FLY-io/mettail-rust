@@ -360,8 +360,8 @@ Steps:
 
   7. Validate the AST with the CallByNeedThunk profile.
 
-  8. Return CallByNeedThunkPlan only if admission, validation, and evidence
-     gates all pass.
+  8. Return an audited CallByNeedThunkPlan only if admission, validation,
+     evidence-presence, and evidence-reference audit gates all pass.
 ```
 
 At runtime the value channel is decoded with the same closed-ground-value reader
@@ -398,8 +398,10 @@ new thunk, state, memo, ret1, ret2 in {
 
 The rendering is again documentation-only. The executable artifact is
 `models::rhoapi::Par`, produced by `mettail_rho_codegen::build_call_by_need_thunk_ast_from_spec`
-and accepted for execution only after `plan_call_by_need_thunk_with_spec`
-returns a `CallByNeedThunkPlan`.
+and accepted for execution only after
+`plan_call_by_need_thunk_with_spec_and_evidence_audit` returns an audited
+`CallByNeedThunkPlan`. Non-audited need plans may support codegen/model tests,
+but `PlannedCallByNeedThunk` rejects them before runtime execution.
 
 The supported transport-pure rhocalc core maps directly onto host Rho-machine
 constructs:

@@ -20,7 +20,7 @@
  *     the call-by-need validation profile and rejects source-text artifacts or
  *     scalar-contract profile confusion;
  *   - accepted planned need execution wraps an accepted AST artifact, admits
- *     both force steps, and carries evidence references;
+ *     both force steps, and carries audited evidence references;
  *   - the current cold/hot AST thunk plans have the same two-force public
  *     observations as source evaluation;
  *   - the runtime report boundary for a planned need invocation preserves the
@@ -167,24 +167,28 @@ Section RhoCallByNeedObservation.
   Record NeedThunkExecutionPlan : Type := {
     need_thunk_artifact_plan : NeedThunkAstPlan;
     need_force_admissions : list NeedForceAdmission;
-    need_evidence_ref_count : nat
+    need_evidence_ref_count : nat;
+    need_evidence_audited : bool
   }.
 
   Definition accepted_need_execution_plan
       (plan : NeedThunkExecutionPlan) : Prop :=
     accepted_need_artifact (need_thunk_artifact_plan plan)
     /\ need_force_admissions plan = [NeedForceAdmitted; NeedForceAdmitted]
-    /\ 0 < need_evidence_ref_count plan.
+    /\ 0 < need_evidence_ref_count plan
+    /\ need_evidence_audited plan = true.
 
   Definition cold_need_execution_plan (e : Expr) : NeedThunkExecutionPlan :=
     {| need_thunk_artifact_plan := cold_need_ast_plan e;
        need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
-       need_evidence_ref_count := 3 |}.
+       need_evidence_ref_count := 3;
+       need_evidence_audited := true |}.
 
   Definition hot_need_execution_plan (e : Expr) : NeedThunkExecutionPlan :=
     {| need_thunk_artifact_plan := hot_need_ast_plan e;
        need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
-       need_evidence_ref_count := 3 |}.
+       need_evidence_ref_count := 3;
+       need_evidence_audited := true |}.
 
   Record NeedRuntimeSpec : Type := {
     need_output_channel : nat;
@@ -293,8 +297,30 @@ Section RhoCallByNeedObservation.
     0 < need_evidence_ref_count plan.
   Proof.
     intros plan Haccepted.
-    destruct Haccepted as [_ [_ Hevidence]].
+    destruct Haccepted as [_ [_ [Hevidence _]]].
     exact Hevidence.
+  Qed.
+
+  Theorem accepted_need_execution_plan_has_audited_evidence : forall plan,
+    accepted_need_execution_plan plan ->
+    need_evidence_audited plan = true.
+  Proof.
+    intros plan Haccepted.
+    destruct Haccepted as [_ [_ [_ Haudited]]].
+    exact Haudited.
+  Qed.
+
+  Theorem unaudited_need_execution_plan_rejected :
+    forall artifact admissions evidence_count,
+    ~ accepted_need_execution_plan
+        {| need_thunk_artifact_plan := artifact;
+           need_force_admissions := admissions;
+           need_evidence_ref_count := evidence_count;
+           need_evidence_audited := false |}.
+  Proof.
+    intros artifact admissions evidence_count Haccepted.
+    destruct Haccepted as [_ [_ [_ Haudited]]].
+    discriminate Haudited.
   Qed.
 
   Theorem cold_ast_plan_observes_source_twice : forall e,

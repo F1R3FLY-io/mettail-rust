@@ -76,7 +76,7 @@ The ownership pipeline for directly covered Rho-native rewrites is:
 
 The generic call-by-need segment uses the same AST-first execution boundary:
 
-`generated-language computation → RhoAstLiteral payload → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
+`generated-language computation → RhoAstLiteral payload → CallByNeedThunkSpec → audited CallByNeedThunkPlan → rhoapi::Par`
 
 | Concern | `language!` | Dovetail | Rho backend |
 |---|---|---|---|
@@ -122,8 +122,8 @@ adds or preserves a specific contract.
 | 4. Dovetail execution | typed AST term plus metadata | `SatReport` and `DovetailRunReport` | rewrite consequences are exact-keyed, ordered, and explicitly complete or bounded |
 | 5a. direct Dovetail runtime | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | the runtime exposes Dovetail evidence without fabricating an Ascent graph |
 | 5b. Rho planning | complete Dovetail report | `RhoNet plan` | covered rewrites become dataflow contracts and uncovered rewrites are explicit rejections |
-| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and `CallByNeedThunkPlan` | thunk payload is a closed `RhoAstLiteral`, channels are generated-language parameters, and budget admission plus AST validation are explicit |
-| 6. AST generation | RhoNet plan or `CallByNeedThunkPlan` | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
+| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and audited `CallByNeedThunkPlan` | thunk payload is a closed `RhoAstLiteral`, channels are generated-language parameters, and budget admission, AST validation, and evidence-reference audit are explicit |
+| 6. AST generation | RhoNet plan or audited `CallByNeedThunkPlan` | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
 | 7. Rho execution | `rhoapi::Par` | RSpace observations | F1r3node's RhoRuntime and RSpace own COMM, joins, scheduling, replay, and checkpointing |
 | 8. runtime return | backend-specific output | `RuntimeBackendReport` | the caller receives an envelope whose shape matches the selected backend |
 
@@ -163,7 +163,7 @@ checkpoint it belongs to:
 | generated inventory | `LanguageMetadata` | derive Dovetail rules and backend coverage requirements |
 | parsed snippet | typed AST | select a runtime backend and seed Dovetail |
 | rewrite evidence | `SatReport` plus `DovetailRunReport` | return direct Dovetail output or lower a complete report |
-| Rho plan | `RhoNet plan` or `CallByNeedThunkPlan` | validate and build normalized `rhoapi::Par` |
+| Rho plan | `RhoNet plan` or audited `CallByNeedThunkPlan` | validate and build normalized `rhoapi::Par` |
 | executable artifact | `rhoapi::Par` | inject into host `RhoRuntime` |
 | runtime observation | resting RSpace facts | construct the selected `RuntimeBackendReport` |
 

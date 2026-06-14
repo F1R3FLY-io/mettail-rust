@@ -447,11 +447,39 @@ pub struct PlannedCallByNeedThunk {
     plan: CallByNeedThunkPlan,
 }
 
+/// Failure building an executable generated call-by-need thunk from a need
+/// plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedCallByNeedThunkError {
+    /// Runtime execution requires the strict evidence-reference audit;
+    /// non-audited need plans are valid model artifacts but not executable
+    /// runtime thunks.
+    EvidenceNotAudited,
+}
+
+impl fmt::Display for PlannedCallByNeedThunkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EvidenceNotAudited => write!(
+                f,
+                "call-by-need Rho thunk plan was not built with evidence-reference auditing"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PlannedCallByNeedThunkError {}
+
 impl PlannedCallByNeedThunk {
     /// Accept a need plan that has passed budget admission, artifact
-    /// validation, and evidence-reference checks.
-    pub fn from_plan(plan: CallByNeedThunkPlan) -> Self {
-        Self { plan }
+    /// validation, and strict evidence-reference auditing.
+    pub fn from_plan(plan: CallByNeedThunkPlan) -> Result<Self, PlannedCallByNeedThunkError> {
+        match plan.evidence_audit_status() {
+            RhoEvidenceAuditStatus::Audited => Ok(Self { plan }),
+            RhoEvidenceAuditStatus::NotAudited => {
+                Err(PlannedCallByNeedThunkError::EvidenceNotAudited)
+            },
+        }
     }
 
     pub fn plan(&self) -> &CallByNeedThunkPlan {
@@ -629,6 +657,7 @@ impl RhoBackendInvocation {
             },
             RhoBackendInvocation::RunCallByNeedThunk { plan } => {
                 PlannedCallByNeedThunk::from_plan(*plan)
+                    .map_err(|err| format!("failed to build planned CBN thunk backend: {err}"))?
                     .run_and_observe_need_report()
                     .await
             },

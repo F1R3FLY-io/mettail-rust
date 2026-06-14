@@ -44,8 +44,8 @@ pub use backend::{
     RhoRuntimeBackedLanguageError, RuntimeReportConversionError,
 };
 pub use backend::{
-    PlannedCallByNeedThunk, PlannedRhoBackend, PlannedRhoBackendError, RhoExecutionBoundary,
-    RhoObservationReport,
+    PlannedCallByNeedThunk, PlannedCallByNeedThunkError, PlannedRhoBackend, PlannedRhoBackendError,
+    RhoExecutionBoundary, RhoObservationReport,
 };
 pub use mettail_rho_codegen::RHOCALC_BAG_ABI_TAG;
 #[cfg(feature = "oracle-rhocalc")]

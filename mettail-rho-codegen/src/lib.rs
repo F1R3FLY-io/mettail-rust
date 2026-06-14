@@ -54,6 +54,7 @@ pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 pub mod ast;
 pub mod backend;
 pub mod deadlock;
+pub mod evidence;
 pub mod flip;
 pub mod lower;
 pub mod need;
@@ -63,7 +64,6 @@ pub use backend::{
     classify_rejected_rules, collect_guard_obligations, plan_rho_default_backend,
     plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
     RhoDefaultBackendEvidenceGate, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
-    RhoEvidenceAuditStatus, RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy,
     RhoGateEvidenceDiagnostic, RhoGuardCoverageEvidence, RhoGuardDisposition,
     RhoGuardDispositionDiagnostic, RhoGuardDispositionKind, RhoGuardObligation,
     RhoGuardObligationKind, RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason,
@@ -74,6 +74,9 @@ pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,
     ContractFlow,
 };
+pub use evidence::{
+    RhoEvidenceAuditStatus, RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy,
+};
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,
@@ -82,11 +85,12 @@ pub use lower::{
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
     build_call_by_need_thunk_program, build_call_by_need_thunk_program_from_spec,
-    plan_call_by_need_thunk, plan_call_by_need_thunk_with_spec, CallByNeedAdmission,
-    CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce, CallByNeedForceAdmissionRecord,
-    CallByNeedInitialState, CallByNeedPlanEvidence, CallByNeedPlanEvidenceDiagnostic,
-    CallByNeedPlanEvidenceGate, CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
-    CallByNeedThunkSpec, CallByNeedThunkSpecError,
+    plan_call_by_need_thunk, plan_call_by_need_thunk_with_evidence_audit,
+    plan_call_by_need_thunk_with_spec, plan_call_by_need_thunk_with_spec_and_evidence_audit,
+    CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce,
+    CallByNeedForceAdmissionRecord, CallByNeedInitialState, CallByNeedPlanEvidence,
+    CallByNeedPlanEvidenceDiagnostic, CallByNeedPlanEvidenceGate, CallByNeedThunkAst,
+    CallByNeedThunkPlan, CallByNeedThunkPlanError, CallByNeedThunkSpec, CallByNeedThunkSpecError,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

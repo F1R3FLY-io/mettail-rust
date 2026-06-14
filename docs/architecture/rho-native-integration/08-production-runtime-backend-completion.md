@@ -95,11 +95,15 @@ nominal ABI.
 Generic call-by-need artifacts use the same AST discipline. The generated
 language supplies a `CallByNeedThunkSpec` containing initial cold/hot state,
 result payload as a closed `RhoAstLiteral`, evaluation marker, output channel,
-and evaluation-trace channel. `plan_call_by_need_thunk_with_spec` then admits
-the two-force sequence under lookahead/heap budgets, validates the normalized
-`rhoapi::Par` artifact with the call-by-need profile, and returns
+and evaluation-trace channel.
+`plan_call_by_need_thunk_with_spec_and_evidence_audit` then admits the
+two-force sequence under lookahead/heap budgets, validates the normalized
+`rhoapi::Par` artifact with the call-by-need profile, verifies that the
+proof/oracle/budget evidence references name existing repository artifacts or
+explicitly allowed logical namespaces, and returns an audited
 `CallByNeedThunkPlan`. Runtime execution uses `PlannedCallByNeedThunk`, which
-reads the spec-named channels rather than the sample fixture channel names.
+rejects non-audited need plans and reads the spec-named channels rather than the
+sample fixture channel names.
 Generated-language wrappers can return that plan through
 `RhoBackendInvocation::RunCallByNeedThunk`; the Rho runtime adapter then
 produces an observation-shaped `RuntimeBackendReport` containing the spec-named
