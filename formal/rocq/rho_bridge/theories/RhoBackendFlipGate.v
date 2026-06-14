@@ -1,10 +1,10 @@
 (*
  * RhoBackendFlipGate: per-language default-backend switch safety.
  *
- * A language may select the Rho backend by default only when its proof,
- * oracle-parity, coverage, generated-artifact validation, scheduler fairness,
- * and deadlock gates are all true.  This file proves the Boolean gate is
- * exactly that conjunction and that any missing gate blocks the flip.
+ * A language may select the Rho backend by default only when the Rust planner
+ * can validate exact coverage, generated-artifact shape, and absence of new
+ * static channel deadlocks.  Proof/oracle attribution lives in formal
+ * commentary and CI, not in runtime gate data.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -15,91 +15,56 @@ From Stdlib Require Import PeanoNat.
 Section RhoBackendFlipGate.
 
   Record GateState : Type := {
-    proofs_passed : bool;
-    oracle_parity_passed : bool;
     coverage_passed : bool;
     artifact_validated : bool;
-    scheduler_fairness_passed : bool;
     no_new_deadlocks : bool
   }.
 
   Definition can_flip_to_rho (g : GateState) : bool :=
-    proofs_passed g
-    && oracle_parity_passed g
-    && coverage_passed g
+    coverage_passed g
     && artifact_validated g
-    && scheduler_fairness_passed g
     && no_new_deadlocks g.
 
   Theorem can_flip_iff_all_gates : forall g,
     can_flip_to_rho g = true
-    <-> proofs_passed g = true
-        /\ oracle_parity_passed g = true
-        /\ coverage_passed g = true
+    <-> coverage_passed g = true
         /\ artifact_validated g = true
-        /\ scheduler_fairness_passed g = true
         /\ no_new_deadlocks g = true.
   Proof.
-    intros [p o c a f d]. simpl. unfold can_flip_to_rho. simpl.
+    intros [c a d]. simpl. unfold can_flip_to_rho. simpl.
     repeat rewrite andb_true_iff.
     split.
-    - intros [[[[[Hp Ho] Hc] Ha] Hf] Hd].
-      repeat split; assumption.
-    - intros [Hp [Ho [Hc [Ha [Hf Hd]]]]].
-      repeat split; assumption.
-  Qed.
-
-  Theorem missing_proofs_blocks_flip : forall g,
-    proofs_passed g = false -> can_flip_to_rho g = false.
-  Proof. intros [p o c a f d] H. simpl in *. rewrite H. reflexivity. Qed.
-
-  Theorem missing_oracle_blocks_flip : forall g,
-    oracle_parity_passed g = false -> can_flip_to_rho g = false.
-  Proof.
-    intros [p o c a f d] H. simpl in *. rewrite H.
-    destruct p; reflexivity.
+    - intros [[Hc Ha] Hd]. repeat split; assumption.
+    - intros [Hc [Ha Hd]]. repeat split; assumption.
   Qed.
 
   Theorem missing_coverage_blocks_flip : forall g,
     coverage_passed g = false -> can_flip_to_rho g = false.
-  Proof.
-    intros [p o c a f d] H. simpl in *. rewrite H.
-    destruct p; destruct o; reflexivity.
-  Qed.
+  Proof. intros [c a d] H. simpl in *. rewrite H. reflexivity. Qed.
 
   Theorem missing_artifact_validation_blocks_flip : forall g,
     artifact_validated g = false -> can_flip_to_rho g = false.
   Proof.
-    intros [p o c a f d] H. simpl in *. rewrite H.
-    destruct p; destruct o; destruct c; reflexivity.
-  Qed.
-
-  Theorem missing_scheduler_fairness_blocks_flip : forall g,
-    scheduler_fairness_passed g = false -> can_flip_to_rho g = false.
-  Proof.
-    intros [p o c a f d] H. simpl in *. rewrite H.
-    destruct p; destruct o; destruct c; destruct a; reflexivity.
+    intros [c a d] H. simpl in *. rewrite H.
+    destruct c; reflexivity.
   Qed.
 
   Theorem missing_deadlock_gate_blocks_flip : forall g,
     no_new_deadlocks g = false -> can_flip_to_rho g = false.
   Proof.
-    intros [p o c a f d] H. simpl in *. rewrite H.
-    destruct p; destruct o; destruct c; destruct a; destruct f; reflexivity.
+    intros [c a d] H. simpl in *. rewrite H.
+    destruct c; destruct a; reflexivity.
   Qed.
 
   Definition deadlock_report_passes (diagnostic_count : nat) : bool :=
     Nat.eqb diagnostic_count 0.
 
   Definition gate_state_from_deadlock_report
-      (proofs oracle coverage artifact fairness : bool)
+      (coverage artifact : bool)
       (diagnostic_count : nat) : GateState :=
     {|
-      proofs_passed := proofs;
-      oracle_parity_passed := oracle;
       coverage_passed := coverage;
       artifact_validated := artifact;
-      scheduler_fairness_passed := fairness;
       no_new_deadlocks := deadlock_report_passes diagnostic_count
     |}.
 
@@ -124,48 +89,43 @@ Section RhoBackendFlipGate.
     - reflexivity.
   Qed.
 
-  Theorem deadlock_diagnostic_blocks_flip : forall proofs oracle coverage artifact fairness n,
+  Theorem deadlock_diagnostic_blocks_flip : forall coverage artifact n,
     n <> 0 ->
     can_flip_to_rho
-      (gate_state_from_deadlock_report proofs oracle coverage artifact fairness n) = false.
+      (gate_state_from_deadlock_report coverage artifact n) = false.
   Proof.
-    intros proofs oracle coverage artifact fairness n Hnonzero.
+    intros coverage artifact n Hnonzero.
     unfold gate_state_from_deadlock_report. simpl.
     rewrite (nonempty_deadlock_report_fails n Hnonzero).
-    destruct proofs; destruct oracle; destruct coverage; destruct artifact; destruct fairness;
-      reflexivity.
+    destruct coverage; destruct artifact; reflexivity.
   Qed.
 
-  Theorem clean_deadlock_report_reduces_to_other_gates : forall proofs oracle coverage artifact fairness,
+  Theorem clean_deadlock_report_reduces_to_other_gates : forall coverage artifact,
     can_flip_to_rho
-      (gate_state_from_deadlock_report proofs oracle coverage artifact fairness 0) = true
-    <-> proofs = true /\ oracle = true /\ coverage = true /\ artifact = true /\ fairness = true.
+      (gate_state_from_deadlock_report coverage artifact 0) = true
+    <-> coverage = true /\ artifact = true.
   Proof.
-    intros proofs oracle coverage artifact fairness.
+    intros coverage artifact.
     unfold gate_state_from_deadlock_report. simpl.
-    destruct proofs; destruct oracle; destruct coverage; destruct artifact; destruct fairness;
-      simpl; split; intro H;
+    destruct coverage; destruct artifact; simpl; split; intro H;
       try discriminate H;
       try (repeat split; reflexivity);
-      destruct H as [Hp [Ho [Hc [Ha Hf]]]]; discriminate.
+      destruct H as [Hcoverage Hartifact]; discriminate.
   Qed.
 
   Definition bool_blocker_count (gate : bool) : nat :=
     if gate then 0 else 1.
 
   Definition flip_blocker_count (g : GateState) : nat :=
-    bool_blocker_count (proofs_passed g)
-    + bool_blocker_count (oracle_parity_passed g)
-    + bool_blocker_count (coverage_passed g)
+    bool_blocker_count (coverage_passed g)
     + bool_blocker_count (artifact_validated g)
-    + bool_blocker_count (scheduler_fairness_passed g)
     + bool_blocker_count (no_new_deadlocks g).
 
   Theorem no_blockers_iff_can_flip : forall g,
     flip_blocker_count g = 0 <-> can_flip_to_rho g = true.
   Proof.
-    intros [p o c a f d]. simpl.
-    destruct p; destruct o; destruct c; destruct a; destruct f; destruct d; simpl; split; intro H;
+    intros [c a d]. simpl.
+    destruct c; destruct a; destruct d; simpl; split; intro H;
       try reflexivity;
       try discriminate H.
   Qed.
@@ -174,8 +134,8 @@ Section RhoBackendFlipGate.
     flip_blocker_count g <> 0 ->
     can_flip_to_rho g = false.
   Proof.
-    intros [p o c a f d] Hblocker. simpl in *.
-    destruct p; destruct o; destruct c; destruct a; destruct f; destruct d; simpl in *;
+    intros [c a d] Hblocker. simpl in *.
+    destruct c; destruct a; destruct d; simpl in *;
       try reflexivity;
       exfalso; apply Hblocker; reflexivity.
   Qed.
@@ -199,13 +159,16 @@ Section RhoBackendFlipGate.
     && Nat.eqb (extraneous_guard_dispositions c) 0
     && Nat.eqb (invalid_guard_dispositions c) 0.
 
+  (* Compatibility signature for dependent coverage proofs.  The first, second,
+     and fourth parameters are intentionally ignored: they are not runtime gate
+     data in the Rust implementation. *)
   Definition default_backend_gate
-      (proofs oracle artifact fairness : bool)
+      (_proofs _oracle artifact _fairness : bool)
       (coverage : CoverageState)
       (diagnostic_count : nat) : bool :=
     can_flip_to_rho
       (gate_state_from_deadlock_report
-        proofs oracle (exact_coverage_evidence coverage) artifact fairness diagnostic_count).
+        (exact_coverage_evidence coverage) artifact diagnostic_count).
 
   Theorem exact_coverage_evidence_iff : forall c,
     exact_coverage_evidence c = true
@@ -255,7 +218,7 @@ Section RhoBackendFlipGate.
     assert (Huncovered : Nat.eqb n 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Huncovered.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit; reflexivity.
+    destruct artifact; destruct audit; reflexivity.
   Qed.
 
   Theorem extraneous_delegation_blocks_default_backend :
@@ -280,8 +243,7 @@ Section RhoBackendFlipGate.
     assert (Hextra : Nat.eqb extra 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Hextra.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
-      destruct (Nat.eqb uncovered 0); reflexivity.
+    destruct artifact; destruct audit; destruct (Nat.eqb uncovered 0); reflexivity.
   Qed.
 
   Theorem invalid_disposition_blocks_default_backend :
@@ -306,7 +268,7 @@ Section RhoBackendFlipGate.
     assert (Hinvalid : Nat.eqb invalid 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Hinvalid.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+    destruct artifact; destruct audit;
       destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0); reflexivity.
   Qed.
 
@@ -332,7 +294,7 @@ Section RhoBackendFlipGate.
     assert (Hguard : Nat.eqb uncovered_guard 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Hguard.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+    destruct artifact; destruct audit;
       destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0);
       destruct (Nat.eqb invalid 0); reflexivity.
   Qed.
@@ -359,7 +321,7 @@ Section RhoBackendFlipGate.
     assert (Hguard : Nat.eqb extra_guard 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Hguard.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+    destruct artifact; destruct audit;
       destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0);
       destruct (Nat.eqb invalid 0); destruct (Nat.eqb uncovered_guard 0); reflexivity.
   Qed.
@@ -386,36 +348,25 @@ Section RhoBackendFlipGate.
     assert (Hguard : Nat.eqb invalid_guard 0 = false).
     { rewrite Nat.eqb_neq. assumption. }
     rewrite Hguard.
-    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+    destruct artifact; destruct audit;
       destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0);
       destruct (Nat.eqb invalid 0); destruct (Nat.eqb uncovered_guard 0);
       destruct (Nat.eqb extra_guard 0); reflexivity.
   Qed.
 
-  Theorem missing_artifact_validation_blocks_default_backend : forall proofs oracle fairness coverage diagnostics,
+  Theorem missing_artifact_validation_blocks_default_backend :
+    forall proofs oracle fairness coverage diagnostics,
     default_backend_gate proofs oracle false fairness coverage diagnostics = false.
   Proof.
     intros proofs oracle fairness coverage diagnostics.
     unfold default_backend_gate, gate_state_from_deadlock_report. simpl.
-    destruct proofs; destruct oracle; destruct (exact_coverage_evidence coverage);
-      destruct fairness; reflexivity.
+    destruct (exact_coverage_evidence coverage); reflexivity.
   Qed.
 
-  Theorem missing_scheduler_fairness_blocks_default_backend : forall proofs oracle artifact coverage diagnostics,
-    default_backend_gate proofs oracle artifact false coverage diagnostics = false.
-  Proof.
-    intros proofs oracle artifact coverage diagnostics.
-    unfold default_backend_gate, gate_state_from_deadlock_report. simpl.
-    destruct proofs; destruct oracle; destruct (exact_coverage_evidence coverage);
-      destruct artifact; reflexivity.
-  Qed.
-
-  Theorem default_backend_gate_iff_all_evidence : forall proofs oracle artifact fairness coverage diagnostics,
+  Theorem default_backend_gate_iff_all_requirements :
+    forall proofs oracle artifact fairness coverage diagnostics,
     default_backend_gate proofs oracle artifact fairness coverage diagnostics = true
-    <-> proofs = true
-        /\ oracle = true
-        /\ artifact = true
-        /\ fairness = true
+    <-> artifact = true
         /\ coverage_audit_passed coverage = true
         /\ uncovered_rejections coverage = 0
         /\ extraneous_dispositions coverage = 0
@@ -432,172 +383,14 @@ Section RhoBackendFlipGate.
     rewrite exact_coverage_evidence_iff.
     rewrite deadlock_report_passes_iff_empty.
     split.
-    - intros [Hproofs [Horacle [Hcoverage [Hartifact [Hfairness Hdiagnostics]]]]].
+    - intros [Hcoverage [Hartifact Hdiagnostics]].
       destruct Hcoverage as
         [Haudit [Huncovered [Hextra [Hinvalid [Hguard [Hextra_guard Hinvalid_guard]]]]]].
       repeat split; assumption.
     - intro H.
-      destruct H as [Hproofs [Horacle H]].
-      destruct H as [Hartifact [Hfairness H]].
-      destruct H as [Haudit [Huncovered H]].
-      destruct H as [Hextra [Hinvalid H]].
-      destruct H as [Hguard [Hextra_guard [Hinvalid_guard Hdiagnostics]]].
-      split; [assumption|].
-      split; [assumption|].
-      split.
-      + repeat split; assumption.
-      + split; [assumption|].
-        split; assumption.
-  Qed.
-
-  Record EvidenceRefState : Type := {
-    proof_evidence_ref_count : nat;
-    oracle_evidence_ref_count : nat;
-    coverage_audit_evidence_ref_count : nat;
-    scheduler_fairness_evidence_ref_count : nat;
-    blank_gate_evidence_ref_count : nat;
-    invalid_gate_evidence_ref_count : nat
-  }.
-
-  Definition passed_gate_has_evidence_ref (passed : bool) (count : nat) : bool :=
-    if passed then negb (Nat.eqb count 0) else true.
-
-  Definition evidence_refs_present
-      (proofs oracle coverage_audit fairness : bool)
-      (refs : EvidenceRefState) : bool :=
-    passed_gate_has_evidence_ref proofs (proof_evidence_ref_count refs)
-    && passed_gate_has_evidence_ref oracle (oracle_evidence_ref_count refs)
-    && passed_gate_has_evidence_ref coverage_audit (coverage_audit_evidence_ref_count refs)
-    && passed_gate_has_evidence_ref fairness (scheduler_fairness_evidence_ref_count refs)
-    && Nat.eqb (blank_gate_evidence_ref_count refs) 0
-    && Nat.eqb (invalid_gate_evidence_ref_count refs) 0.
-
-  Definition default_backend_gate_with_refs
-      (proofs oracle artifact fairness : bool)
-      (coverage : CoverageState)
-      (diagnostics : nat)
-      (refs : EvidenceRefState) : bool :=
-    default_backend_gate proofs oracle artifact fairness coverage diagnostics
-    && evidence_refs_present proofs oracle (coverage_audit_passed coverage) fairness refs.
-
-  Theorem missing_proof_evidence_ref_blocks_default_backend_with_refs :
-    forall oracle artifact fairness coverage diagnostics refs,
-    proof_evidence_ref_count refs = 0 ->
-    default_backend_gate_with_refs true oracle artifact fairness coverage diagnostics refs = false.
-  Proof.
-    intros oracle artifact fairness coverage diagnostics
-      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hmissing.
-    simpl in Hmissing. subst proof_refs.
-    unfold default_backend_gate_with_refs, evidence_refs_present,
-      passed_gate_has_evidence_ref. simpl.
-    destruct (default_backend_gate true oracle artifact fairness coverage diagnostics);
-      reflexivity.
-  Qed.
-
-  Theorem missing_oracle_evidence_ref_blocks_default_backend_with_refs :
-    forall proofs artifact fairness coverage diagnostics refs,
-    oracle_evidence_ref_count refs = 0 ->
-    default_backend_gate_with_refs proofs true artifact fairness coverage diagnostics refs = false.
-  Proof.
-    intros proofs artifact fairness coverage diagnostics
-      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hmissing.
-    simpl in Hmissing. subst oracle_refs.
-    unfold default_backend_gate_with_refs, evidence_refs_present,
-      passed_gate_has_evidence_ref. simpl.
-    destruct (default_backend_gate proofs true artifact fairness coverage diagnostics);
-      destruct proofs; destruct (Nat.eqb proof_refs 0); reflexivity.
-  Qed.
-
-  Theorem missing_coverage_audit_evidence_ref_blocks_default_backend_with_refs :
-    forall proofs oracle artifact fairness uncovered extra invalid
-      uncovered_guard extra_guard invalid_guard diagnostics refs,
-    coverage_audit_evidence_ref_count refs = 0 ->
-    default_backend_gate_with_refs proofs oracle artifact fairness
-      {| coverage_audit_passed := true;
-         uncovered_rejections := uncovered;
-         extraneous_dispositions := extra;
-         invalid_dispositions := invalid;
-         uncovered_guard_obligations := uncovered_guard;
-         extraneous_guard_dispositions := extra_guard;
-         invalid_guard_dispositions := invalid_guard |}
-      diagnostics refs = false.
-  Proof.
-    intros proofs oracle artifact fairness uncovered extra invalid
-      uncovered_guard extra_guard invalid_guard diagnostics
-      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hmissing.
-    simpl in Hmissing. subst coverage_refs.
-    unfold default_backend_gate_with_refs, evidence_refs_present,
-      passed_gate_has_evidence_ref. simpl.
-    destruct (default_backend_gate proofs oracle artifact fairness
-      {| coverage_audit_passed := true;
-         uncovered_rejections := uncovered;
-         extraneous_dispositions := extra;
-         invalid_dispositions := invalid;
-         uncovered_guard_obligations := uncovered_guard;
-         extraneous_guard_dispositions := extra_guard;
-         invalid_guard_dispositions := invalid_guard |} diagnostics);
-      destruct proofs; destruct oracle;
-      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
-      reflexivity.
-  Qed.
-
-  Theorem missing_scheduler_fairness_evidence_ref_blocks_default_backend_with_refs :
-    forall proofs oracle artifact coverage diagnostics refs,
-    scheduler_fairness_evidence_ref_count refs = 0 ->
-    default_backend_gate_with_refs proofs oracle artifact true coverage diagnostics refs = false.
-  Proof.
-    intros proofs oracle artifact coverage diagnostics
-      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hmissing.
-    simpl in Hmissing. subst fairness_refs.
-    unfold default_backend_gate_with_refs, evidence_refs_present,
-      passed_gate_has_evidence_ref. simpl.
-    destruct (default_backend_gate proofs oracle artifact true coverage diagnostics);
-      destruct proofs; destruct oracle; destruct (coverage_audit_passed coverage);
-      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
-      destruct (Nat.eqb coverage_refs 0); reflexivity.
-  Qed.
-
-  Theorem blank_gate_evidence_ref_blocks_default_backend_with_refs :
-    forall proofs oracle artifact fairness coverage diagnostics refs,
-    blank_gate_evidence_ref_count refs <> 0 ->
-    default_backend_gate_with_refs proofs oracle artifact fairness coverage diagnostics refs = false.
-  Proof.
-    intros proofs oracle artifact fairness coverage diagnostics
-      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hnonzero.
-    simpl in Hnonzero.
-    unfold default_backend_gate_with_refs, evidence_refs_present,
-      passed_gate_has_evidence_ref. simpl.
-    assert (Hblank : Nat.eqb blank_refs 0 = false).
-    { rewrite Nat.eqb_neq. assumption. }
-    rewrite Hblank.
-    destruct (default_backend_gate proofs oracle artifact fairness coverage diagnostics);
-      destruct proofs; destruct oracle; destruct (coverage_audit_passed coverage);
-      destruct fairness;
-      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
-      destruct (Nat.eqb coverage_refs 0); destruct (Nat.eqb fairness_refs 0);
-      reflexivity.
-  Qed.
-
-  Theorem invalid_gate_evidence_ref_blocks_default_backend_with_refs :
-    forall proofs oracle artifact fairness coverage diagnostics refs,
-    invalid_gate_evidence_ref_count refs <> 0 ->
-    default_backend_gate_with_refs proofs oracle artifact fairness coverage diagnostics refs = false.
-  Proof.
-    intros proofs oracle artifact fairness coverage diagnostics
-      [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hnonzero.
-    simpl in Hnonzero.
-    unfold default_backend_gate_with_refs, evidence_refs_present,
-      passed_gate_has_evidence_ref. simpl.
-    assert (Hinvalid : Nat.eqb invalid_refs 0 = false).
-    { rewrite Nat.eqb_neq. assumption. }
-    rewrite Hinvalid.
-    destruct (default_backend_gate proofs oracle artifact fairness coverage diagnostics);
-      destruct proofs; destruct oracle; destruct (coverage_audit_passed coverage);
-      destruct fairness;
-      destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
-      destruct (Nat.eqb coverage_refs 0); destruct (Nat.eqb fairness_refs 0);
-      destruct (Nat.eqb blank_refs 0);
-      reflexivity.
+      destruct H as [Hartifact [Haudit [Huncovered H]]].
+      destruct H as [Hextra [Hinvalid [Hguard [Hextra_guard [Hinvalid_guard Hdiagnostics]]]]].
+      repeat split; try assumption.
   Qed.
 
 End RhoBackendFlipGate.

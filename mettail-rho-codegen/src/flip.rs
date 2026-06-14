@@ -1,30 +1,23 @@
 //! Per-language Rho-default flip gate.
 //!
 //! This is the Rust-side image of `RhoBackendFlipGate.v`: a language can use
-//! the Rho backend by default exactly when proof, oracle, coverage, generated
-//! artifact validation, scheduler-fairness, and static channel-deadlock gates
-//! all pass.
+//! the Rho backend by default exactly when the planner can validate exact
+//! coverage, generated artifact shape, and static channel-deadlock gates.
 
 use crate::deadlock::{ChannelDeadlockDiagnostic, ChannelDeadlockReport};
 
 /// Gate inputs other than the generated channel-deadlock report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RhoFlipGates {
-    pub proofs_passed: bool,
-    pub oracle_parity_passed: bool,
     pub coverage_passed: bool,
     pub artifact_validated: bool,
-    pub scheduler_fairness_passed: bool,
 }
 
 /// A reason the Rho backend must not become default for a language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoFlipBlocker {
-    Proofs,
-    OracleParity,
     Coverage,
     ArtifactValidation,
-    SchedulerFairness,
     ChannelDeadlocks(Vec<ChannelDeadlockDiagnostic>),
 }
 
@@ -47,20 +40,11 @@ pub fn decide_rho_flip(
 ) -> RhoFlipDecision {
     let mut blockers = Vec::new();
 
-    if !gates.proofs_passed {
-        blockers.push(RhoFlipBlocker::Proofs);
-    }
-    if !gates.oracle_parity_passed {
-        blockers.push(RhoFlipBlocker::OracleParity);
-    }
     if !gates.coverage_passed {
         blockers.push(RhoFlipBlocker::Coverage);
     }
     if !gates.artifact_validated {
         blockers.push(RhoFlipBlocker::ArtifactValidation);
-    }
-    if !gates.scheduler_fairness_passed {
-        blockers.push(RhoFlipBlocker::SchedulerFairness);
     }
     if !deadlock_report.no_new_deadlocks() {
         blockers.push(RhoFlipBlocker::ChannelDeadlocks(deadlock_report.diagnostics.clone()));
@@ -84,11 +68,8 @@ mod tests {
 
     fn passing_gates() -> RhoFlipGates {
         RhoFlipGates {
-            proofs_passed: true,
-            oracle_parity_passed: true,
             coverage_passed: true,
             artifact_validated: true,
-            scheduler_fairness_passed: true,
         }
     }
 
@@ -100,24 +81,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_proofs_or_oracle_or_coverage_blocks_flip() {
+    fn missing_coverage_blocks_flip() {
         let report = clean_report();
         let decision = decide_rho_flip(
             RhoFlipGates {
-                proofs_passed: false,
-                oracle_parity_passed: false,
                 coverage_passed: false,
                 artifact_validated: true,
-                scheduler_fairness_passed: true,
             },
             &report,
         );
 
         assert!(!decision.can_flip_to_rho());
-        assert_eq!(
-            decision.blockers,
-            vec![RhoFlipBlocker::Proofs, RhoFlipBlocker::OracleParity, RhoFlipBlocker::Coverage,]
-        );
+        assert_eq!(decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
     #[test]
@@ -146,11 +121,8 @@ mod tests {
         );
         let decision = decide_rho_flip(
             RhoFlipGates {
-                proofs_passed: false,
-                oracle_parity_passed: true,
                 coverage_passed: false,
                 artifact_validated: false,
-                scheduler_fairness_passed: false,
             },
             &report,
         );
@@ -158,10 +130,8 @@ mod tests {
         assert_eq!(
             decision.blockers,
             vec![
-                RhoFlipBlocker::Proofs,
                 RhoFlipBlocker::Coverage,
                 RhoFlipBlocker::ArtifactValidation,
-                RhoFlipBlocker::SchedulerFairness,
                 RhoFlipBlocker::ChannelDeadlocks(report.diagnostics.clone()),
             ]
         );
@@ -171,33 +141,13 @@ mod tests {
     fn artifact_validation_blocks_flip() {
         let decision = decide_rho_flip(
             RhoFlipGates {
-                proofs_passed: true,
-                oracle_parity_passed: true,
                 coverage_passed: true,
                 artifact_validated: false,
-                scheduler_fairness_passed: true,
             },
             &clean_report(),
         );
 
         assert!(!decision.can_flip_to_rho());
         assert_eq!(decision.blockers, vec![RhoFlipBlocker::ArtifactValidation]);
-    }
-
-    #[test]
-    fn scheduler_fairness_blocks_flip() {
-        let decision = decide_rho_flip(
-            RhoFlipGates {
-                proofs_passed: true,
-                oracle_parity_passed: true,
-                coverage_passed: true,
-                artifact_validated: true,
-                scheduler_fairness_passed: false,
-            },
-            &clean_report(),
-        );
-
-        assert!(!decision.can_flip_to_rho());
-        assert_eq!(decision.blockers, vec![RhoFlipBlocker::SchedulerFairness]);
     }
 }

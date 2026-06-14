@@ -3,20 +3,17 @@
 //! `run_validated_program*` is intentionally still available for oracle and
 //! debug code that needs to inject a shape-validated AST. Generated backend
 //! execution should use [`PlannedRhoBackend`]: it can only be built from a
-//! `RhoDefaultBackendPlan` whose proof, oracle, coverage,
-//! scheduler-fairness, validation, deadlock, and strict evidence-reference
-//! audit gates passed.
+//! `RhoDefaultBackendPlan` whose coverage, validation, and deadlock gates
+//! passed.
 
 #[cfg(feature = "runtime-report")]
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 #[cfg(feature = "runtime-report")]
 use std::thread;
 
 use mettail_rho_codegen::{
-    CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, RhoEvidenceAuditStatus,
-    ValidatedRhoProgram,
+    CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram,
 };
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
@@ -153,7 +150,6 @@ where
     /// report shape without routing through `AscentResults`.
     pub fn try_into_runtime_backend_report(
         self,
-        evidence_refs: Vec<String>,
     ) -> Result<RuntimeBackendReport, RuntimeReportConversionError> {
         let artifact = runtime_artifact_kind(self.artifact_kind)?;
         let values = self
@@ -161,11 +157,11 @@ where
             .into_iter()
             .map(IntoRuntimeObservationValue::into_runtime_observation_value)
             .collect();
+        // Formal model: `formal/rocq/rho_bridge/theories/RhoRuntimeBackendReportBridge.v`.
         RuntimeBackendReport::try_observations(
             RuntimeBackend::RhoMachine,
             artifact,
             vec![RuntimeChannelObservation::new(self.channel, values)],
-            evidence_refs,
         )
         .map_err(RuntimeReportConversionError::InvalidRuntimeReportShape)
     }
@@ -195,37 +191,13 @@ pub struct PlannedRhoBackend {
     plan: RhoDefaultBackendPlan,
 }
 
-/// Failure building an executable generated Rho backend from a codegen plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlannedRhoBackendError {
-    /// Runtime-default execution requires the strict evidence-reference audit;
-    /// non-audited plans are valid model artifacts but not executable defaults.
-    EvidenceNotAudited { language_name: String },
-}
-
-impl fmt::Display for PlannedRhoBackendError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EvidenceNotAudited { language_name } => write!(
-                f,
-                "RhoMachine backend plan for language {language_name} was not built with evidence-reference auditing"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for PlannedRhoBackendError {}
-
 impl PlannedRhoBackend {
     /// Accept a Rho-default backend plan that has already passed the codegen
-    /// flip gate and strict evidence-reference audit.
-    pub fn from_plan(plan: RhoDefaultBackendPlan) -> Result<Self, PlannedRhoBackendError> {
-        match plan.evidence_audit_status() {
-            RhoEvidenceAuditStatus::Audited => Ok(Self { plan }),
-            RhoEvidenceAuditStatus::NotAudited => Err(PlannedRhoBackendError::EvidenceNotAudited {
-                language_name: plan.language_name().to_string(),
-            }),
-        }
+    /// flip gate and artifact-validation boundary.
+    ///
+    /// Formal model: `formal/rocq/rho_bridge/theories/RhoPlannedExecutionBoundary.v`.
+    pub fn from_plan(plan: RhoDefaultBackendPlan) -> Self {
+        Self { plan }
     }
 
     /// The plan that selected this generated backend.
@@ -252,13 +224,6 @@ impl PlannedRhoBackend {
     /// Reader/debug annotation. This text is not parsed for execution.
     pub fn text_annotation(&self) -> &str {
         self.program().text_annotation()
-    }
-
-    /// Evidence references inherited from the flip-gated backend plan. Generated
-    /// language metadata can use this list when advertising `RhoMachine` as an
-    /// executable default backend.
-    pub fn evidence_refs(&self) -> &[String] {
-        self.plan.evidence_refs()
     }
 
     /// Run the generated backend artifact to quiescence.
@@ -447,39 +412,13 @@ pub struct PlannedCallByNeedThunk {
     plan: CallByNeedThunkPlan,
 }
 
-/// Failure building an executable generated call-by-need thunk from a need
-/// plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlannedCallByNeedThunkError {
-    /// Runtime execution requires the strict evidence-reference audit;
-    /// non-audited need plans are valid model artifacts but not executable
-    /// runtime thunks.
-    EvidenceNotAudited,
-}
-
-impl fmt::Display for PlannedCallByNeedThunkError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EvidenceNotAudited => write!(
-                f,
-                "call-by-need Rho thunk plan was not built with evidence-reference auditing"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for PlannedCallByNeedThunkError {}
-
 impl PlannedCallByNeedThunk {
     /// Accept a need plan that has passed budget admission, artifact
-    /// validation, and strict evidence-reference auditing.
-    pub fn from_plan(plan: CallByNeedThunkPlan) -> Result<Self, PlannedCallByNeedThunkError> {
-        match plan.evidence_audit_status() {
-            RhoEvidenceAuditStatus::Audited => Ok(Self { plan }),
-            RhoEvidenceAuditStatus::NotAudited => {
-                Err(PlannedCallByNeedThunkError::EvidenceNotAudited)
-            },
-        }
+    /// validation, and the call-by-need construction boundary.
+    ///
+    /// Formal models: `RhoCallByNeedObservation.v` and `RhoCallByNeedBudget.v`.
+    pub fn from_plan(plan: CallByNeedThunkPlan) -> Self {
+        Self { plan }
     }
 
     pub fn plan(&self) -> &CallByNeedThunkPlan {
@@ -492,10 +431,6 @@ impl PlannedCallByNeedThunk {
 
     pub fn artifact_kind(&self) -> RhoArtifactKind {
         self.program().artifact_kind()
-    }
-
-    pub fn evidence_refs(&self) -> &[String] {
-        self.plan.evidence_refs()
     }
 
     /// Run the planned thunk artifact and read ground strings from each quoted
@@ -559,7 +494,6 @@ impl PlannedCallByNeedThunk {
                 RuntimeChannelObservation::new(spec.out_channel(), out_values),
                 RuntimeChannelObservation::new(spec.eval_channel(), eval_values),
             ],
-            self.evidence_refs().to_vec(),
         )
         .map_err(|err| format!("failed to convert CBN thunk observations: {err:?}"))
     }
@@ -599,65 +533,63 @@ pub enum RhoBackendInvocation {
 #[cfg(feature = "runtime-report")]
 impl RhoBackendInvocation {
     async fn execute(self, backend: &PlannedRhoBackend) -> Result<RuntimeBackendReport, String> {
-        let evidence_refs = backend.evidence_refs().to_vec();
         match self {
             RhoBackendInvocation::RunAndObserveInts { out_channel } => backend
                 .run_and_observe_ints(&out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho integer observation report: {err:?}")
                 }),
             RhoBackendInvocation::RunAndObserveBools { out_channel } => backend
                 .run_and_observe_bools(&out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho boolean observation report: {err:?}")
                 }),
             RhoBackendInvocation::RunAndObserveStrings { out_channel } => backend
                 .run_and_observe_strings(&out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
             RhoBackendInvocation::RunAndObserveRuntimeValues { out_channel } => backend
                 .run_and_observe_runtime_values(&out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho runtime value observation report: {err:?}")
                 }),
             RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel } => backend
                 .run_with_call_and_observe_ints(&call, &out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho integer observation report: {err:?}")
                 }),
             RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel } => backend
                 .run_with_call_and_observe_bools(&call, &out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho boolean observation report: {err:?}")
                 }),
             RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel } => backend
                 .run_with_call_and_observe_strings(&call, &out_channel)
                 .await?
-                .try_into_runtime_backend_report(evidence_refs)
+                .try_into_runtime_backend_report()
                 .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
             RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { call, out_channel } => {
                 backend
                     .run_with_call_and_observe_runtime_values(&call, &out_channel)
                     .await?
-                    .try_into_runtime_backend_report(evidence_refs)
+                    .try_into_runtime_backend_report()
                     .map_err(|err| {
                         format!("failed to convert Rho runtime value observation report: {err:?}")
                     })
             },
             RhoBackendInvocation::RunCallByNeedThunk { plan } => {
                 PlannedCallByNeedThunk::from_plan(*plan)
-                    .map_err(|err| format!("failed to build planned CBN thunk backend: {err}"))?
                     .run_and_observe_need_report()
                     .await
             },
@@ -810,7 +742,6 @@ where
         capabilities.push(RuntimeBackendCapability {
             backend: RuntimeBackend::RhoMachine,
             is_default: true,
-            evidence_refs: self.backend.evidence_refs().to_vec(),
         });
         capabilities.extend(
             inner_capabilities
@@ -983,21 +914,11 @@ mod tests {
     fn observation_report_converts_to_runtime_backend_report() {
         let report =
             RhoObservationReport::planned(RhoArtifactKind::NormalizedAst, "OUT", vec![3_i64, 1, 3])
-                .try_into_runtime_backend_report(vec![
-                    "formal/rocq/rho_bridge/theories/RhoObservationReportBoundary.v".to_string(),
-                    "formal/rocq/rho_bridge/theories/RhoRuntimeBackendReportBridge.v".to_string(),
-                ])
+                .try_into_runtime_backend_report()
                 .expect("normalized AST observations must convert to runtime backend reports");
 
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
         assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-        assert_eq!(
-            report.evidence_refs(),
-            vec![
-                "formal/rocq/rho_bridge/theories/RhoObservationReportBoundary.v",
-                "formal/rocq/rho_bridge/theories/RhoRuntimeBackendReportBridge.v",
-            ]
-        );
 
         let out = report
             .observations_for_channel("OUT")

@@ -14,14 +14,12 @@
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_rho_codegen::{
-    plan_rho_default_backend_with_evidence_audit, RhoAstSend, RhoCoverageEvidence,
-    RhoDefaultBackendEvidence, RhoGuardCoverageEvidence,
+    plan_rho_default_backend, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::PlannedRhoBackend;
 use mettail_runtime::Language;
 use std::collections::BTreeSet;
-
-mod support;
 
 const CALC_RUN_FRAGMENT: &str = r#"
     name: CalcRun,
@@ -35,22 +33,8 @@ const CALC_RUN_FRAGMENT: &str = r#"
     }
 "#;
 
-fn passing_evidence() -> RhoDefaultBackendEvidence {
-    RhoDefaultBackendEvidence {
-        proofs_passed: true,
-        proof_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string()
-        ],
-        oracle_parity_passed: true,
-        oracle_parity_evidence_refs: vec!["mettail-rho-runtime/tests/rho_vs_ascent.rs".to_string()],
-        coverage_audit_passed: true,
-        coverage_audit_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
-        ],
-        scheduler_fairness_passed: true,
-        scheduler_fairness_evidence_refs: vec![
-            "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
-        ],
+fn passing_requirements() -> RhoDefaultBackendRequirements {
+    RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::AllRulesLowered,
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
@@ -59,17 +43,15 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
 fn calculator_backend() -> PlannedRhoBackend {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let audit_policy = support::strict_evidence_audit_policy();
-    let plan =
-        plan_rho_default_backend_with_evidence_audit(&def, passing_evidence(), &audit_policy)
-            .expect("all calculator Int scalar ops must pass the Rho-default gate");
+    let plan = plan_rho_default_backend(&def, passing_requirements())
+        .expect("all calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
         vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt"],
         "all five Int binary scalar ops must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
+    PlannedRhoBackend::from_plan(plan)
 }
 
 /// The Ascent backend's normal-form display strings for `input`.

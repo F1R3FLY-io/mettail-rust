@@ -516,7 +516,6 @@ mod tests {
     static DOVETAIL_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
         backend: RuntimeBackend::Dovetail,
         is_default: true,
-        evidence_refs: &["testkit:complete-dovetail-program-report"],
     }];
 
     impl LanguageMetadata for DovetailProgramMetadata {
@@ -602,8 +601,7 @@ mod tests {
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
                 RuntimeBackend::Dovetail => {
-                    RuntimeBackendReport::try_dovetail(self.report(), Vec::new())
-                        .map_err(|err| err.to_string())
+                    RuntimeBackendReport::try_dovetail(self.report()).map_err(|err| err.to_string())
                 },
                 RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{} backend is not installed", other)),

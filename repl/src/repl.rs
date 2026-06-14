@@ -90,12 +90,10 @@ mod tests {
         BackendCapabilityDef {
             backend: RuntimeBackend::RhoMachine,
             is_default: true,
-            evidence_refs: &["repl-test:rho-default"],
         },
         BackendCapabilityDef {
             backend: RuntimeBackend::Ascent,
             is_default: false,
-            evidence_refs: &["repl-test:ascent-reference"],
         },
     ];
 
@@ -163,7 +161,6 @@ mod tests {
                         "OUT",
                         vec![RuntimeObservationValue::Text("rho-backend".to_string())],
                     )],
-                    vec!["repl-test:rho-default".to_string()],
                 )
                 .map_err(|err| err.to_string()),
                 other => Err(format!("unexpected backend: {other}")),
@@ -244,7 +241,6 @@ mod tests {
             .expect("exec stores the selected runtime backend report");
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
         assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-        assert_eq!(report.evidence_refs(), &["repl-test:rho-default"]);
 
         let out = report
             .observations_for_channel("OUT")

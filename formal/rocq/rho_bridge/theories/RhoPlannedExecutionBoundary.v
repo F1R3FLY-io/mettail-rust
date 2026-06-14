@@ -4,7 +4,7 @@
  *
  * Rust image:
  *   - `mettail_rho_codegen::RhoDefaultBackendPlan` is created only when the
- *     proof/oracle/coverage/artifact/scheduler-fairness/deadlock gate accepts.
+ *     coverage/artifact/deadlock gate accepts.
  *   - `mettail_rho_runtime::PlannedRhoBackend` is built from that plan and is
  *     the generated-backend execution boundary.
  *   - raw `ValidatedRhoProgram` execution remains available for oracle/debug
@@ -87,19 +87,8 @@ Section RhoPlannedExecutionBoundary.
     intros p Haccept.
     apply accepted_planned_execution_implies_can_flip in Haccept.
     apply can_flip_iff_all_gates in Haccept.
-    destruct Haccept as [_ [_ [_ [Hartifact [_ _]]]]].
+    destruct Haccept as [_ [Hartifact _]].
     exact Hartifact.
-  Qed.
-
-  Theorem accepted_planned_execution_implies_scheduler_fairness : forall p,
-    generated_backend_accepts PlannedDefaultBackend p = true ->
-    scheduler_fairness_passed (planned_gate_state p) = true.
-  Proof.
-    intros p Haccept.
-    apply accepted_planned_execution_implies_can_flip in Haccept.
-    apply can_flip_iff_all_gates in Haccept.
-    destruct Haccept as [_ [_ [_ [_ [Hfairness _]]]]].
-    exact Hfairness.
   Qed.
 
   Theorem missing_flip_gate_blocks_planned_execution : forall p,

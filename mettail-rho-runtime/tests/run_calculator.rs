@@ -12,15 +12,12 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, plan_rho_default_backend_with_evidence_audit, RhoArtifactKind,
-    RhoAstLiteral, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
-    RhoGuardCoverageEvidence,
+    plan_rho_default_backend, RhoArtifactKind, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
-use mettail_rho_runtime::{PlannedRhoBackend, PlannedRhoBackendError, RhoExecutionBoundary};
+use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
 use std::collections::{BTreeMap, BTreeSet};
-
-mod support;
 
 // The calculator's Rholang-native scalar-op fragment, body-less. Lowering keys
 // on concrete-syntax operator, operand types, and result type. Every rule here
@@ -61,22 +58,8 @@ const CALC_RUN_FRAGMENT: &str = r#"
     }
 "#;
 
-fn passing_evidence() -> RhoDefaultBackendEvidence {
-    RhoDefaultBackendEvidence {
-        proofs_passed: true,
-        proof_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string()
-        ],
-        oracle_parity_passed: true,
-        oracle_parity_evidence_refs: vec!["mettail-rho-runtime/tests/run_calculator.rs".to_string()],
-        coverage_audit_passed: true,
-        coverage_audit_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
-        ],
-        scheduler_fairness_passed: true,
-        scheduler_fairness_evidence_refs: vec![
-            "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
-        ],
+fn passing_requirements() -> RhoDefaultBackendRequirements {
+    RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::AllRulesLowered,
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
@@ -85,10 +68,8 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
 fn calculator_backend() -> PlannedRhoBackend {
     let def =
         syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let audit_policy = support::strict_evidence_audit_policy();
-    let plan =
-        plan_rho_default_backend_with_evidence_audit(&def, passing_evidence(), &audit_policy)
-            .expect("all calculator Int scalar ops must pass the Rho-default gate");
+    let plan = plan_rho_default_backend(&def, passing_requirements())
+        .expect("all calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
         vec![
@@ -100,23 +81,7 @@ fn calculator_backend() -> PlannedRhoBackend {
         "all Int, Bool, and Str native scalar ops in the fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
-}
-
-#[test]
-fn planned_backend_rejects_unaudited_default_plan() {
-    let def =
-        syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_evidence())
-        .expect("non-audited plan still passes the model flip gate");
-
-    assert!(!plan.is_evidence_audited());
-    let err = PlannedRhoBackend::from_plan(plan)
-        .expect_err("runtime-executable Rho backends require strict evidence auditing");
-    assert_eq!(
-        err,
-        PlannedRhoBackendError::EvidenceNotAudited { language_name: "CalcRun".to_string() }
-    );
+    PlannedRhoBackend::from_plan(plan)
 }
 
 /// `@"OP"!(a, b, @"OUT")`
@@ -176,15 +141,6 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
         backend.text_annotation().contains("contract @\"AddInt\""),
         "reader annotation remains available but is not the execution boundary"
     );
-    assert!(
-        backend
-            .evidence_refs()
-            .iter()
-            .any(|evidence_ref| evidence_ref
-                == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
-        "planned runtime backend must expose flip-gate evidence refs for metadata"
-    );
-
     let cases: &[(&str, i64, i64, i64)] = &[
         ("AddInt", 2, 3, 5),
         ("SubInt", 10, 4, 6),

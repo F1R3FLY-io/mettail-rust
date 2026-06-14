@@ -19,8 +19,8 @@
  *   - the generated call-by-need artifact boundary accepts AST artifacts with
  *     the call-by-need validation profile and rejects source-text artifacts or
  *     scalar-contract profile confusion;
- *   - accepted planned need execution wraps an accepted AST artifact, admits
- *     both force steps, and carries audited evidence references;
+ *   - accepted planned need execution wraps an accepted AST artifact and admits
+ *     both force steps;
  *   - the current cold/hot AST thunk plans have the same two-force public
  *     observations as source evaluation;
  *   - the runtime report boundary for a planned need invocation preserves the
@@ -166,29 +166,21 @@ Section RhoCallByNeedObservation.
 
   Record NeedThunkExecutionPlan : Type := {
     need_thunk_artifact_plan : NeedThunkAstPlan;
-    need_force_admissions : list NeedForceAdmission;
-    need_evidence_ref_count : nat;
-    need_evidence_audited : bool
+    need_force_admissions : list NeedForceAdmission
   }.
 
   Definition accepted_need_execution_plan
       (plan : NeedThunkExecutionPlan) : Prop :=
     accepted_need_artifact (need_thunk_artifact_plan plan)
-    /\ need_force_admissions plan = [NeedForceAdmitted; NeedForceAdmitted]
-    /\ 0 < need_evidence_ref_count plan
-    /\ need_evidence_audited plan = true.
+    /\ need_force_admissions plan = [NeedForceAdmitted; NeedForceAdmitted].
 
   Definition cold_need_execution_plan (e : Expr) : NeedThunkExecutionPlan :=
     {| need_thunk_artifact_plan := cold_need_ast_plan e;
-       need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
-       need_evidence_ref_count := 3;
-       need_evidence_audited := true |}.
+       need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted] |}.
 
   Definition hot_need_execution_plan (e : Expr) : NeedThunkExecutionPlan :=
     {| need_thunk_artifact_plan := hot_need_ast_plan e;
-       need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
-       need_evidence_ref_count := 3;
-       need_evidence_audited := true |}.
+       need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted] |}.
 
   Record NeedRuntimeSpec : Type := {
     need_output_channel : nat;
@@ -201,15 +193,13 @@ Section RhoCallByNeedObservation.
     need_report_output_channel : nat;
     need_report_output_values : list Value;
     need_report_eval_channel : nat;
-    need_report_eval_values : list Value;
-    need_report_evidence_ref_count : nat
+    need_report_eval_values : list Value
   }.
 
   Definition accepted_need_runtime_report
       (plan : NeedThunkExecutionPlan) (report : NeedRuntimeReport) : Prop :=
     accepted_need_execution_plan plan
-    /\ need_report_artifact_kind report = NeedAst
-    /\ 0 < need_report_evidence_ref_count report.
+    /\ need_report_artifact_kind report = NeedAst.
 
   Definition force_plan_twice (e : Expr) (plan : NeedThunkAstPlan)
       : list Value * Memo :=
@@ -228,9 +218,7 @@ Section RhoCallByNeedObservation.
          fst (force_plan_twice e
            (need_thunk_artifact_plan (cold_need_execution_plan e)));
        need_report_eval_channel := need_eval_channel spec;
-       need_report_eval_values := [need_eval_marker spec];
-       need_report_evidence_ref_count :=
-         need_evidence_ref_count (cold_need_execution_plan e) |}.
+       need_report_eval_values := [need_eval_marker spec] |}.
 
   Definition hot_need_runtime_report
       (e : Expr) (spec : NeedRuntimeSpec) : NeedRuntimeReport :=
@@ -240,9 +228,7 @@ Section RhoCallByNeedObservation.
          fst (force_plan_twice e
            (need_thunk_artifact_plan (hot_need_execution_plan e)));
        need_report_eval_channel := need_eval_channel spec;
-       need_report_eval_values := [];
-       need_report_evidence_ref_count :=
-         need_evidence_ref_count (hot_need_execution_plan e) |}.
+       need_report_eval_values := [] |}.
 
   Theorem accepted_need_artifact_is_ast : forall plan,
     accepted_need_artifact plan ->
@@ -290,37 +276,6 @@ Section RhoCallByNeedObservation.
     intros plan Haccepted.
     destruct Haccepted as [_ [Hadmissions _]].
     exact Hadmissions.
-  Qed.
-
-  Theorem accepted_need_execution_plan_has_evidence_refs : forall plan,
-    accepted_need_execution_plan plan ->
-    0 < need_evidence_ref_count plan.
-  Proof.
-    intros plan Haccepted.
-    destruct Haccepted as [_ [_ [Hevidence _]]].
-    exact Hevidence.
-  Qed.
-
-  Theorem accepted_need_execution_plan_has_audited_evidence : forall plan,
-    accepted_need_execution_plan plan ->
-    need_evidence_audited plan = true.
-  Proof.
-    intros plan Haccepted.
-    destruct Haccepted as [_ [_ [_ Haudited]]].
-    exact Haudited.
-  Qed.
-
-  Theorem unaudited_need_execution_plan_rejected :
-    forall artifact admissions evidence_count,
-    ~ accepted_need_execution_plan
-        {| need_thunk_artifact_plan := artifact;
-           need_force_admissions := admissions;
-           need_evidence_ref_count := evidence_count;
-           need_evidence_audited := false |}.
-  Proof.
-    intros artifact admissions evidence_count Haccepted.
-    destruct Haccepted as [_ [_ [_ Haudited]]].
-    discriminate Haudited.
   Qed.
 
   Theorem cold_ast_plan_observes_source_twice : forall e,
@@ -378,7 +333,7 @@ Section RhoCallByNeedObservation.
     accepted_need_execution_plan (cold_need_execution_plan e)
     /\ accepted_need_execution_plan (hot_need_execution_plan e).
   Proof.
-    intros e. split; repeat split; try reflexivity; apply Nat.lt_0_succ.
+    intros e. split; repeat split; reflexivity.
   Qed.
 
   Theorem cold_execution_plan_observes_source_twice : forall e,
@@ -402,7 +357,7 @@ Section RhoCallByNeedObservation.
       (cold_need_execution_plan e)
       (cold_need_runtime_report e spec).
   Proof.
-    intros e spec. repeat split; try reflexivity; apply Nat.lt_0_succ.
+    intros e spec. repeat split; reflexivity.
   Qed.
 
   Theorem hot_need_runtime_report_is_accepted : forall e spec,
@@ -410,7 +365,7 @@ Section RhoCallByNeedObservation.
       (hot_need_execution_plan e)
       (hot_need_runtime_report e spec).
   Proof.
-    intros e spec. repeat split; try reflexivity; apply Nat.lt_0_succ.
+    intros e spec. repeat split; reflexivity.
   Qed.
 
   Theorem cold_need_runtime_report_preserves_output_channel : forall e spec,
@@ -475,8 +430,7 @@ Section RhoCallByNeedObservation.
     typed_need_report_output_channel : nat;
     typed_need_report_output_values : list NeedRuntimeValue;
     typed_need_report_eval_channel : nat;
-    typed_need_report_eval_values : list Value;
-    typed_need_report_evidence_ref_count : nat
+    typed_need_report_eval_values : list Value
   }.
 
   Definition cold_typed_need_runtime_report
@@ -486,10 +440,7 @@ Section RhoCallByNeedObservation.
        typed_need_report_output_values :=
          [typed_source_eval e; typed_source_eval e];
        typed_need_report_eval_channel := need_eval_channel spec;
-       typed_need_report_eval_values := [need_eval_marker spec];
-       typed_need_report_evidence_ref_count :=
-         need_evidence_ref_count
-           (cold_need_execution_plan (typed_expr_base e)) |}.
+       typed_need_report_eval_values := [need_eval_marker spec] |}.
 
   Definition hot_typed_need_runtime_report
       (e : TypedExpr) (spec : NeedRuntimeSpec) : TypedNeedRuntimeReport :=
@@ -498,10 +449,7 @@ Section RhoCallByNeedObservation.
        typed_need_report_output_values :=
          [typed_source_eval e; typed_source_eval e];
        typed_need_report_eval_channel := need_eval_channel spec;
-       typed_need_report_eval_values := [];
-       typed_need_report_evidence_ref_count :=
-         need_evidence_ref_count
-           (hot_need_execution_plan (typed_expr_base e)) |}.
+       typed_need_report_eval_values := [] |}.
 
   Theorem cold_typed_need_runtime_report_preserves_payload_values : forall e spec,
     typed_need_report_output_values (cold_typed_need_runtime_report e spec) =

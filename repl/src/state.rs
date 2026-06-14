@@ -267,7 +267,6 @@ mod tests {
             RuntimeBackend::RhoMachine,
             RuntimeBackendArtifact::RhoNormalizedAst,
             vec![RuntimeChannelObservation::new("OUT", vec![RuntimeObservationValue::Int(5)])],
-            vec!["test:evidence".to_string()],
         )
         .expect("test Rho observation report is shape-valid");
         state

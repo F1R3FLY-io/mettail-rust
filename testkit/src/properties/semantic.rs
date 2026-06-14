@@ -129,7 +129,6 @@ mod tests {
     static OBSERVATION_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
         backend: RuntimeBackend::RhoMachine,
         is_default: true,
-        evidence_refs: &["testkit:runtime-report-observations"],
     }];
 
     impl LanguageMetadata for ObservationMetadata {
@@ -197,7 +196,6 @@ mod tests {
                         "OUT",
                         vec![RuntimeObservationValue::Int(5)],
                     )],
-                    vec!["testkit:runtime-report-observations".to_string()],
                 )
                 .map_err(|err| err.to_string()),
                 other => Err(format!("{other} is not installed")),

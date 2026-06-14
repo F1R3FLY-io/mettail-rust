@@ -63,7 +63,7 @@ Section RhoRejectedCoverage.
     end.
 
   (* In this finite model, zero is the missing/blank token for Rust's
-     whitespace-only rule ids and evidence references. *)
+     whitespace-only rule ids. *)
   Definition valid_rule_id (rule : RuleId) : bool :=
     negb (Nat.eqb rule 0).
 

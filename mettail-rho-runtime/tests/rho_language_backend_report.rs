@@ -7,17 +7,14 @@ use mettail_languages::calculator::{
     Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
 use mettail_rho_codegen::{
-    plan_call_by_need_thunk_with_spec_and_evidence_audit,
-    plan_rho_default_backend_with_evidence_audit, CallByNeedBudget, CallByNeedInitialState,
-    CallByNeedPlanEvidence, CallByNeedThunkSpec, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
-    RhoDefaultBackendEvidence, RhoGuardCoverageEvidence,
+    plan_call_by_need_thunk_with_spec, plan_rho_default_backend, CallByNeedBudget,
+    CallByNeedInitialState, CallByNeedThunkSpec, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
 use mettail_runtime::{
     Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue, SeedFacts, Term,
 };
-
-mod support;
 
 const CALC_RUN_FRAGMENT: &str = r#"
     name: Calculator,
@@ -54,50 +51,17 @@ const CALC_RUN_FRAGMENT: &str = r#"
     }
 "#;
 
-fn passing_evidence() -> RhoDefaultBackendEvidence {
-    RhoDefaultBackendEvidence {
-        proofs_passed: true,
-        proof_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string(),
-            "formal/rocq/rho_bridge/theories/RuntimeBackendDispatch.v".to_string(),
-        ],
-        oracle_parity_passed: true,
-        oracle_parity_evidence_refs: vec![
-            "mettail-rho-runtime/tests/rho_language_backend_report.rs".to_string(),
-        ],
-        coverage_audit_passed: true,
-        coverage_audit_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
-        ],
-        scheduler_fairness_passed: true,
-        scheduler_fairness_evidence_refs: vec![
-            "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
-        ],
+fn passing_requirements() -> RhoDefaultBackendRequirements {
+    RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::AllRulesLowered,
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 
-fn need_evidence() -> CallByNeedPlanEvidence {
-    CallByNeedPlanEvidence {
-        proof_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v".to_string()
-        ],
-        runtime_oracle_evidence_refs: vec![
-            "mettail-rho-runtime/tests/rho_call_by_need.rs".to_string()
-        ],
-        budget_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v".to_string()
-        ],
-    }
-}
-
 fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
     let def = syn::parse_str::<LanguageDef>(fragment).expect("calculator fragment must parse");
-    let audit_policy = support::strict_evidence_audit_policy();
-    let plan =
-        plan_rho_default_backend_with_evidence_audit(&def, passing_evidence(), &audit_policy)
-            .expect("calculator Int scalar ops must pass the Rho-default gate");
+    let plan = plan_rho_default_backend(&def, passing_requirements())
+        .expect("calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
         vec![
@@ -109,7 +73,7 @@ fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
         "all binary Int, Bool, and Str scalar ops in this fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
+    PlannedRhoBackend::from_plan(plan)
 }
 
 fn calculator_backend() -> PlannedRhoBackend {
@@ -496,14 +460,8 @@ fn plan_need(value: RhoAstLiteral, eval_marker: &str) -> Result<RhoBackendInvoca
         "NEED_EVAL",
     )
     .map_err(|err| format!("failed to build calculator CBN thunk spec: {err:?}"))?;
-    let audit_policy = support::strict_evidence_audit_policy();
-    let plan = plan_call_by_need_thunk_with_spec_and_evidence_audit(
-        spec,
-        CallByNeedBudget::new(2, 1),
-        need_evidence(),
-        &audit_policy,
-    )
-    .map_err(|err| format!("failed to plan calculator CBN thunk: {err:?}"))?;
+    let plan = plan_call_by_need_thunk_with_spec(spec, CallByNeedBudget::new(2, 1))
+        .map_err(|err| format!("failed to plan calculator CBN thunk: {err:?}"))?;
     Ok(RhoBackendInvocation::RunCallByNeedThunk { plan: Box::new(plan) })
 }
 
@@ -797,13 +755,6 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     assert_eq!(capabilities.len(), 2);
     assert_eq!(capabilities[0].backend, RuntimeBackend::RhoMachine);
     assert!(capabilities[0].is_default);
-    assert!(
-        capabilities[0]
-            .evidence_refs
-            .iter()
-            .any(|evidence| evidence == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
-        "Rho runtime capability must carry flip-gate evidence refs"
-    );
     assert_eq!(capabilities[1].backend, RuntimeBackend::Ascent);
     assert!(!capabilities[1].is_default);
 
@@ -812,13 +763,6 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .expect("Rho default backend must return a runtime report");
     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
     assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-    assert!(
-        report
-            .evidence_refs()
-            .iter()
-            .any(|evidence| evidence == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
-        "Rho backend report must carry flip-gate evidence refs"
-    );
 
     let out = report
         .observations_for_channel("OUT")
@@ -947,14 +891,6 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
             .expect("Rho default backend must execute the planned CBN thunk invocation");
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
         assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-        assert!(
-            report
-                .evidence_refs()
-                .iter()
-                .any(|evidence| evidence
-                    == "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v"),
-            "CBN runtime report must carry need proof evidence refs"
-        );
 
         let out = report
             .observations_for_channel("NEED_OUT")

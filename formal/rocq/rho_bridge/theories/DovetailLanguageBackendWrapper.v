@@ -8,9 +8,9 @@
  *     delegates parsing, environments, type inference, Ascent execution, and
  *     non-Dovetail backend requests to `L`.
  *   - The wrapper selects `RuntimeBackend::Dovetail` as its default backend.
- *   - The wrapper installs the default only when it has a report producer and
- *     evidence references for that producer that passed the selected audit
- *     policy.
+ *   - The wrapper installs the default when it has a report producer; the
+ *     report itself is still checked for completeness and structural
+ *     well-formedness before it can run as the default backend.
  *   - The Dovetail path returns a `DovetailRunReport` shaped
  *     `RuntimeBackendReport`, not `AscentResults` and not Rho observations.
  *   - `BoundedByCycleCut`, malformed reports, and Ascent-shaped seeded facts
@@ -45,8 +45,7 @@ Section DovetailLanguageBackendWrapper.
 
   Record RuntimeBackendCapability : Type := {
     capability_backend : Backend;
-    capability_is_default : bool;
-    capability_has_evidence : bool
+    capability_is_default : bool
   }.
 
   Record InnerLanguage : Type := {
@@ -57,16 +56,12 @@ Section DovetailLanguageBackendWrapper.
   Record DovetailWrapper : Type := {
     wrapped_inner : InnerLanguage;
     dovetail_report_available : bool;
-    dovetail_evidence_available : bool;
-    dovetail_evidence_audited : bool;
     dovetail_report_completeness : ExtractionCompleteness;
     dovetail_report_well_formed : bool
   }.
 
   Definition wrapper_installs_dovetail (wrapper : DovetailWrapper) : bool :=
-    dovetail_report_available wrapper &&
-    dovetail_evidence_available wrapper &&
-    dovetail_evidence_audited wrapper.
+    dovetail_report_available wrapper.
 
   Definition inner_supports
       (inner : InnerLanguage) (backend : Backend) : bool :=
@@ -95,13 +90,11 @@ Section DovetailLanguageBackendWrapper.
       (inner : InnerLanguage) : list RuntimeBackendCapability :=
     (if inner_supports_ascent inner
      then [{| capability_backend := Ascent;
-              capability_is_default := false;
-              capability_has_evidence := true |}]
+              capability_is_default := false |}]
      else []) ++
     (if inner_supports_rho inner
      then [{| capability_backend := RhoMachine;
-              capability_is_default := false;
-              capability_has_evidence := true |}]
+              capability_is_default := false |}]
      else []).
 
   Definition wrapper_default_backend (_wrapper : DovetailWrapper) : Backend :=
@@ -111,8 +104,7 @@ Section DovetailLanguageBackendWrapper.
       (wrapper : DovetailWrapper) : list RuntimeBackendCapability :=
     (if wrapper_installs_dovetail wrapper
      then [{| capability_backend := Dovetail;
-              capability_is_default := true;
-              capability_has_evidence := true |}]
+              capability_is_default := true |}]
      else []) ++
     demoted_inner_capabilities (wrapped_inner wrapper).
 
@@ -176,47 +168,15 @@ Section DovetailLanguageBackendWrapper.
     - discriminate Hinstall.
   Qed.
 
-  Theorem wrapper_installs_dovetail_requires_evidence : forall wrapper,
-    wrapper_installs_dovetail wrapper = true ->
-    dovetail_evidence_available wrapper = true.
-  Proof.
-    intros wrapper Hinstall.
-    unfold wrapper_installs_dovetail in Hinstall.
-    destruct (dovetail_report_available wrapper);
-      destruct (dovetail_evidence_available wrapper);
-      destruct (dovetail_evidence_audited wrapper);
-      simpl in Hinstall;
-      try reflexivity;
-      discriminate Hinstall.
-  Qed.
-
-  Theorem wrapper_installs_dovetail_requires_evidence_audited : forall wrapper,
-    wrapper_installs_dovetail wrapper = true ->
-    dovetail_evidence_audited wrapper = true.
-  Proof.
-    intros wrapper Hinstall.
-    unfold wrapper_installs_dovetail in Hinstall.
-    destruct (dovetail_report_available wrapper);
-      destruct (dovetail_evidence_available wrapper);
-      destruct (dovetail_evidence_audited wrapper);
-      simpl in Hinstall;
-      try reflexivity;
-      discriminate Hinstall.
-  Qed.
-
   Theorem wrapper_capabilities_support_matches_wrapper_supports :
     forall wrapper backend,
       capabilities_support
         (wrapper_runtime_capabilities wrapper) backend =
       wrapper_supports wrapper backend.
   Proof.
-    intros
-      [[supports_ascent supports_rho] available evidence audited completeness well_formed]
-      backend.
+    intros [[supports_ascent supports_rho] available completeness well_formed] backend.
     destruct backend;
       destruct available;
-      destruct evidence;
-      destruct audited;
       destruct well_formed;
       destruct supports_ascent;
       destruct supports_rho;
@@ -229,13 +189,10 @@ Section DovetailLanguageBackendWrapper.
         wrapper_runtime_capabilities
           {| wrapped_inner := inner;
              dovetail_report_available := true;
-             dovetail_evidence_available := true;
-             dovetail_evidence_audited := true;
              dovetail_report_completeness := completeness;
              dovetail_report_well_formed := well_formed |} =
         {| capability_backend := Dovetail;
-           capability_is_default := true;
-           capability_has_evidence := true |} :: tail.
+           capability_is_default := true |} :: tail.
   Proof.
     intros inner completeness well_formed.
     exists (demoted_inner_capabilities inner).
@@ -254,11 +211,8 @@ Section DovetailLanguageBackendWrapper.
       (fun capability => no_non_dovetail_default capability = true)
       (wrapper_runtime_capabilities wrapper).
   Proof.
-    intros
-      [[supports_ascent supports_rho] available evidence audited completeness well_formed].
+    intros [[supports_ascent supports_rho] available completeness well_formed].
     destruct available;
-      destruct evidence;
-      destruct audited;
       destruct supports_ascent;
       destruct supports_rho;
       repeat constructor.
@@ -286,49 +240,15 @@ Section DovetailLanguageBackendWrapper.
     - discriminate Hrun.
   Qed.
 
-  Theorem wrapper_default_report_requires_evidence : forall wrapper,
-    wrapper_default_report_runs wrapper = true ->
-    dovetail_evidence_available wrapper = true.
-  Proof.
-    intros wrapper Hrun.
-    unfold wrapper_default_report_runs, wrapper_installs_dovetail in Hrun.
-    destruct (dovetail_report_available wrapper);
-      destruct (dovetail_evidence_available wrapper);
-      destruct (dovetail_evidence_audited wrapper);
-      simpl in Hrun;
-      try reflexivity;
-      discriminate Hrun.
-  Qed.
-
-  Theorem wrapper_default_report_requires_evidence_audited : forall wrapper,
-    wrapper_default_report_runs wrapper = true ->
-    dovetail_evidence_audited wrapper = true.
-  Proof.
-    intros wrapper Hrun.
-    unfold wrapper_default_report_runs, wrapper_installs_dovetail in Hrun.
-    destruct (dovetail_report_available wrapper);
-      destruct (dovetail_evidence_available wrapper);
-      destruct (dovetail_evidence_audited wrapper);
-      simpl in Hrun;
-      try reflexivity;
-      discriminate Hrun.
-  Qed.
-
   Theorem wrapper_default_report_requires_complete_report : forall wrapper,
     wrapper_default_report_runs wrapper = true ->
     dovetail_report_completeness wrapper = Complete.
   Proof.
-    intros [inner available evidence audited completeness well_formed] Hrun.
+    intros [inner available completeness well_formed] Hrun.
     unfold wrapper_default_report_runs in Hrun.
     destruct available; simpl in Hrun.
-    - destruct evidence; simpl in Hrun.
-      + destruct audited; simpl in Hrun.
-        * destruct completeness; simpl in Hrun.
-          -- destruct well_formed; simpl in Hrun.
-             ++ reflexivity.
-             ++ discriminate Hrun.
-          -- discriminate Hrun.
-        * discriminate Hrun.
+    - destruct completeness; simpl in Hrun.
+      + reflexivity.
       + discriminate Hrun.
     - discriminate Hrun.
   Qed.
@@ -337,16 +257,12 @@ Section DovetailLanguageBackendWrapper.
     wrapper_default_report_runs wrapper = true ->
     dovetail_report_well_formed wrapper = true.
   Proof.
-    intros [inner available evidence audited completeness well_formed] Hrun.
+    intros [inner available completeness well_formed] Hrun.
     unfold wrapper_default_report_runs in Hrun.
     destruct available; simpl in Hrun.
-    - destruct evidence; simpl in Hrun.
-      + destruct audited; simpl in Hrun.
-        * destruct completeness; simpl in Hrun.
-          -- destruct well_formed; simpl in Hrun.
-             ++ reflexivity.
-             ++ discriminate Hrun.
-          -- discriminate Hrun.
+    - destruct completeness; simpl in Hrun.
+      + destruct well_formed; simpl in Hrun.
+        * reflexivity.
         * discriminate Hrun.
       + discriminate Hrun.
     - discriminate Hrun.
@@ -357,64 +273,14 @@ Section DovetailLanguageBackendWrapper.
     wrapper_default_report_runs
       {| wrapped_inner := inner;
          dovetail_report_available := true;
-         dovetail_evidence_available := true;
-         dovetail_evidence_audited := true;
          dovetail_report_completeness := Complete;
          dovetail_report_well_formed := true |} = true.
   Proof. intros inner. reflexivity. Qed.
-
-  Theorem missing_evidence_never_installs_dovetail :
-    forall inner available completeness well_formed,
-    wrapper_supports
-      {| wrapped_inner := inner;
-         dovetail_report_available := available;
-         dovetail_evidence_available := false;
-         dovetail_evidence_audited := true;
-         dovetail_report_completeness := completeness;
-         dovetail_report_well_formed := well_formed |}
-      Dovetail = false /\
-    wrapper_default_report_runs
-      {| wrapped_inner := inner;
-         dovetail_report_available := available;
-         dovetail_evidence_available := false;
-         dovetail_evidence_audited := true;
-         dovetail_report_completeness := completeness;
-         dovetail_report_well_formed := well_formed |} = false.
-  Proof.
-    intros inner available completeness well_formed.
-    destruct available; destruct completeness; destruct well_formed; simpl;
-      split; reflexivity.
-  Qed.
-
-  Theorem unaudited_evidence_never_installs_dovetail :
-    forall inner available evidence completeness well_formed,
-    wrapper_supports
-      {| wrapped_inner := inner;
-         dovetail_report_available := available;
-         dovetail_evidence_available := evidence;
-         dovetail_evidence_audited := false;
-         dovetail_report_completeness := completeness;
-         dovetail_report_well_formed := well_formed |}
-      Dovetail = false /\
-    wrapper_default_report_runs
-      {| wrapped_inner := inner;
-         dovetail_report_available := available;
-         dovetail_evidence_available := evidence;
-         dovetail_evidence_audited := false;
-         dovetail_report_completeness := completeness;
-         dovetail_report_well_formed := well_formed |} = false.
-  Proof.
-    intros inner available evidence completeness well_formed.
-    destruct available; destruct evidence; destruct completeness; destruct well_formed;
-      simpl; split; reflexivity.
-  Qed.
 
   Theorem available_bounded_wrapper_default_report_rejects : forall inner,
     wrapper_default_report_runs
       {| wrapped_inner := inner;
          dovetail_report_available := true;
-         dovetail_evidence_available := true;
-         dovetail_evidence_audited := true;
          dovetail_report_completeness := BoundedByCycleCut;
          dovetail_report_well_formed := true |} = false.
   Proof. intros inner. reflexivity. Qed.
@@ -424,8 +290,6 @@ Section DovetailLanguageBackendWrapper.
     wrapper_default_report_runs
       {| wrapped_inner := inner;
          dovetail_report_available := true;
-         dovetail_evidence_available := true;
-         dovetail_evidence_audited := true;
          dovetail_report_completeness := completeness;
          dovetail_report_well_formed := false |} = false.
   Proof. intros inner completeness. destruct completeness; reflexivity. Qed.

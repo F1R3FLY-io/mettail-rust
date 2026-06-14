@@ -130,7 +130,7 @@ pub trait LanguageMetadata: 'static + Send + Sync {
     }
 }
 
-/// Static evidence that a runtime backend is installed for a language.
+/// Static runtime backend installed for a generated language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilityDef {
     /// Backend exposed through `Language::run_with_backend`.
@@ -138,18 +138,11 @@ pub struct BackendCapabilityDef {
 
     /// Whether this backend is the language's user-facing default.
     pub is_default: bool,
-
-    /// Stable proof, oracle, generated-artifact, or implementation references
-    /// that justify exposing this backend.
-    pub evidence_refs: &'static [&'static str],
 }
-
-const DEFAULT_ASCENT_BACKEND_EVIDENCE: &[&str] = &["mettail-runtime:ascent-reference-backend"];
 
 pub const DEFAULT_ASCENT_BACKEND_CAPABILITIES: &[BackendCapabilityDef] = &[BackendCapabilityDef {
     backend: RuntimeBackend::Ascent,
     is_default: true,
-    evidence_refs: DEFAULT_ASCENT_BACKEND_EVIDENCE,
 }];
 
 /// Definition of a type (category) in the language
@@ -474,15 +467,10 @@ mod guard_metadata_tests {
         BackendCapabilityDef {
             backend: RuntimeBackend::RhoMachine,
             is_default: true,
-            evidence_refs: &[
-                "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v",
-                "mettail-rho-codegen::RhoDefaultBackendPlan",
-            ],
         },
         BackendCapabilityDef {
             backend: RuntimeBackend::Ascent,
             is_default: false,
-            evidence_refs: &["mettail-runtime:ascent-reference-backend"],
         },
     ];
 

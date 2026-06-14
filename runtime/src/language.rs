@@ -56,13 +56,12 @@ impl fmt::Display for RuntimeBackend {
 /// Executable runtime backend capability for a concrete `Language` value.
 ///
 /// Static generated metadata uses [`crate::BackendCapabilityDef`]. This owned
-/// form is the runtime view: wrappers can add flip-gated backends and attach
-/// plan-specific evidence without mutating generated static metadata.
+/// form is the runtime view: wrappers can add checked backends without mutating
+/// generated static metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeBackendCapability {
     pub backend: RuntimeBackend,
     pub is_default: bool,
-    pub evidence_refs: Vec<String>,
 }
 
 impl RuntimeBackendCapability {
@@ -70,11 +69,6 @@ impl RuntimeBackendCapability {
         Self {
             backend: capability.backend,
             is_default: capability.is_default,
-            evidence_refs: capability
-                .evidence_refs
-                .iter()
-                .map(|reference| (*reference).to_string())
-                .collect(),
         }
     }
 }
@@ -557,7 +551,6 @@ pub struct RuntimeBackendReport {
     backend: RuntimeBackend,
     artifact: RuntimeBackendArtifact,
     output: RuntimeBackendOutput,
-    evidence_refs: Vec<String>,
 }
 
 impl RuntimeBackendReport {
@@ -566,7 +559,6 @@ impl RuntimeBackendReport {
             backend: RuntimeBackend::Ascent,
             artifact: RuntimeBackendArtifact::AscentFixpoint,
             output: RuntimeBackendOutput::Ascent(results),
-            evidence_refs: Vec::new(),
         }
     }
 
@@ -574,7 +566,6 @@ impl RuntimeBackendReport {
         backend: RuntimeBackend,
         artifact: RuntimeBackendArtifact,
         observations: Vec<RuntimeChannelObservation>,
-        evidence_refs: Vec<String>,
     ) -> Result<Self, RuntimeObservationReportError> {
         if backend != RuntimeBackend::RhoMachine {
             return Err(RuntimeObservationReportError::InvalidObservationBackend { backend });
@@ -592,20 +583,17 @@ impl RuntimeBackendReport {
             backend,
             artifact,
             output: RuntimeBackendOutput::Observations(observations),
-            evidence_refs,
         })
     }
 
     pub fn try_dovetail(
         report: RuntimeDovetailRunReport,
-        evidence_refs: Vec<String>,
     ) -> Result<Self, RuntimeDovetailReportError> {
         report.validate_shape()?;
         Ok(Self {
             backend: RuntimeBackend::Dovetail,
             artifact: RuntimeBackendArtifact::DovetailRunReport,
             output: RuntimeBackendOutput::Dovetail(report),
-            evidence_refs,
         })
     }
 
@@ -619,10 +607,6 @@ impl RuntimeBackendReport {
 
     pub fn output(&self) -> &RuntimeBackendOutput {
         &self.output
-    }
-
-    pub fn evidence_refs(&self) -> &[String] {
-        &self.evidence_refs
     }
 
     pub fn into_output(self) -> RuntimeBackendOutput {
@@ -1889,7 +1873,6 @@ mod tests {
     static DISPATCH_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
         backend: RuntimeBackend::Ascent,
         is_default: true,
-        evidence_refs: &["runtime-test:dispatch-ascent"],
     }];
 
     impl LanguageMetadata for DispatchMetadata {
@@ -2002,15 +1985,10 @@ mod tests {
         BackendCapabilityDef {
             backend: RuntimeBackend::RhoMachine,
             is_default: true,
-            evidence_refs: &[
-                "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v",
-                "runtime-test:rho-dispatch",
-            ],
         },
         BackendCapabilityDef {
             backend: RuntimeBackend::Ascent,
             is_default: false,
-            evidence_refs: &["runtime-test:ascent-oracle"],
         },
     ];
 
@@ -2079,7 +2057,6 @@ mod tests {
                         "OUT",
                         vec![RuntimeObservationValue::Text("rho-default".to_string())],
                     )],
-                    vec!["runtime-test:rho-dispatch".to_string()],
                 )
                 .map_err(|err| err.to_string()),
                 other => {
@@ -2223,11 +2200,8 @@ mod tests {
         report
             .validate_shape()
             .expect("sample report is structurally valid");
-        let backend_report = RuntimeBackendReport::try_dovetail(
-            report,
-            vec!["runtime-test:dovetail-shape".to_string()],
-        )
-        .expect("checked constructor accepts structurally valid Dovetail reports");
+        let backend_report = RuntimeBackendReport::try_dovetail(report)
+            .expect("checked constructor accepts structurally valid Dovetail reports");
 
         assert_eq!(backend_report.backend(), RuntimeBackend::Dovetail);
         assert_eq!(backend_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
@@ -2256,7 +2230,7 @@ mod tests {
         let mut report = sample_dovetail_runtime_report();
         report.derivation_edges[0].child_key = b"missing".to_vec();
 
-        let err = RuntimeBackendReport::try_dovetail(report, Vec::new())
+        let err = RuntimeBackendReport::try_dovetail(report)
             .expect_err("checked constructor rejects dangling derivation edges");
         assert!(matches!(err, RuntimeDovetailReportError::EdgeChildMissing { edge_ordinal: 0 }));
     }
@@ -2285,7 +2259,6 @@ mod tests {
             RuntimeBackend::RhoMachine,
             RuntimeBackendArtifact::RhoNormalizedAst,
             vec![RuntimeChannelObservation::new("OUT", vec![RuntimeObservationValue::Int(5)])],
-            vec!["runtime-test:rho-observation-shape".to_string()],
         )
         .expect("Rho normalized AST may produce observation-shaped runtime output");
 
@@ -2299,7 +2272,6 @@ mod tests {
         let err = RuntimeBackendReport::try_observations(
             RuntimeBackend::Ascent,
             RuntimeBackendArtifact::RhoNormalizedAst,
-            Vec::new(),
             Vec::new(),
         )
         .expect_err("Ascent reports must remain Ascent-shaped");
@@ -2317,7 +2289,6 @@ mod tests {
         let err = RuntimeBackendReport::try_observations(
             RuntimeBackend::RhoMachine,
             RuntimeBackendArtifact::DovetailRunReport,
-            Vec::new(),
             Vec::new(),
         )
         .expect_err("Rho observations must be backed by a Rho runtime artifact");
@@ -2365,8 +2336,6 @@ mod tests {
             .expect("metadata-selected Rho backend must dispatch");
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
         assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-        assert_eq!(report.evidence_refs(), &["runtime-test:rho-dispatch"]);
-
         let out = report
             .observations_for_channel("OUT")
             .expect("Rho report must expose the OUT channel");

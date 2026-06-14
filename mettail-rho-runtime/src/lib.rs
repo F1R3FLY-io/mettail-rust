@@ -29,8 +29,8 @@
 //! hand-authored host oracle tests, reads public resting data for oracle checks,
 //! runs lowered calculator contracts against the Ascent baseline, and hosts the
 //! M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language flip
-//! baseline until a language's proof, oracle, coverage, artifact-validation,
-//! scheduler-fairness, and deadlock gates pass.
+//! baseline until a language's coverage, artifact-validation, and deadlock
+//! gates pass.
 
 #![forbid(unsafe_code)]
 
@@ -44,8 +44,7 @@ pub use backend::{
     RhoRuntimeBackedLanguageError, RuntimeReportConversionError,
 };
 pub use backend::{
-    PlannedCallByNeedThunk, PlannedCallByNeedThunkError, PlannedRhoBackend, PlannedRhoBackendError,
-    RhoExecutionBoundary, RhoObservationReport,
+    PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
 };
 pub use mettail_rho_codegen::RHOCALC_BAG_ABI_TAG;
 #[cfg(feature = "oracle-rhocalc")]

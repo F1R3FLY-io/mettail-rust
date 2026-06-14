@@ -26,16 +26,16 @@
 //! `lower_language_def` emits normalized Rholang AST (`rhoapi::Par`) for the
 //! supported native scalar subset, records every unsupported rule as an explicit
 //! rejection, and keeps Rholang-looking text only as a reader/debug annotation.
-//! `plan_rho_default_backend` then ties that lowering to proof, oracle, coverage,
-//! artifact-validation, scheduler-fairness, and deadlock evidence before
-//! returning the concrete backend plan. Generic call-by-need admission is bounded
+//! `plan_rho_default_backend` then ties that lowering to exact coverage,
+//! artifact-validation, and deadlock gates before returning the concrete backend
+//! plan. Generic call-by-need admission is bounded
 //! by explicit lookahead and heap budgets, and the memoized-thunk slice keeps a
 //! verified contract/state/memo topology while `CallByNeedThunkSpec`
 //! parameterizes generated-language values, evaluation markers, and observation
 //! channels. The builder emits a normalized `rhoapi::Par` `RhoProgram` with a
 //! call-by-need validation profile, then wraps it in `CallByNeedThunkPlan` after
-//! budget admission, validation, and evidence-reference checks before runtime
-//! execution. The totality-or-explicit-rejection proof is
+//! budget admission and validation before runtime execution. The
+//! totality-or-explicit-rejection proof is
 //! `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the flip-gate
 //! proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
 
@@ -54,7 +54,6 @@ pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 pub mod ast;
 pub mod backend;
 pub mod deadlock;
-pub mod evidence;
 pub mod flip;
 pub mod lower;
 pub mod need;
@@ -62,9 +61,8 @@ pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
     classify_rejected_rules, collect_guard_obligations, plan_rho_default_backend,
-    plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
-    RhoDefaultBackendEvidenceGate, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
-    RhoGateEvidenceDiagnostic, RhoGuardCoverageEvidence, RhoGuardDisposition,
+    RhoCoverageEvidence, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
     RhoGuardDispositionDiagnostic, RhoGuardDispositionKind, RhoGuardObligation,
     RhoGuardObligationKind, RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason,
     RhoRejectedRuleDisposition, RhoRejectedRuleDispositionDiagnostic,
@@ -74,9 +72,6 @@ pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,
     ContractFlow,
 };
-pub use evidence::{
-    RhoEvidenceAuditStatus, RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy,
-};
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,
@@ -85,12 +80,10 @@ pub use lower::{
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
     build_call_by_need_thunk_program, build_call_by_need_thunk_program_from_spec,
-    plan_call_by_need_thunk, plan_call_by_need_thunk_with_evidence_audit,
-    plan_call_by_need_thunk_with_spec, plan_call_by_need_thunk_with_spec_and_evidence_audit,
-    CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce,
-    CallByNeedForceAdmissionRecord, CallByNeedInitialState, CallByNeedPlanEvidence,
-    CallByNeedPlanEvidenceDiagnostic, CallByNeedPlanEvidenceGate, CallByNeedThunkAst,
-    CallByNeedThunkPlan, CallByNeedThunkPlanError, CallByNeedThunkSpec, CallByNeedThunkSpecError,
+    plan_call_by_need_thunk, plan_call_by_need_thunk_with_spec, CallByNeedAdmission,
+    CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce, CallByNeedForceAdmissionRecord,
+    CallByNeedInitialState, CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
+    CallByNeedThunkSpec, CallByNeedThunkSpecError,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,
@@ -361,18 +354,15 @@ mod tests {
         let out = lower_language_def(&def);
         let decision = decide_rho_flip(
             RhoFlipGates {
-                proofs_passed: true,
-                oracle_parity_passed: true,
                 coverage_passed: true,
                 artifact_validated: true,
-                scheduler_fairness_passed: true,
             },
             &out.deadlock_report,
         );
 
         assert!(
             decision.can_flip_to_rho(),
-            "the deadlock side of scalar lowering should pass when proof/oracle/coverage gates pass: {:?}",
+            "the deadlock side of scalar lowering should pass when coverage/artifact gates pass: {:?}",
             decision.blockers
         );
     }

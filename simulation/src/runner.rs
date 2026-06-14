@@ -1216,13 +1216,11 @@ mod tests {
     static RUNTIME_OBSERVATION_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
         backend: RuntimeBackend::RhoMachine,
         is_default: true,
-        evidence_refs: &["simulation-test:runtime-observations"],
     }];
 
     static DOVETAIL_REPORT_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
         backend: RuntimeBackend::Dovetail,
         is_default: true,
-        evidence_refs: &["simulation-test:dovetail-report"],
     }];
 
     impl LanguageMetadata for RuntimeObservationMetadata {
@@ -1338,7 +1336,6 @@ mod tests {
                         "OUT",
                         vec![RuntimeObservationValue::Int(5)],
                     )],
-                    vec!["simulation-test:runtime-observations".to_string()],
                 )
                 .map_err(|err| err.to_string()),
                 RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
@@ -1426,11 +1423,10 @@ mod tests {
             _term: &dyn Term,
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
-                RuntimeBackend::Dovetail => RuntimeBackendReport::try_dovetail(
-                    complete_dovetail_runtime_report(),
-                    vec!["simulation-test:dovetail-report".to_string()],
-                )
-                .map_err(|err| err.to_string()),
+                RuntimeBackend::Dovetail => {
+                    RuntimeBackendReport::try_dovetail(complete_dovetail_runtime_report())
+                        .map_err(|err| err.to_string())
+                },
                 RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{other} is not installed")),
             }

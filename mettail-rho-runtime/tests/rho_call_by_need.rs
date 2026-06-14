@@ -6,27 +6,10 @@
 //! are read from RSpace after one runtime evaluation.
 
 use mettail_rho_codegen::{
-    plan_call_by_need_thunk_with_spec, plan_call_by_need_thunk_with_spec_and_evidence_audit,
-    CallByNeedBudget, CallByNeedInitialState, CallByNeedPlanEvidence, CallByNeedThunkSpec,
-    RhoAstLiteral,
+    plan_call_by_need_thunk_with_spec, CallByNeedBudget, CallByNeedInitialState,
+    CallByNeedThunkSpec, RhoAstLiteral,
 };
-use mettail_rho_runtime::{PlannedCallByNeedThunk, PlannedCallByNeedThunkError};
-
-mod support;
-
-fn evidence() -> CallByNeedPlanEvidence {
-    CallByNeedPlanEvidence {
-        proof_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v".to_string()
-        ],
-        runtime_oracle_evidence_refs: vec![
-            "mettail-rho-runtime/tests/rho_call_by_need.rs".to_string()
-        ],
-        budget_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v".to_string()
-        ],
-    }
-}
+use mettail_rho_runtime::PlannedCallByNeedThunk;
 
 fn budget_for(initial_state: CallByNeedInitialState) -> CallByNeedBudget {
     match initial_state {
@@ -40,16 +23,9 @@ async fn run_need(initial_state: CallByNeedInitialState) -> (Vec<String>, Vec<St
 }
 
 async fn run_need_spec(spec: CallByNeedThunkSpec) -> (Vec<String>, Vec<String>) {
-    let audit_policy = support::strict_evidence_audit_policy();
-    let plan = plan_call_by_need_thunk_with_spec_and_evidence_audit(
-        spec.clone(),
-        budget_for(spec.initial_state()),
-        evidence(),
-        &audit_policy,
-    )
-    .expect("call-by-need thunk plan must pass budget, evidence, and artifact gates");
-    let backend = PlannedCallByNeedThunk::from_plan(plan)
-        .expect("audited call-by-need plan should build executable thunk");
+    let plan = plan_call_by_need_thunk_with_spec(spec.clone(), budget_for(spec.initial_state()))
+        .expect("call-by-need thunk plan must pass budget and artifact gates");
+    let backend = PlannedCallByNeedThunk::from_plan(plan);
     let mut observed = backend
         .run_and_read_need_channels()
         .await
@@ -109,16 +85,4 @@ async fn call_by_need_parameterized_payload_and_channels_observe_generated_value
         vec!["calculator-add".to_string()],
         "a cold generated-language thunk must compute exactly once"
     );
-}
-
-#[test]
-fn planned_need_runtime_rejects_unaudited_plan() {
-    let spec = CallByNeedThunkSpec::default_for(CallByNeedInitialState::Hot);
-    let plan = plan_call_by_need_thunk_with_spec(spec, CallByNeedBudget::new(2, 0), evidence())
-        .expect("non-audited need plan still passes model gates");
-
-    assert!(!plan.is_evidence_audited());
-    let err = PlannedCallByNeedThunk::from_plan(plan)
-        .expect_err("runtime-executable need thunks require strict evidence auditing");
-    assert_eq!(err, PlannedCallByNeedThunkError::EvidenceNotAudited);
 }

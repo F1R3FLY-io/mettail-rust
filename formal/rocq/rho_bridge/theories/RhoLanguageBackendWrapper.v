@@ -37,8 +37,7 @@ Section RhoLanguageBackendWrapper.
 
   Record RuntimeBackendCapability : Type := {
     capability_backend : Backend;
-    capability_is_default : bool;
-    capability_has_evidence : bool
+    capability_is_default : bool
   }.
 
   Record InnerLanguage : Type := {
@@ -76,13 +75,11 @@ Section RhoLanguageBackendWrapper.
       (inner : InnerLanguage) : list RuntimeBackendCapability :=
     (if inner_supports_ascent inner
      then [{| capability_backend := Ascent;
-              capability_is_default := false;
-              capability_has_evidence := true |}]
+              capability_is_default := false |}]
      else []) ++
     (if inner_supports_dovetail inner
      then [{| capability_backend := Dovetail;
-              capability_is_default := false;
-              capability_has_evidence := true |}]
+              capability_is_default := false |}]
      else []).
 
   Definition wrapper_default_backend (_wrapper : RhoWrapper) : Backend :=
@@ -92,8 +89,7 @@ Section RhoLanguageBackendWrapper.
       (wrapper : RhoWrapper) : list RuntimeBackendCapability :=
     (if wrapper_installs_rho wrapper
      then [{| capability_backend := RhoMachine;
-              capability_is_default := true;
-              capability_has_evidence := true |}]
+              capability_is_default := true |}]
      else []) ++
     demoted_inner_capabilities (wrapped_inner wrapper).
 
@@ -191,8 +187,7 @@ Section RhoLanguageBackendWrapper.
              plan_matches_language := true;
              invocation_total := invocation |} =
         {| capability_backend := RhoMachine;
-           capability_is_default := true;
-           capability_has_evidence := true |} :: tail.
+           capability_is_default := true |} :: tail.
   Proof.
     intros inner invocation.
     exists (demoted_inner_capabilities inner).

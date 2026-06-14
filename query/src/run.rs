@@ -127,24 +127,18 @@ mod tests {
                     mettail_runtime::RuntimeObservationValue::Text("other".to_string()),
                 ],
             )],
-            vec!["query-test:rho-report".to_string()],
         )
         .expect("sample observation report is valid");
 
         let rows = run_query_report("query(value) <-- runtime_observation(OUT, value).", &report)
             .expect("runtime observations are queryable");
         assert_eq!(rows, vec![vec!["rho-backend"], vec!["other"]]);
-
-        let evidence =
-            run_query_report("query(reference) <-- runtime_evidence(reference).", &report)
-                .expect("runtime metadata is queryable");
-        assert_eq!(evidence, vec![vec!["query-test:rho-report"]]);
     }
 
     #[test]
     fn test_run_query_report_dovetail_roots() {
-        let report = RuntimeBackendReport::try_dovetail(
-            mettail_runtime::RuntimeDovetailRunReport {
+        let report =
+            RuntimeBackendReport::try_dovetail(mettail_runtime::RuntimeDovetailRunReport {
                 roots: vec![b"root".to_vec()],
                 root_ordinals: vec![0],
                 terms: vec![mettail_runtime::RuntimeDovetailTermRecord {
@@ -157,10 +151,8 @@ mod tests {
                 }],
                 derivation_edges: Vec::new(),
                 completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
-            },
-            vec!["query-test:dovetail-report".to_string()],
-        )
-        .expect("sample Dovetail report is valid");
+            })
+            .expect("sample Dovetail report is valid");
 
         let rows = run_query_report("query(op) <-- dovetail_root(_, _, op, _).", &report)
             .expect("Dovetail roots are queryable");

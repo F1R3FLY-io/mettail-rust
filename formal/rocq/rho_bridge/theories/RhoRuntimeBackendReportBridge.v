@@ -7,8 +7,8 @@
  *   - `RhoObservationReport<T>::try_into_runtime_backend_report` maps typed Rho
  *     values into `RuntimeObservationValue`.
  *   - The resulting `RuntimeBackendReport` has backend `RhoMachine`, artifact
- *     `RhoNormalizedAst`, exactly one channel observation, the same read-order
- *     values after payload mapping, and copied evidence references.
+ *     `RhoNormalizedAst`, exactly one channel observation, and the same
+ *     read-order values after payload mapping.
  *   - Closed Rho ground payloads preserve scalar and structured collection
  *     shape when they are read as generic runtime observation values.
  *
@@ -134,12 +134,10 @@ Section RhoRuntimeBackendReportBridge.
   Record RuntimeBackendReport : Type := {
     runtime_backend : RuntimeBackend;
     runtime_artifact : RuntimeArtifact;
-    runtime_output : RuntimeOutput;
-    runtime_evidence_refs : list nat
+    runtime_output : RuntimeOutput
   }.
 
   Definition rho_report_to_runtime_report
-      (evidence_refs : list nat)
       (r : ObservationReport) : RuntimeBackendReport :=
     {|
       runtime_backend := RhoMachine;
@@ -147,8 +145,7 @@ Section RhoRuntimeBackendReportBridge.
       runtime_output :=
         ObservationOutput
           (observation_channel r)
-          (map fact_to_runtime_value (observation_values r));
-      runtime_evidence_refs := evidence_refs
+          (map fact_to_runtime_value (observation_values r))
     |}.
 
   Definition runtime_report_is_ascent_output
@@ -181,68 +178,66 @@ Section RhoRuntimeBackendReportBridge.
     | _, _ => false
     end.
 
-  Theorem rho_runtime_report_backend_is_rho : forall evidence_refs report,
-    runtime_backend (rho_report_to_runtime_report evidence_refs report) =
+  Theorem rho_runtime_report_backend_is_rho : forall report,
+    runtime_backend (rho_report_to_runtime_report report) =
       RhoMachine.
-  Proof. intros evidence_refs report. reflexivity. Qed.
+  Proof. intros report. reflexivity. Qed.
 
   Theorem rho_runtime_report_artifact_is_normalized_ast :
-    forall evidence_refs report,
-      runtime_artifact (rho_report_to_runtime_report evidence_refs report) =
+    forall report,
+      runtime_artifact (rho_report_to_runtime_report report) =
         RhoNormalizedAst.
-  Proof. intros evidence_refs report. reflexivity. Qed.
+  Proof. intros report. reflexivity. Qed.
 
   Theorem rho_runtime_report_is_not_ascent_output :
-    forall evidence_refs report,
+    forall report,
       runtime_report_is_ascent_output
-        (rho_report_to_runtime_report evidence_refs report) = false.
-  Proof. intros evidence_refs report. reflexivity. Qed.
+        (rho_report_to_runtime_report report) = false.
+  Proof. intros report. reflexivity. Qed.
 
   Theorem rho_runtime_report_has_valid_observation_shape :
-    forall evidence_refs report,
+    forall report,
       runtime_report_is_valid_observation_shape
-        (rho_report_to_runtime_report evidence_refs report) = true.
-  Proof. intros evidence_refs report. reflexivity. Qed.
+        (rho_report_to_runtime_report report) = true.
+  Proof. intros report. reflexivity. Qed.
 
   Theorem ascent_backend_observation_shape_is_invalid :
-    forall artifact channel values evidence_refs,
+    forall artifact channel values,
       runtime_report_is_valid_observation_shape
         {| runtime_backend := Ascent;
            runtime_artifact := artifact;
-           runtime_output := ObservationOutput channel values;
-           runtime_evidence_refs := evidence_refs |} = false.
-  Proof. intros artifact channel values evidence_refs. reflexivity. Qed.
+           runtime_output := ObservationOutput channel values |} = false.
+  Proof. intros artifact channel values. reflexivity. Qed.
 
   Theorem rho_backend_dovetail_artifact_observation_shape_is_invalid :
-    forall channel values evidence_refs,
+    forall channel values,
       runtime_report_is_valid_observation_shape
         {| runtime_backend := RhoMachine;
            runtime_artifact := DovetailRunReport;
-           runtime_output := ObservationOutput channel values;
-           runtime_evidence_refs := evidence_refs |} = false.
-  Proof. intros channel values evidence_refs. reflexivity. Qed.
+           runtime_output := ObservationOutput channel values |} = false.
+  Proof. intros channel values. reflexivity. Qed.
 
-  Theorem rho_runtime_report_preserves_channel : forall evidence_refs report,
-    runtime_output (rho_report_to_runtime_report evidence_refs report) =
+  Theorem rho_runtime_report_preserves_channel : forall report,
+    runtime_output (rho_report_to_runtime_report report) =
       ObservationOutput (observation_channel report)
                         (map fact_to_runtime_value (observation_values report)).
-  Proof. intros evidence_refs report. reflexivity. Qed.
+  Proof. intros report. reflexivity. Qed.
 
-  Theorem rho_runtime_report_preserves_values : forall evidence_refs report,
-    match runtime_output (rho_report_to_runtime_report evidence_refs report) with
+  Theorem rho_runtime_report_preserves_values : forall report,
+    match runtime_output (rho_report_to_runtime_report report) with
     | AscentOutput => False
     | ObservationOutput _ values =>
         values = map fact_to_runtime_value (observation_values report)
     end.
-  Proof. intros evidence_refs report. reflexivity. Qed.
+  Proof. intros report. reflexivity. Qed.
 
   Theorem rho_runtime_report_preserves_observed_count :
-    forall evidence_refs report,
+    forall report,
       runtime_report_observed_count
-        (rho_report_to_runtime_report evidence_refs report) =
+        (rho_report_to_runtime_report report) =
       length (observation_values report).
   Proof.
-    intros evidence_refs report.
+    intros report.
     destruct report as [entry channel values]. simpl.
     apply fact_to_runtime_value_map_length.
   Qed.
@@ -297,11 +292,5 @@ Section RhoRuntimeBackendReportBridge.
     apply PayloadMapsBagCons; [exact Hvalue |].
     apply PayloadMapsBagNil.
   Qed.
-
-  Theorem rho_runtime_report_preserves_evidence_refs :
-    forall evidence_refs report,
-      runtime_evidence_refs
-        (rho_report_to_runtime_report evidence_refs report) = evidence_refs.
-  Proof. intros evidence_refs report. reflexivity. Qed.
 
 End RhoRuntimeBackendReportBridge.

@@ -48,13 +48,10 @@ impl<'a> RuntimeReportDataSource<'a> {
     }
 
     pub fn schema(&self) -> QuerySchema {
-        let mut relations = vec![
-            (
-                "runtime_backend".to_string(),
-                vec!["RuntimeBackend".to_string(), "RuntimeBackendArtifact".to_string()],
-            ),
-            ("runtime_evidence".to_string(), vec!["EvidenceRef".to_string()]),
-        ];
+        let mut relations = vec![(
+            "runtime_backend".to_string(),
+            vec!["RuntimeBackend".to_string(), "RuntimeBackendArtifact".to_string()],
+        )];
 
         match self.report.output() {
             RuntimeBackendOutput::Ascent(results) => {
@@ -134,13 +131,6 @@ impl<'a> RuntimeReportDataSource<'a> {
                 self.report.backend().to_string(),
                 self.report.artifact().to_string(),
             ]]),
-            "runtime_evidence" => Some(
-                self.report
-                    .evidence_refs()
-                    .iter()
-                    .map(|reference| vec![reference.clone()])
-                    .collect(),
-            ),
             _ => None,
         }
     }

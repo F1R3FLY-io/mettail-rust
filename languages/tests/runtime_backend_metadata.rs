@@ -11,7 +11,6 @@ fn generated_language_runtime_backends_are_metadata_driven() {
     assert_eq!(capabilities.len(), 1);
     assert_eq!(capabilities[0].backend, RuntimeBackend::Ascent);
     assert!(capabilities[0].is_default);
-    assert_eq!(capabilities[0].evidence_refs, &["mettail-macros:generated-ascent-runner"]);
 
     let metadata_default = capabilities
         .iter()
@@ -24,10 +23,6 @@ fn generated_language_runtime_backends_are_metadata_driven() {
     assert_eq!(runtime_capabilities.len(), 1);
     assert_eq!(runtime_capabilities[0].backend, RuntimeBackend::Ascent);
     assert!(runtime_capabilities[0].is_default);
-    assert_eq!(
-        runtime_capabilities[0].evidence_refs,
-        vec!["mettail-macros:generated-ascent-runner".to_string()]
-    );
     assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
     assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));

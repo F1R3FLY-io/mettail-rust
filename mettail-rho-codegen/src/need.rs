@@ -5,7 +5,7 @@
 //! admission: every force consumes one lookahead step, and a cold force that
 //! must allocate a memo cell also consumes one heap cell.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use models::rhoapi::{MatchCase, Par, Receive, ReceiveBind};
 use models::rust::utils::{
@@ -14,10 +14,6 @@ use models::rust::utils::{
 };
 
 use crate::ast::{RhoAstBuildError, RhoAstLiteral};
-use crate::evidence::{
-    audit_evidence_refs as audit_refs_with_policy, RhoEvidenceAuditStatus,
-    RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy,
-};
 use crate::lower::{RhoAstProgram, RhoAstValidationProfile, RhoProgram};
 use crate::validate::{RhoValidationError, ValidatedRhoProgram};
 
@@ -212,62 +208,6 @@ impl CallByNeedThunkSpec {
     }
 }
 
-/// Named evidence gate for accepting a planned call-by-need thunk artifact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CallByNeedPlanEvidenceGate {
-    Proof,
-    RuntimeOracle,
-    Budget,
-}
-
-/// Evidence references required before a call-by-need thunk can be used through
-/// the planned execution boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallByNeedPlanEvidence {
-    pub proof_evidence_refs: Vec<String>,
-    pub runtime_oracle_evidence_refs: Vec<String>,
-    pub budget_evidence_refs: Vec<String>,
-}
-
-impl CallByNeedPlanEvidence {
-    fn diagnostics(&self) -> Vec<CallByNeedPlanEvidenceDiagnostic> {
-        let mut diagnostics = Vec::new();
-        diagnose_evidence_refs(
-            CallByNeedPlanEvidenceGate::Proof,
-            &self.proof_evidence_refs,
-            &mut diagnostics,
-        );
-        diagnose_evidence_refs(
-            CallByNeedPlanEvidenceGate::RuntimeOracle,
-            &self.runtime_oracle_evidence_refs,
-            &mut diagnostics,
-        );
-        diagnose_evidence_refs(
-            CallByNeedPlanEvidenceGate::Budget,
-            &self.budget_evidence_refs,
-            &mut diagnostics,
-        );
-        diagnostics
-    }
-
-    fn accepted_refs(&self) -> Vec<String> {
-        let mut refs = BTreeSet::new();
-        push_evidence_refs(&mut refs, &self.proof_evidence_refs);
-        push_evidence_refs(&mut refs, &self.runtime_oracle_evidence_refs);
-        push_evidence_refs(&mut refs, &self.budget_evidence_refs);
-        refs.insert("mettail-rho-codegen:call-by-need-artifact-validation:NormalizedAst".into());
-        refs.insert("mettail-rho-codegen:call-by-need-budget-admission:two-forces".into());
-        refs.into_iter().collect()
-    }
-}
-
-/// Evidence-reference hygiene diagnostics for call-by-need planning.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CallByNeedPlanEvidenceDiagnostic {
-    MissingEvidenceRefs { gate: CallByNeedPlanEvidenceGate },
-    BlankEvidenceRef { gate: CallByNeedPlanEvidenceGate },
-}
-
 /// One force admission decision inside a planned thunk execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallByNeedForceAdmissionRecord {
@@ -280,9 +220,9 @@ pub struct CallByNeedForceAdmissionRecord {
 /// Planned M-RHO.2 call-by-need thunk artifact.
 ///
 /// This is the need-specific counterpart to the scalar default-backend plan:
-/// it keeps budget admission, validation, and evidence references attached to
-/// the executable `ValidatedRhoProgram` so runtime code does not inject a bare
-/// shape-validated artifact by accident.
+/// it keeps budget admission and validation attached to the executable
+/// `ValidatedRhoProgram` so runtime code does not inject a bare shape-validated
+/// artifact by accident.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallByNeedThunkPlan {
     spec: CallByNeedThunkSpec,
@@ -290,8 +230,6 @@ pub struct CallByNeedThunkPlan {
     budget_after: CallByNeedBudget,
     force_admissions: Vec<CallByNeedForceAdmissionRecord>,
     validated_program: ValidatedRhoProgram,
-    evidence_refs: Vec<String>,
-    evidence_audit_status: RhoEvidenceAuditStatus,
 }
 
 impl CallByNeedThunkPlan {
@@ -318,22 +256,6 @@ impl CallByNeedThunkPlan {
     pub fn program(&self) -> &ValidatedRhoProgram {
         &self.validated_program
     }
-
-    pub fn evidence_refs(&self) -> &[String] {
-        &self.evidence_refs
-    }
-
-    /// Whether this plan was built by the strict evidence-auditing planner.
-    pub fn evidence_audit_status(&self) -> RhoEvidenceAuditStatus {
-        self.evidence_audit_status
-    }
-
-    /// True only for plans built by
-    /// [`plan_call_by_need_thunk_with_spec_and_evidence_audit`] or
-    /// [`plan_call_by_need_thunk_with_evidence_audit`].
-    pub fn is_evidence_audited(&self) -> bool {
-        self.evidence_audit_status == RhoEvidenceAuditStatus::Audited
-    }
 }
 
 /// Rejected call-by-need plan with all diagnostics preserved.
@@ -343,43 +265,15 @@ pub struct CallByNeedThunkPlanError {
     pub budget_before: CallByNeedBudget,
     pub force_admissions: Box<[CallByNeedForceAdmissionRecord]>,
     pub validation_errors: Box<[RhoValidationError]>,
-    pub evidence_diagnostics: Box<[CallByNeedPlanEvidenceDiagnostic]>,
-    pub invalid_audited_evidence_refs: Box<[RhoEvidenceRefAuditDiagnostic]>,
 }
 
 /// Build a planned call-by-need thunk artifact after budget admission,
-/// generated-shape validation, and evidence-reference checks.
+/// generated-shape validation, and construction-boundary checks.
 pub fn plan_call_by_need_thunk(
     initial_state: CallByNeedInitialState,
     budget: CallByNeedBudget,
-    evidence: CallByNeedPlanEvidence,
 ) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
-    plan_call_by_need_thunk_with_spec(
-        CallByNeedThunkSpec::default_for(initial_state),
-        budget,
-        evidence,
-    )
-}
-
-/// Build a planned call-by-need thunk artifact with strict evidence-reference
-/// auditing.
-///
-/// Use this entry point for production runtime execution. It preserves the same
-/// budget, artifact-validation, and nonblank-evidence gates as
-/// [`plan_call_by_need_thunk`], then additionally rejects missing local evidence
-/// artifacts and unapproved logical evidence namespaces.
-pub fn plan_call_by_need_thunk_with_evidence_audit(
-    initial_state: CallByNeedInitialState,
-    budget: CallByNeedBudget,
-    evidence: CallByNeedPlanEvidence,
-    audit_policy: &RhoEvidenceRefAuditPolicy,
-) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
-    plan_call_by_need_thunk_with_spec_and_evidence_audit(
-        CallByNeedThunkSpec::default_for(initial_state),
-        budget,
-        evidence,
-        audit_policy,
-    )
+    plan_call_by_need_thunk_with_spec(CallByNeedThunkSpec::default_for(initial_state), budget)
 }
 
 /// Build a planned call-by-need thunk with generated-language payload and
@@ -387,27 +281,6 @@ pub fn plan_call_by_need_thunk_with_evidence_audit(
 pub fn plan_call_by_need_thunk_with_spec(
     spec: CallByNeedThunkSpec,
     budget: CallByNeedBudget,
-    evidence: CallByNeedPlanEvidence,
-) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
-    plan_call_by_need_thunk_with_spec_impl(spec, budget, evidence, None)
-}
-
-/// Build a parameterized planned call-by-need thunk with strict
-/// evidence-reference auditing.
-pub fn plan_call_by_need_thunk_with_spec_and_evidence_audit(
-    spec: CallByNeedThunkSpec,
-    budget: CallByNeedBudget,
-    evidence: CallByNeedPlanEvidence,
-    audit_policy: &RhoEvidenceRefAuditPolicy,
-) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
-    plan_call_by_need_thunk_with_spec_impl(spec, budget, evidence, Some(audit_policy))
-}
-
-fn plan_call_by_need_thunk_with_spec_impl(
-    spec: CallByNeedThunkSpec,
-    budget: CallByNeedBudget,
-    evidence: CallByNeedPlanEvidence,
-    audit_policy: Option<&RhoEvidenceRefAuditPolicy>,
 ) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
     let initial_state = spec.initial_state();
     let (force_admissions, budget_after) = admit_force_sequence(initial_state, budget);
@@ -417,14 +290,11 @@ fn plan_call_by_need_thunk_with_spec_impl(
     let validated_program =
         ValidatedRhoProgram::try_from(build_call_by_need_thunk_program_from_spec(spec.clone()));
     let validation_errors = validated_program.clone().err().unwrap_or_default();
-    let evidence_diagnostics = evidence.diagnostics();
-    let invalid_audited_evidence_refs = audit_need_evidence_refs(&evidence, audit_policy);
 
-    if !blocked_by_budget
-        && validation_errors.is_empty()
-        && evidence_diagnostics.is_empty()
-        && invalid_audited_evidence_refs.is_empty()
-    {
+    // Formal models: `RhoCallByNeedObservation.v` and `RhoCallByNeedBudget.v`.
+    // The executable plan stores only budget-admission records plus a validated
+    // AST artifact; proof locations remain commentary, not runtime state.
+    if !blocked_by_budget && validation_errors.is_empty() {
         Ok(CallByNeedThunkPlan {
             spec,
             budget_before: budget,
@@ -432,12 +302,6 @@ fn plan_call_by_need_thunk_with_spec_impl(
             force_admissions,
             validated_program: validated_program
                 .expect("empty validation errors require a validated need program"),
-            evidence_refs: evidence.accepted_refs(),
-            evidence_audit_status: if audit_policy.is_some() {
-                RhoEvidenceAuditStatus::Audited
-            } else {
-                RhoEvidenceAuditStatus::NotAudited
-            },
         })
     } else {
         Err(CallByNeedThunkPlanError {
@@ -445,24 +309,8 @@ fn plan_call_by_need_thunk_with_spec_impl(
             budget_before: budget,
             force_admissions: force_admissions.into_boxed_slice(),
             validation_errors: validation_errors.into_boxed_slice(),
-            evidence_diagnostics: evidence_diagnostics.into_boxed_slice(),
-            invalid_audited_evidence_refs: invalid_audited_evidence_refs.into_boxed_slice(),
         })
     }
-}
-
-fn audit_need_evidence_refs(
-    evidence: &CallByNeedPlanEvidence,
-    policy: Option<&RhoEvidenceRefAuditPolicy>,
-) -> Vec<RhoEvidenceRefAuditDiagnostic> {
-    audit_refs_with_policy(
-        evidence
-            .proof_evidence_refs
-            .iter()
-            .chain(evidence.runtime_oracle_evidence_refs.iter())
-            .chain(evidence.budget_evidence_refs.iter()),
-        policy,
-    )
 }
 
 fn force_sequence(initial_state: CallByNeedInitialState) -> [CallByNeedForce; 2] {
@@ -496,30 +344,6 @@ fn admit_force_sequence(
     }
 
     (records, current)
-}
-
-fn diagnose_evidence_refs(
-    gate: CallByNeedPlanEvidenceGate,
-    refs: &[String],
-    diagnostics: &mut Vec<CallByNeedPlanEvidenceDiagnostic>,
-) {
-    if refs.is_empty() {
-        diagnostics.push(CallByNeedPlanEvidenceDiagnostic::MissingEvidenceRefs { gate });
-    }
-    for evidence_ref in refs {
-        if evidence_ref.trim().is_empty() {
-            diagnostics.push(CallByNeedPlanEvidenceDiagnostic::BlankEvidenceRef { gate });
-        }
-    }
-}
-
-fn push_evidence_refs(out: &mut BTreeSet<String>, refs: &[String]) {
-    for evidence_ref in refs {
-        let trimmed = evidence_ref.trim();
-        if !trimmed.is_empty() {
-            out.insert(trimmed.to_string());
-        }
-    }
 }
 
 /// Normalized AST artifact for the current M-RHO.2 call-by-need thunk slice.
@@ -889,35 +713,8 @@ fn bitvec(indices: &[usize]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-
     use super::*;
     use models::rhoapi::expr::ExprInstance;
-
-    fn repo_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("mettail-rho-codegen must be a workspace member")
-            .to_path_buf()
-    }
-
-    fn strict_policy() -> RhoEvidenceRefAuditPolicy {
-        RhoEvidenceRefAuditPolicy::new(repo_root())
-    }
-
-    fn passing_evidence() -> CallByNeedPlanEvidence {
-        CallByNeedPlanEvidence {
-            proof_evidence_refs: vec![
-                "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v".into()
-            ],
-            runtime_oracle_evidence_refs: vec![
-                "mettail-rho-runtime/tests/rho_call_by_need.rs".into()
-            ],
-            budget_evidence_refs: vec![
-                "formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v".into()
-            ],
-        }
-    }
 
     #[test]
     fn memo_hit_consumes_lookahead_but_not_heap() {
@@ -1065,13 +862,10 @@ mod tests {
     }
 
     #[test]
-    fn planned_cold_thunk_records_budget_validation_and_evidence() {
-        let plan = plan_call_by_need_thunk(
-            CallByNeedInitialState::Cold,
-            CallByNeedBudget::new(2, 1),
-            passing_evidence(),
-        )
-        .expect("cold thunk has enough lookahead and heap budget");
+    fn planned_cold_thunk_records_budget_validation_and_artifact() {
+        let plan =
+            plan_call_by_need_thunk(CallByNeedInitialState::Cold, CallByNeedBudget::new(2, 1))
+                .expect("cold thunk has enough lookahead and heap budget");
 
         assert_eq!(plan.initial_state(), CallByNeedInitialState::Cold);
         assert_eq!(plan.spec(), &CallByNeedThunkSpec::default_for(CallByNeedInitialState::Cold));
@@ -1080,27 +874,7 @@ mod tests {
         assert_eq!(plan.force_admissions().len(), 2);
         assert_eq!(plan.force_admissions()[0].force, CallByNeedForce::MemoMiss);
         assert_eq!(plan.force_admissions()[1].force, CallByNeedForce::MemoHit);
-        assert!(!plan.evidence_refs().is_empty());
-        assert_eq!(plan.evidence_audit_status(), RhoEvidenceAuditStatus::NotAudited);
-        assert!(!plan.is_evidence_audited());
         assert_eq!(plan.program().artifact_kind(), crate::lower::RhoArtifactKind::NormalizedAst);
-    }
-
-    #[test]
-    fn audited_planned_cold_thunk_records_audit_status() {
-        let policy = strict_policy();
-        let plan = plan_call_by_need_thunk_with_evidence_audit(
-            CallByNeedInitialState::Cold,
-            CallByNeedBudget::new(2, 1),
-            passing_evidence(),
-            &policy,
-        )
-        .expect("cold thunk has enough budget and audited evidence");
-
-        assert_eq!(plan.evidence_audit_status(), RhoEvidenceAuditStatus::Audited);
-        assert!(plan.is_evidence_audited());
-        assert!(plan.evidence_refs().iter().any(|evidence_ref| evidence_ref
-            == "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v"));
     }
 
     #[test]
@@ -1113,12 +887,8 @@ mod tests {
             "TRACE",
         )
         .expect("parameterized spec is valid");
-        let plan = plan_call_by_need_thunk_with_spec(
-            spec.clone(),
-            CallByNeedBudget::new(2, 1),
-            passing_evidence(),
-        )
-        .expect("parameterized cold thunk has enough budget");
+        let plan = plan_call_by_need_thunk_with_spec(spec.clone(), CallByNeedBudget::new(2, 1))
+            .expect("parameterized cold thunk has enough budget");
 
         assert_eq!(plan.spec(), &spec);
         assert!(plan.program().text_annotation().contains("forty-two"));
@@ -1126,12 +896,9 @@ mod tests {
 
     #[test]
     fn planned_hot_thunk_does_not_require_heap_budget() {
-        let plan = plan_call_by_need_thunk(
-            CallByNeedInitialState::Hot,
-            CallByNeedBudget::new(2, 0),
-            passing_evidence(),
-        )
-        .expect("hot thunk forces are memo hits");
+        let plan =
+            plan_call_by_need_thunk(CallByNeedInitialState::Hot, CallByNeedBudget::new(2, 0))
+                .expect("hot thunk forces are memo hits");
 
         assert_eq!(plan.budget_after(), CallByNeedBudget::new(0, 0));
         assert_eq!(plan.force_admissions()[0].force, CallByNeedForce::MemoHit);
@@ -1140,85 +907,16 @@ mod tests {
 
     #[test]
     fn planned_cold_thunk_rejects_insufficient_heap_budget() {
-        let err = plan_call_by_need_thunk(
-            CallByNeedInitialState::Cold,
-            CallByNeedBudget::new(2, 0),
-            passing_evidence(),
-        )
-        .expect_err("cold thunk must allocate one memo cell");
+        let err =
+            plan_call_by_need_thunk(CallByNeedInitialState::Cold, CallByNeedBudget::new(2, 0))
+                .expect_err("cold thunk must allocate one memo cell");
 
         assert!(err.validation_errors.is_empty());
-        assert!(err.evidence_diagnostics.is_empty());
         assert_eq!(err.force_admissions.len(), 1);
         assert_eq!(
             err.force_admissions[0].admission.blocker,
             Some(CallByNeedBudgetBlocker::HeapBudgetExceeded)
         );
-    }
-
-    #[test]
-    fn planned_thunk_rejects_missing_evidence_refs() {
-        let err = plan_call_by_need_thunk(
-            CallByNeedInitialState::Hot,
-            CallByNeedBudget::new(2, 0),
-            CallByNeedPlanEvidence {
-                proof_evidence_refs: Vec::new(),
-                runtime_oracle_evidence_refs: vec![" ".into()],
-                budget_evidence_refs: Vec::new(),
-            },
-        )
-        .expect_err("planned need execution requires evidence references");
-
-        assert!(err.validation_errors.is_empty());
-        assert_eq!(
-            err.evidence_diagnostics.as_ref(),
-            [
-                CallByNeedPlanEvidenceDiagnostic::MissingEvidenceRefs {
-                    gate: CallByNeedPlanEvidenceGate::Proof,
-                },
-                CallByNeedPlanEvidenceDiagnostic::BlankEvidenceRef {
-                    gate: CallByNeedPlanEvidenceGate::RuntimeOracle,
-                },
-                CallByNeedPlanEvidenceDiagnostic::MissingEvidenceRefs {
-                    gate: CallByNeedPlanEvidenceGate::Budget,
-                },
-            ]
-        );
-        assert!(err.invalid_audited_evidence_refs.is_empty());
-    }
-
-    #[test]
-    fn audited_planned_thunk_rejects_missing_local_evidence_refs() {
-        let policy = strict_policy();
-        let err = plan_call_by_need_thunk_with_evidence_audit(
-            CallByNeedInitialState::Hot,
-            CallByNeedBudget::new(2, 0),
-            CallByNeedPlanEvidence {
-                proof_evidence_refs: vec![
-                    "formal/rocq/rho_bridge/theories/MissingNeedProof.v".into()
-                ],
-                runtime_oracle_evidence_refs: vec![
-                    "mettail-rho-runtime/tests/rho_call_by_need.rs".into()
-                ],
-                budget_evidence_refs: vec![
-                    "formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v".into()
-                ],
-            },
-            &policy,
-        )
-        .expect_err("audited need planning must reject missing local evidence artifacts");
-
-        assert!(err.validation_errors.is_empty());
-        assert!(err.evidence_diagnostics.is_empty());
-        assert_eq!(err.invalid_audited_evidence_refs.len(), 1);
-        match &err.invalid_audited_evidence_refs[0] {
-            RhoEvidenceRefAuditDiagnostic::MissingLocalPath { evidence_ref, resolved_path } => {
-                assert_eq!(evidence_ref, "formal/rocq/rho_bridge/theories/MissingNeedProof.v");
-                assert!(resolved_path
-                    .ends_with("mettail-rust/formal/rocq/rho_bridge/theories/MissingNeedProof.v"));
-            },
-            other => panic!("unexpected audit diagnostic: {other:?}"),
-        }
     }
 
     fn gstring(par: &Par) -> Option<&str> {

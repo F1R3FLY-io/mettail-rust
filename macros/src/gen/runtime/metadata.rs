@@ -126,7 +126,6 @@ fn generate_runtime_backend_defs() -> TokenStream {
         &[mettail_runtime::BackendCapabilityDef {
             backend: mettail_runtime::RuntimeBackend::Ascent,
             is_default: true,
-            evidence_refs: &["mettail-macros:generated-ascent-runner"],
         }]
     }
 }

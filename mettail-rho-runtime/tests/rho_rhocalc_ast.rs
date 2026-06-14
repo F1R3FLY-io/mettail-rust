@@ -11,7 +11,7 @@ use mettail_languages::rhocalc::{
     Bag, Int, List, Map, Name, Proc, RhoCalcTerm, RhoCalcTermInner, Str,
 };
 use mettail_rho_codegen::{
-    plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{
@@ -28,8 +28,6 @@ use models::rhoapi::EList;
 use models::rhoapi::Par;
 use models::rust::rholang::implicits::GPrivateBuilder;
 
-mod support;
-
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
@@ -44,25 +42,8 @@ const RHOCALC_DYNAMIC_PLAN_FRAGMENT: &str = r#"
     terms {}
 "#;
 
-fn passing_dynamic_evidence() -> RhoDefaultBackendEvidence {
-    RhoDefaultBackendEvidence {
-        proofs_passed: true,
-        proof_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string(),
-            "formal/rocq/rho_bridge/theories/RhoLanguageBackendWrapper.v".to_string(),
-        ],
-        oracle_parity_passed: true,
-        oracle_parity_evidence_refs: vec![
-            "mettail-rho-runtime/tests/rho_rhocalc_ast.rs".to_string()
-        ],
-        coverage_audit_passed: true,
-        coverage_audit_evidence_refs: vec![
-            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
-        ],
-        scheduler_fairness_passed: true,
-        scheduler_fairness_evidence_refs: vec![
-            "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
-        ],
+fn passing_dynamic_requirements() -> RhoDefaultBackendRequirements {
+    RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::AllRulesLowered,
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
@@ -71,13 +52,8 @@ fn passing_dynamic_evidence() -> RhoDefaultBackendEvidence {
 fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
     let def = syn::parse_str::<LanguageDef>(RHOCALC_DYNAMIC_PLAN_FRAGMENT)
         .expect("dynamic rhocalc runtime fragment must parse");
-    let audit_policy = support::strict_evidence_audit_policy();
-    let plan = plan_rho_default_backend_with_evidence_audit(
-        &def,
-        passing_dynamic_evidence(),
-        &audit_policy,
-    )
-    .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
+    let plan = plan_rho_default_backend(&def, passing_dynamic_requirements())
+        .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
     assert!(
         plan.lowering.lowered.is_empty(),
         "dynamic RhoCalc plan should not need static scalar contracts"
@@ -86,7 +62,7 @@ fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
         plan.lowering.rejected.is_empty(),
         "dynamic RhoCalc plan should not hide rejected static rules"
     );
-    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
+    PlannedRhoBackend::from_plan(plan)
 }
 
 fn quoted_name(value: &str) -> Name {
@@ -209,14 +185,6 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
 
     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
     assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-    assert!(
-        report
-            .evidence_refs()
-            .iter()
-            .any(|reference| reference == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
-        "Rho runtime report must retain flip-gate evidence"
-    );
-
     let out = report
         .observations_for_channel("OUT")
         .expect("Rho-backed RhoCalc report must expose OUT observations");
