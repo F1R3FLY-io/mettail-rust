@@ -16,9 +16,17 @@ The target state is:
 | WPDA parser/recognizer | retained source-to-typed-term frontend |
 | Rholang source strings as executable artifacts | direct `rhoapi::Par` AST artifacts |
 
-The runtime path is therefore:
+The full Rho-native runtime path is therefore:
 
 `typed MeTTaIL term -> Dovetail report -> RhoNet plan -> rhoapi::Par -> RhoRuntime -> RSpace observations -> RuntimeBackendReport`
+
+The direct Dovetail runtime-backend path stops at the checked report:
+
+`typed MeTTaIL term -> Dovetail report -> RuntimeDovetailRunReport -> RuntimeBackendOutput::Dovetail`
+
+Both paths are production-relevant. Dovetail replaces the production rewrite
+engine; Rho replaces the CESK runtime backend when a language has enough RhoNet
+coverage to execute the checked rewrite semantics natively on F1r3node.
 
 ## Runtime Scope Diagram
 
@@ -41,6 +49,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | Surface | Current evidence | Production completion condition |
 |---|---|---|
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
+| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend without fabricating Ascent-shaped graphs or accepting incomplete cycle-bounded reports as exhaustive |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
 | `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, `RhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
@@ -85,10 +94,12 @@ nominal ABI.
 ## Runtime Observation Payloads
 
 `RuntimeBackendReport` is the common user-facing envelope for Ascent,
-Dovetail, and Rho-backed execution. For Rho-backed execution the report is
-observation-shaped: it names a quoted RSpace channel and the ground values left
-resting there. The planned Rho backend reads closed Rho ground data into
-`RuntimeObservationValue`; it rejects arbitrary processes, open collection
+Dovetail, and Rho-backed execution. Its output is intentionally variant-shaped:
+Ascent returns a legacy rewrite graph, Dovetail returns a checked report
+projection, and Rho returns runtime observations. For Rho-backed execution the
+report is observation-shaped: it names a quoted RSpace channel and the ground
+values left resting there. The planned Rho backend reads closed Rho ground data
+into `RuntimeObservationValue`; it rejects arbitrary processes, open collection
 remainders, connective bodies, sends, receives, bundles, and operator
 expression bodies as non-ground observations.
 
@@ -229,6 +240,10 @@ When a user runs exec:
   ask the selected default backend for a RuntimeBackendReport
   if the report is Ascent-shaped:
     keep the historical rewrite-graph display and navigation behavior
+  if the report is Dovetail-report-shaped:
+    display backend, artifact, completeness, roots, terms, and edge counts
+    store the report as the current runtime result
+    do not fabricate Ascent rewrite facts
   if the report is observation-shaped:
     display backend, artifact, channel, and observed values
     store the report as the current runtime result
@@ -237,15 +252,16 @@ When a user runs exec:
 When a user runs step, apply, equations, rewrites, normal-forms, or queries:
   require an Ascent-shaped rewrite graph
   reject non-Ascent selected backends before executing step
-  reject observation-shaped reports with an explicit message
+  reject Dovetail-report-shaped and observation-shaped reports with an explicit message
 ```
 
-This preserves old graph-navigation ergonomics while allowing Rho-default
-languages to return typed RSpace observations. The REPL crate also exposes the
-bundled generated language registry behind its default `bundled-languages`
-feature. Normal CLI builds keep that feature enabled. Focused state tests may
-disable default features so report-state behavior can be checked without
-compiling every generated language.
+This preserves old graph-navigation ergonomics while allowing Dovetail-default
+languages to return checked report evidence and Rho-default languages to return
+typed RSpace observations. The REPL crate also exposes the bundled generated
+language registry behind its default `bundled-languages` feature. Normal CLI
+builds keep that feature enabled. Focused state tests may disable default
+features so report-state behavior can be checked without compiling every
+generated language.
 
 ## Simulation Runner Boundary
 
@@ -263,6 +279,11 @@ When SimulationRunner executes a term:
   if the report is Ascent-shaped:
     keep the existing rewrite-graph BFS normal-form trace
     preserve rule-coverage collection over Ascent rewrite edges
+  if the report is Dovetail-report-shaped:
+    record one terminal runtime step with backend and artifact identity
+    summarize completeness, roots, terms, and edges as TraceOutcome::RuntimeReport
+    write the report outcome through the JSONL trace format
+    do not fabricate an Ascent rewrite graph or normal-form claim
   if the report is observation-shaped:
     record one terminal runtime step with backend and artifact identity
     summarize observed channels and values as TraceOutcome::RuntimeObservations
@@ -272,11 +293,12 @@ When SimulationRunner executes a term:
     fail closed with an unsupported report-shape simulation failure
 ```
 
-Observation-shaped runtime outputs are terminal simulation outcomes. They are
-not normal-form graph evidence, and they intentionally bypass the Ascent-only
-normal-form BFS. This preserves the old simulation semantics for Ascent-default
-languages while allowing Rho-default languages to be simulated by their actual
-runtime observations.
+Report-shaped and observation-shaped runtime outputs are terminal simulation
+outcomes. They are not normal-form graph evidence, and they intentionally
+bypass the Ascent-only normal-form BFS. This preserves the old simulation
+semantics for Ascent-default languages while allowing Dovetail-default
+languages to expose checked report evidence and Rho-default languages to be
+simulated by their actual runtime observations.
 
 `mettail-simulation` remains substrate-neutral: its focused unit tests use a
 small mock language that returns a Rho-shaped observation report. Generated
@@ -303,7 +325,7 @@ The intended generated-test behavior is:
 When a generated operational test evaluates a parsed term:
   ask the selected default backend for a RuntimeBackendReport
   compare expected values through report-aware helpers
-  accept Ascent normal forms and Rho/runtime observations as backend outputs
+  accept Ascent normal forms, Dovetail report roots, and Rho/runtime observations as backend outputs
   use semantic outputs, not channel-summary diagnostics, for parseability checks
   keep graph-only assertions behind explicit Ascent-shaped graph checks
 ```
@@ -311,10 +333,10 @@ When a generated operational test evaluates a parsed term:
 This boundary lets generated expected-output, smoke, precedence,
 associativity, type-preservation, and algebraic-property tests continue to
 work while a language is Ascent-default, and then continue to test the same
-semantic obligation when the language is wrapped as Rho-default. The templates
-also generate property-based identity-law checks for both `f(e,a)=a` and
-`f(a,e)=a`; the side of the identity element is part of the detected property,
-not a hard-coded convention.
+semantic obligation when the language is wrapped as Dovetail-default or
+Rho-default. The templates also generate property-based identity-law checks for
+both `f(e,a)=a` and `f(a,e)=a`; the side of the identity element is part of the
+detected property, not a hard-coded convention.
 
 ## Diagram Tooling Policy
 

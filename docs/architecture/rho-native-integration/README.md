@@ -88,6 +88,16 @@ suite explains one handoff in that chain, and the correctness documents prove
 that a downstream artifact does not claim more than its upstream artifact
 established.
 
+When `RuntimeBackend::Dovetail` is selected directly, the chain stops earlier:
+
+`language! specification → generated semantic inventory → DovetailRunReport → RuntimeBackendOutput::Dovetail`
+
+That direct report-shaped output is installed by `mettail-dovetail-runtime`.
+It is useful for production rewrite execution, differential checks, REPL
+inspection, and simulation traces. The Rho-native chain starts from the same
+checked report but lowers it further to `rhoapi::Par` and observes RSpace after
+execution.
+
 ## Document Map
 
 | Document | Question answered |

@@ -24,6 +24,7 @@ Section RuntimeBackendDispatch.
 
   Inductive OutputShape : Type :=
   | AscentResultsShape
+  | DovetailReportShape
   | ObservationReportShape.
 
   Record BackendState : Type := {
@@ -51,7 +52,7 @@ Section RuntimeBackendDispatch.
       (backend : Backend) (shape : OutputShape) : bool :=
     match backend, shape with
     | Ascent, AscentResultsShape => true
-    | Dovetail, ObservationReportShape => true
+    | Dovetail, DovetailReportShape => true
     | RhoMachine, ObservationReportShape => true
     | _, _ => false
     end.
@@ -64,6 +65,7 @@ Section RuntimeBackendDispatch.
     can_run_default_backend_report state &&
     match default_output_shape state with
     | AscentResultsShape => true
+    | DovetailReportShape => false
     | ObservationReportShape => false
     end.
 
@@ -125,6 +127,42 @@ Section RuntimeBackendDispatch.
     can_run_default_backend
       {| ascent_installed := ascent;
          dovetail_installed := false;
+         rho_machine_installed := rho;
+         default_backend := Dovetail;
+         default_output_shape := DovetailReportShape |} = false.
+  Proof. reflexivity. Qed.
+
+  Theorem installed_dovetail_default_report_runs :
+    can_run_default_backend_report
+      {| ascent_installed := true;
+         dovetail_installed := true;
+         rho_machine_installed := false;
+         default_backend := Dovetail;
+         default_output_shape := DovetailReportShape |} = true.
+  Proof. reflexivity. Qed.
+
+  Theorem installed_dovetail_default_is_not_ascent_compat :
+    can_run_default_ascent_compat
+      {| ascent_installed := true;
+         dovetail_installed := true;
+         rho_machine_installed := false;
+         default_backend := Dovetail;
+         default_output_shape := DovetailReportShape |} = false.
+  Proof. reflexivity. Qed.
+
+  Theorem dovetail_default_with_ascent_shape_is_rejected : forall ascent rho,
+    can_run_default_backend_report
+      {| ascent_installed := ascent;
+         dovetail_installed := true;
+         rho_machine_installed := rho;
+         default_backend := Dovetail;
+         default_output_shape := AscentResultsShape |} = false.
+  Proof. reflexivity. Qed.
+
+  Theorem dovetail_default_with_observation_shape_is_rejected : forall ascent rho,
+    can_run_default_backend_report
+      {| ascent_installed := ascent;
+         dovetail_installed := true;
          rho_machine_installed := rho;
          default_backend := Dovetail;
          default_output_shape := ObservationReportShape |} = false.

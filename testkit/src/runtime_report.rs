@@ -1,6 +1,6 @@
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackendOutput, RuntimeBackendReport, RuntimeChannelObservation,
-    RuntimeObservationValue, Term,
+    RuntimeDovetailRunReport, RuntimeObservationValue, Term,
 };
 
 pub fn run_default_backend_report(
@@ -44,6 +44,13 @@ pub fn report_contains_expected(report: &RuntimeBackendReport, expected: &str) -
             .normal_forms()
             .iter()
             .any(|normal_form| normal_form.display == expected),
+        RuntimeBackendOutput::Dovetail(report) => {
+            dovetail_report_summary(report) == expected
+                || report
+                    .terms
+                    .iter()
+                    .any(|term| term.op_display == expected || term.key == expected.as_bytes())
+        },
         RuntimeBackendOutput::Observations(observations) => {
             observation_summary(observations) == expected
                 || observations.iter().any(|observation| {
@@ -64,6 +71,18 @@ pub fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<String> {
             .iter()
             .map(|normal_form| normal_form.display.clone())
             .collect(),
+        RuntimeBackendOutput::Dovetail(report) => {
+            let mut outputs = Vec::new();
+            outputs.push(dovetail_report_summary(report));
+            outputs.extend(
+                report
+                    .terms
+                    .iter()
+                    .filter(|term| term.is_root)
+                    .map(|term| term.op_display.clone()),
+            );
+            outputs
+        },
         RuntimeBackendOutput::Observations(observations) => {
             let mut outputs = Vec::new();
             let summary = observation_summary(observations);
@@ -87,6 +106,12 @@ pub fn report_semantic_outputs(report: &RuntimeBackendReport) -> Vec<String> {
             .normal_forms()
             .iter()
             .map(|normal_form| normal_form.display.clone())
+            .collect(),
+        RuntimeBackendOutput::Dovetail(report) => report
+            .terms
+            .iter()
+            .filter(|term| term.is_root)
+            .map(|term| term.op_display.clone())
             .collect(),
         RuntimeBackendOutput::Observations(observations) => {
             let mut outputs = Vec::new();
@@ -120,6 +145,13 @@ pub fn report_signature(report: &RuntimeBackendReport) -> Vec<String> {
             signature.push(format!("terms={}", results.all_terms.len()));
             signature.push(format!("rewrites={}", results.rewrites.len()));
         },
+        RuntimeBackendOutput::Dovetail(report) => {
+            signature.push(format!("completeness={}", report.completeness));
+            signature.push(format!("roots={}", report.roots.len()));
+            signature.push(format!("terms={}", report.terms.len()));
+            signature.push(format!("edges={}", report.derivation_edges.len()));
+            signature.push(format!("summary={}", dovetail_report_summary(report)));
+        },
         RuntimeBackendOutput::Observations(observations) => {
             signature.push(format!("observations={}", observation_summary(observations)));
         },
@@ -129,6 +161,23 @@ pub fn report_signature(report: &RuntimeBackendReport) -> Vec<String> {
     }
 
     signature
+}
+
+fn dovetail_report_summary(report: &RuntimeDovetailRunReport) -> String {
+    let roots = report
+        .root_ordinals
+        .iter()
+        .filter_map(|ordinal| report.terms.get(*ordinal))
+        .map(|term| format!("{}#{}", term.op_display, hex_bytes(&term.key)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "DovetailRunReport(completeness={}, roots=[{}], terms={}, edges={})",
+        report.completeness,
+        roots,
+        report.terms.len(),
+        report.derivation_edges.len()
+    )
 }
 
 fn observation_summary(observations: &[RuntimeChannelObservation]) -> String {
@@ -167,5 +216,79 @@ fn raw_observation_text(value: &RuntimeObservationValue) -> Option<&str> {
             Some(value.as_str())
         },
         _ => None,
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use mettail_runtime::{
+        RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailRunReport,
+        RuntimeDovetailTermRecord,
+    };
+
+    use super::*;
+
+    fn sample_dovetail_report() -> RuntimeBackendReport {
+        RuntimeBackendReport::dovetail(
+            RuntimeDovetailRunReport {
+                roots: vec![b"root".to_vec()],
+                root_ordinals: vec![0],
+                terms: vec![RuntimeDovetailTermRecord {
+                    ordinal: 0,
+                    class_id: 0,
+                    key: b"root".to_vec(),
+                    op_display: "normal-form".to_string(),
+                    weight_display: "1".to_string(),
+                    is_root: true,
+                }],
+                derivation_edges: Vec::new(),
+                completeness: RuntimeDovetailCompleteness::Complete,
+            },
+            vec!["testkit:dovetail-report".to_string()],
+        )
+    }
+
+    #[test]
+    fn dovetail_reports_have_stable_testkit_outputs() {
+        let report = sample_dovetail_report();
+
+        assert!(report_contains_expected(&report, "normal-form"));
+        assert!(report_contains_expected(
+            &report,
+            "DovetailRunReport(completeness=Complete, roots=[normal-form#726f6f74], terms=1, edges=0)"
+        ));
+        assert_eq!(report_semantic_outputs(&report), vec!["normal-form".to_string()]);
+        assert_eq!(
+            report_observed_outputs(&report),
+            vec![
+                "DovetailRunReport(completeness=Complete, roots=[normal-form#726f6f74], terms=1, edges=0)"
+                    .to_string(),
+                "normal-form".to_string(),
+            ]
+        );
+        assert_eq!(
+            report_signature(&report),
+            vec![
+                "backend=Dovetail".to_string(),
+                "artifact=DovetailRunReport".to_string(),
+                "output=DovetailRunReport".to_string(),
+                "completeness=Complete".to_string(),
+                "roots=1".to_string(),
+                "terms=1".to_string(),
+                "edges=0".to_string(),
+                "summary=DovetailRunReport(completeness=Complete, roots=[normal-form#726f6f74], terms=1, edges=0)"
+                    .to_string(),
+            ]
+        );
     }
 }

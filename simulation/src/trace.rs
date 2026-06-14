@@ -60,6 +60,13 @@ pub enum TraceOutcome {
         values: usize,
         summary: String,
     },
+    /// The selected runtime backend returned a checked backend report that is
+    /// not an Ascent rewrite graph and not substrate observations.
+    RuntimeReport {
+        backend: String,
+        artifact: String,
+        summary: String,
+    },
     /// The simulation hit its step limit without reaching a normal form.
     StepLimitReached { final_term: String },
     /// An invariant was violated during execution.
@@ -134,6 +141,15 @@ fn outcome_to_json_fields(outcome: &TraceOutcome) -> String {
                 json_escape(artifact),
                 channels,
                 values,
+                json_escape(summary),
+            )
+        },
+        TraceOutcome::RuntimeReport { backend, artifact, summary } => {
+            format!(
+                "\"kind\":\"RuntimeReport\",\"backend\":\"{}\",\"artifact\":\"{}\",\
+                 \"summary\":\"{}\"",
+                json_escape(backend),
+                json_escape(artifact),
                 json_escape(summary),
             )
         },
@@ -473,6 +489,15 @@ fn parse_outcome_from_line(line: &str) -> Result<TraceOutcome, String> {
                 summary,
             })
         },
+        "RuntimeReport" => {
+            let backend = extract_json_string(line, "backend")
+                .ok_or_else(|| "Missing 'backend' in RuntimeReport outcome".to_string())?;
+            let artifact = extract_json_string(line, "artifact")
+                .ok_or_else(|| "Missing 'artifact' in RuntimeReport outcome".to_string())?;
+            let summary = extract_json_string(line, "summary")
+                .ok_or_else(|| "Missing 'summary' in RuntimeReport outcome".to_string())?;
+            Ok(TraceOutcome::RuntimeReport { backend, artifact, summary })
+        },
         "StepLimitReached" => {
             let final_term = extract_json_string(line, "final_term")
                 .ok_or_else(|| "Missing 'final_term' in StepLimitReached outcome".to_string())?;
@@ -679,6 +704,14 @@ mod tests {
         };
         assert!(matches!(ro, TraceOutcome::RuntimeObservations { .. }));
 
+        let rr = TraceOutcome::RuntimeReport {
+            backend: "Dovetail".to_string(),
+            artifact: "DovetailRunReport".to_string(),
+            summary: "DovetailRunReport(completeness=Complete, roots=[pair], terms=3, edges=2)"
+                .to_string(),
+        };
+        assert!(matches!(rr, TraceOutcome::RuntimeReport { .. }));
+
         let sl = TraceOutcome::StepLimitReached { final_term: "stuck".to_string() };
         assert!(matches!(sl, TraceOutcome::StepLimitReached { .. }));
 
@@ -809,6 +842,50 @@ mod tests {
                 assert_eq!(summary, "OUT=[5]");
             },
             other => panic!("Expected RuntimeObservations, got: {:?}", other),
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_runtime_report_serialization_roundtrip() {
+        let trace = ExecutionTrace {
+            seed: "test-seed".to_string(),
+            language: "DovetailMock".to_string(),
+            steps: vec![TraceEntry {
+                step_index: 0,
+                term_display:
+                    "DovetailRunReport(completeness=Complete, roots=[x], terms=1, edges=0)"
+                        .to_string(),
+                operation: "runtime:Dovetail:DovetailRunReport".to_string(),
+                metrics: None,
+            }],
+            outcome: TraceOutcome::RuntimeReport {
+                backend: "Dovetail".to_string(),
+                artifact: "DovetailRunReport".to_string(),
+                summary: "DovetailRunReport(completeness=Complete, roots=[x], terms=1, edges=0)"
+                    .to_string(),
+            },
+            morphology: None,
+        };
+
+        let dir = std::env::temp_dir().join("mettail_trace_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("runtime_report.jsonl");
+
+        write_trace_jsonl(&trace, &path).expect("write should succeed");
+        let recovered = read_trace_jsonl(&path).expect("read should succeed");
+
+        match recovered.outcome {
+            TraceOutcome::RuntimeReport { backend, artifact, summary } => {
+                assert_eq!(backend, "Dovetail");
+                assert_eq!(artifact, "DovetailRunReport");
+                assert_eq!(
+                    summary,
+                    "DovetailRunReport(completeness=Complete, roots=[x], terms=1, edges=0)"
+                );
+            },
+            other => panic!("Expected RuntimeReport, got: {:?}", other),
         }
 
         let _ = std::fs::remove_file(&path);

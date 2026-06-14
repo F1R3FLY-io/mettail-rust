@@ -5,7 +5,10 @@ use crate::state::ReplState;
 use anyhow::Result;
 use colored::Colorize;
 use mettail_query::run_query as query_run_query;
-use mettail_runtime::{AscentResults, Language, RuntimeBackend, RuntimeBackendOutput, TermInfo};
+use mettail_runtime::{
+    AscentResults, Language, RuntimeBackend, RuntimeBackendOutput, RuntimeDovetailRunReport,
+    TermInfo,
+};
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
@@ -72,6 +75,23 @@ impl mettail_runtime::Term for DisplayTerm {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+fn dovetail_report_display(report: &RuntimeDovetailRunReport) -> String {
+    let roots = report
+        .root_ordinals
+        .iter()
+        .filter_map(|ordinal| report.terms.get(*ordinal))
+        .map(|term| term.op_display.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "DovetailRunReport(completeness={}, roots=[{}], terms={}, edges={})",
+        report.completeness,
+        roots,
+        report.terms.len(),
+        report.derivation_edges.len()
+    )
 }
 
 /// Replace whole-word occurrences of env-bound identifiers in the input with their display form.
@@ -1326,6 +1346,44 @@ impl Repl {
                         .join(", ");
                     format!("RuntimeObservations({channels})")
                 };
+                let result_id = {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    report.backend.hash(&mut hasher);
+                    report.artifact.hash(&mut hasher);
+                    display.hash(&mut hasher);
+                    hasher.finish()
+                };
+
+                println!("{}", "Current term (result):".bold());
+                println!("{}", format_term_pretty(&display).cyan());
+                println!();
+
+                let result_term: Box<dyn mettail_runtime::Term> =
+                    Box::new(DisplayTerm { display, id: result_id });
+                self.state
+                    .set_term_with_report(result_term, report.clone(), result_id)?;
+            },
+            RuntimeBackendOutput::Dovetail(dovetail_report) => {
+                if step_mode {
+                    anyhow::bail!(
+                        "step mode requires an Ascent-shaped rewrite graph; {} returned a Dovetail report",
+                        backend
+                    );
+                }
+
+                println!();
+                println!("Computed:");
+                println!("  - backend: {}", report.backend);
+                println!("  - artifact: {}", report.artifact);
+                println!("  - completeness: {}", dovetail_report.completeness);
+                println!("  - {} root(s)", dovetail_report.roots.len());
+                println!("  - {} term record(s)", dovetail_report.terms.len());
+                println!("  - {} derivation edge(s)", dovetail_report.derivation_edges.len());
+                println!();
+
+                let display = dovetail_report_display(dovetail_report);
                 let result_id = {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};

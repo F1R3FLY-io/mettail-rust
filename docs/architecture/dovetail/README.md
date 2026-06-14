@@ -129,6 +129,16 @@ Downstream consumers then choose their own artifact: the Rho backend lowers a
 complete report to normalized `rhoapi::Par`, an oracle compares exact keys with
 a reference backend, and tests inspect the same roots and derivation edges.
 
+There is also a runtime-facing adapter boundary:
+
+`DovetailRunReport → RuntimeDovetailRunReport → RuntimeBackendOutput::Dovetail`
+
+The adapter crate `mettail-dovetail-runtime` owns that projection so the
+substrate-neutral `dovetail` crate does not depend on `mettail-runtime`. This
+is the direct Dovetail runtime-backend path. It is distinct from the Rho path,
+where a complete Dovetail report is lowered further to `rhoapi::Par` and the
+eventual generic runtime output is observation-shaped.
+
 This separation is the main cohesiveness rule for the documentation: when a
 page describes a term before the report, it is talking about MeTTaIL inventory
 or Dovetail internals; when it describes `rhoapi::Par` or RSpace observations,
@@ -142,6 +152,7 @@ it is talking about a downstream consumer of a complete report.
 | WPDA parser | Upstream producer of typed terms; not replaced by Dovetail. |
 | Ascent | Legacy production rewrite backend and reference/oracle path during rollout. |
 | CESK runtime backend | Runtime backend path being replaced by Dovetail plus Rho-native execution. |
+| `mettail-dovetail-runtime` | One-way adapter that installs Dovetail as a selected runtime backend and projects complete checked reports into `RuntimeBackendOutput::Dovetail`. |
 | Rho backend | Downstream consumer that lowers covered Dovetail rewrite networks to `rhoapi::Par`. |
 | F1r3node/RSpace | Runtime substrate for Rho execution; Dovetail does not depend on it. |
 | `rigail` | Algebra crate providing semirings, weights, and Newton-SCC solving. |

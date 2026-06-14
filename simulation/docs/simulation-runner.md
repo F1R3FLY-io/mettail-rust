@@ -10,7 +10,7 @@ Located in `simulation/src/runner.rs`.
 
 The runner provides two levels of API:
 
-1. **Single-term simulation**: `run_to_normal_form(input: &str)` parses a term, runs the language's selected default runtime backend through `RuntimeBackendReport`, checks invariants at every observable step, and returns a complete `ExecutionTrace`. Ascent-shaped reports are walked as rewrite graphs to a normal form. Observation-shaped reports become terminal runtime-observation outcomes instead of fabricated Ascent graphs.
+1. **Single-term simulation**: `run_to_normal_form(input: &str)` parses a term, runs the language's selected default runtime backend through `RuntimeBackendReport`, checks invariants at every observable step, and returns a complete `ExecutionTrace`. Ascent-shaped reports are walked as rewrite graphs to a normal form. Dovetail report-shaped outputs become terminal runtime-report outcomes, and observation-shaped Rho outputs become terminal runtime-observation outcomes instead of fabricated Ascent graphs.
 
 2. **Campaign mode**: `run_campaign(strategy)` generates many terms, runs each through the single-term pipeline, collects ALL failures (does not stop at the first), attempts shrinking for each failure, and returns aggregate `CampaignResults`.
 
@@ -148,11 +148,11 @@ engine computes all possible rewrites to saturation, producing a graph that may
 contain multiple paths to the same normal form. BFS ensures the trace records
 the most direct path.
 
-For observation-shaped reports, there is no Ascent rewrite graph to walk. The
-simulation records the backend, artifact, channel count, observed values, and
-terminal observation summary. A normal-form invariant requested against an
-observation-shaped report fails explicitly because runtime observations are not
-normal-form graph evidence.
+For Dovetail report-shaped and observation-shaped reports, there is no Ascent
+rewrite graph to walk. The simulation records the backend, artifact, report or
+observation summary, and terminal runtime outcome. A normal-form invariant
+requested against either shape fails explicitly because checked reports and
+runtime observations are not normal-form graph evidence.
 
 ### Trampoline-Style Rewriting
 

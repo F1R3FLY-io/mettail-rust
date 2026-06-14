@@ -100,6 +100,7 @@ information by returning a plain term, vector, or Boolean.
 | saturation | `bool` or mutated e-graph only | `SatReport` | `Converged`, `NodeLimit`, or `IterationLimit`, plus statistics |
 | extraction | `Option<Derivation>` or `Vec<Derivation>` | `Extraction<T>` | extracted value kept together with `Complete` or `BoundedByCycleCut` |
 | runtime handoff | displayed normal forms | `DovetailRunReport` | exact keys, root order, term records, derivation edges, and completeness |
+| direct runtime backend | `AscentResults` compatibility graph | `RuntimeBackendOutput::Dovetail` | the projected Dovetail report remains report-shaped and cannot be mistaken for an Ascent graph |
 
 The pipeline can be read as:
 
@@ -115,6 +116,18 @@ Only the last arrow is backend-specific. The first three arrows are Dovetail's
 own semantic boundary. That is why the term belongs in the Dovetail
 documentation, not only in the Rho-native integration documentation.
 
+For direct Dovetail runtime execution, the backend-specific arrow is:
+
+`DovetailRunReport → RuntimeBackendReport { backend = Dovetail, output = Dovetail(...) }`
+
+For Rho-native execution, the backend-specific arrow is:
+
+`DovetailRunReport → rhoapi::Par → RhoRuntime → RuntimeBackendReport { backend = RhoMachine, output = Observations(...) }`
+
+Both paths start from the same checked report. They differ in what happens
+after the report boundary: the direct Dovetail backend exposes the report, while
+the Rho backend executes an AST artifact derived from a complete report.
+
 The important negative rule is:
 
 `DovetailRunReport ≠ RuntimeBackendReport ≠ RhoObservationReport`
@@ -125,6 +138,19 @@ by a selected runtime backend. `RhoObservationReport` is what the Rho runtime
 observes after executing a planned Rho artifact. Runtime tests may compare
 values through the generic runtime envelope, but Dovetail's own correctness
 claim is carried by `SatReport`, `Extraction<T>`, and `DovetailRunReport`.
+
+The direct Dovetail runtime backend uses an adapter-owned projection:
+
+`DovetailRunReport<L,W> → RuntimeDovetailRunReport → RuntimeBackendOutput::Dovetail`
+
+`RuntimeDovetailRunReport` copies exact key bytes, root ordinals, term records,
+ordered derivation edges, and completeness into `mettail-runtime` types. It
+stores operator and weight displays only as reader-facing fields; semantic
+identity remains the exact key bytes. This projection lives in
+`mettail-dovetail-runtime`, not in `dovetail`, so the dependency direction
+stays one-way. A selected `RuntimeBackend::Dovetail` therefore returns a
+Dovetail-shaped runtime backend report, not an `AscentResults` graph and not
+Rho observations.
 
 ## Report Family
 
@@ -151,6 +177,7 @@ No single report is allowed to smuggle that stronger claim on its own.
 | `SatReport` | The saturation terminal-status artifact: `Converged`, `NodeLimit`, or `IterationLimit`, plus saturation statistics. |
 | `Extraction<T>` | The checked extraction envelope: extracted value plus terminal completeness. |
 | `DovetailRunReport` | The runtime-facing artifact produced by `report_from_extraction`. |
+| `RuntimeDovetailRunReport` | The `mettail-runtime` projection of a Dovetail report, used when `RuntimeBackend::Dovetail` is selected directly. |
 | root | A top-level derivation selected by the extractor for the requested e-class. |
 | term record | A unique derivation node, recorded once under exact `ContentKey` identity. |
 | derivation edge | A parent-to-child dependency edge inside a derivation tree. |
@@ -163,6 +190,8 @@ The core distinction is:
 `DovetailRunReport = checked rewrite/extraction artifact`
 
 `RuntimeBackendReport = generic Language-level backend return envelope`
+
+`RuntimeBackendOutput::Dovetail = runtime-envelope output for direct Dovetail execution`
 
 `RhoObservationReport = Rho-runtime observation artifact`
 
@@ -715,6 +744,7 @@ The same report can feed different consumers without changing Dovetail:
 
 | Consumer | What it reads from the report | What it may produce later |
 |---|---|---|
+| Direct Dovetail runtime adapter | exact keys, term table, ordered derivation edges, completeness | `RuntimeBackendOutput::Dovetail(RuntimeDovetailRunReport)` |
 | Rho backend | exact roots, term table, ordered derivation edges, completeness | normalized `rhoapi::Par`, and later a Rho runtime observation |
 | Ascent oracle | exact roots and derivation identity | a differential comparison against the legacy relation result |
 | testkit | roots, output records, and completeness | assertions over observed values or graph-shaped evidence |
@@ -744,6 +774,14 @@ The Rho handoff proof then builds on this boundary: complete reports may
 produce Rho-visible observations of their root keys, while
 `BoundedByCycleCut` reports are rejected before observations are emitted.
 
+The runtime adapter proof
+[`DovetailLanguageBackendWrapper.v`](../../../formal/rocq/rho_bridge/theories/DovetailLanguageBackendWrapper.v)
+models the direct runtime backend wrapper. It proves that a wrapper-installed
+Dovetail default is report-shaped, not Ascent-compatible, delegates non-Dovetail
+backend support to the inner generated language, requires an available complete
+report, rejects `BoundedByCycleCut`, and rejects Ascent-shaped seeded facts on
+the Dovetail path.
+
 ## Consumer Obligations
 
 Every report consumer must obey these rules:
@@ -769,6 +807,7 @@ report means.
 | Comparing display strings | conflates presentation with exact semantic identity |
 | Treating ordinals as keys | ordinals are local table positions only |
 | Collapsing reports into `AscentResults` | hides non-Ascent runtime observations and boundedness |
+| Treating `RuntimeBackendOutput::Dovetail` as Rho execution | confuses a checked rewrite report with RSpace observations produced after Rho runtime execution |
 
 The report boundary exists to make these mistakes difficult. It is the point
 where Dovetail's internal proof obligations become stable engineering data for

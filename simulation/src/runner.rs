@@ -20,7 +20,7 @@ use crate::results::{CampaignResults, RuleCoverage, SimulationFailure};
 use crate::step::SimOperation;
 use crate::trace::{ExecutionTrace, TraceEntry, TraceOutcome};
 
-use mettail_runtime::{Language, RuntimeBackendOutput};
+use mettail_runtime::{Language, RuntimeBackendOutput, RuntimeDovetailRunReport};
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
 use std::io::{BufRead, Write};
@@ -214,6 +214,23 @@ fn hex_digit(b: u8) -> Option<u8> {
     }
 }
 
+fn dovetail_report_summary(report: &RuntimeDovetailRunReport) -> String {
+    let roots = report
+        .root_ordinals
+        .iter()
+        .filter_map(|ordinal| report.terms.get(*ordinal))
+        .map(|term| term.op_display.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "DovetailRunReport(completeness={}, roots=[{}], terms={}, edges={})",
+        report.completeness,
+        roots,
+        report.terms.len(),
+        report.derivation_edges.len()
+    )
+}
+
 /// Extract a human-readable message from a panic payload.
 fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -374,6 +391,72 @@ impl<'a> SimulationRunner<'a> {
                 {
                     let message = format!(
                         "Normal form not reached: {} backend returned runtime observations, not an Ascent-shaped rewrite graph",
+                        report.backend
+                    );
+                    let trace = ExecutionTrace {
+                        seed: seed_str.clone(),
+                        language: language_name,
+                        steps,
+                        outcome: TraceOutcome::InvariantViolation {
+                            step: step_index,
+                            invariant: "NormalFormReachable".to_string(),
+                            message: message.clone(),
+                        },
+                        morphology,
+                    };
+                    return Err(SimulationFailure {
+                        seed: seed_str,
+                        input: input.to_string(),
+                        trace,
+                        error: message,
+                    });
+                }
+
+                let trace = ExecutionTrace {
+                    seed: seed_str,
+                    language: language_name,
+                    steps,
+                    outcome,
+                    morphology,
+                };
+
+                if let TraceOutputFormat::Jsonl { ref path } = self.config.trace_output {
+                    if let Err(e) = crate::trace::write_trace_jsonl(&trace, path) {
+                        eprintln!("Warning: failed to write JSONL trace: {}", e);
+                    }
+                }
+
+                return Ok(trace);
+            },
+            RuntimeBackendOutput::Dovetail(dovetail_report) => {
+                let summary = dovetail_report_summary(&dovetail_report);
+                let operation = format!("runtime:{}:{}", report.backend, report.artifact);
+                let metrics = TermMetrics::from_display(&summary);
+                if let Some(ref mut tracker) = morphology_tracker {
+                    tracker.record(metrics.clone());
+                }
+                steps.push(TraceEntry {
+                    step_index,
+                    term_display: summary.clone(),
+                    operation,
+                    metrics: Some(metrics),
+                });
+
+                let outcome = TraceOutcome::RuntimeReport {
+                    backend: report.backend.to_string(),
+                    artifact: report.artifact.to_string(),
+                    summary,
+                };
+                let morphology = morphology_tracker.as_ref().map(|t| t.summary());
+
+                if self
+                    .config
+                    .invariants
+                    .iter()
+                    .any(|invariant| invariant.name() == "NormalFormReachable")
+                {
+                    let message = format!(
+                        "Normal form not reached: {} backend returned a Dovetail report, not an Ascent-shaped rewrite graph",
                         report.backend
                     );
                     let trace = ExecutionTrace {
@@ -1094,6 +1177,7 @@ mod tests {
     use mettail_runtime::{
         AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackend,
         RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
+        RuntimeDovetailCompleteness, RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
         RuntimeObservationValue, Term, TermType, VarTypeInfo,
     };
     use std::any::Any;
@@ -1136,6 +1220,12 @@ mod tests {
         evidence_refs: &["simulation-test:runtime-observations"],
     }];
 
+    static DOVETAIL_REPORT_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
+        backend: RuntimeBackend::Dovetail,
+        is_default: true,
+        evidence_refs: &["simulation-test:dovetail-report"],
+    }];
+
     impl LanguageMetadata for RuntimeObservationMetadata {
         fn name(&self) -> &'static str {
             "RuntimeObservationMock"
@@ -1164,7 +1254,56 @@ mod tests {
 
     static RUNTIME_OBSERVATION_METADATA: RuntimeObservationMetadata = RuntimeObservationMetadata;
 
+    struct DovetailReportMetadata;
+
+    impl LanguageMetadata for DovetailReportMetadata {
+        fn name(&self) -> &'static str {
+            "DovetailReportMock"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            DOVETAIL_REPORT_BACKENDS
+        }
+    }
+
+    static DOVETAIL_REPORT_METADATA: DovetailReportMetadata = DovetailReportMetadata;
+
     struct RuntimeObservationLanguage;
+
+    struct DovetailReportLanguage;
+
+    fn complete_dovetail_runtime_report() -> RuntimeDovetailRunReport {
+        RuntimeDovetailRunReport {
+            roots: vec![b"root".to_vec()],
+            root_ordinals: vec![0],
+            terms: vec![RuntimeDovetailTermRecord {
+                ordinal: 0,
+                class_id: 0,
+                key: b"root".to_vec(),
+                op_display: "normal-form".to_string(),
+                weight_display: "1".to_string(),
+                is_root: true,
+            }],
+            derivation_edges: Vec::new(),
+            completeness: RuntimeDovetailCompleteness::Complete,
+        }
+    }
 
     impl Language for RuntimeObservationLanguage {
         fn name(&self) -> &'static str {
@@ -1201,6 +1340,95 @@ mod tests {
                         vec![RuntimeObservationValue::Int(5)],
                     )],
                     vec!["simulation-test:runtime-observations".to_string()],
+                )),
+                RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
+                other => Err(format!("{other} is not installed")),
+            }
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
+    impl Language for DovetailReportLanguage {
+        fn name(&self) -> &'static str {
+            "DovetailReportMock"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &DOVETAIL_REPORT_METADATA
+        }
+
+        fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(RuntimeObservationTerm(input.to_string())))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            Ok(AscentResults::empty())
+        }
+
+        fn run_backend_report(
+            &self,
+            backend: RuntimeBackend,
+            _term: &dyn Term,
+        ) -> Result<RuntimeBackendReport, String> {
+            match backend {
+                RuntimeBackend::Dovetail => Ok(RuntimeBackendReport::dovetail(
+                    complete_dovetail_runtime_report(),
+                    vec!["simulation-test:dovetail-report".to_string()],
                 )),
                 RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{other} is not installed")),
@@ -1341,6 +1569,34 @@ mod tests {
                 assert!(message.contains("not an Ascent-shaped rewrite graph"));
             },
             other => panic!("expected NormalFormReachable violation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dovetail_backend_returns_runtime_report_trace() {
+        let language = DovetailReportLanguage;
+        let runner = SimulationRunner::new(&language, SimulationConfig::default());
+
+        let trace = runner
+            .run_to_normal_form("dovetail-call")
+            .expect("Dovetail report should produce a trace");
+
+        assert_eq!(trace.steps.len(), 2);
+        assert_eq!(trace.steps[1].operation, "runtime:Dovetail:DovetailRunReport");
+        assert_eq!(
+            trace.steps[1].term_display,
+            "DovetailRunReport(completeness=Complete, roots=[normal-form], terms=1, edges=0)"
+        );
+        match trace.outcome {
+            TraceOutcome::RuntimeReport { backend, artifact, summary } => {
+                assert_eq!(backend, "Dovetail");
+                assert_eq!(artifact, "DovetailRunReport");
+                assert_eq!(
+                    summary,
+                    "DovetailRunReport(completeness=Complete, roots=[normal-form], terms=1, edges=0)"
+                );
+            },
+            other => panic!("expected RuntimeReport, got {other:?}"),
         }
     }
 

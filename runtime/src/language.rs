@@ -251,12 +251,90 @@ impl RuntimeChannelObservation {
     }
 }
 
+/// Completeness status of a Dovetail runtime report projected into the generic
+/// runtime layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RuntimeDovetailCompleteness {
+    Complete,
+    BoundedByCycleCut,
+}
+
+impl fmt::Display for RuntimeDovetailCompleteness {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeDovetailCompleteness::Complete => write!(f, "Complete"),
+            RuntimeDovetailCompleteness::BoundedByCycleCut => write!(f, "BoundedByCycleCut"),
+        }
+    }
+}
+
+/// One exact-keyed derivation node from a Dovetail report, projected into the
+/// runtime-neutral report envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDovetailTermRecord {
+    pub ordinal: usize,
+    pub class_id: u32,
+    pub key: ExactTermKey,
+    pub op_display: String,
+    pub weight_display: String,
+    pub is_root: bool,
+}
+
+/// Parent-to-child derivation edge from a Dovetail report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDovetailDerivationEdge {
+    pub ordinal: usize,
+    pub parent_key: ExactTermKey,
+    pub child_key: ExactTermKey,
+    pub child_index: usize,
+}
+
+/// Runtime-neutral projection of `dovetail::report::DovetailRunReport`.
+///
+/// The generic runtime crate cannot depend on Dovetail without reversing the
+/// intended dependency direction, so this type carries the report data in
+/// runtime-owned terms: exact keys, deterministic ordinals, display strings,
+/// ordered derivation edges, and explicit completeness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDovetailRunReport {
+    pub roots: Vec<ExactTermKey>,
+    pub root_ordinals: Vec<usize>,
+    pub terms: Vec<RuntimeDovetailTermRecord>,
+    pub derivation_edges: Vec<RuntimeDovetailDerivationEdge>,
+    pub completeness: RuntimeDovetailCompleteness,
+}
+
+impl RuntimeDovetailRunReport {
+    pub fn is_complete(&self) -> bool {
+        self.completeness == RuntimeDovetailCompleteness::Complete
+    }
+
+    pub fn assert_complete(&self) -> Result<(), RuntimeDovetailCompleteness> {
+        if self.is_complete() {
+            Ok(())
+        } else {
+            Err(self.completeness)
+        }
+    }
+
+    pub fn term_by_key(&self, key: &[u8]) -> Option<&RuntimeDovetailTermRecord> {
+        self.terms.iter().find(|term| term.key.as_slice() == key)
+    }
+
+    pub fn root_count(&self) -> usize {
+        self.roots.len()
+    }
+}
+
 /// Runtime-neutral output of an installed backend.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum RuntimeBackendOutput {
     /// Legacy/reference rewrite graph materialized as Ascent facts.
     Ascent(AscentResults),
+    /// Checked Dovetail extraction report.
+    Dovetail(RuntimeDovetailRunReport),
     /// Resting observations from a substrate such as RSpace.
     Observations(Vec<RuntimeChannelObservation>),
 }
@@ -265,6 +343,7 @@ impl RuntimeBackendOutput {
     pub fn kind_name(&self) -> &'static str {
         match self {
             RuntimeBackendOutput::Ascent(_) => "AscentResults",
+            RuntimeBackendOutput::Dovetail(_) => "DovetailRunReport",
             RuntimeBackendOutput::Observations(_) => "runtime observations",
         }
     }
@@ -303,9 +382,19 @@ impl RuntimeBackendReport {
         }
     }
 
+    pub fn dovetail(report: RuntimeDovetailRunReport, evidence_refs: Vec<String>) -> Self {
+        Self {
+            backend: RuntimeBackend::Dovetail,
+            artifact: RuntimeBackendArtifact::DovetailRunReport,
+            output: RuntimeBackendOutput::Dovetail(report),
+            evidence_refs,
+        }
+    }
+
     pub fn as_ascent_results(&self) -> Option<&AscentResults> {
         match &self.output {
             RuntimeBackendOutput::Ascent(results) => Some(results),
+            RuntimeBackendOutput::Dovetail(_) => None,
             RuntimeBackendOutput::Observations(_) => None,
         }
     }
@@ -313,6 +402,7 @@ impl RuntimeBackendReport {
     pub fn into_ascent_results(self) -> Result<AscentResults, Self> {
         match self.output {
             RuntimeBackendOutput::Ascent(results) => Ok(results),
+            RuntimeBackendOutput::Dovetail(_) => Err(self),
             RuntimeBackendOutput::Observations(_) => Err(self),
         }
     }
@@ -320,6 +410,7 @@ impl RuntimeBackendReport {
     pub fn observations_for_channel(&self, channel: &str) -> Option<&RuntimeChannelObservation> {
         match &self.output {
             RuntimeBackendOutput::Ascent(_) => None,
+            RuntimeBackendOutput::Dovetail(_) => None,
             RuntimeBackendOutput::Observations(observations) => observations
                 .iter()
                 .find(|observation| observation.channel == channel),

@@ -1,0 +1,14 @@
+[package]
+name = "mettail-dovetail-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Runtime adapter for installing checked Dovetail reports as a MeTTaIL RuntimeBackend::Dovetail without coupling dovetail to mettail-runtime."
+
+[dependencies]
+dovetail = { path = "../dovetail" }
+mettail-runtime = { path = "../runtime" }
+
+[dev-dependencies]
+rigail = { path = "../rigail" }
