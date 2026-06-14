@@ -110,6 +110,11 @@ channel only as textual trace markers.
 calculator scalar family currently admitted by the lowerer on the real
 in-memory RhoRuntime: integer arithmetic, integer, boolean, and string
 comparisons, boolean `and`/`or`/`not`, and string concatenation.
+`mettail-rho-runtime/tests/rho_language_backend_report.rs` separately checks
+the generic call-by-need path over a generated scalar case matrix: each planned
+`RhoAstLiteral` payload for supported `Int`, `Bool`, and `Str` operations is
+compared against `CalculatorLanguage::run_ascent` normal forms before the
+representative thunk plans are executed on RhoRuntime.
 `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the structured path by
 lowering rhocalc list, map, and bag typed AST payloads directly to `rhoapi::Par`
 and observing recursive runtime values from RSpace.
@@ -326,6 +331,10 @@ Rust/runtime gate:
   that typed term, executes it through `RhoRuntimeBackedLanguage`, and observes
   the computed value twice on `NEED_OUT` plus the evaluation marker once on
   `NEED_EVAL`.
+- `rho_language_backend_report::call_by_need_plans_match_ascent_golden_for_supported_scalar_families`
+  generates the supported scalar `Int`, `Bool`, and `Str` CBN case matrix,
+  plans each typed thunk payload, and requires the payload display to match a
+  `CalculatorLanguage::run_ascent` normal form for the same source snippet.
 
 Strong bisimulation is not the contract across force boundaries because the
 target has internal communication steps that the source observation hides.

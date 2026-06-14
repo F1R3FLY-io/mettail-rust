@@ -505,43 +505,256 @@ fn planned_need_spec_for(snippet: &str) -> (RhoAstLiteral, String) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NeedScalarCase {
+    snippet: String,
+    expected_value: RhoAstLiteral,
+    expected_marker: &'static str,
+}
+
+fn need_case(
+    snippet: impl Into<String>,
+    expected_value: RhoAstLiteral,
+    expected_marker: &'static str,
+) -> NeedScalarCase {
+    NeedScalarCase {
+        snippet: snippet.into(),
+        expected_value,
+        expected_marker,
+    }
+}
+
+fn scalar_need_cases() -> Vec<NeedScalarCase> {
+    let mut cases = Vec::new();
+    let ints = [0_i64, 1, 3];
+    for left in ints {
+        for right in ints {
+            cases.push(need_case(
+                format!("{left} + {right}"),
+                RhoAstLiteral::Int(left + right),
+                "AddInt",
+            ));
+            cases.push(need_case(
+                format!("{left} - {right}"),
+                RhoAstLiteral::Int(left - right),
+                "SubInt",
+            ));
+            cases.push(need_case(
+                format!("{left} * {right}"),
+                RhoAstLiteral::Int(left * right),
+                "MulInt",
+            ));
+            if right != 0 {
+                cases.push(need_case(
+                    format!("{left} / {right}"),
+                    RhoAstLiteral::Int(left / right),
+                    "DivInt",
+                ));
+                cases.push(need_case(
+                    format!("{left} % {right}"),
+                    RhoAstLiteral::Int(left % right),
+                    "ModInt",
+                ));
+            }
+            cases.push(need_case(
+                format!("{left} == {right}"),
+                RhoAstLiteral::Bool(left == right),
+                "EqInt",
+            ));
+            cases.push(need_case(
+                format!("{left} != {right}"),
+                RhoAstLiteral::Bool(left != right),
+                "NeInt",
+            ));
+            cases.push(need_case(
+                format!("{left} < {right}"),
+                RhoAstLiteral::Bool(left < right),
+                "LtInt",
+            ));
+            cases.push(need_case(
+                format!("{left} > {right}"),
+                RhoAstLiteral::Bool(left > right),
+                "GtInt",
+            ));
+            cases.push(need_case(
+                format!("{left} <= {right}"),
+                RhoAstLiteral::Bool(left <= right),
+                "LtEqInt",
+            ));
+            cases.push(need_case(
+                format!("{left} >= {right}"),
+                RhoAstLiteral::Bool(left >= right),
+                "GtEqInt",
+            ));
+        }
+    }
+
+    let bools = [false, true];
+    for left in bools {
+        for right in bools {
+            cases.push(need_case(
+                format!("{left} == {right}"),
+                RhoAstLiteral::Bool(left == right),
+                "EqBool",
+            ));
+            cases.push(need_case(
+                format!("{left} != {right}"),
+                RhoAstLiteral::Bool(left != right),
+                "NeBool",
+            ));
+            cases.push(need_case(
+                format!("{left} < {right}"),
+                RhoAstLiteral::Bool(!left && right),
+                "LtBool",
+            ));
+            cases.push(need_case(
+                format!("{left} > {right}"),
+                RhoAstLiteral::Bool(left && !right),
+                "GtBool",
+            ));
+            cases.push(need_case(
+                format!("{left} <= {right}"),
+                RhoAstLiteral::Bool(!left || right),
+                "LtEqBool",
+            ));
+            cases.push(need_case(
+                format!("{left} >= {right}"),
+                RhoAstLiteral::Bool(left || !right),
+                "GtEqBool",
+            ));
+            cases.push(need_case(
+                format!("{left} and {right}"),
+                RhoAstLiteral::Bool(left && right),
+                "And",
+            ));
+            cases.push(need_case(
+                format!("{left} or {right}"),
+                RhoAstLiteral::Bool(left || right),
+                "Or",
+            ));
+        }
+        cases.push(need_case(format!("not {left}"), RhoAstLiteral::Bool(!left), "Not"));
+    }
+
+    let strings = ["", "a", "hello"];
+    for left in strings {
+        for right in strings {
+            let left_lit = calculator_string_literal(left);
+            let right_lit = calculator_string_literal(right);
+            cases.push(need_case(
+                format!("{left_lit} ++ {right_lit}"),
+                RhoAstLiteral::String(format!("{left}{right}")),
+                "Concat",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} + {right_lit}"),
+                RhoAstLiteral::String(format!("{left}{right}")),
+                "AddStr",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} == {right_lit}"),
+                RhoAstLiteral::Bool(left == right),
+                "EqStr",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} != {right_lit}"),
+                RhoAstLiteral::Bool(left != right),
+                "NeStr",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} < {right_lit}"),
+                RhoAstLiteral::Bool(left < right),
+                "LtStr",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} > {right_lit}"),
+                RhoAstLiteral::Bool(left > right),
+                "GtStr",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} <= {right_lit}"),
+                RhoAstLiteral::Bool(left <= right),
+                "LtEqStr",
+            ));
+            cases.push(need_case(
+                format!("{left_lit} >= {right_lit}"),
+                RhoAstLiteral::Bool(left >= right),
+                "GtEqStr",
+            ));
+        }
+    }
+
+    cases
+}
+
+fn calculator_string_literal(value: &str) -> String {
+    format!("{:?}", value)
+}
+
+fn ascent_normal_form_displays_for(snippet: &str) -> Vec<String> {
+    mettail_runtime::clear_var_cache();
+    let term = CalculatorLanguage
+        .parse_term(snippet)
+        .unwrap_or_else(|err| {
+            panic!("calculator parse failed for Ascent golden {snippet:?}: {err}")
+        });
+    let results = CalculatorLanguage
+        .run_ascent(term.as_ref())
+        .unwrap_or_else(|err| panic!("calculator Ascent run failed for {snippet:?}: {err}"));
+    let mut displays = results
+        .normal_forms()
+        .iter()
+        .map(|normal_form| normal_form.display.clone())
+        .collect::<Vec<_>>();
+    displays.sort();
+    displays.dedup();
+    displays
+}
+
+fn rho_literal_calculator_display(value: &RhoAstLiteral) -> String {
+    match value {
+        RhoAstLiteral::Int(value) => value.to_string(),
+        RhoAstLiteral::Bool(value) => value.to_string(),
+        RhoAstLiteral::String(value) => calculator_string_literal(value),
+        other => {
+            panic!("calculator scalar CBN parity only covers Int, Bool, and Str, got {other:?}")
+        },
+    }
+}
+
 #[test]
 fn call_by_need_planning_preserves_typed_payloads_for_scalar_families() {
-    let cases = [
-        ("2 + 3", RhoAstLiteral::Int(5), "AddInt"),
-        ("10 - 4", RhoAstLiteral::Int(6), "SubInt"),
-        ("3 * 7", RhoAstLiteral::Int(21), "MulInt"),
-        ("20 / 4", RhoAstLiteral::Int(5), "DivInt"),
-        ("17 % 5", RhoAstLiteral::Int(2), "ModInt"),
-        ("2 == 2", RhoAstLiteral::Bool(true), "EqInt"),
-        ("2 != 3", RhoAstLiteral::Bool(true), "NeInt"),
-        ("2 < 3", RhoAstLiteral::Bool(true), "LtInt"),
-        ("3 > 2", RhoAstLiteral::Bool(true), "GtInt"),
-        ("2 <= 2", RhoAstLiteral::Bool(true), "LtEqInt"),
-        ("3 >= 2", RhoAstLiteral::Bool(true), "GtEqInt"),
-        ("true == true", RhoAstLiteral::Bool(true), "EqBool"),
-        ("true != false", RhoAstLiteral::Bool(true), "NeBool"),
-        ("false < true", RhoAstLiteral::Bool(true), "LtBool"),
-        ("true > false", RhoAstLiteral::Bool(true), "GtBool"),
-        ("false <= false", RhoAstLiteral::Bool(true), "LtEqBool"),
-        ("true >= false", RhoAstLiteral::Bool(true), "GtEqBool"),
-        ("true and false", RhoAstLiteral::Bool(false), "And"),
-        ("true or false", RhoAstLiteral::Bool(true), "Or"),
-        ("not false", RhoAstLiteral::Bool(true), "Not"),
-        (r#""rho" ++ "net""#, RhoAstLiteral::String("rhonet".to_string()), "Concat"),
-        (r#""rho" + "net""#, RhoAstLiteral::String("rhonet".to_string()), "AddStr"),
-        (r#""alpha" == "alpha""#, RhoAstLiteral::Bool(true), "EqStr"),
-        (r#""alpha" != "beta""#, RhoAstLiteral::Bool(true), "NeStr"),
-        (r#""alpha" < "beta""#, RhoAstLiteral::Bool(true), "LtStr"),
-        (r#""beta" > "alpha""#, RhoAstLiteral::Bool(true), "GtStr"),
-        (r#""alpha" <= "alpha""#, RhoAstLiteral::Bool(true), "LtEqStr"),
-        (r#""beta" >= "alpha""#, RhoAstLiteral::Bool(true), "GtEqStr"),
-    ];
+    for case in scalar_need_cases() {
+        let (value, marker) = planned_need_spec_for(&case.snippet);
+        assert_eq!(value, case.expected_value, "typed CBN value mismatch for {:?}", case.snippet);
+        assert_eq!(marker, case.expected_marker, "CBN eval marker mismatch for {:?}", case.snippet);
+    }
+}
 
-    for (snippet, expected_value, expected_marker) in cases {
-        let (value, marker) = planned_need_spec_for(snippet);
-        assert_eq!(value, expected_value, "typed CBN value mismatch for {snippet:?}");
-        assert_eq!(marker, expected_marker, "CBN eval marker mismatch for {snippet:?}");
+#[test]
+fn call_by_need_plans_match_ascent_golden_for_supported_scalar_families() {
+    for case in scalar_need_cases() {
+        let (value, marker) = planned_need_spec_for(&case.snippet);
+        assert_eq!(
+            marker, case.expected_marker,
+            "CBN eval marker mismatch before golden comparison for {:?}",
+            case.snippet
+        );
+        assert_eq!(
+            value, case.expected_value,
+            "typed CBN value mismatch before golden comparison for {:?}",
+            case.snippet
+        );
+
+        let expected_display = rho_literal_calculator_display(&value);
+        let ascent_displays = ascent_normal_form_displays_for(&case.snippet);
+        assert!(
+            ascent_displays.contains(&expected_display),
+            "CBN planned value for {:?} must match a generated Calculator Ascent normal form; expected display {:?}, Ascent normal forms {:?}",
+            case.snippet,
+            expected_display,
+            ascent_displays
+        );
     }
 }
 

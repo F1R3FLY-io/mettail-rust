@@ -166,11 +166,13 @@ observe `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end
 chain from source snippet through WPDA parsing, typed invocation mapping,
 validated `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
 The call-by-need wrapper test covers the same value domain in two layers:
-cheap planning assertions check every currently supported scalar family
-(`Int`, `Bool`, and `Str` arithmetic/predicates/logical/string operations), and
-full RhoRuntime executions sample representative `Int`, `Bool`, and `Str`
-payloads to ensure the thunked path reports typed values rather than
-stringifying all computed results.
+cheap planning assertions generate a scalar case matrix for every currently
+supported `Int`, `Bool`, and `Str` arithmetic, predicate, logical, and string
+operation, compare each planned typed `RhoAstLiteral` payload with
+`CalculatorLanguage::run_ascent` normal forms, and then full RhoRuntime
+executions sample representative `Int`, `Bool`, and `Str` payloads to ensure
+the thunked path reports typed values rather than stringifying all computed
+results.
 
 Rejected-rule coverage should start from generated inventory, not hand-written
 category lists. `mettail_rho_codegen::classify_rejected_rules(def, lowering)`
