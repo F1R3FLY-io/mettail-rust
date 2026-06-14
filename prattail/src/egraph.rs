@@ -680,13 +680,6 @@ impl EGraph {
         result
     }
 
-    /// Apply matched substitutions for a rule's RHS, merging with the match root.
-    ///
-    /// Returns the number of new merges applied.
-    fn apply_matches(&mut self, rhs: &Pattern, matches: &[(EClassId, Subst)]) -> usize {
-        self.apply_matches_bounded(rhs, matches).merges
-    }
-
     /// Run equality saturation: apply all rules until fixpoint or limits.
     pub fn saturate(&mut self, rules: &[ERewriteRule]) -> SaturationResult {
         let mut stats = Vec::new();
@@ -1560,7 +1553,7 @@ mod tests {
 
         let matches = eg.search_pattern(&rule.lhs);
         assert_eq!(matches.len(), 1);
-        let merges = eg.apply_matches(&rule.rhs, &matches);
+        let merges = eg.apply_matches_bounded(&rule.rhs, &matches).merges;
         assert!(merges > 0);
         // f(a) should now be equivalent to a
         assert!(eg.equiv(fa, a));

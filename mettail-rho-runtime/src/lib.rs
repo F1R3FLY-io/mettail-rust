@@ -61,12 +61,6 @@ pub use run::{
     run_validated_program_and_read_runtime_values,
     run_validated_program_with_call_and_read_runtime_values,
 };
-#[allow(deprecated)]
-pub use run::{
-    run_and_read_ints, run_and_read_strings, run_par, run_par_and_read_ints,
-    run_par_and_read_strings, run_program, run_program_then_consume_strings,
-    run_sequence_and_read_ints, run_sequence_and_read_strings,
-};
 pub use run::{
     run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_bools,
     run_normalized_par_for_oracle_and_read_ints,

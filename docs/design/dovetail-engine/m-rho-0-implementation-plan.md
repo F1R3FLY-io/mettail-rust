@@ -183,10 +183,12 @@ only building the bridge crates (or `--workspace`) does.
   (the oracle is a sound exact equivalence) + the literal two-backend differential
   `rho_vs_ascent.rs` — lowered calculator on a real RhoRuntime ≡ `run_ascent` (5/5).
 - **M-RHO.0.5 — SHIPPED** (`bfe56c4b`, AST-first updated 2026-06-13):
-  `run_par_and_read_ints` builds an in-memory RhoRuntime, injects the lowered
-  `Par` contracts directly with an explicit max budget, and reads correct
-  results (6/6). `RUST_MIN_STACK` proved unnecessary for these shallow reductions
-  (the speculative global config edit was reverted).
+  `run_normalized_par_for_oracle_and_read_ints` builds an in-memory RhoRuntime,
+  injects raw oracle/debug `Par` directly with an explicit max budget, and reads
+  correct results (6/6). Generated backend execution uses validated
+  `rhoapi::Par` artifacts through `PlannedRhoBackend`, not generic source-text
+  or raw-`Par` helper aliases. `RUST_MIN_STACK` proved unnecessary for these
+  shallow reductions (the speculative global config edit was reverted).
 - **★ M-RHO.0 COMPLETE end-to-end** (tip `7629c828`, AST-first updated
   2026-06-13): LanguageDef → lowered normalized Rholang AST → direct f1r3node
   injection → differentially equals Ascent. Full ungated integration; 7
