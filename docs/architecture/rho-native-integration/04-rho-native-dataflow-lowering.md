@@ -150,7 +150,7 @@ simulation of COMM; it is COMM delegated to the host Rho machine.
 
 ### AST-First rhocalc Bridge
 
-The executable rhocalc bridge follows this pipeline:
+The executable rhocalc bridge is a transport-pure Rho-machine bridge:
 
 `rhocalc source → MeTTaIL/WPDA Proc AST → normalized rhoapi::Par → RhoRuntime::inj`
 
@@ -162,6 +162,19 @@ consumed by the interpreter. This keeps the path aligned with the
 forward-looking bytecode plan: bytecode can become another artifact kind after
 `Par`, while source text remains a diagnostic annotation rather than an
 execution dependency.
+
+This direct bridge is intentionally narrower than the general production
+runtime-backend path. It is valid for the rhocalc fragment whose source AST
+already is a Rho-calculus process representation. For arbitrary
+MeTTaIL-modeled languages, the Rho backend consumes checked Dovetail evidence
+first:
+
+`typed term + LanguageMetadata → DovetailRunReport → RhoNet plan → rhoapi::Par`
+
+Thus direct rhocalc lowering is not a replacement for the Dovetail report
+boundary. It is the native fast path for a language whose semantic domain is
+already Rho-shaped, and it supplies evidence for how a covered Rho fragment is
+injected into the host interpreter without a source-text round trip.
 
 The supported transport-pure rhocalc core maps directly onto host Rho-machine
 constructs:

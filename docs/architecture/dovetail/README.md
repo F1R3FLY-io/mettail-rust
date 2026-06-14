@@ -134,6 +134,20 @@ That is why Dovetail pages talk about exact keys, saturation, extraction,
 weights, and completeness. They mention Rho only when explaining one downstream
 consumer of a complete report.
 
+For a concrete example, use the MiniRhoFor trace in
+[Runtime-Facing Reports](10-runtime-facing-reports.md#minirhofor-report-example)
+as the canonical walk-through. It ties the two reader questions together:
+
+| Reader question | Artifact chain | Where to read next |
+|---|---|---|
+| How does a language declaration become Dovetail input? | `language! specification → LanguageDef → LanguageMetadata → Dovetail rewrite rules` | [MiniRhoFor static compilation path](10-runtime-facing-reports.md#static-compilation-path) |
+| How does one snippet move through the runtime? | `source snippet → WPDA parser → typed AST → DovetailRunReport → backend artifact` | [MiniRhoFor runtime snippet path](10-runtime-facing-reports.md#runtime-snippet-path) |
+| What changes when the selected backend is Rho? | `DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime observations` | [Rho-native end-to-end architecture](../rho-native-integration/02-end-to-end-architecture.md#high-level-dispatch-trace) |
+
+The same example deliberately uses Rholang-like text only for readability.
+Generated execution values are typed artifacts, and the Rho lane constructs
+`rhoapi::Par` directly.
+
 ## Cohesive Integration View
 
 Dovetail's standalone contract is the middle of the runtime replacement chain:

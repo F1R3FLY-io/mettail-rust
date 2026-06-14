@@ -144,6 +144,54 @@ The generated runtime artifact is a normalized `rhoapi::Par` AST. This is both
 the current fast path into `RhoRuntime::inj` and the future handoff point for a
 Rholang bytecode artifact.
 
+## High-Level Dispatch Trace
+
+The highest-value mental model is two tracks that meet at generated inventory:
+
+| Track | Time | Producer | Output |
+|---|---|---|---|
+| language-definition track | macro expansion | `language!` parser and validator | `LanguageDef`, typed AST definitions, and `LanguageMetadata` |
+| snippet-execution track | runtime invocation | generated language value plus selected backend wrapper | `RuntimeBackendReport` |
+
+For MiniRhoFor, the language-definition track is:
+
+```text
+language! specification
+  -> LanguageDef
+  -> generated Proc and Name AST constructors
+  -> generated LanguageMetadata
+  -> metadata-derived Dovetail rules: Comm and ParCong
+```
+
+The snippet-execution track is:
+
+```text
+source snippet
+  -> WPDA parser
+  -> typed Proc AST
+  -> Language::run_default_backend_report
+  -> selected runtime backend
+```
+
+After dispatch, the selected backend determines the final lane:
+
+| Selected runtime backend | Execution lane | Output shape |
+|---|---|---|
+| `RuntimeBackend::Dovetail` | `typed Proc AST + LanguageMetadata → SatReport → DovetailRunReport → RuntimeDovetailRunReport` | report-shaped `RuntimeBackendOutput::Dovetail` |
+| `RuntimeBackend::RhoMachine` | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → RSpace observations` | observation-shaped `RuntimeBackendReport` |
+| `RuntimeBackend::Ascent` | generated legacy relation execution | oracle or compatibility output during rollout |
+
+This dispatch trace is intentionally high-level. It names the shape-changing
+boundaries without requiring the reader to learn every generated Rust type
+first. The important cohesion rule is that every runtime lane starts from the
+same language-owned typed AST and metadata, then either exposes a checked
+Dovetail report or executes a Rho artifact derived from a complete report.
+
+The MiniRhoFor `language!` fixture in
+[`macros/src/doc_examples.rs`](../../../macros/src/doc_examples.rs) parses and
+validates as a `LanguageDef`. That fixture is the syntax guard for the example
+shown in [Dovetail Runtime-Facing Reports](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example).
+
 ## Bridge Crate Boundary
 
 The design uses small one-way bridge crates rather than a runtime fork:
@@ -315,27 +363,34 @@ Steps:
      Each requirement is either Dovetail-core, native-handler, Rho-handler,
      or rejected with evidence.
 
-  4. If B is local Dovetail:
-       saturate F₀ inside Dovetail and extract O.
-     Otherwise continue.
+  4. Run Dovetail on F₀ and L's generated metadata.
+     Produce a SatReport and a DovetailRunReport.
+     If B selects the direct Dovetail backend:
+       return the checked report through RuntimeBackendOutput::Dovetail.
 
-  5. Lower the supported Dovetail network into RhoNet.
+  5. Check the report boundary before Rho lowering.
+     If the saturation outcome is not Converged:
+       return bounded evidence or a gate failure, according to backend policy.
+     If report completeness is BoundedByCycleCut:
+       reject exhaustive Rho execution for this invocation.
+
+  6. Lower the complete supported Dovetail report into RhoNet.
      Terms become fact messages.
      Rules become contracts.
      Multi-premise rules become joins.
 
-  6. Lower RhoNet to normalized Rholang AST.
+  7. Lower RhoNet to normalized Rholang AST.
      The AST generator constructs the host `Par` shape directly, including
      De Bruijn indices, locally-free metadata, connective flags, bind counts,
      receive conditions, dynamic input sends, and structured ground payloads.
 
-  7. Inject the normalized `Par` into F1r3node RhoRuntime.
+  8. Inject the normalized `Par` into F1r3node RhoRuntime.
      RSpace schedules every enabled COMM.
 
-  8. At quiescence, inspect the resting space.
+  9. At quiescence, inspect the resting space.
      Project out scheduler metadata and canonicalize names.
 
-  9. Return the canonical observation O.
+  10. Return the canonical observation O.
 ```
 
 ### Invariant

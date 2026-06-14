@@ -227,6 +227,25 @@ execute it as a dynamic call against a flip-gated `PlannedRhoBackend`. The
 Rholang text shown in examples remains reader annotation; the runtime value is
 the AST.
 
+This convenience path is scoped to the RhoCalc/Rho-shaped fragment. It is the
+native fast path where the parsed MeTTaIL term is already a process-calculus
+term whose host execution meaning is RhoRuntime execution. The general
+production path for other modeled languages remains report-first:
+
+```text
+typed language AST
+  -> generated LanguageMetadata
+  -> SatReport + complete DovetailRunReport
+  -> RhoNet plan
+  -> validated rhoapi::Par
+  -> RhoRuntime observations
+```
+
+The flip gate must therefore record which path a language is using. A direct
+RhoCalc mapper must prove the parsed process AST is in the covered Rho
+fragment. A generic language mapper must prove that the Rho artifact is derived
+from a complete Dovetail report and a covered RhoNet plan.
+
 ## User-Facing REPL Boundary
 
 The REPL is part of the runtime-backend replacement surface because `exec`

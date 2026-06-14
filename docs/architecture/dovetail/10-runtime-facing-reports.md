@@ -478,6 +478,13 @@ evidence.
 `Language::metadata()`. Dovetail should consume those generated inventories; it
 should not duplicate category lists by hand.
 
+This section is the canonical documentation example for the end-to-end
+handoff. It is intentionally small enough to keep all boundaries visible, and
+the `language!` syntax is checked by
+[`macros/src/doc_examples.rs`](../../../macros/src/doc_examples.rs). The
+example is a documentation fixture, not a claim that MiniRhoFor is a production
+language crate.
+
 Those two pipelines meet at generated language inventory:
 
 | High-level step | Artifact | Owner | Reader question |
@@ -612,14 +619,25 @@ Consider this source-level example:
 The runtime path is:
 
 1. `MiniRhoForLanguage::parse_term` parses the snippet.
-2. The parser returns a typed AST plus exact/weighted rewrite seeds when the
-   generated language exposes them.
+2. The retained MeTTaIL/WPDA parser path returns a typed AST plus
+   exact/weighted rewrite seeds when the generated language exposes them.
 3. `Language::run_default_backend_report` dispatches to the selected runtime
    backend.
 4. The Dovetail backend saturates the generated rewrite rules and extracts a
    checked report.
 5. The Rho backend lowers a complete report to normalized Rholang AST,
    currently represented as `rhoapi::Par`.
+
+At dispatch time, the direct Dovetail and Rho lanes intentionally diverge:
+
+| Lane | Consumes | Produces | What the caller learns |
+|---|---|---|---|
+| direct Dovetail runtime backend | typed AST, generated metadata, and configured Dovetail bounds | `RuntimeBackendOutput::Dovetail(RuntimeDovetailRunReport)` | the checked rewrite report is the runtime result |
+| Rho runtime backend | a complete `DovetailRunReport` and a covered RhoNet plan | normalized `rhoapi::Par`, then RSpace observations | the checked rewrite report has been executed by the host Rho machine |
+
+Both lanes begin with the same parsed source-language AST. The Rho lane does
+not parse the Rholang-looking text shown in this document; it constructs the
+host AST directly and injects that value into F1r3node.
 
 The parsed AST is logically:
 

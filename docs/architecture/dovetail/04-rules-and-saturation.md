@@ -3,6 +3,24 @@
 Dovetail represents rewrite rules as data. A caller supplies `RewriteRule<L>`
 values over payload labels `L`.
 
+## Where Rules Come From
+
+In MeTTaIL integration, rules originate in the generated language inventory:
+
+`language! specification → LanguageDef → LanguageMetadata → RewriteRule<L>`
+
+The `language!` macro remains the source of truth for categories,
+constructors, equations, rewrites, guards, and native-handler declarations.
+Macro parsing produces `LanguageDef`; code generation emits typed AST
+constructors and `LanguageMetadata`; the Dovetail adapter derives
+`RewriteRule<L>` values from that metadata.
+
+This distinction matters for maintenance. Dovetail should not maintain a
+separate hard-coded list of language categories or constructor heads. It should
+ask the generated inventory what exists, then lower that inventory into
+pattern-and-rule data. A future language edit should therefore flow through the
+language definition and generated metadata before reaching Dovetail.
+
 ## Rule Shape
 
 A rule has:

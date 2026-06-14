@@ -66,10 +66,20 @@ Equations form equivalence classes:
 
 `Eq_C(t, u) ∧ Eq_C(u, v) ⇒ Eq_C(t, v)`
 
-`Eq_C(t, u) ⇒ key(t) = key(u)`
+`Eq_C(t, u) ⇒ eclass(t) = eclass(u)`
 
-Dovetail implements this with exact keys. A lossy hash may index the relation,
-but it must not be the identity proof.
+The equation merges canonical e-class identity; it does not erase the exact
+term or derivation keys of the evidence that reached the class. Dovetail keeps
+two identities distinct:
+
+| Identity | Meaning | Consumer rule |
+|---|---|---|
+| `ContentKey(term)` | exact byte identity of a term or derivation record | preserve it in reports and oracle comparisons |
+| `EClassId(term)` | canonical equivalence-class representative after merges | use it for congruence closure and rule matching |
+
+Thus equivalent terms may share an e-class while still appearing as distinct
+term records when their exact derivation keys differ. A lossy hash may index a
+relation, but it must not be the identity proof.
 
 ### 3. Directed Rewrites
 
@@ -186,7 +196,7 @@ Steps:
           The remaining facts are Δ_next.
 
        c. If adding Δ_next would exceed a node or iteration budget:
-            return F with an explicit bounded outcome.
+            return F with an explicit saturation limit outcome.
 
        d. Add Δ_next to F.
           Replace Δ with Δ_next.
@@ -208,11 +218,17 @@ For finite acyclic fact domains, each iteration adds at least one new fact or
 terminates. Since no fact is added twice, the loop terminates after at most the
 number of derivable facts.
 
-For cyclic or bounded domains, termination is enforced by explicit outcomes:
+Saturation termination is enforced by explicit saturation outcomes:
 
-`Converged ∨ NodeLimit ∨ IterationLimit ∨ BoundedByCycleCut`
+`SatOutcome ∈ {Converged, NodeLimit, IterationLimit}`
 
-No bounded outcome is reported as complete.
+Extraction has a separate terminal completeness status:
+
+`ExtractionCompleteness ∈ {Complete, BoundedByCycleCut}`
+
+No bounded extraction outcome is reported as complete. Keeping these status
+families separate prevents an implementation from treating a converged
+saturation run as proof that a cyclic extraction was exhaustive.
 
 ## Literate Algorithm: Exact-Key Deduplication
 
