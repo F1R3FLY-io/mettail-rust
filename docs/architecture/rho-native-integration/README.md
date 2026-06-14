@@ -126,6 +126,25 @@ This table is also the vocabulary discipline for the documentation. A
 the post-execution fact seen in RSpace. A generic `RuntimeBackendReport` is only
 the outer language-level envelope returned to callers.
 
+The quickest way to stay oriented is to separate the static and dynamic tracks:
+
+| Track | Artifact chain | Cohesion rule |
+|---|---|---|
+| static language definition | `language! → LanguageDef → generated AST constructors + LanguageMetadata → Dovetail rule inventory` | there is one language source of truth, and every downstream category, constructor, guard, rewrite, and handler is derived from it |
+| dynamic snippet execution | `source snippet → WPDA parser → typed AST → selected runtime backend` | parsing remains upstream; runtime backends consume typed terms and generated metadata |
+| direct Dovetail runtime | `typed AST + metadata → SatReport → DovetailRunReport → RuntimeBackendOutput::Dovetail` | the runtime result is report-shaped rewrite evidence |
+| Rho-native runtime | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → observations → RuntimeBackendReport` | the runtime result is observation-shaped evidence after host Rho execution |
+| generic call-by-need runtime | `typed computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par → observations` | generated-language computations are parameterized into an AST-first Rho thunk, not lowered through text |
+
+This separation is deliberately repetitive across the suite. It prevents three
+common misreadings:
+
+| Misreading | Correct reading |
+|---|---|
+| Dovetail replaces the parser. | The WPDA parser remains the source-text frontend; Dovetail consumes typed AST values. |
+| The Rho backend emits Rholang text. | Documentation may show Rholang-like text, but the executable artifact is normalized AST such as `rhoapi::Par`. |
+| A Dovetail report is the same thing as a runtime observation. | A report is pre-execution rewrite evidence; an observation is post-execution RSpace evidence. |
+
 ## Running Example Ownership
 
 The canonical end-to-end example is MiniRhoFor in

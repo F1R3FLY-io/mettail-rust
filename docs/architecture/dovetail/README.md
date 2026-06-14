@@ -157,6 +157,29 @@ The same example deliberately uses Rholang-like text only for readability.
 Generated execution values are typed artifacts, and the Rho lane constructs
 `rhoapi::Par` directly.
 
+## Comprehension Contract
+
+Every Dovetail document should preserve the same left-to-right story:
+
+`language! specification → LanguageDef → LanguageMetadata → Dovetail rules → SatReport → Extraction<T> → DovetailRunReport`
+
+Those arrows are ownership boundaries, not just implementation steps:
+
+| Boundary | Reader should understand | Dovetail obligation |
+|---|---|---|
+| `language! → LanguageDef` | the language author declared a valid typed model | consume the typed model, never invent a parallel language inventory |
+| `LanguageDef → LanguageMetadata` | generated code exposes categories, constructors, rewrites, guards, and handlers | derive rules from generated inventory rather than hard-coded category lists |
+| `LanguageMetadata → Dovetail rules` | rewrite requirements become exact-keyed rule data | preserve equality, congruence, guard, native-handler, and boundedness distinctions |
+| `rules → SatReport` | saturation stopped for a named reason | report `Converged`, `NodeLimit`, or `IterationLimit` explicitly |
+| `SatReport → Extraction<T>` | extraction emits ordered derivations with terminal metadata | never report a cycle-cut prefix as complete |
+| `Extraction<T> → DovetailRunReport` | consumers receive exact roots, term records, derivation edges, and completeness | keep the report substrate-neutral and proof-preserving |
+
+If a page needs to mention runtime execution, it should do so as a consumer
+after `DovetailRunReport`. That keeps the standalone Dovetail design cohesive:
+Dovetail explains what rewrite evidence exists and what is safe to consume;
+the Rho integration suite explains how a complete report becomes host Rho
+machine work.
+
 ## Cohesive Integration View
 
 Dovetail's standalone contract is the middle of the runtime replacement chain:

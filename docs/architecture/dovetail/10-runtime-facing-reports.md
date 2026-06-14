@@ -473,6 +473,19 @@ does not parse the snippet and does not own the language definition; it consumes
 the generated inventory plus the parsed term and returns checked rewrite
 evidence.
 
+For comprehension, keep the two tracks separate until runtime dispatch:
+
+| Track | High-level flow | Stable handoff |
+|---|---|---|
+| language-definition track | `language! spec → LanguageDef → generated AST constructors → LanguageMetadata → Dovetail rules` | generated metadata is the source of truth for categories, constructors, rewrites, guards, and handlers |
+| snippet-execution track | `source snippet → WPDA parser → typed AST → selected backend` | the selected backend receives typed terms, not source strings |
+| Dovetail report lane | `typed AST + rules → SatReport → Extraction<T> → DovetailRunReport` | the report carries exact roots, term records, derivation edges, ordering, and completeness |
+| Rho execution lane | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime observations` | the executable artifact is host Rholang AST; Rholang-looking text remains reader notation |
+
+This table is the complete high-level story. Later details elaborate these
+boundaries; they do not introduce a second language-definition mechanism or a
+source-text Rholang generation step.
+
 `LanguageDef` is the compile-time language model parsed from the macro input.
 `LanguageMetadata` is the generated runtime-facing inventory exposed by
 `Language::metadata()`. Dovetail should consume those generated inventories; it
@@ -593,8 +606,13 @@ The syntax above follows the repository DSL shape used by the checked
 languages and is guarded by
 [`doc_examples.rs`](../../../macros/src/doc_examples.rs).
 `Proc` and `Name` are categories. `POutput`, `PFor`, and `PPar` are
-constructors. Because `Name` has no explicit literal constructor, the generated
-language supplies its normal parseable variable form, such as `Name::NVar(a)`.
+constructors. Because `Name` has no user-written variable constructor, the
+macro follows its normal generated-variable convention: categories without an
+explicit variable rule receive a `<first-letter>Var` variant, so `Name` has
+logical variable values such as `Name::NVar(a)`. The enum convention is
+implemented by `generate_var_label`, and the WPDA generator mirrors it with
+synthetic variable rules for parseable categories. That is why the runtime
+snippet can use bare names such as `a`, `b`, `x`, and `z` in reader notation.
 The `PFor` constructor binds a `Name` variable in a `Proc` body, and `eval cont
 Q` applies that generated binding function during the communication rewrite.
 
@@ -656,6 +674,22 @@ At dispatch time, the direct Dovetail and Rho lanes intentionally diverge:
 Both lanes begin with the same parsed source-language AST. The Rho lane does
 not parse the Rholang-looking text shown in this document; it constructs the
 host AST directly and injects that value into F1r3node.
+
+In high-level artifact form, the runtime dispatch is:
+
+```text
+parse source snippet
+  -> typed Proc AST
+  -> run_default_backend_report
+  -> RuntimeBackend::Dovetail or RuntimeBackend::RhoMachine
+```
+
+If the selected backend is Dovetail, the runtime envelope contains the checked
+report projection. If the selected backend is Rho, the backend first requires a
+complete Dovetail report, then emits `rhoapi::Par` and returns observations
+after the host Rho runtime has executed it. This is the cohesion point between
+"Dovetail as rewrite engine" and "Rho as runtime backend": the report is the
+only semantic handoff, and `rhoapi::Par` is the only executable Rho handoff.
 
 The parsed AST is logically:
 
