@@ -163,6 +163,14 @@ statement about the particular wrapped value and its installed checked Rho plan.
 This keeps the dependency direction one-way and keeps Rho execution AST-first:
 generated calls are `rhoapi::Par` values, with any Rholang-looking text
 remaining only a reader annotation.
+Executable callers must use the selected runtime-capability view as their
+authority. `Language::selected_default_runtime_backend()` returns `None` when a
+concrete language value advertises no executable default, and `run_default_*`,
+the REPL, the simulation runner, and testkit diagnostics fail closed in that
+case. `Language::default_runtime_backend()` is retained only as a legacy
+metadata/display query during the transition; it must not be used to choose an
+execution path because its compatibility fallback can name `Ascent` even when no
+Ascent backend is executable.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
 lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,
@@ -743,7 +751,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete; `CyclicEnumerationImpossibility.v` explains why productive cyclic spaces cannot be finitely exhausted |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge execution uses `DovetailRhoRuntimeBackedLanguage` plus `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; the composed wrapper can wrap a generated language as Rho-default only when the generated metadata fingerprint, plan fingerprint, Dovetail compiler-stage fingerprint, and invocation compiler-stage fingerprint all match the same macro-expanded `LanguageDef`, and it does so without adding a reverse dependency from generated crates to the Rho runtime; static generated backend metadata remains crate-local, while `Language::runtime_backend_capabilities()` exposes the concrete wrapper-installed Rho default and non-default Dovetail intermediate; the generic `Language` path returns `RuntimeBackendReport` for selected backends, Rho execution returns observations rather than `AscentResults`, and Rho invocation construction is gated by a complete, structurally valid Dovetail report; source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge execution uses `DovetailRhoRuntimeBackedLanguage` plus `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; the composed wrapper can wrap a generated language as Rho-default only when the generated metadata fingerprint, plan fingerprint, Dovetail compiler-stage fingerprint, and invocation compiler-stage fingerprint all match the same macro-expanded `LanguageDef`, and it does so without adding a reverse dependency from generated crates to the Rho runtime; static generated backend metadata remains crate-local, while `Language::runtime_backend_capabilities()` exposes the concrete wrapper-installed Rho default and non-default Dovetail intermediate; executable default dispatch uses `Language::selected_default_runtime_backend()` and fails closed when no concrete default is selected; the generic `Language` path returns `RuntimeBackendReport` for selected backends, Rho execution returns observations rather than `AscentResults`, and Rho invocation construction is gated by a complete, structurally valid Dovetail report; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 

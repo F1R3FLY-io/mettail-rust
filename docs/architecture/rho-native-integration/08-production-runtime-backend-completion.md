@@ -359,6 +359,13 @@ larger generated language merely because the names match. Such fragments remain
 useful as oracle tests, but production installation requires full-definition
 identity across generated metadata, Dovetail compilation, and Rho invocation
 compilation.
+Default execution is selected from the concrete runtime-capability view, not
+from a display/default metadata fallback. Production callers must ask
+`selected_default_runtime_backend()` and fail closed when it returns `None`.
+This is the rule implemented by `run_default_*`, the REPL, the simulation
+runner, and testkit helpers. The older `default_runtime_backend()` method is
+therefore only a transition-era metadata query; it is not an authority for
+executing Ascent, Dovetail, or Rho.
 The runtime integration tests construct `RhoDefaultBackendPlan` values through
 the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
