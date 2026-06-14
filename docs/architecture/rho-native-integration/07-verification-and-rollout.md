@@ -26,7 +26,7 @@ The current proof and coverage sources are
 | host Rho-machine reuse | `HostRhoMachineReuse.v` | proved accepted backend plans include host Rholang/RSpace and exclude custom reducer, tuple-space, matcher, and replay components |
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
-| auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate |
+| auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate; advisory rejected-rule classifications preserve rule identity and still require evidence before becoming dispositions |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text; structured dynamic payloads preserve list, map, and bag literals across the AST boundary |
 | type-sensitive scalar operator lowering | `RhoScalarOperatorTyping.v`, `mettail-rho-codegen::lower` | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, and ill-typed or mixed scalar operators are rejected |
 | rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::{lower_rhocalc_proc,lower_rhocalc_term}`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
@@ -478,6 +478,16 @@ coverage wrapper at the rule-identity level: `AllRulesLowered` is valid only
 when the rejected set is empty; `CoveredRejectedRules` is valid only when typed
 dispositions name exactly the rejected rule set; and omitted, stale, duplicate,
 blank-rule, or blank-evidence dispositions block the default-backend gate.
+`mettail_rho_codegen::classify_rejected_rules` is an advisory convenience layer
+over the same boundary. It derives suggested disposition kinds from the parsed
+`LanguageDef`: HOL `fold`/`step` or Rust-code rules suggest native handlers,
+constructor labels referenced by equations/rewrites and structured syntax
+suggest Rho AST contracts, and unsupported scalar-operator shapes suggest
+external contracts. The classifier does not satisfy coverage by itself.
+`RhoRejectedCoverage.v` models this explicitly: a classification with no
+suggested kind yields no disposition, and a classification converted with blank
+evidence remains an invalid disposition. Production flips therefore still pass
+only through `CoveredRejectedRules` with stable evidence references.
 `RhoBackendFlipGate.v` also models the coverage counters consumed by the flip
 gate, including the `invalid_dispositions` counter. Its
 `deadlock_diagnostic_blocks_flip` theorem models the codegen analyzer output:
@@ -533,6 +543,9 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::RhoGateEvidenceDiagnostic`
 - `mettail_rho_codegen::RhoDefaultBackendPlan::evidence_refs`
 - `mettail_rho_codegen::RhoCoverageEvidence`
+- `mettail_rho_codegen::classify_rejected_rules`
+- `mettail_rho_codegen::RhoRejectedRuleClassification`
+- `mettail_rho_codegen::RhoRejectedRuleClassificationReason`
 - `mettail_rho_codegen::RhoRejectedRuleDisposition`
 - `mettail_rho_codegen::RhoRejectedRuleDispositionKind`
 - `mettail_rho_codegen::RhoRejectedRuleDispositionDiagnostic`

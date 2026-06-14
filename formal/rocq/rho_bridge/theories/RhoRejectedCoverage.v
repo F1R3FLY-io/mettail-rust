@@ -44,6 +44,24 @@ Section RhoRejectedCoverage.
     disposition_evidence_id : EvidenceId
   }.
 
+  Record RejectedRuleClassification : Type := {
+    classification_rule_id : RuleId;
+    classification_kind : option DispositionKind
+  }.
+
+  Definition classification_to_disposition
+      (classification : RejectedRuleClassification)
+      (evidence : EvidenceId) : option RejectedRuleDisposition :=
+    match classification_kind classification with
+    | Some kind =>
+        Some {|
+          disposition_rule_id := classification_rule_id classification;
+          disposition_kind := kind;
+          disposition_evidence_id := evidence
+        |}
+    | None => None
+    end.
+
   (* In this finite model, zero is the missing/blank token for Rust's
      whitespace-only rule ids and evidence references. *)
   Definition valid_rule_id (rule : RuleId) : bool :=
@@ -55,6 +73,40 @@ Section RhoRejectedCoverage.
   Definition disposition_valid (disposition : RejectedRuleDisposition) : bool :=
     valid_rule_id (disposition_rule_id disposition)
     && valid_evidence_id (disposition_evidence_id disposition).
+
+  Theorem classification_without_kind_yields_no_disposition :
+    forall rule evidence,
+    classification_to_disposition
+      {| classification_rule_id := rule; classification_kind := None |}
+      evidence = None.
+  Proof.
+    intros rule evidence. reflexivity.
+  Qed.
+
+  Theorem classification_to_disposition_preserves_rule_and_evidence :
+    forall classification evidence disposition,
+    classification_to_disposition classification evidence = Some disposition ->
+    disposition_rule_id disposition = classification_rule_id classification
+    /\ disposition_evidence_id disposition = evidence.
+  Proof.
+    intros classification evidence disposition Hconvert.
+    unfold classification_to_disposition in Hconvert.
+    destruct (classification_kind classification) as [kind |] eqn:Hkind;
+      inversion Hconvert; subst; split; reflexivity.
+  Qed.
+
+  Theorem classification_with_blank_evidence_yields_invalid_disposition :
+    forall classification disposition,
+    classification_to_disposition classification 0 = Some disposition ->
+    disposition_valid disposition = false.
+  Proof.
+    intros classification disposition Hconvert.
+    unfold classification_to_disposition in Hconvert.
+    destruct (classification_kind classification) as [kind |] eqn:Hkind;
+      inversion Hconvert; subst.
+    unfold disposition_valid, valid_evidence_id. simpl.
+    rewrite andb_false_r. reflexivity.
+  Qed.
 
   Definition rule_member (rule : RuleId) (rules : list RuleId) : bool :=
     existsb (Nat.eqb rule) rules.

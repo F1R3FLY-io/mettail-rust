@@ -6,10 +6,12 @@
 //! evidence, and either returns a concrete Rho-default backend plan or all
 //! blockers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
+use mettail_ast::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::TypeExpr;
 use models::rhoapi::Par;
 
 use crate::flip::{decide_rho_flip, RhoFlipDecision, RhoFlipGates};
@@ -50,6 +52,75 @@ impl RhoRejectedRuleDisposition {
             kind,
             evidence_ref: evidence_ref.into(),
         }
+    }
+}
+
+/// Why the planner suggested a disposition for a rejected rule.
+///
+/// These reasons are derived from the parsed `LanguageDef`; they are not a
+/// replacement for evidence references. A suggestion helps generated tooling
+/// avoid brittle hard-coded category lists, while the default-backend gate
+/// still requires auditable coverage through [`RhoCoverageEvidence`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoRejectedRuleClassificationReason {
+    /// The rule carries user Rust evaluation code or an explicit HOL fold/step
+    /// mode, so it belongs behind a verified native handler boundary.
+    NativeEvaluation,
+    /// The rejected constructor is mentioned by an equation or rewrite pattern,
+    /// so it participates in non-scalar source semantics that need a Rho AST
+    /// contract rather than scalar expression lowering.
+    ReferencedByEquationOrRewrite,
+    /// The rule contains binding, higher-order, collection, optional, guard, or
+    /// syntax-operation structure that cannot be represented as one scalar
+    /// Rholang expression contract.
+    StructuredSyntax,
+    /// The rule has scalar-operator shape but no exact scalar Rholang
+    /// expression lowering. A host/runtime contract may still cover it.
+    UnsupportedScalarOperator,
+    /// The rule is a plain constructor outside the scalar-expression lowering
+    /// subset. It is a candidate for generated Rho AST structural handling.
+    StructuralConstructor,
+    /// The rejected label did not correspond to a `LanguageDef::terms` rule.
+    /// This should not happen for `lower_language_def`, but keeping it explicit
+    /// makes stale lowering data visible to callers.
+    MissingLanguageRule,
+}
+
+/// Advisory, `LanguageDef`-derived classification for a rule rejected by the
+/// scalar lowering family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoRejectedRuleClassification {
+    pub rule: String,
+    pub suggested_kind: Option<RhoRejectedRuleDispositionKind>,
+    pub reason: RhoRejectedRuleClassificationReason,
+}
+
+impl RhoRejectedRuleClassification {
+    fn new(
+        rule: impl Into<String>,
+        suggested_kind: Option<RhoRejectedRuleDispositionKind>,
+        reason: RhoRejectedRuleClassificationReason,
+    ) -> Self {
+        Self {
+            rule: rule.into(),
+            suggested_kind,
+            reason,
+        }
+    }
+
+    /// Convert an advisory classification into an auditable disposition by
+    /// pairing it with an explicit evidence reference.
+    ///
+    /// This helper deliberately refuses classifications without a suggested
+    /// kind; callers must inspect those cases instead of silently fabricating a
+    /// coverage claim.
+    pub fn to_disposition(
+        &self,
+        evidence_ref: impl Into<String>,
+    ) -> Option<RhoRejectedRuleDisposition> {
+        self.suggested_kind.map(|kind| {
+            RhoRejectedRuleDisposition::new(self.rule.clone(), kind, evidence_ref.into())
+        })
     }
 }
 
@@ -151,6 +222,152 @@ impl RhoCoverageEvidence {
             Self::CoveredRejectedRules(dispositions) => dispositions.clone(),
         }
     }
+}
+
+fn collect_referenced_constructor_labels(def: &LanguageDef) -> HashSet<String> {
+    let mut labels = HashSet::new();
+    for equation in &def.equations {
+        equation.left.collect_constructor_labels(&mut labels);
+        equation.right.collect_constructor_labels(&mut labels);
+    }
+    for rewrite in &def.rewrites {
+        rewrite.left.collect_constructor_labels(&mut labels);
+        rewrite.right.collect_constructor_labels(&mut labels);
+    }
+    labels
+}
+
+fn type_expr_is_structured(ty: &TypeExpr) -> bool {
+    match ty {
+        TypeExpr::Base(_) => false,
+        TypeExpr::Arrow { .. }
+        | TypeExpr::MultiBinder(_)
+        | TypeExpr::Collection { .. }
+        | TypeExpr::Refined { .. }
+        | TypeExpr::Map { .. } => true,
+    }
+}
+
+fn term_param_is_structured(param: &TermParam) -> bool {
+    match param {
+        TermParam::Simple { ty, .. } => type_expr_is_structured(ty),
+        TermParam::Abstraction { .. }
+        | TermParam::MultiAbstraction { .. }
+        | TermParam::GuardBody { .. }
+        | TermParam::Optional { .. } => true,
+    }
+}
+
+fn grammar_item_is_structured(item: &GrammarItem) -> bool {
+    matches!(item, GrammarItem::Binder { .. } | GrammarItem::Collection { .. })
+}
+
+fn syntax_expr_is_structured(expr: &SyntaxExpr) -> bool {
+    matches!(expr, SyntaxExpr::Op(_))
+}
+
+fn rule_has_structured_syntax(rule: &GrammarRule) -> bool {
+    rule.items.iter().any(grammar_item_is_structured)
+        || rule
+            .term_context
+            .as_ref()
+            .is_some_and(|params| params.iter().any(term_param_is_structured))
+        || rule
+            .syntax_pattern
+            .as_ref()
+            .is_some_and(|pattern| pattern.iter().any(syntax_expr_is_structured))
+}
+
+fn rule_has_scalar_operator_shape(rule: &GrammarRule) -> bool {
+    let Some(pattern) = &rule.syntax_pattern else {
+        return false;
+    };
+    matches!(
+        pattern.as_slice(),
+        [SyntaxExpr::Param(_), SyntaxExpr::Literal(_), SyntaxExpr::Param(_)]
+            | [SyntaxExpr::Literal(_), SyntaxExpr::Param(_)]
+    )
+}
+
+fn classify_rejected_rule(
+    rule: &GrammarRule,
+    referenced_labels: &HashSet<String>,
+) -> RhoRejectedRuleClassification {
+    let label = rule.label.to_string();
+    if rule.rust_code.is_some() || rule.eval_mode.is_some() {
+        return RhoRejectedRuleClassification::new(
+            label,
+            Some(RhoRejectedRuleDispositionKind::NativeHandler),
+            RhoRejectedRuleClassificationReason::NativeEvaluation,
+        );
+    }
+
+    if referenced_labels.contains(&label) {
+        return RhoRejectedRuleClassification::new(
+            label,
+            Some(RhoRejectedRuleDispositionKind::RhoAstContract),
+            RhoRejectedRuleClassificationReason::ReferencedByEquationOrRewrite,
+        );
+    }
+
+    if rule_has_structured_syntax(rule) {
+        return RhoRejectedRuleClassification::new(
+            label,
+            Some(RhoRejectedRuleDispositionKind::RhoAstContract),
+            RhoRejectedRuleClassificationReason::StructuredSyntax,
+        );
+    }
+
+    if rule_has_scalar_operator_shape(rule) {
+        return RhoRejectedRuleClassification::new(
+            label,
+            Some(RhoRejectedRuleDispositionKind::ExternalContract),
+            RhoRejectedRuleClassificationReason::UnsupportedScalarOperator,
+        );
+    }
+
+    RhoRejectedRuleClassification::new(
+        label,
+        Some(RhoRejectedRuleDispositionKind::RhoAstContract),
+        RhoRejectedRuleClassificationReason::StructuralConstructor,
+    )
+}
+
+/// Classify every rule label in `lowering.rejected` using `def` as the source
+/// of truth.
+///
+/// The returned classifications are advisory. They are intended for generated
+/// coverage tooling and review output, not for bypassing the exact
+/// `CoveredRejectedRules` gate. To become accepted coverage, each suggested
+/// classification still has to be paired with a stable evidence reference and
+/// supplied through [`RhoCoverageEvidence::CoveredRejectedRules`].
+pub fn classify_rejected_rules(
+    def: &LanguageDef,
+    lowering: &RhoLowering,
+) -> Vec<RhoRejectedRuleClassification> {
+    let rules_by_label = def
+        .terms
+        .iter()
+        .map(|rule| (rule.label.to_string(), rule))
+        .collect::<HashMap<_, _>>();
+    let referenced_labels = collect_referenced_constructor_labels(def);
+
+    lowering
+        .rejected
+        .iter()
+        .map(|label| {
+            rules_by_label.get(label).map_or_else(
+                || {
+                    RhoRejectedRuleClassification::new(
+                        label.clone(),
+                        None,
+                        RhoRejectedRuleClassificationReason::MissingLanguageRule,
+                    )
+                },
+                |rule| classify_rejected_rule(rule, &referenced_labels),
+            )
+        })
+        .collect()
 }
 
 /// Evidence inputs for selecting Rho as a language's default runtime backend.
@@ -575,6 +792,47 @@ mod tests {
         }
     "#;
 
+    const NATIVE_REJECTED_FRAGMENT: &str = r#"
+        name: CalcNativeRejected,
+        types { Proc }
+        terms {
+            PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] fold;
+            FactInt . a:Int |- a "!" : Int ![factorial(a)] step;
+        }
+    "#;
+
+    const MINIRHO_FOR_FRAGMENT: &str = r#"
+        name: MiniRhoFor,
+        options {
+            emit_simulator: false,
+            emit_blockly: false,
+        },
+        types {
+            Proc
+            Name
+        },
+        terms {
+            PZero . |- "0" : Proc ;
+
+            PPar . ps:HashBag(Proc)
+                |- "{" ps.*sep("|") "}" : Proc ;
+
+            POutput . n:Name, q:Name
+                |- n "!" "(" q ")" : Proc ;
+
+            PFor . n:Name, ^x.p:[Name -> Proc]
+                |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+        },
+        equations {},
+        rewrites {
+            Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest})
+                ~> (PPar {(eval cont Q), ...rest});
+
+            ParCong . | S ~> T
+                |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+        }
+    "#;
+
     fn parse(src: &str) -> LanguageDef {
         syn::parse_str::<LanguageDef>(src).expect("test fragment must parse")
     }
@@ -609,6 +867,16 @@ mod tests {
         )
     }
 
+    fn classification<'a>(
+        classifications: &'a [RhoRejectedRuleClassification],
+        rule: &str,
+    ) -> &'a RhoRejectedRuleClassification {
+        classifications
+            .iter()
+            .find(|classification| classification.rule == rule)
+            .unwrap_or_else(|| panic!("missing classification for {rule}"))
+    }
+
     fn repo_root() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -640,6 +908,93 @@ mod tests {
                 "mettail-rho-runtime/tests/rho_vs_ascent.rs".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn rejected_rule_classification_is_derived_from_language_def() {
+        let def = parse(PARTIAL_FRAGMENT);
+        let lowering = lower_language_def(&def);
+        let classifications = classify_rejected_rules(&def, &lowering);
+
+        assert_eq!(lowering.rejected, vec!["PowInt", "AddBigInt"]);
+        assert_eq!(
+            classifications,
+            vec![
+                RhoRejectedRuleClassification {
+                    rule: "PowInt".to_string(),
+                    suggested_kind: Some(RhoRejectedRuleDispositionKind::ExternalContract),
+                    reason: RhoRejectedRuleClassificationReason::UnsupportedScalarOperator,
+                },
+                RhoRejectedRuleClassification {
+                    rule: "AddBigInt".to_string(),
+                    suggested_kind: Some(RhoRejectedRuleDispositionKind::ExternalContract),
+                    reason: RhoRejectedRuleClassificationReason::UnsupportedScalarOperator,
+                },
+            ]
+        );
+
+        let disposition = classifications[0]
+            .to_disposition("external-contract:PowInt")
+            .expect("classification with suggested kind should become disposition with evidence");
+        assert_eq!(
+            disposition,
+            RhoRejectedRuleDisposition::new(
+                "PowInt",
+                RhoRejectedRuleDispositionKind::ExternalContract,
+                "external-contract:PowInt",
+            )
+        );
+    }
+
+    #[test]
+    fn native_rejected_rule_classification_uses_eval_metadata() {
+        let def = parse(NATIVE_REJECTED_FRAGMENT);
+        let lowering = lower_language_def(&def);
+        let classifications = classify_rejected_rules(&def, &lowering);
+
+        assert_eq!(lowering.rejected, vec!["PowInt", "FactInt"]);
+        for rule in ["PowInt", "FactInt"] {
+            let classification = classification(&classifications, rule);
+            assert_eq!(
+                classification.suggested_kind,
+                Some(RhoRejectedRuleDispositionKind::NativeHandler)
+            );
+            assert_eq!(
+                classification.reason,
+                RhoRejectedRuleClassificationReason::NativeEvaluation
+            );
+        }
+    }
+
+    #[test]
+    fn rho_structural_rule_classification_comes_from_rewrites_and_syntax() {
+        let def = parse(MINIRHO_FOR_FRAGMENT);
+        let lowering = lower_language_def(&def);
+        let classifications = classify_rejected_rules(&def, &lowering);
+
+        assert_eq!(lowering.lowered, Vec::<String>::new());
+        assert_eq!(lowering.rejected, vec!["PZero", "PPar", "POutput", "PFor"]);
+
+        assert_eq!(
+            classification(&classifications, "PZero").suggested_kind,
+            Some(RhoRejectedRuleDispositionKind::RhoAstContract)
+        );
+        assert_eq!(
+            classification(&classifications, "PZero").reason,
+            RhoRejectedRuleClassificationReason::StructuralConstructor
+        );
+
+        for rule in ["PPar", "POutput", "PFor"] {
+            let classification = classification(&classifications, rule);
+            assert_eq!(
+                classification.suggested_kind,
+                Some(RhoRejectedRuleDispositionKind::RhoAstContract)
+            );
+            assert_eq!(
+                classification.reason,
+                RhoRejectedRuleClassificationReason::ReferencedByEquationOrRewrite
+            );
+        }
     }
 
     #[test]

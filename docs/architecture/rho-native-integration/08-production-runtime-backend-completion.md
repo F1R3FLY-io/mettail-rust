@@ -162,6 +162,16 @@ observe `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end
 chain from source snippet through WPDA parsing, typed invocation mapping,
 validated `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
 
+Rejected-rule coverage should start from generated inventory, not hand-written
+category lists. `mettail_rho_codegen::classify_rejected_rules(def, lowering)`
+derives an advisory classification for every label in `RhoLowering::rejected`
+from the parsed `LanguageDef`: native evaluation metadata suggests a native
+handler, equation/rewrite references and structured syntax suggest a Rho AST
+contract, and unsupported scalar-operator shapes suggest an external contract.
+This helper is for planning and review. It does not satisfy the production
+coverage gate until each suggestion is paired with a stable evidence reference
+and supplied as `RhoCoverageEvidence::CoveredRejectedRules`.
+
 ## Production Gates
 
 | Gate | Required evidence |
