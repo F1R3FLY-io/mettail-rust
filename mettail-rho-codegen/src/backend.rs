@@ -474,6 +474,13 @@ pub struct RhoDefaultBackendPlan {
 }
 
 impl RhoDefaultBackendPlan {
+    /// Name of the `LanguageDef` whose lowering passed the default-backend
+    /// gate. Runtime wrappers use this to reject cross-language plan
+    /// installation.
+    pub fn language_name(&self) -> &str {
+        self.lowering.language_name()
+    }
+
     /// Executable Rho backend artifact selected and validated by the flip gate.
     pub fn program(&self) -> &ValidatedRhoProgram {
         &self.validated_program
@@ -892,6 +899,8 @@ mod tests {
         )
         .expect("all-lowered fragment should pass the default-backend gate");
 
+        assert_eq!(plan.language_name(), "CalcAllLowered");
+        assert_eq!(plan.lowering.language_name(), "CalcAllLowered");
         assert_eq!(plan.lowering.lowered, vec!["AddInt", "SubInt", "Neg"]);
         assert_eq!(plan.lowering.rejected, Vec::<String>::new());
         assert_eq!(plan.rejected_rule_dispositions, Vec::new());

@@ -210,6 +210,7 @@ through the strict audited planner:
 Given a generated language L, a planned Rho backend B, and an invocation mapper F:
   build a RhoDefaultBackendPlan with plan_rho_default_backend_with_evidence_audit
   reject missing local proof/test artifacts and unapproved logical evidence namespaces
+  require B.plan.language_name = L.name before wrapper installation
   keep L as the owner of parsing, environments, type inference, and Ascent oracle execution
   expose RhoMachine as the default runtime backend through Language methods
   delegate explicit non-Rho backend requests back to L

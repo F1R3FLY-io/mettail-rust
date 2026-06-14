@@ -6,6 +6,8 @@
  *   - `RhoRuntimeBackedLanguage<L, F>` delegates parsing, environments,
  *     type inference, Ascent execution, and non-Rho backend requests to `L`.
  *   - The wrapper selects `RuntimeBackend::RhoMachine` as its default backend.
+ *   - The wrapper installs only a planned backend whose `LanguageDef` identity
+ *     matches the generated language being wrapped.
  *   - The Rho path returns an observation-shaped `RuntimeBackendReport`, not
  *     `AscentResults`.
  *   - Ascent-shaped seeded facts are rejected on the Rho path unless the fact
@@ -47,8 +49,12 @@ Section RhoLanguageBackendWrapper.
   Record RhoWrapper : Type := {
     wrapped_inner : InnerLanguage;
     planned_rho_backend : bool;
+    plan_matches_language : bool;
     invocation_total : bool
   }.
+
+  Definition wrapper_installs_rho (wrapper : RhoWrapper) : bool :=
+    planned_rho_backend wrapper && plan_matches_language wrapper.
 
   Definition inner_supports
       (inner : InnerLanguage) (backend : Backend) : bool :=
@@ -84,7 +90,7 @@ Section RhoLanguageBackendWrapper.
 
   Definition wrapper_runtime_capabilities
       (wrapper : RhoWrapper) : list RuntimeBackendCapability :=
-    (if planned_rho_backend wrapper
+    (if wrapper_installs_rho wrapper
      then [{| capability_backend := RhoMachine;
               capability_is_default := true;
               capability_has_evidence := true |}]
@@ -101,12 +107,12 @@ Section RhoLanguageBackendWrapper.
   Definition wrapper_supports
       (wrapper : RhoWrapper) (backend : Backend) : bool :=
     match backend with
-    | RhoMachine => planned_rho_backend wrapper
+    | RhoMachine => wrapper_installs_rho wrapper
     | other => inner_supports (wrapped_inner wrapper) other
     end.
 
   Definition wrapper_default_report_runs (wrapper : RhoWrapper) : bool :=
-    planned_rho_backend wrapper && invocation_total wrapper.
+    wrapper_installs_rho wrapper && invocation_total wrapper.
 
   Definition wrapper_default_report_shape
       (wrapper : RhoWrapper) : option ReportShape :=
@@ -133,9 +139,33 @@ Section RhoLanguageBackendWrapper.
     wrapper_default_backend wrapper = RhoMachine.
   Proof. intros wrapper. reflexivity. Qed.
 
-  Theorem wrapper_supports_rho_iff_planned : forall wrapper,
-    wrapper_supports wrapper RhoMachine = planned_rho_backend wrapper.
+  Theorem wrapper_supports_rho_iff_installed : forall wrapper,
+    wrapper_supports wrapper RhoMachine = wrapper_installs_rho wrapper.
   Proof. intros wrapper. reflexivity. Qed.
+
+  Theorem wrapper_installs_rho_requires_planned_backend : forall wrapper,
+    wrapper_installs_rho wrapper = true ->
+    planned_rho_backend wrapper = true.
+  Proof.
+    intros wrapper Hinstall.
+    unfold wrapper_installs_rho in Hinstall.
+    destruct (planned_rho_backend wrapper); simpl in Hinstall.
+    - reflexivity.
+    - discriminate Hinstall.
+  Qed.
+
+  Theorem wrapper_installs_rho_requires_matching_language : forall wrapper,
+    wrapper_installs_rho wrapper = true ->
+    plan_matches_language wrapper = true.
+  Proof.
+    intros wrapper Hinstall.
+    unfold wrapper_installs_rho in Hinstall.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      simpl in Hinstall;
+      try reflexivity;
+      discriminate Hinstall.
+  Qed.
 
   Theorem wrapper_capabilities_support_matches_wrapper_supports :
     forall wrapper backend,
@@ -143,9 +173,10 @@ Section RhoLanguageBackendWrapper.
         (wrapper_runtime_capabilities wrapper) backend =
       wrapper_supports wrapper backend.
   Proof.
-    intros [[supports_ascent supports_dovetail] planned invocation] backend.
+    intros [[supports_ascent supports_dovetail] planned same_language invocation] backend.
     destruct backend;
       destruct planned;
+      destruct same_language;
       destruct supports_ascent;
       destruct supports_dovetail;
       reflexivity.
@@ -157,6 +188,7 @@ Section RhoLanguageBackendWrapper.
         wrapper_runtime_capabilities
           {| wrapped_inner := inner;
              planned_rho_backend := true;
+             plan_matches_language := true;
              invocation_total := invocation |} =
         {| capability_backend := RhoMachine;
            capability_is_default := true;
@@ -179,8 +211,9 @@ Section RhoLanguageBackendWrapper.
       (fun capability => no_non_rho_default capability = true)
       (wrapper_runtime_capabilities wrapper).
   Proof.
-    intros [[supports_ascent supports_dovetail] planned invocation].
+    intros [[supports_ascent supports_dovetail] planned same_language invocation].
     destruct planned;
+      destruct same_language;
       destruct supports_ascent;
       destruct supports_dovetail;
       repeat constructor.
@@ -202,9 +235,23 @@ Section RhoLanguageBackendWrapper.
   Proof.
     intros wrapper Hrun.
     unfold wrapper_default_report_runs in Hrun.
+    unfold wrapper_installs_rho in Hrun.
     destruct (planned_rho_backend wrapper); simpl in Hrun.
     - reflexivity.
     - discriminate Hrun.
+  Qed.
+
+  Theorem wrapper_default_report_requires_matching_language : forall wrapper,
+    wrapper_default_report_runs wrapper = true ->
+    plan_matches_language wrapper = true.
+  Proof.
+    intros wrapper Hrun.
+    unfold wrapper_default_report_runs, wrapper_installs_rho in Hrun.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      simpl in Hrun;
+      try reflexivity;
+      discriminate Hrun.
   Qed.
 
   Theorem wrapper_default_report_requires_total_invocation : forall wrapper,
@@ -213,7 +260,7 @@ Section RhoLanguageBackendWrapper.
   Proof.
     intros wrapper Hrun.
     unfold wrapper_default_report_runs in Hrun.
-    destruct (planned_rho_backend wrapper); simpl in Hrun.
+    destruct (wrapper_installs_rho wrapper); simpl in Hrun.
     - exact Hrun.
     - discriminate Hrun.
   Qed.
@@ -222,8 +269,26 @@ Section RhoLanguageBackendWrapper.
     wrapper_default_report_runs
       {| wrapped_inner := inner;
          planned_rho_backend := true;
+         plan_matches_language := true;
          invocation_total := true |} = true.
   Proof. intros inner. reflexivity. Qed.
+
+  Theorem mismatched_plan_never_installs_rho : forall inner planned invocation,
+    wrapper_supports
+      {| wrapped_inner := inner;
+         planned_rho_backend := planned;
+         plan_matches_language := false;
+         invocation_total := invocation |}
+      RhoMachine = false /\
+    wrapper_default_report_runs
+      {| wrapped_inner := inner;
+         planned_rho_backend := planned;
+         plan_matches_language := false;
+         invocation_total := invocation |} = false.
+  Proof.
+    intros inner planned invocation.
+    destruct planned; simpl; split; reflexivity.
+  Qed.
 
   Theorem wrapper_default_report_is_observation_shaped : forall wrapper,
     wrapper_default_report_runs wrapper = true ->
@@ -240,7 +305,7 @@ Section RhoLanguageBackendWrapper.
     intros wrapper.
     unfold wrapper_default_ascent_compat, wrapper_default_report_shape,
       wrapper_default_report_runs.
-    destruct (planned_rho_backend wrapper);
+    destruct (wrapper_installs_rho wrapper);
       destruct (invocation_total wrapper);
       reflexivity.
   Qed.

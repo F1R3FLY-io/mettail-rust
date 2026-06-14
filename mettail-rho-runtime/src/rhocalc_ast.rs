@@ -24,6 +24,18 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 
 type BoundEnv = HashMap<FreeVar<String>, usize>;
 
+/// Invocation mapper used by the RhoCalc runtime-backed wrapper helpers.
+pub type RhocalcInvocationMapper =
+    Box<dyn Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync>;
+
+/// Rho-default wrapper type used by the RhoCalc helper constructors.
+pub type RhocalcRuntimeBackedLanguage =
+    crate::backend::RhoRuntimeBackedLanguage<RhoCalcLanguage, RhocalcInvocationMapper>;
+
+/// Fallible RhoCalc runtime-backed wrapper construction result.
+pub type RhocalcRuntimeBackedLanguageResult =
+    Result<RhocalcRuntimeBackedLanguage, crate::backend::RhoRuntimeBackedLanguageError>;
+
 /// Fallible rhocalc-to-Rholang-AST lowering error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhocalcAstLowerError {
@@ -83,14 +95,11 @@ pub fn rhocalc_observe_values_invocation(
 pub fn rho_runtime_backed_rhocalc_strings(
     backend: crate::backend::PlannedRhoBackend,
     out_channel: impl Into<String>,
-) -> crate::backend::RhoRuntimeBackedLanguage<
-    RhoCalcLanguage,
-    impl Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync,
-> {
+) -> RhocalcRuntimeBackedLanguageResult {
     let out_channel = out_channel.into();
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
-        rhocalc_observe_strings_invocation(term, out_channel.clone())
-    })
+    let mapper: RhocalcInvocationMapper =
+        Box::new(move |term| rhocalc_observe_strings_invocation(term, out_channel.clone()));
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, mapper)
 }
 
 /// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
@@ -98,14 +107,11 @@ pub fn rho_runtime_backed_rhocalc_strings(
 pub fn rho_runtime_backed_rhocalc_ints(
     backend: crate::backend::PlannedRhoBackend,
     out_channel: impl Into<String>,
-) -> crate::backend::RhoRuntimeBackedLanguage<
-    RhoCalcLanguage,
-    impl Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync,
-> {
+) -> RhocalcRuntimeBackedLanguageResult {
     let out_channel = out_channel.into();
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
-        rhocalc_observe_ints_invocation(term, out_channel.clone())
-    })
+    let mapper: RhocalcInvocationMapper =
+        Box::new(move |term| rhocalc_observe_ints_invocation(term, out_channel.clone()));
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, mapper)
 }
 
 /// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
@@ -113,14 +119,11 @@ pub fn rho_runtime_backed_rhocalc_ints(
 pub fn rho_runtime_backed_rhocalc_values(
     backend: crate::backend::PlannedRhoBackend,
     out_channel: impl Into<String>,
-) -> crate::backend::RhoRuntimeBackedLanguage<
-    RhoCalcLanguage,
-    impl Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync,
-> {
+) -> RhocalcRuntimeBackedLanguageResult {
     let out_channel = out_channel.into();
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
-        rhocalc_observe_values_invocation(term, out_channel.clone())
-    })
+    let mapper: RhocalcInvocationMapper =
+        Box::new(move |term| rhocalc_observe_values_invocation(term, out_channel.clone()));
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, mapper)
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.

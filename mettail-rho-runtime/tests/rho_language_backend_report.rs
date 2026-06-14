@@ -19,7 +19,7 @@ use mettail_runtime::{
 mod support;
 
 const CALC_RUN_FRAGMENT: &str = r#"
-    name: CalcRun,
+    name: Calculator,
     types { Proc }
     terms {
         AddInt . a:Int, b:Int |- a "+" b : Int ;
@@ -90,9 +90,8 @@ fn need_evidence() -> CallByNeedPlanEvidence {
     }
 }
 
-fn calculator_backend() -> PlannedRhoBackend {
-    let def =
-        syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
+fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
+    let def = syn::parse_str::<LanguageDef>(fragment).expect("calculator fragment must parse");
     let audit_policy = support::strict_evidence_audit_policy();
     let plan =
         plan_rho_default_backend_with_evidence_audit(&def, passing_evidence(), &audit_policy)
@@ -109,6 +108,16 @@ fn calculator_backend() -> PlannedRhoBackend {
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
+}
+
+fn calculator_backend() -> PlannedRhoBackend {
+    let backend = backend_from_fragment(CALC_RUN_FRAGMENT);
+    assert_eq!(
+        backend.plan().language_name(),
+        "Calculator",
+        "wrapper-installed Calculator plan must preserve its source LanguageDef name"
+    );
+    backend
 }
 
 fn int_literal(term: &Int) -> Result<i64, String> {
@@ -764,7 +773,8 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         CalculatorLanguage,
         calculator_backend(),
         calculator_invocation,
-    );
+    )
+    .expect("Calculator plan should install on CalculatorLanguage");
     let term = language.parse_term("2 + 3").expect("calculator parse");
 
     assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
@@ -909,7 +919,8 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
         CalculatorLanguage,
         calculator_backend(),
         calculator_call_by_need_invocation,
-    );
+    )
+    .expect("Calculator plan should install on CalculatorLanguage");
 
     let cases = [
         ("2 + 3", RuntimeObservationValue::Int(5), "AddInt"),
@@ -956,4 +967,32 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
             "CBN report must preserve textual eval marker for {snippet:?}"
         );
     }
+}
+
+#[test]
+fn rho_runtime_backed_language_rejects_cross_language_plan_installation() {
+    let mismatched_fragment =
+        CALC_RUN_FRAGMENT.replacen("name: Calculator", "name: NotCalculator", 1);
+    let result = RhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        backend_from_fragment(&mismatched_fragment),
+        calculator_invocation,
+    );
+    assert!(result.is_err(), "a NotCalculator plan must not install on CalculatorLanguage");
+    let err = result
+        .err()
+        .expect("mismatch must produce an installation error");
+
+    assert_eq!(
+        err,
+        mettail_rho_runtime::RhoRuntimeBackedLanguageError::LanguagePlanMismatch {
+            language_name: "Calculator".to_string(),
+            plan_language_name: "NotCalculator".to_string(),
+        }
+    );
+    assert!(
+        err.to_string()
+            .contains("cannot be installed on generated language Calculator"),
+        "{err}"
+    );
 }

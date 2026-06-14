@@ -11,6 +11,8 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "runtime-report")]
+use std::fmt;
+#[cfg(feature = "runtime-report")]
 use std::thread;
 
 use mettail_rho_codegen::{
@@ -644,13 +646,54 @@ pub struct RhoRuntimeBackedLanguage<L, F> {
     invocation: F,
 }
 
+/// Failure installing a flip-gated Rho backend plan on a generated language.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoRuntimeBackedLanguageError {
+    /// The plan was produced from a different `LanguageDef` than the generated
+    /// language being wrapped.
+    LanguagePlanMismatch {
+        language_name: String,
+        plan_language_name: String,
+    },
+}
+
+#[cfg(feature = "runtime-report")]
+impl fmt::Display for RhoRuntimeBackedLanguageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LanguagePlanMismatch { language_name, plan_language_name } => write!(
+                f,
+                "RhoMachine backend plan for language {plan_language_name} cannot be installed on generated language {language_name}"
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl std::error::Error for RhoRuntimeBackedLanguageError {}
+
 #[cfg(feature = "runtime-report")]
 impl<L, F> RhoRuntimeBackedLanguage<L, F>
 where
+    L: Language,
     F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
 {
-    pub fn new(inner: L, backend: PlannedRhoBackend, invocation: F) -> Self {
-        Self { inner, backend, invocation }
+    pub fn new(
+        inner: L,
+        backend: PlannedRhoBackend,
+        invocation: F,
+    ) -> Result<Self, RhoRuntimeBackedLanguageError> {
+        let language_name = inner.name();
+        let plan_language_name = backend.plan().language_name();
+        if language_name != plan_language_name {
+            return Err(RhoRuntimeBackedLanguageError::LanguagePlanMismatch {
+                language_name: language_name.to_string(),
+                plan_language_name: plan_language_name.to_string(),
+            });
+        }
+
+        Ok(Self { inner, backend, invocation })
     }
 
     pub fn inner(&self) -> &L {

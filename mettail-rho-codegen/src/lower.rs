@@ -137,6 +137,7 @@ pub enum RhoAstValidationProfile {
 /// rule of `def.terms` appears in exactly one of `lowered` / `rejected`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoLowering {
+    pub language_name: String,
     pub(crate) program: RhoProgram,
     pub lowered: Vec<String>,
     pub rejected: Vec<String>,
@@ -144,6 +145,11 @@ pub struct RhoLowering {
 }
 
 impl RhoLowering {
+    /// Name of the `LanguageDef` that produced this lowering.
+    pub fn language_name(&self) -> &str {
+        &self.language_name
+    }
+
     /// Lowered backend artifact. This is exposed for inspection and validation;
     /// generated execution should consume `ValidatedRhoProgram`.
     pub fn program(&self) -> &RhoProgram {
@@ -484,6 +490,7 @@ pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
     };
     let deadlock_report = analyze_channel_deadlocks(&network);
     RhoLowering {
+        language_name: def.name.to_string(),
         program: RhoProgram::Ast(RhoAstProgram::new(program, text_annotation)),
         lowered,
         rejected,

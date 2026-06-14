@@ -41,7 +41,7 @@ pub mod run;
 #[cfg(feature = "runtime-report")]
 pub use backend::{
     IntoRuntimeObservationValue, RhoBackendInvocation, RhoRuntimeBackedLanguage,
-    RuntimeReportConversionError,
+    RhoRuntimeBackedLanguageError, RuntimeReportConversionError,
 };
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
@@ -52,7 +52,8 @@ pub use rhocalc_ast::{
     lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_ints,
     rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
     rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
-    rhocalc_observe_values_invocation, RhocalcAstLowerError,
+    rhocalc_observe_values_invocation, RhocalcAstLowerError, RhocalcInvocationMapper,
+    RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{

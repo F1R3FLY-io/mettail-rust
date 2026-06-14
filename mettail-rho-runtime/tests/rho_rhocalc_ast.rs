@@ -38,7 +38,7 @@ fn parse_lower(source: &str) -> Par {
 }
 
 const RHOCALC_DYNAMIC_PLAN_FRAGMENT: &str = r#"
-    name: RhoCalcDynamicRuntime,
+    name: RhoCalc,
     types { Proc }
     terms {}
 "#;
@@ -174,7 +174,8 @@ fn ambiguous_term_rejects_cross_category_alternative_instead_of_dropping_it() {
 
 #[test]
 fn rhocalc_language_default_report_observes_runtime_values() {
-    let language = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT");
+    let language = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT")
+        .expect("RhoCalc plan should install on RhoCalcLanguage");
     let term = language
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
@@ -191,7 +192,8 @@ fn rhocalc_language_default_report_observes_runtime_values() {
 
 #[test]
 fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
-    let language = rho_runtime_backed_rhocalc_strings(rhocalc_dynamic_backend(), "OUT");
+    let language = rho_runtime_backed_rhocalc_strings(rhocalc_dynamic_backend(), "OUT")
+        .expect("RhoCalc plan should install on RhoCalcLanguage");
     let term = language
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
