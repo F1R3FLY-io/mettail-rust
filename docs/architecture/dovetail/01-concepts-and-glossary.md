@@ -58,6 +58,19 @@ presentation. The report is the checked handoff object that says which exact
 rewrite alternatives exist, how they are supported, and whether the finite
 handoff is exhaustive.
 
+The word does not introduce a separate reporting subsystem. It names values
+that already sit on Dovetail's critical execution path:
+
+`saturate → SatReport`
+
+`extract → Extraction<T>`
+
+`report_from_extraction → DovetailRunReport`
+
+Those values exist because a rewrite engine has to preserve more than one
+pretty-printed answer. It must also preserve exact identity, ambiguity,
+derivation support, ordering, budget status, and cyclic boundedness.
+
 The detailed contract is
 [Runtime-Facing Reports](10-runtime-facing-reports.md).
 

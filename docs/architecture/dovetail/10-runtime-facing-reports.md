@@ -85,6 +85,43 @@ For engineering review, use this rule:
 
 `If a value crosses from Dovetail into another subsystem, it must either be a report or be explicitly derived from a report without weakening its obligations.`
 
+## Where Reports Sit In The Rewrite Pipeline
+
+Reports are not a fourth runtime or an after-the-fact audit log. They are the
+typed return values at the points where Dovetail would otherwise lose semantic
+information by returning a plain term, vector, or Boolean.
+
+| Pipeline stage | Natural but unsafe return shape | Dovetail return shape | Information preserved |
+|---|---|---|---|
+| saturation | `bool` or mutated e-graph only | `SatReport` | `Converged`, `NodeLimit`, or `IterationLimit`, plus statistics |
+| extraction | `Option<Derivation>` or `Vec<Derivation>` | `Extraction<T>` | extracted value kept together with `Complete` or `BoundedByCycleCut` |
+| runtime handoff | displayed normal forms | `DovetailRunReport` | exact keys, root order, term records, derivation edges, and completeness |
+
+The pipeline can be read as:
+
+`seeds + rules + bounds → saturated e-graph + SatReport`
+
+`saturated e-graph + root → Extraction<derivations>`
+
+`Extraction<derivations> → DovetailRunReport`
+
+`DovetailRunReport → consumer-specific artifact or observation`
+
+Only the last arrow is backend-specific. The first three arrows are Dovetail's
+own semantic boundary. That is why the term belongs in the Dovetail
+documentation, not only in the Rho-native integration documentation.
+
+The important negative rule is:
+
+`DovetailRunReport ≠ RuntimeBackendReport ≠ RhoObservationReport`
+
+`DovetailRunReport` is Dovetail's checked extraction artifact.
+`RuntimeBackendReport` is the generic MeTTaIL language-level envelope returned
+by a selected runtime backend. `RhoObservationReport` is what the Rho runtime
+observes after executing a planned Rho artifact. Runtime tests may compare
+values through the generic runtime envelope, but Dovetail's own correctness
+claim is carried by `SatReport`, `Extraction<T>`, and `DovetailRunReport`.
+
 ## Report Family
 
 "Report" is a family name for typed artifacts at Dovetail phase boundaries. The
