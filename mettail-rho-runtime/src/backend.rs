@@ -10,6 +10,8 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "runtime-report")]
+use std::fmt;
+#[cfg(feature = "runtime-report")]
 use std::thread;
 
 use mettail_rho_codegen::{
@@ -621,11 +623,12 @@ fn run_rho_invocation_blocking(
 /// Runtime adapter that makes a generated language select a flip-gated
 /// [`PlannedRhoBackend`] through the generic [`Language`] report API.
 ///
-/// The wrapped language remains the source of parsing, environments, type
-/// inference, and the Ascent oracle. The adapter changes only the runtime
-/// backend selection surface: `RhoMachine` becomes the default, explicit Ascent
-/// requests still delegate to the wrapped language, and the legacy
-/// `AscentResults` compatibility methods reject Rho observation reports.
+/// The wrapped language remains the source of parsing, environments, and type
+/// inference. Transition-only oracle execution belongs outside the production
+/// wrapper. This adapter changes the public runtime backend selection surface:
+/// `RhoMachine` becomes the default, the legacy Ascent runtime is not exposed
+/// through the wrapped value, and the legacy `AscentResults` compatibility
+/// methods reject Rho observation reports.
 #[cfg(feature = "runtime-report")]
 pub struct RhoRuntimeBackedLanguage<L, F> {
     inner: L,
@@ -729,7 +732,11 @@ where
     }
 
     fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
-        self.inner.run_ascent(term)
+        let _ = term;
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Rho-backed language {}",
+            self.name()
+        ))
     }
 
     fn default_runtime_backend(&self) -> RuntimeBackend {
@@ -746,7 +753,10 @@ where
         capabilities.extend(
             inner_capabilities
                 .into_iter()
-                .filter(|capability| capability.backend != RuntimeBackend::RhoMachine)
+                .filter(|capability| {
+                    capability.backend != RuntimeBackend::RhoMachine
+                        && capability.backend != RuntimeBackend::Ascent
+                })
                 .map(|mut capability| {
                     capability.is_default = false;
                     capability
@@ -756,7 +766,11 @@ where
     }
 
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
-        backend == RuntimeBackend::RhoMachine || self.inner.supports_runtime_backend(backend)
+        match backend {
+            RuntimeBackend::RhoMachine => true,
+            RuntimeBackend::Ascent => false,
+            other => self.inner.supports_runtime_backend(other),
+        }
     }
 
     fn run_backend_report(
@@ -774,6 +788,10 @@ where
                 })?;
                 run_rho_invocation_blocking(self.backend.clone(), invocation)
             },
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Rho-backed language {}",
+                self.name()
+            )),
             other => self.inner.run_backend_report(other, term),
         }
     }
@@ -783,7 +801,11 @@ where
         term: &dyn Term,
         facts: &SeedFacts,
     ) -> Result<AscentResults, String> {
-        self.inner.run_ascent_with_facts(term, facts)
+        let _ = (term, facts);
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Rho-backed language {}",
+            self.name()
+        ))
     }
 
     fn run_backend_report_with_facts(
@@ -798,6 +820,10 @@ where
             },
             RuntimeBackend::RhoMachine => Err(format!(
                 "RhoMachine backend for language {} does not accept Ascent-shaped seeded facts",
+                self.name()
+            )),
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Rho-backed language {}",
                 self.name()
             )),
             other => self.inner.run_backend_report_with_facts(other, term, facts),

@@ -353,17 +353,18 @@ important:
 | runtime view, `Language::runtime_backend_capabilities()` | concrete `Language` value | value-level overlay | backends executable by this particular value, including wrapper-installed defaults |
 
 For a generated language such as Calculator, static metadata still advertises
-the generated Ascent oracle as the default. After the language is wrapped with a
-flip-gated `PlannedRhoBackend`, the runtime view starts with
-`RuntimeBackendCapability { backend: RhoMachine, is_default: true, … }` and
-then appends the inherited generated capabilities with their `is_default` flags
-cleared. This is the reason `language.metadata().runtime_backends()` can remain
-Ascent-only while `language.default_runtime_backend()` and
-`language.run_default_backend_report(…)` select the Rho machine for that
-wrapped value. The Rocq model
+the generated Ascent oracle as its transition default. After the language is
+wrapped with a flip-gated `PlannedRhoBackend`, the production runtime view
+starts with `RuntimeBackendCapability { backend: RhoMachine, is_default: true,
+… }` and strips the legacy Ascent runtime from the wrapped value. This is the
+reason `language.metadata().runtime_backends()` can remain Ascent-only during
+transition while `language.default_runtime_backend()` reports `RhoMachine`,
+`language.supports_runtime_backend(RuntimeBackend::Ascent)` reports `false`,
+and `language.run_default_backend_report(…)` uses the production Rho surface for
+that wrapped value. The Rocq model
 `formal/rocq/rho_bridge/theories/RhoLanguageBackendWrapper.v` proves that the
 runtime capability list supports exactly the backends reported by the wrapper
-and that inherited non-Rho capabilities cannot remain default after wrapping.
+and that inherited Ascent capability is not exposed after wrapping.
 
 For the RhoCalc process path, the reusable mappers include
 `mettail_rho_runtime::rhocalc_observe_values_invocation` for closed Rho ground

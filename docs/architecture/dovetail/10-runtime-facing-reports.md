@@ -960,10 +960,12 @@ produce Rho-visible observations of their root keys, while
 The runtime adapter proof
 [`DovetailLanguageBackendWrapper.v`](../../../formal/rocq/rho_bridge/theories/DovetailLanguageBackendWrapper.v)
 models the direct runtime backend wrapper. It proves that a wrapper-installed
-Dovetail default is report-shaped, not Ascent-compatible, delegates non-Dovetail
-backend support to the inner generated language, requires an available complete
-and well-formed report, rejects `BoundedByCycleCut`, rejects malformed projected
-report shape, and rejects Ascent-shaped seeded facts on the Dovetail path.
+Dovetail default is report-shaped, not Ascent-compatible, does not expose the
+legacy Ascent runtime through the production wrapped value, delegates only
+non-Dovetail and non-Ascent backend support to the inner generated language,
+requires an available complete and well-formed report, rejects
+`BoundedByCycleCut`, rejects malformed projected report shape, and rejects
+Ascent-shaped seeded facts on the Dovetail path.
 
 The Rust adapter enforces the report side of that contract before the default
 backend result enters the generic runtime envelope. Formal proof references are

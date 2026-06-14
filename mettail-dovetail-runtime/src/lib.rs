@@ -72,10 +72,11 @@ where
 /// backend for a concrete language value.
 ///
 /// The wrapped language remains the authority for parsing, environments, type
-/// inference, and the Ascent oracle. This adapter only changes runtime backend
-/// selection: `RuntimeBackend::Dovetail` becomes the default, explicit Ascent
-/// requests still delegate to the wrapped language, and incomplete Dovetail
-/// reports fail closed instead of being advertised as production results.
+/// inference, and transition-only oracle construction outside the production
+/// wrapper. This adapter changes the public runtime view:
+/// `RuntimeBackend::Dovetail` becomes the default, the legacy Ascent runtime is
+/// not exposed through the wrapped value, and incomplete Dovetail reports fail
+/// closed instead of being advertised as production results.
 pub struct DovetailRuntimeBackedLanguage<L, F> {
     inner: L,
     runner: F,
@@ -134,7 +135,11 @@ where
     }
 
     fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
-        self.inner.run_ascent(term)
+        let _ = term;
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Dovetail-backed language {}",
+            self.name()
+        ))
     }
 
     fn default_runtime_backend(&self) -> RuntimeBackend {
@@ -151,7 +156,10 @@ where
         capabilities.extend(
             inner_capabilities
                 .into_iter()
-                .filter(|capability| capability.backend != RuntimeBackend::Dovetail)
+                .filter(|capability| {
+                    capability.backend != RuntimeBackend::Dovetail
+                        && capability.backend != RuntimeBackend::Ascent
+                })
                 .map(|mut capability| {
                     capability.is_default = false;
                     capability
@@ -161,7 +169,11 @@ where
     }
 
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
-        backend == RuntimeBackend::Dovetail || self.inner.supports_runtime_backend(backend)
+        match backend {
+            RuntimeBackend::Dovetail => true,
+            RuntimeBackend::Ascent => false,
+            other => self.inner.supports_runtime_backend(other),
+        }
     }
 
     fn run_backend_report(
@@ -190,6 +202,10 @@ where
                     )
                 })
             },
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Dovetail-backed language {}",
+                self.name()
+            )),
             other => self.inner.run_backend_report(other, term),
         }
     }
@@ -199,7 +215,11 @@ where
         term: &dyn Term,
         facts: &SeedFacts,
     ) -> Result<AscentResults, String> {
-        self.inner.run_ascent_with_facts(term, facts)
+        let _ = (term, facts);
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Dovetail-backed language {}",
+            self.name()
+        ))
     }
 
     fn run_backend_report_with_facts(
@@ -212,6 +232,10 @@ where
             RuntimeBackend::Dovetail if facts.is_empty() => self.run_backend_report(backend, term),
             RuntimeBackend::Dovetail => Err(format!(
                 "Dovetail backend for language {} does not accept Ascent-shaped seeded facts",
+                self.name()
+            )),
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Dovetail-backed language {}",
                 self.name()
             )),
             other => self.inner.run_backend_report_with_facts(other, term, facts),
@@ -511,15 +535,13 @@ mod tests {
 
         assert_eq!(language.default_runtime_backend(), RuntimeBackend::Dovetail);
         assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
-        assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
 
         let capabilities = language.runtime_backend_capabilities();
-        assert_eq!(capabilities.len(), 2);
+        assert_eq!(capabilities.len(), 1);
         assert_eq!(capabilities[0].backend, RuntimeBackend::Dovetail);
         assert!(capabilities[0].is_default);
-        assert_eq!(capabilities[1].backend, RuntimeBackend::Ascent);
-        assert!(!capabilities[1].is_default);
 
         let report = language
             .run_default_backend_report(term.as_ref())
@@ -579,18 +601,22 @@ mod tests {
     }
 
     #[test]
-    fn explicit_ascent_still_delegates_to_inner_language() {
+    fn production_wrapper_rejects_explicit_ascent_runtime() {
         let language =
             DovetailRuntimeBackedLanguage::new(
                 DummyLanguage,
                 |_term| Ok(complete_runtime_report()),
             );
         let term = language.parse_term("x").expect("parse");
-        let report = language
+        let report_err = language
             .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
-            .expect("explicit Ascent should delegate");
-        assert_eq!(report.backend(), RuntimeBackend::Ascent);
-        assert!(report.as_ascent_results().is_some());
+            .expect_err("production Dovetail wrapper must not expose Ascent");
+        assert!(report_err.contains("legacy Ascent runtime is not exposed"), "{report_err}");
+
+        let ascent_err = language
+            .run_ascent(term.as_ref())
+            .expect_err("production Dovetail wrapper must not forward run_ascent");
+        assert!(ascent_err.contains("legacy Ascent runtime is not exposed"), "{ascent_err}");
     }
 
     #[test]

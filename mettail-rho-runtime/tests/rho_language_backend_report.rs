@@ -744,7 +744,7 @@ fn rho_runtime_backed_language_dispatches_default_report() {
 
     assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
-    assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
+    assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
     let static_capabilities = language.metadata().runtime_backends();
     assert_eq!(static_capabilities.len(), 1);
@@ -752,11 +752,9 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     assert!(static_capabilities[0].is_default);
 
     let capabilities = language.runtime_backend_capabilities();
-    assert_eq!(capabilities.len(), 2);
+    assert_eq!(capabilities.len(), 1);
     assert_eq!(capabilities[0].backend, RuntimeBackend::RhoMachine);
     assert!(capabilities[0].is_default);
-    assert_eq!(capabilities[1].backend, RuntimeBackend::Ascent);
-    assert!(!capabilities[1].is_default);
 
     let report = language
         .run_default_backend_report(term.as_ref())
@@ -769,12 +767,10 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .expect("Rho report must expose OUT observations");
     assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
 
-    let ascent_report = language
+    let ascent_err = language
         .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
-        .expect("explicit Ascent backend must still delegate to the wrapped language");
-    assert_eq!(ascent_report.backend(), RuntimeBackend::Ascent);
-    assert_eq!(ascent_report.artifact(), RuntimeBackendArtifact::AscentFixpoint);
-    assert!(ascent_report.as_ascent_results().is_some());
+        .expect_err("production Rho wrapper must not expose Ascent");
+    assert!(ascent_err.contains("legacy Ascent runtime is not exposed"), "{ascent_err}");
 
     let compat_err = language
         .run_default_backend(term.as_ref())

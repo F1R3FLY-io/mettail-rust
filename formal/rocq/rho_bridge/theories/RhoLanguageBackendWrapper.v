@@ -4,8 +4,10 @@
  *
  * Rust image:
  *   - `RhoRuntimeBackedLanguage<L, F>` delegates parsing, environments,
- *     type inference, Ascent execution, and non-Rho backend requests to `L`.
+ *     type inference, and non-Rho, non-Ascent backend requests to `L`.
  *   - The wrapper selects `RuntimeBackend::RhoMachine` as its default backend.
+ *   - The legacy Ascent runtime is not exposed through the production
+ *     Rho-backed value.
  *   - The wrapper installs only a planned backend whose `LanguageDef` identity
  *     matches the generated language being wrapped.
  *   - The Rho path returns an observation-shaped `RuntimeBackendReport`, not
@@ -58,7 +60,7 @@ Section RhoLanguageBackendWrapper.
   Definition inner_supports
       (inner : InnerLanguage) (backend : Backend) : bool :=
     match backend with
-    | Ascent => inner_supports_ascent inner
+    | Ascent => false
     | Dovetail => inner_supports_dovetail inner
     | RhoMachine => false
     end.
@@ -73,10 +75,6 @@ Section RhoLanguageBackendWrapper.
 
   Definition demoted_inner_capabilities
       (inner : InnerLanguage) : list RuntimeBackendCapability :=
-    (if inner_supports_ascent inner
-     then [{| capability_backend := Ascent;
-              capability_is_default := false |}]
-     else []) ++
     (if inner_supports_dovetail inner
      then [{| capability_backend := Dovetail;
               capability_is_default := false |}]
@@ -104,6 +102,7 @@ Section RhoLanguageBackendWrapper.
       (wrapper : RhoWrapper) (backend : Backend) : bool :=
     match backend with
     | RhoMachine => wrapper_installs_rho wrapper
+    | Ascent => false
     | other => inner_supports (wrapped_inner wrapper) other
     end.
 
@@ -214,9 +213,8 @@ Section RhoLanguageBackendWrapper.
       repeat constructor.
   Qed.
 
-  Theorem wrapper_delegates_ascent_support : forall wrapper,
-    wrapper_supports wrapper Ascent =
-      inner_supports_ascent (wrapped_inner wrapper).
+  Theorem wrapper_rejects_ascent_support : forall wrapper,
+    wrapper_supports wrapper Ascent = false.
   Proof. intros wrapper. reflexivity. Qed.
 
   Theorem wrapper_delegates_dovetail_support : forall wrapper,

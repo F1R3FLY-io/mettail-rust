@@ -5,9 +5,11 @@
  *
  * Rust image:
  *   - `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage<L, F>`
- *     delegates parsing, environments, type inference, Ascent execution, and
- *     non-Dovetail backend requests to `L`.
+ *     delegates parsing, environments, type inference, and non-Dovetail,
+ *     non-Ascent backend requests to `L`.
  *   - The wrapper selects `RuntimeBackend::Dovetail` as its default backend.
+ *   - The legacy Ascent runtime is not exposed through the production
+ *     Dovetail-backed value.
  *   - The wrapper installs the default when it has a report producer; the
  *     report itself is still checked for completeness and structural
  *     well-formedness before it can run as the default backend.
@@ -66,7 +68,7 @@ Section DovetailLanguageBackendWrapper.
   Definition inner_supports
       (inner : InnerLanguage) (backend : Backend) : bool :=
     match backend with
-    | Ascent => inner_supports_ascent inner
+    | Ascent => false
     | RhoMachine => inner_supports_rho inner
     | Dovetail => false
     end.
@@ -88,10 +90,6 @@ Section DovetailLanguageBackendWrapper.
 
   Definition demoted_inner_capabilities
       (inner : InnerLanguage) : list RuntimeBackendCapability :=
-    (if inner_supports_ascent inner
-     then [{| capability_backend := Ascent;
-              capability_is_default := false |}]
-     else []) ++
     (if inner_supports_rho inner
      then [{| capability_backend := RhoMachine;
               capability_is_default := false |}]
@@ -119,6 +117,7 @@ Section DovetailLanguageBackendWrapper.
       (wrapper : DovetailWrapper) (backend : Backend) : bool :=
     match backend with
     | Dovetail => wrapper_installs_dovetail wrapper
+    | Ascent => false
     | other => inner_supports (wrapped_inner wrapper) other
     end.
 
@@ -218,9 +217,8 @@ Section DovetailLanguageBackendWrapper.
       repeat constructor.
   Qed.
 
-  Theorem wrapper_delegates_ascent_support : forall wrapper,
-    wrapper_supports wrapper Ascent =
-      inner_supports_ascent (wrapped_inner wrapper).
+  Theorem wrapper_rejects_ascent_support : forall wrapper,
+    wrapper_supports wrapper Ascent = false.
   Proof. intros wrapper. reflexivity. Qed.
 
   Theorem wrapper_delegates_rho_support : forall wrapper,
