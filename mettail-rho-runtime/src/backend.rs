@@ -472,6 +472,38 @@ impl PlannedCallByNeedThunk {
         let values = channels.remove(out_channel).unwrap_or_default();
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
+
+    /// Run the planned thunk artifact and convert its generated-language value
+    /// and evaluation-trace channels into the generic runtime report envelope.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_and_observe_need_report(&self) -> Result<RuntimeBackendReport, String> {
+        let spec = self.plan.spec();
+        let mut observed = self.run_and_read_need_channels().await?;
+        let out_values = observed
+            .remove(spec.out_channel())
+            .unwrap_or_default()
+            .into_iter()
+            .map(RuntimeObservationValue::Text)
+            .collect();
+        let eval_values = observed
+            .remove(spec.eval_channel())
+            .unwrap_or_default()
+            .into_iter()
+            .map(RuntimeObservationValue::Text)
+            .collect();
+        let artifact = runtime_artifact_kind(self.artifact_kind())
+            .map_err(|err| format!("failed to convert CBN thunk artifact kind: {err:?}"))?;
+        RuntimeBackendReport::try_observations(
+            RuntimeBackend::RhoMachine,
+            artifact,
+            vec![
+                RuntimeChannelObservation::new(spec.out_channel(), out_values),
+                RuntimeChannelObservation::new(spec.eval_channel(), eval_values),
+            ],
+            self.evidence_refs().to_vec(),
+        )
+        .map_err(|err| format!("failed to convert CBN thunk observations: {err:?}"))
+    }
 }
 
 /// Dynamic operation that a Rho-backed generated language wants to execute for
@@ -500,6 +532,9 @@ pub enum RhoBackendInvocation {
     /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
     /// closed Rho ground values on the channel.
     RunWithCallAndObserveRuntimeValues { call: Par, out_channel: String },
+    /// Run a generated-language call-by-need thunk plan and report the
+    /// spec-named value/evaluation channels.
+    RunCallByNeedThunk { plan: CallByNeedThunkPlan },
 }
 
 #[cfg(feature = "runtime-report")]
@@ -560,6 +595,11 @@ impl RhoBackendInvocation {
                     .map_err(|err| {
                         format!("failed to convert Rho runtime value observation report: {err:?}")
                     })
+            },
+            RhoBackendInvocation::RunCallByNeedThunk { plan } => {
+                PlannedCallByNeedThunk::from_plan(plan)
+                    .run_and_observe_need_report()
+                    .await
             },
         }
     }

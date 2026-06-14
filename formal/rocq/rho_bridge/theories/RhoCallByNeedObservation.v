@@ -22,7 +22,10 @@
  *   - accepted planned need execution wraps an accepted AST artifact, admits
  *     both force steps, and carries evidence references;
  *   - the current cold/hot AST thunk plans have the same two-force public
- *     observations as source evaluation.
+ *     observations as source evaluation;
+ *   - the runtime report boundary for a planned need invocation preserves the
+ *     generated output/evaluation channels and reports the cold evaluation
+ *     marker exactly once.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -181,6 +184,27 @@ Section RhoCallByNeedObservation.
        need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
        need_evidence_ref_count := 3 |}.
 
+  Record NeedRuntimeSpec : Type := {
+    need_output_channel : nat;
+    need_eval_channel : nat;
+    need_eval_marker : Value
+  }.
+
+  Record NeedRuntimeReport : Type := {
+    need_report_artifact_kind : NeedArtifactKind;
+    need_report_output_channel : nat;
+    need_report_output_values : list Value;
+    need_report_eval_channel : nat;
+    need_report_eval_values : list Value;
+    need_report_evidence_ref_count : nat
+  }.
+
+  Definition accepted_need_runtime_report
+      (plan : NeedThunkExecutionPlan) (report : NeedRuntimeReport) : Prop :=
+    accepted_need_execution_plan plan
+    /\ need_report_artifact_kind report = NeedAst
+    /\ 0 < need_report_evidence_ref_count report.
+
   Definition force_plan_twice (e : Expr) (plan : NeedThunkAstPlan)
       : list Value * Memo :=
     match force e (need_initial_memo plan) with
@@ -189,6 +213,30 @@ Section RhoCallByNeedObservation.
         | (v2, memo2) => ([v1; v2], memo2)
         end
     end.
+
+  Definition cold_need_runtime_report
+      (e : Expr) (spec : NeedRuntimeSpec) : NeedRuntimeReport :=
+    {| need_report_artifact_kind := NeedAst;
+       need_report_output_channel := need_output_channel spec;
+       need_report_output_values :=
+         fst (force_plan_twice e
+           (need_thunk_artifact_plan (cold_need_execution_plan e)));
+       need_report_eval_channel := need_eval_channel spec;
+       need_report_eval_values := [need_eval_marker spec];
+       need_report_evidence_ref_count :=
+         need_evidence_ref_count (cold_need_execution_plan e) |}.
+
+  Definition hot_need_runtime_report
+      (e : Expr) (spec : NeedRuntimeSpec) : NeedRuntimeReport :=
+    {| need_report_artifact_kind := NeedAst;
+       need_report_output_channel := need_output_channel spec;
+       need_report_output_values :=
+         fst (force_plan_twice e
+           (need_thunk_artifact_plan (hot_need_execution_plan e)));
+       need_report_eval_channel := need_eval_channel spec;
+       need_report_eval_values := [];
+       need_report_evidence_ref_count :=
+         need_evidence_ref_count (hot_need_execution_plan e) |}.
 
   Theorem accepted_need_artifact_is_ast : forall plan,
     accepted_need_artifact plan ->
@@ -320,5 +368,58 @@ Section RhoCallByNeedObservation.
   Proof.
     intros e. apply hot_ast_plan_observes_source_twice.
   Qed.
+
+  Theorem cold_need_runtime_report_is_accepted : forall e spec,
+    accepted_need_runtime_report
+      (cold_need_execution_plan e)
+      (cold_need_runtime_report e spec).
+  Proof.
+    intros e spec. repeat split; try reflexivity; apply Nat.lt_0_succ.
+  Qed.
+
+  Theorem hot_need_runtime_report_is_accepted : forall e spec,
+    accepted_need_runtime_report
+      (hot_need_execution_plan e)
+      (hot_need_runtime_report e spec).
+  Proof.
+    intros e spec. repeat split; try reflexivity; apply Nat.lt_0_succ.
+  Qed.
+
+  Theorem cold_need_runtime_report_preserves_output_channel : forall e spec,
+    need_report_output_channel (cold_need_runtime_report e spec) =
+    need_output_channel spec.
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem cold_need_runtime_report_preserves_eval_channel : forall e spec,
+    need_report_eval_channel (cold_need_runtime_report e spec) =
+    need_eval_channel spec.
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem cold_need_runtime_report_observes_source_twice : forall e spec,
+    need_report_output_values (cold_need_runtime_report e spec) =
+    [source_eval e; source_eval e].
+  Proof.
+    intros e spec.
+    unfold cold_need_runtime_report.
+    simpl. apply cold_execution_plan_observes_source_twice.
+  Qed.
+
+  Theorem cold_need_runtime_report_emits_eval_marker_once : forall e spec,
+    need_report_eval_values (cold_need_runtime_report e spec) =
+    [need_eval_marker spec].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem hot_need_runtime_report_observes_source_twice : forall e spec,
+    need_report_output_values (hot_need_runtime_report e spec) =
+    [source_eval e; source_eval e].
+  Proof.
+    intros e spec.
+    unfold hot_need_runtime_report.
+    simpl. apply hot_execution_plan_observes_source_twice.
+  Qed.
+
+  Theorem hot_need_runtime_report_has_no_eval_marker : forall e spec,
+    need_report_eval_values (hot_need_runtime_report e spec) = [].
+  Proof. intros e spec. reflexivity. Qed.
 
 End RhoCallByNeedObservation.

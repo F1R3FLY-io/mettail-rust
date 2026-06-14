@@ -7,8 +7,9 @@ use mettail_languages::calculator::{
     Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
 use mettail_rho_codegen::{
-    plan_rho_default_backend_with_evidence_audit, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
-    RhoDefaultBackendEvidence,
+    plan_call_by_need_thunk_with_spec, plan_rho_default_backend_with_evidence_audit,
+    CallByNeedBudget, CallByNeedInitialState, CallByNeedPlanEvidence, CallByNeedThunkSpec,
+    RhoAstLiteral, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
 use mettail_runtime::{
@@ -72,6 +73,20 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
             "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
         ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
+    }
+}
+
+fn need_evidence() -> CallByNeedPlanEvidence {
+    CallByNeedPlanEvidence {
+        proof_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v".to_string()
+        ],
+        runtime_oracle_evidence_refs: vec![
+            "mettail-rho-runtime/tests/rho_call_by_need.rs".to_string()
+        ],
+        budget_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v".to_string()
+        ],
     }
 }
 
@@ -329,6 +344,26 @@ fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String
     }
 }
 
+fn calculator_call_by_need_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
+    let int = calculator_int(term)?;
+    let Int::AddInt(left, right) = int else {
+        return Err(format!("calculator CBN bridge only covers AddInt in this test, got {int:?}"));
+    };
+    let value = int_literal(left.as_ref())? + int_literal(right.as_ref())?;
+    let spec = CallByNeedThunkSpec::new(
+        CallByNeedInitialState::Cold,
+        value.to_string(),
+        "AddInt",
+        "NEED_OUT",
+        "NEED_EVAL",
+    )
+    .map_err(|err| format!("failed to build calculator CBN thunk spec: {err:?}"))?;
+    let plan =
+        plan_call_by_need_thunk_with_spec(spec, CallByNeedBudget::new(2, 1), need_evidence())
+            .map_err(|err| format!("failed to plan calculator CBN thunk: {err:?}"))?;
+    Ok(RhoBackendInvocation::RunCallByNeedThunk { plan })
+}
+
 #[test]
 fn rho_runtime_backed_language_dispatches_default_report() {
     let language = RhoRuntimeBackedLanguage::new(
@@ -472,4 +507,42 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT Str plus observations");
     assert_eq!(add_str_out.values, vec![RuntimeObservationValue::Text("rhonet".to_string())]);
+}
+
+#[test]
+fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
+    let language = RhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        calculator_backend(),
+        calculator_call_by_need_invocation,
+    );
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("Rho default backend must execute the planned CBN thunk invocation");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+    assert!(
+        report.evidence_refs().iter().any(
+            |evidence| evidence == "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v"
+        ),
+        "CBN runtime report must carry need proof evidence refs"
+    );
+
+    let out = report
+        .observations_for_channel("NEED_OUT")
+        .expect("CBN report must expose generated value observations");
+    assert_eq!(
+        out.values,
+        vec![
+            RuntimeObservationValue::Text("5".to_string()),
+            RuntimeObservationValue::Text("5".to_string()),
+        ]
+    );
+
+    let eval = report
+        .observations_for_channel("NEED_EVAL")
+        .expect("CBN report must expose generated evaluation trace observations");
+    assert_eq!(eval.values, vec![RuntimeObservationValue::Text("AddInt".to_string())]);
 }

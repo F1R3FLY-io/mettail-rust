@@ -99,7 +99,10 @@ result payload, evaluation marker, output channel, and evaluation-trace channel.
 lookahead/heap budgets, validates the normalized `rhoapi::Par` artifact with
 the call-by-need profile, and returns `CallByNeedThunkPlan`. Runtime execution
 uses `PlannedCallByNeedThunk`, which reads the spec-named channels rather than
-the sample fixture channel names.
+the sample fixture channel names. Generated-language wrappers can return that
+plan through `RhoBackendInvocation::RunCallByNeedThunk`; the Rho runtime adapter
+then produces an observation-shaped `RuntimeBackendReport` containing the
+spec-named value and evaluation-trace channels.
 
 ## Runtime Observation Payloads
 
@@ -190,6 +193,7 @@ Given a generated language L, a planned Rho backend B, and an invocation mapper 
   delegate explicit non-Rho backend requests back to L
   map each typed term to a RhoBackendInvocation through F
   execute B with the invocation as normalized rhoapi::Par
+  if F returns a planned call-by-need thunk, execute that thunk plan through the same report boundary
   return RuntimeBackendReport with RhoMachine, RhoNormalizedAst, observations, and evidence refs
   reject Ascent-shaped seeded facts on the Rho path unless the fact set is empty
 ```

@@ -243,7 +243,11 @@ to the sample string used by tests. It also models the generated artifact
 boundary: accepted call-by-need plans are AST artifacts, not Rholang source
 text, and they must carry the call-by-need validation profile rather than the
 scalar-contract profile. The current cold/hot thunk plans both observe the
-source value twice while preserving the expected memo state.
+source value twice while preserving the expected memo state. The runtime-report
+boundary for planned need execution preserves the generated output/evaluation
+channels; a cold need report observes the source value twice and emits the
+evaluation marker once, while a hot need report observes the source value twice
+with no evaluation marker.
 
 `RhoCallByNeedBudget.v` proves the bounded admission contract for
 `Lookahead[n] + HeapBudget`: zero lookahead blocks a force before observation,
@@ -289,6 +293,11 @@ Rust/runtime gate:
 - `mettail_rho_runtime::PlannedCallByNeedThunk` consumes `CallByNeedThunkPlan`
   for runtime execution, so M-RHO.2 tests do not inject a bare
   `ValidatedRhoProgram` as the generated need path.
+- `mettail_rho_runtime::RhoBackendInvocation::RunCallByNeedThunk` lets a
+  generated-language invocation mapper return a planned CBN thunk through the
+  same `RhoRuntimeBackedLanguage` and `RuntimeBackendReport` surface as the
+  static RhoNet path. The report carries the thunk plan's evidence references
+  and two spec-named observation channels.
 
 - `rho_call_by_need::call_by_need_force_miss_memoizes_and_repeated_force_reuses_value`
   validates a generated cold thunk AST, injects the validated artifact, forces
@@ -302,6 +311,11 @@ Rust/runtime gate:
   `calculator-add`, public channel `RESULT`, and trace channel `TRACE`; runtime
   execution observes `answer` twice on `RESULT` and `calculator-add` once on
   `TRACE`.
+- `rho_language_backend_report::rho_runtime_backed_language_dispatches_call_by_need_thunk_report`
+  parses a Calculator source term, derives a generated-language CBN plan from
+  that typed term, executes it through `RhoRuntimeBackedLanguage`, and observes
+  the computed value twice on `NEED_OUT` plus the evaluation marker once on
+  `NEED_EVAL`.
 
 Strong bisimulation is not the contract across force boundaries because the
 target has internal communication steps that the source observation hides.
