@@ -1,6 +1,6 @@
 # Concepts and Glossary
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document defines the names, acronyms, and symbols used by the
 Rho-native MeTTaIL integration documents. A term is introduced here before it
@@ -40,6 +40,10 @@ is used formally elsewhere.
 | ambiguity | The presence of multiple valid parses, derivations, or normal forms that must remain visible until evidence rejects them. |
 | exact key | A byte-level key that is injective with respect to the observational identity being represented. It is not a lossy hash. |
 | semantic hash | A hash derived from an exact key. It may be used for indexing, but it must not be the identity proof unless its safety contract establishes injectivity for the domain. |
+| predicated type | A type-like communication or rewrite constraint expressed as a guard predicate over matched terms. Predicated types are declared by the language layer, consumed by Dovetail as guarded rules, and lowered by the Rho backend only through covered guards, native guard handlers, or explicit rejections. |
+| guard sublanguage | The language-defined syntax and semantics for guard predicates, including connective keywords, built-in predicates, typed predicate signatures, theory registrations, and channel/join declarations. |
+| typed predicate | A guard predicate whose parameters carry source-language category or type annotations, such as `gt(x: Int, y: Int)`. Typed predicates drive validation, theory routing, and type-specific lowering; they do not create a backend-local type system. |
+| theory routing | The mapping from typed guard predicates to analysis or decision procedures, such as arithmetic, unification, or lattice reasoning. The mapping is derived from generated language inventory rather than keyword heuristics. |
 
 ## Rho and RSpace Terms
 

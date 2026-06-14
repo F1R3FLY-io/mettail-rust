@@ -1,6 +1,6 @@
 # Requirements Traceability
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document maps the explicit documentation requirements for the
 MeTTaIL / Dovetail / F1r3node / Rholang / Rho-machine integration to the files
@@ -42,6 +42,7 @@ a completed mechanized result.
 | Use pseudocode rather than code snippets for algorithms. | Algorithms are marked as literate pseudocode in [End-to-End Architecture](02-end-to-end-architecture.md), [Dovetail Rewrite Semantics](03-dovetail-rewrite-semantics.md), [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md), and [RSpace Parallel Scheduling](05-rspace-parallel-scheduling.md). |
 | Include examples and code snippets where related. | Small Rholang and RhoNet examples appear in [End-to-End Architecture](02-end-to-end-architecture.md) and [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md). Algorithmic material remains pseudocode. |
 | Include Dovetail rewrite rules. | [Dovetail Rewrite Semantics](03-dovetail-rewrite-semantics.md) lists seed, equation, directed rewrite, equivalence-respecting rewrite, congruence, native/fold, guarded, saturation, and extraction rule families. |
+| Explain predicated types in the Dovetail/Rho backend plan. | [Concepts and Glossary](01-concepts-and-glossary.md) defines predicated types, typed predicates, guard sublanguages, and theory routing; [Dovetail Rewrite Semantics](03-dovetail-rewrite-semantics.md#7-guarded-rules) maps `guards {}` inventory to guarded Dovetail rules; [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md#predicated-type-lowering-contract) maps predicated-type guards to RhoNet guarded contracts, atomic joins, or native guard handlers; [Production Runtime Backend Completion Guide](08-production-runtime-backend-completion.md#production-gates) adds predicated-type coverage to the flip gate. |
 | Explain compilation of rewrite semantics into a Rho-native dataflow network. | [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md) defines RhoNet, the lowering correspondence, examples, semi-naive channels, rule lowering, deduplication, and name discipline. |
 | Explain how RSpace schedules enabled rewrites in parallel. | [RSpace Parallel Scheduling](05-rspace-parallel-scheduling.md) maps Dovetail readiness to RSpace readiness, describes atomic joins, disjoint-channel independence, fairness, and ambiguity preservation. |
 | Include mathematical and logical proofs of correctness and coverage. | [Correctness and Coverage](06-correctness-and-coverage.md) states and proves saturation soundness/completeness, Rho lowering soundness/completeness, ambiguity preservation, exact-key deduplication, guard atomicity, parallel independence, observation correctness, coverage honesty, and final preservation. |

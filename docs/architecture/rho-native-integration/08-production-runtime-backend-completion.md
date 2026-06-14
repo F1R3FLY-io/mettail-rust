@@ -189,6 +189,7 @@ and supplied as `RhoCoverageEvidence::CoveredRejectedRules`.
 | Gate | Required evidence |
 |---|---|
 | semantic coverage | coverage matrix maps each language rewrite requirement to Dovetail, RhoNet, native handler, or exact rejection |
+| predicated-type coverage | every `guards {}` predicate, typed predicate overload, theory registration, channel/join declaration, and guarded rule is derived from generated inventory and classified as Dovetail-core, RhoNet-lowerable, native-guard, external-contract, or exact rejection |
 | AST artifact purity | generated backend accepts `rhoapi::Par` artifacts and rejects source-text artifacts |
 | RSpace schedule correctness | independent-redex schedules erase to the same visible Dovetail observations |
 | guarded join correctness | failed guards release data and valid joins can commit afterward |
@@ -422,15 +423,18 @@ order:
 
 1. Classify every language rule as Dovetail-core, RhoNet-lowerable,
    native-handler, covered by a typed disposition, or rejected.
-2. Add Dovetail proofs for Dovetail-core rules and external contracts for
+2. Classify every predicated-type guard from generated `guards {}` inventory:
+   structural patterns, typed predicate overloads, theory-routed predicates,
+   relation queries, channel declarations, and guarded joins.
+3. Add Dovetail proofs for Dovetail-core rules and external contracts for
    native-handler rules.
-3. Implement RhoNet lowering to `rhoapi::Par` for each lowerable rule.
-4. Add RhoRuntime observation tests that execute the validated `Par` artifact.
-5. Add differential oracle tests against the Ascent reference path.
-6. Add process-calculus and schedule-family checks for the rule's concurrency
+4. Implement RhoNet lowering to `rhoapi::Par` for each lowerable rule.
+5. Add RhoRuntime observation tests that execute the validated `Par` artifact.
+6. Add differential oracle tests against the Ascent reference path.
+7. Add process-calculus and schedule-family checks for the rule's concurrency
    shape when the rule has multiple independent redexes or guarded joins.
-7. Run the language's capped Dovetail/Rho proof and runtime gate suite.
-8. Enable the language's Dovetail/Rho backend selection only through the
+8. Run the language's capped Dovetail/Rho proof and runtime gate suite.
+9. Enable the language's Dovetail/Rho backend selection only through the
    flip-gated planner.
 
 Completion means the strict backend selection gate succeeds from current

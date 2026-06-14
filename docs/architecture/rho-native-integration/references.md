@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This bibliography supports the Rho-native MeTTaIL integration documents. DOI
 links are included only where a DOI was verified or is part of a publisher
@@ -206,6 +206,16 @@ Repository-local M-RHO rollout design:
 
 Used for: M-RHO.1 execution contracts, red-team constraints, rollout staging,
 and claim-boundary discipline.
+
+### PREDICATED-TYPES-DESIGN
+
+Repository-local predicated-types design:
+
+- `docs/design/predicated-types.md`
+
+Used for: guarded communication, structural and behavioral predicates,
+`guards {}` language inventory, typed predicate overloads, theory routing,
+channel/join declarations, and the no-commit semantics for failed guards.
 
 ### DOVETAIL-FORMAL
 

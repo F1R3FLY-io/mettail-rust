@@ -71,6 +71,37 @@ and:
 
 If `guard(σ) = false`, no fact is consumed and no body is emitted.
 
+## Predicated-Type Lowering Contract
+
+Predicated types lower through the same `guard` field in `Contract`, but the
+guard is not invented by the backend. It is derived from the `language!`
+`guards {}` inventory:
+
+`LanguageDef.guards → typed predicate inventory → Dovetail guarded rule → RhoNet Contract(..., guard, ...)`
+
+The Rho backend classifies each guard conjunct before emitting `rhoapi::Par`:
+
+| Guard conjunct | Lowering target | Commit rule |
+|---|---|---|
+| structural match on one received value | receive bind pattern or local match inside the contract | mismatch behaves as no match |
+| pure typed predicate over already bound ground values | Rholang/RSpace boolean guard | false behaves as no match |
+| multi-channel predicate over a join substitution | atomic join guard or native guard handler before commit | false releases all candidate data |
+| `logic {}` relation membership | RhoNet fact lookup or explicit external contract | missing relation fact blocks the rule |
+| quantified, AC, lattice, arithmetic, or host-specific predicate | native guard handler with evidence, or explicit rejection | handler failure is no-commit, not partial consumption |
+
+This is the Rho-machine advantage for predicated types: once a guarded rule is
+compiled as an atomic join, RSpace can try all enabled communication candidates
+in parallel while preserving the Dovetail guard semantics. The backend does not
+need a central CESK scheduler to poll every guarded redex.
+
+The lowering is deliberately fail-closed:
+
+`emit(C_g) ⇒ source(g) ∈ LanguageDef.guards ∧ covered(g) ∧ no_commit_on_false(g)`
+
+A guard with unknown predicate meaning, missing typed-predicate metadata, or
+unapproved native-handler evidence is rejected during planning rather than
+encoded as a permissive Rho contract.
+
 ## Lowering Shape
 
 ![Dovetail rule to RhoNet and Rholang dataflow lowering](figures/04-rho-native-dataflow-lowering.svg)
@@ -482,9 +513,13 @@ Steps:
      The bind pattern extracts the values needed by the substitution `σ`.
 
   3. Classify the guard.
+     Read guard declarations, typed predicate signatures, theory routing, and
+     channel/join metadata from generated language inventory.
      If the guard depends only on variables from one bind and can be rendered
      as a pure Rholang boolean, mark it as an RSpace where-guard.
-     Otherwise mark it as a native guard-handler call.
+     If it depends on a multi-channel substitution, mark it as an atomic join
+     guard.
+     Otherwise mark it as a native guard-handler call or explicit rejection.
 
   4. Build an atomic join over all premise channels.
      The join has one body and commits only when all binds and the guard hold.

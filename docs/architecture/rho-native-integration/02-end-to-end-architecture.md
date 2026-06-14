@@ -84,6 +84,7 @@ The generic call-by-need segment uses the same AST-first execution boundary:
 | typed AST | generates source-language terms | stores exact-keyed terms and derivations | lowers covered terms to Rholang AST |
 | concrete syntax | owns parser/display hooks | does not parse source text | may attach reader text only as annotation |
 | rewrite declarations | declares rules and metadata | saturates, extracts, and reports checked consequences | compiles covered rule instances to Rho dataflow |
+| predicated types | declares `guards {}` syntax, typed predicates, theory routing, and channels | consumes generated guard inventory as guarded rules | lowers covered guards to RhoNet guards, atomic joins, or native guard handlers |
 | native operations | declares and binds handlers | records explicit external contracts | routes handlers through Rho/native boundary |
 | runtime scheduling | does not schedule | defines substrate-neutral rewrite semantics | lets RSpace schedule enabled COMM events |
 | completeness status | supplies requirement inventory | reports `Complete` or `BoundedByCycleCut` | rejects incomplete reports for production execution |
@@ -92,6 +93,12 @@ The apparent overlap is therefore intentional provenance tracking. Dovetail and
 the Rho backend repeat enough rule and constructor information to prove that
 execution preserves the `language!` semantics, but they do not replace the
 macro as the language-definition authority.
+
+Predicated types follow the same ownership rule. The language definition owns
+the guard sublanguage and typed predicate metadata; Dovetail turns that
+inventory into guarded rewrite obligations; the Rho backend can execute only
+covered guards whose no-commit behavior is preserved by RSpace or a verified
+native guard handler.
 
 ## End-To-End Artifact Spine
 

@@ -1,6 +1,6 @@
 # Dovetail Rewrite Semantics
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document describes the rewrite semantics Dovetail provides before any
 Rho-specific lowering happens. Rho-native execution is valuable only if it
@@ -132,6 +132,37 @@ A guard is a predicate on a substitution:
 
 The important property is atomicity: a failed guard must not consume inputs or
 hide alternatives.
+
+Predicated types are the language-facing source of these guards. A predicated
+type is not a second runtime type system; it is a `language!`-declared guard
+constraint that Dovetail receives through generated inventory. The static path
+is:
+
+`guards {} + typed predicate signatures + theory registrations + channel declarations → LanguageDef → LanguageMetadata → guarded Dovetail rule`
+
+Dovetail uses that inventory to build `guardᵣ`, `premisesᵣ`, and any external
+contract obligations. It must not infer predicated-type meaning from hard-coded
+predicate names or category lists. A predicate such as `gt(x: Int, y: Int)` and
+a predicate such as `gt(x: Str, y: Str)` may share a surface label, but their
+validation and backend contracts are determined by generated typed-predicate
+metadata.
+
+The semantic split is:
+
+| Predicated-type layer | Dovetail interpretation |
+|---|---|
+| structural guard pattern | first-order match that extends `σ` or fails with `no_commit` |
+| built-in typed predicate | total boolean guard or explicit external/native contract |
+| `logic {}` relation query | premise membership check over the generated language relation inventory |
+| quantified or theory-backed predicate | explicit theory/native contract, with boundedness recorded in coverage |
+| channel/join declaration | source of multi-premise guarded rule shape |
+
+The production coverage obligation is:
+
+`∀g ∈ guards(LanguageDef). DovetailCore(g) ∨ RhoNetLowerable(g) ∨ NativeGuard(g) ∨ ExternalContract(g) ∨ Rejected(g)`
+
+Thus a guard that is parsed but not classified is a coverage failure, not a
+runtime best effort.
 
 ### 8. Saturation Rules
 
