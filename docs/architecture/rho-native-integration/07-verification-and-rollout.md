@@ -163,6 +163,11 @@ statement about the particular wrapped value and its installed checked Rho plan.
 This keeps the dependency direction one-way and keeps Rho execution AST-first:
 generated calls are `rhoapi::Par` values, with any Rholang-looking text
 remaining only a reader annotation.
+The `LanguageDef` used to build the Dovetail/Rho plan is the structured value
+emitted by `language!`, with a stable fingerprint carried through the Dovetail
+and Rho compiler stages. Display strings, pretty-printed snippets, and
+`text_annotation` fields are evidence for readers and test diagnostics only;
+they are not parsed to reconstruct language metadata.
 Executable callers must use the selected runtime-capability view as their
 authority. `Language::selected_default_runtime_backend()` returns `None` when a
 concrete language value advertises no executable default, and `run_default_*`,
@@ -197,7 +202,9 @@ available, structurally valid, and `Complete`; `BoundedByCycleCut` and malformed
 reports fail before any Rho execution. The invocation mapper receives the
 checked `RuntimeDovetailRunReport` and constructs `rhoapi::Par` values directly.
 Rholang source text remains documentation/test-oracle annotation, not a
-generated execution artifact.
+generated execution artifact. In the Rust crate, hand-authored Rholang source
+helpers are compiled only with the `mettail-rho-runtime/source-oracle` feature;
+the default public API exposes validated AST/program execution helpers.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases

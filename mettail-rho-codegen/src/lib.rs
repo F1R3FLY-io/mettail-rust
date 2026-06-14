@@ -2,7 +2,10 @@
 //!
 //! MeTTaIL is the COMPILER; f1r3node-rust's Rho machine is the parallel RUNTIME.
 //! This crate lowers a MeTTaIL `LanguageDef` into a **parallel-optimized Rholang
-//! VM** — three artifacts:
+//! VM**. The `LanguageDef` is the structured value produced by the `language!`
+//! macro expansion; reader-facing display strings and pretty-printed examples
+//! are never parsed back into compiler input. The lowering emits three
+//! artifacts:
 //!  1. reduction rules as `Par` contracts (the COMM family),
 //!  2. native `Vec<Definition>` system processes (HOL `fold`/`step`),
 //!  3. the `OslfResourceLogic` adapter wiring (see `mettail-rho-adapter`).

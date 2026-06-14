@@ -28,9 +28,11 @@
 //! M-RHO.2 need-specific planned execution boundary, keeps source-text evaluation only for
 //! hand-authored host oracle tests, reads public resting data for oracle checks,
 //! runs lowered calculator contracts against the Ascent baseline, and hosts the
-//! M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language flip
-//! baseline until a language's coverage, artifact-validation, and deadlock
-//! gates pass.
+//! M-RHO.1 transport-pure COMM oracle. Hand-authored Rholang source evaluation
+//! helpers are available only behind the `source-oracle` feature; generated
+//! backend execution is always AST-first and enters through validated
+//! `rhoapi::Par` artifacts. Ascent remains the per-language flip baseline until
+//! a language's coverage, artifact-validation, and deadlock gates pass.
 
 #![forbid(unsafe_code)]
 
@@ -67,16 +69,19 @@ pub use run::{
     run_normalized_par_for_oracle_and_read_ints,
     run_normalized_par_for_oracle_and_read_string_channels,
     run_normalized_par_for_oracle_and_read_string_tuples,
-    run_normalized_par_for_oracle_and_read_strings, run_rholang_source_for_oracle,
-    run_rholang_source_for_oracle_and_read_bools, run_rholang_source_for_oracle_and_read_ints,
-    run_rholang_source_for_oracle_and_read_strings,
-    run_rholang_source_for_oracle_then_consume_strings,
-    run_rholang_source_sequence_for_oracle_and_read_bools,
-    run_rholang_source_sequence_for_oracle_and_read_ints,
-    run_rholang_source_sequence_for_oracle_and_read_strings, run_validated_program,
+    run_normalized_par_for_oracle_and_read_strings, run_validated_program,
     run_validated_program_and_read_bools, run_validated_program_and_read_ints,
     run_validated_program_and_read_string_channels, run_validated_program_and_read_strings,
     run_validated_program_with_call, run_validated_program_with_call_and_read_bools,
     run_validated_program_with_call_and_read_ints,
     run_validated_program_with_call_and_read_strings,
+};
+#[cfg(feature = "source-oracle")]
+pub use run::{
+    run_rholang_source_for_oracle, run_rholang_source_for_oracle_and_read_bools,
+    run_rholang_source_for_oracle_and_read_ints, run_rholang_source_for_oracle_and_read_strings,
+    run_rholang_source_for_oracle_then_consume_strings,
+    run_rholang_source_sequence_for_oracle_and_read_bools,
+    run_rholang_source_sequence_for_oracle_and_read_ints,
+    run_rholang_source_sequence_for_oracle_and_read_strings,
 };

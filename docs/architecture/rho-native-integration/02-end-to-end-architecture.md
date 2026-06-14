@@ -51,10 +51,13 @@ constructors, rules, and normal forms. They differ by ownership.
 `language!` is the source-of-truth specification mechanism for a modeled
 language. It declares categories, constructors, concrete display forms,
 parsing hooks, equations, rewrites, native folds, guards, predicates, and
-metadata. Its expansion produces typed Rust AST values and language inventory
-that other crates can consume. When the category set changes, that inventory is
-the authority; downstream backends should discover the categories from the
-generated metadata instead of keeping hard-coded category whitelists.
+metadata. Its expansion produces the structured `LanguageDef`, typed Rust AST
+values, and language inventory that other crates consume directly. The compiler
+does not reconstruct `LanguageDef` from displayed terms, pretty-printed
+examples, or Rholang-looking annotations; those strings are diagnostics for
+humans. When the category set changes, the generated inventory is the
+authority; downstream backends should discover the categories from the generated
+metadata instead of keeping hard-coded category whitelists.
 
 Dovetail is not a competing specification macro. It is the rewrite engine that
 consumes the inventory emitted by `language!`. It gives the declared equations

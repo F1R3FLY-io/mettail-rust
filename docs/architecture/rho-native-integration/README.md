@@ -168,7 +168,7 @@ apply these rules:
 
 | Rule | Practical consequence |
 |---|---|
-| One language source of truth | categories, constructors, guards, rewrites, and handlers are derived from generated `LanguageMetadata`, not backend-local lists |
+| One language source of truth | `LanguageDef` is the structured macro-expanded value produced by `language!`; categories, constructors, guards, rewrites, and handlers are derived from generated metadata, not backend-local lists or display strings |
 | One rewrite evidence boundary | the Rho backend consumes `DovetailRunReport`; it does not reconstruct Dovetail evidence from displayed terms |
 | One executable Rho artifact kind | generated execution values are normalized `rhoapi::Par`, with Rholang text kept as annotation |
 | One host runtime | F1r3node/RhoRuntime/RSpace schedule COMM and joins; MeTTaIL does not grow a second Rho machine |

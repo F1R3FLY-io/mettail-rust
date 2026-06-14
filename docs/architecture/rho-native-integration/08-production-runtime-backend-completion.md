@@ -62,7 +62,10 @@ true before a language can select Dovetail/Rho as its production runtime path.
 Generated runtime artifacts are `models::rhoapi::Par` values from the
 F1r3node `models` crate. Rholang-looking text in documents and tests is a
 reader annotation unless the test explicitly names a hand-authored source
-oracle.
+oracle. Those source-oracle helpers are isolated behind the
+`mettail-rho-runtime/source-oracle` feature; generated runtime paths compile
+and execute validated AST artifacts without exposing source-text execution as
+the default crate surface.
 
 | MeTTaIL/rhocalc construct | Rho artifact |
 |---|---|

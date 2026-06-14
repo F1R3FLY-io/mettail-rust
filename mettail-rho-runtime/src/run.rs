@@ -19,6 +19,7 @@ use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
 #[cfg(feature = "runtime-report")]
 use models::rust::rholang::implicits::GPrivateBuilder;
+#[cfg(feature = "source-oracle")]
 use models::rust::utils::new_freevar_par;
 
 use rho_pure_eval::Env;
@@ -234,6 +235,7 @@ pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationV
 /// A one-value wildcard binding pattern for direct `RhoRuntime::consume_result`
 /// checks. This mirrors the host normalizer's `for (@x <- @"c")` shape without
 /// routing the receive through source text.
+#[cfg(feature = "source-oracle")]
 fn one_string_bind_pattern() -> BindPattern {
     BindPattern {
         patterns: vec![new_freevar_par(0, Vec::new())],
@@ -242,6 +244,7 @@ fn one_string_bind_pattern() -> BindPattern {
     }
 }
 
+#[cfg(feature = "source-oracle")]
 fn matched_strings(data: &[ListParWithRandom]) -> Option<Vec<String>> {
     let mut out = Vec::with_capacity(data.len());
     for item in data {
@@ -276,6 +279,7 @@ async fn build_runtime() -> Result<impl RhoRuntime, String> {
     .await)
 }
 
+#[cfg(feature = "source-oracle")]
 async fn eval_on_runtime<R: RhoRuntime>(runtime: &mut R, program: &str) -> Result<(), String> {
     let result = runtime
         .evaluate_with_term(program)
@@ -336,6 +340,7 @@ where
     out
 }
 
+#[cfg(feature = "source-oracle")]
 async fn evaluate(program: &str) -> Result<impl RhoRuntime, String> {
     let mut runtime = build_runtime().await?;
     eval_on_runtime(&mut runtime, program).await?;
@@ -373,6 +378,7 @@ async fn evaluate_validated_program_with_call(
     evaluate_par(&par.append(call.clone())).await
 }
 
+#[cfg(feature = "source-oracle")]
 async fn run_and_read_ground<T>(
     program: &str,
     out_channel: &str,
@@ -415,6 +421,7 @@ async fn run_validated_program_with_call_and_read_ground<T>(
 ///
 /// `Err` on a store/rspace failure or when evaluation reports interpreter errors
 /// (so a malformed source corpus member surfaces, never silently "succeeds").
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_for_oracle(program: &str) -> Result<(), String> {
     evaluate(program).await.map(|_| ())
 }
@@ -457,6 +464,7 @@ pub async fn run_normalized_par_for_oracle(program: &Par) -> Result<(), String> 
 /// Build an in-memory `RhoRuntime`, evaluate hand-authored Rholang source to
 /// quiescence, and return every ground integer left resting on the quoted
 /// channel `@"<out_channel>"`.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_for_oracle_and_read_ints(
     program: &str,
     out_channel: &str,
@@ -504,6 +512,7 @@ pub async fn run_normalized_par_for_oracle_and_read_ints(
 /// Build an in-memory `RhoRuntime`, evaluate hand-authored Rholang source to
 /// quiescence, and return every ground string left resting on the quoted channel
 /// `@"<out_channel>"`.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_for_oracle_and_read_strings(
     program: &str,
     out_channel: &str,
@@ -583,6 +592,7 @@ pub async fn run_validated_program_with_call_and_read_strings(
 /// Build an in-memory `RhoRuntime`, evaluate hand-authored Rholang source to
 /// quiescence, and return every ground boolean left resting on the quoted
 /// channel `@"<out_channel>"`.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_for_oracle_and_read_bools(
     program: &str,
     out_channel: &str,
@@ -719,6 +729,7 @@ pub async fn run_normalized_par_for_oracle_and_read_string_tuples(
 /// `channels` may contain duplicates. That is intentional: it lets the Rho
 /// backend verify same-channel joins at the RSpace/ADT boundary even when the
 /// source-text parser rejects duplicate receive-channel syntax before evaluation.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_for_oracle_then_consume_strings(
     program: &str,
     channels: &[&str],
@@ -756,6 +767,7 @@ pub async fn run_rholang_source_for_oracle_then_consume_strings(
 /// This is used by the M-RHO.1 race oracle: installing a receive first and then
 /// submitting sends one at a time makes send-arrival order explicit without
 /// relying on host scheduler traces.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_sequence_for_oracle_and_read_strings(
     programs: &[&str],
     out_channels: &[&str],
@@ -778,6 +790,7 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_strings(
 /// Evaluate hand-authored Rholang source programs sequentially on one in-memory
 /// `RhoRuntime`, then return every ground integer left resting on each requested
 /// quoted channel.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_sequence_for_oracle_and_read_ints(
     programs: &[&str],
     out_channels: &[&str],
@@ -800,6 +813,7 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_ints(
 /// Evaluate hand-authored Rholang source programs sequentially on one in-memory
 /// `RhoRuntime`, then return every ground boolean left resting on each requested
 /// quoted channel.
+#[cfg(feature = "source-oracle")]
 pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
     programs: &[&str],
     out_channels: &[&str],

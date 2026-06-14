@@ -28,6 +28,11 @@ oracle-ascent = ["runtime-report", "dep:mettail-languages", "mettail-languages/c
 # oracle. This keeps the Rholang process lowering independent from the legacy
 # calculator/Ascent oracle feature.
 oracle-rhocalc = ["runtime-report", "dep:mettail-languages", "mettail-languages/rhocalc"]
+# Enables hand-authored Rholang source evaluation helpers used only by
+# source-oracle regression tests. Generated backend execution remains AST-first:
+# the production boundary is `ValidatedRhoProgram` / `PlannedRhoBackend`, not
+# source text that will be reparsed.
+source-oracle = []
 
 [dependencies]
 mettail-rho-codegen = { path = "../mettail-rho-codegen" }
@@ -67,3 +72,13 @@ required-features = ["oracle-rhocalc"]
 name = "rho_structured_ast_send"
 path = "tests/rho_structured_ast_send.rs"
 required-features = ["runtime-report"]
+
+[[test]]
+name = "rho_comm_oracle"
+path = "tests/rho_comm_oracle.rs"
+required-features = ["source-oracle"]
+
+[[test]]
+name = "rho_guard_oracle"
+path = "tests/rho_guard_oracle.rs"
+required-features = ["source-oracle"]

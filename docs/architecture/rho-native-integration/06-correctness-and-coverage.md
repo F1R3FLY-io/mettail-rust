@@ -464,9 +464,11 @@ Proof:
 
 The generated backend entry point is the planned Rho backend. A planned backend
 contains a flip-gated default-backend plan, and the plan contains a
-validation-gated execution artifact. The current artifact constructor is the
-normalized host AST `rhoapi::Par`; Rholang-looking text is carried only as a
-reader annotation. Since source text is not a validated execution artifact,
+validation-gated execution artifact. That plan is derived from the structured
+`LanguageDef` produced by the `language!` expansion, not from displayed syntax
+or pretty-printed rule text. The current artifact constructor is the normalized
+host AST `rhoapi::Par`; Rholang-looking text is carried only as a reader
+annotation. Since source text is not a validated execution artifact,
 introducing a source-text artifact into the artifact universe does not make it
 acceptable: the generated-backend acceptance predicate rejects it directly.
 Therefore generated execution can inject a validated host artifact into
