@@ -52,6 +52,12 @@ A Dovetail report is therefore closer to a small certificate than to a log:
 
 `report = semantic payload + exact identity + boundary status`
 
+The common source of confusion is treating a report as an evaluator's final
+display value. In Dovetail, the display value is a possible downstream
+presentation. The report is the checked handoff object that says which exact
+rewrite alternatives exist, how they are supported, and whether the finite
+handoff is exhaustive.
+
 The detailed contract is
 [Runtime-Facing Reports](10-runtime-facing-reports.md).
 

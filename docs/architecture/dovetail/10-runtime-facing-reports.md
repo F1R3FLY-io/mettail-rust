@@ -40,6 +40,25 @@ So a report is not an extra logging layer. It is the reason Dovetail can remain
 substrate-neutral while still giving Rho, Ascent-oracle checks, tests, and
 future bytecode paths the same exact semantic payload.
 
+## Purpose At A Glance
+
+A Dovetail report exists to make a rewrite run safely consumable outside the
+rewrite engine. It is the bridge between Dovetail's internal proof obligations
+and the rest of the MeTTaIL runtime stack.
+
+| Purpose | What the report carries | Failure avoided |
+|---|---|---|
+| preserve exact alternatives | root `ContentKey`s and unique term records | treating two distinct derivations as the same displayed term |
+| preserve derivation evidence | parent-to-child edges with child indexes | losing operand order, repeated operands, or sharing |
+| preserve ordering | extractor root order and stable term-table ordinals | nondeterministic oracle comparisons or backend handoff |
+| preserve boundedness | `Complete` or `BoundedByCycleCut` terminal metadata | claiming a finite cyclic prefix is exhaustive |
+| preserve substrate neutrality | data tables rather than Ascent, Rho, parser, or UI types | coupling Dovetail to one runtime backend |
+
+The report is therefore not "the answer" in the usual evaluator sense. The
+answer may later become a Rho observation, an oracle comparison, a test
+assertion, or a displayed normal form. The report is the checked evidence
+envelope from which those downstream values must be derived.
+
 ## Why This Belongs In A Rewrite Engine
 
 The word "report" can sound surprising because a rewrite engine is often
@@ -326,6 +345,22 @@ The edge list preserves ordered children:
 The report is therefore a compact graph-shaped representation of the extracted
 derivation forest. It is not merely the displayed values `S(Z)` and
 `Add(Z, S(Z))`.
+
+## Concrete Handoff Example
+
+The same report can feed different consumers without changing Dovetail:
+
+| Consumer | What it reads from the report | What it may produce later |
+|---|---|---|
+| Rho backend | exact roots, term table, ordered derivation edges, completeness | normalized `rhoapi::Par`, and later a Rho runtime observation |
+| Ascent oracle | exact roots and derivation identity | a differential comparison against the legacy relation result |
+| testkit | roots, output records, and completeness | assertions over observed values or graph-shaped evidence |
+| reviewer tooling | saturation and extraction status | human-readable diagnostics derived from checked data |
+
+This distinction is important. A Rho observation is not a Dovetail report; it
+is produced after the Rho runtime consumes a backend artifact derived from a
+complete report. Likewise, an Ascent comparison is not the report; it is a
+consumer-side check against the report's exact semantic payload.
 
 ## Formal Contract
 
