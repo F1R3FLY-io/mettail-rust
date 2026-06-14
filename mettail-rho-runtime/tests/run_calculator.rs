@@ -12,10 +12,11 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
-    plan_rho_default_backend_with_evidence_audit, RhoArtifactKind, RhoAstLiteral, RhoAstSend,
-    RhoCoverageEvidence, RhoDefaultBackendEvidence, RhoGuardCoverageEvidence,
+    plan_rho_default_backend, plan_rho_default_backend_with_evidence_audit, RhoArtifactKind,
+    RhoAstLiteral, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    RhoGuardCoverageEvidence,
 };
-use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
+use mettail_rho_runtime::{PlannedRhoBackend, PlannedRhoBackendError, RhoExecutionBoundary};
 use models::rhoapi::Par;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -99,7 +100,23 @@ fn calculator_backend() -> PlannedRhoBackend {
         "all Int, Bool, and Str native scalar ops in the fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan)
+    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
+}
+
+#[test]
+fn planned_backend_rejects_unaudited_default_plan() {
+    let def =
+        syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
+    let plan = plan_rho_default_backend(&def, passing_evidence())
+        .expect("non-audited plan still passes the model flip gate");
+
+    assert!(!plan.is_evidence_audited());
+    let err = PlannedRhoBackend::from_plan(plan)
+        .expect_err("runtime-executable Rho backends require strict evidence auditing");
+    assert_eq!(
+        err,
+        PlannedRhoBackendError::EvidenceNotAudited { language_name: "CalcRun".to_string() }
+    );
 }
 
 /// `@"OP"!(a, b, @"OUT")`

@@ -63,11 +63,12 @@ pub use backend::{
     classify_rejected_rules, collect_guard_obligations, plan_rho_default_backend,
     plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
     RhoDefaultBackendEvidenceGate, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
-    RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy, RhoGateEvidenceDiagnostic,
-    RhoGuardCoverageEvidence, RhoGuardDisposition, RhoGuardDispositionDiagnostic,
-    RhoGuardDispositionKind, RhoGuardObligation, RhoGuardObligationKind,
-    RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason, RhoRejectedRuleDisposition,
-    RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
+    RhoEvidenceAuditStatus, RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy,
+    RhoGateEvidenceDiagnostic, RhoGuardCoverageEvidence, RhoGuardDisposition,
+    RhoGuardDispositionDiagnostic, RhoGuardDispositionKind, RhoGuardObligation,
+    RhoGuardObligationKind, RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason,
+    RhoRejectedRuleDisposition, RhoRejectedRuleDispositionDiagnostic,
+    RhoRejectedRuleDispositionKind,
 };
 pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,

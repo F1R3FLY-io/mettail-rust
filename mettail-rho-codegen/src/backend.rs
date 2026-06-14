@@ -856,6 +856,19 @@ pub enum RhoEvidenceRefAuditDiagnostic {
     },
 }
 
+/// Whether a successful Rho-default plan was built with evidence-reference
+/// auditing enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhoEvidenceAuditStatus {
+    /// The planner checked Boolean gates and nonblank evidence refs, but did
+    /// not verify that repository-local evidence paths exist or that logical
+    /// evidence namespaces were explicitly allowed.
+    NotAudited,
+    /// The planner verified repository-local evidence paths and logical
+    /// evidence namespaces under a caller-supplied audit policy.
+    Audited,
+}
+
 /// Concrete plan for a language that passed the Rho-default flip gate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoDefaultBackendPlan {
@@ -864,6 +877,7 @@ pub struct RhoDefaultBackendPlan {
     pub rejected_rule_dispositions: Vec<RhoRejectedRuleDisposition>,
     pub guard_obligation_dispositions: Vec<RhoGuardDisposition>,
     pub evidence_refs: Vec<String>,
+    pub evidence_audit_status: RhoEvidenceAuditStatus,
 }
 
 impl RhoDefaultBackendPlan {
@@ -894,6 +908,17 @@ impl RhoDefaultBackendPlan {
     /// exposing this plan as a default runtime backend.
     pub fn evidence_refs(&self) -> &[String] {
         &self.evidence_refs
+    }
+
+    /// Whether this plan was built by the strict evidence-auditing planner.
+    pub fn evidence_audit_status(&self) -> RhoEvidenceAuditStatus {
+        self.evidence_audit_status
+    }
+
+    /// True only for plans built by
+    /// [`plan_rho_default_backend_with_evidence_audit`].
+    pub fn is_evidence_audited(&self) -> bool {
+        self.evidence_audit_status == RhoEvidenceAuditStatus::Audited
     }
 }
 
@@ -1178,6 +1203,11 @@ fn plan_rho_default_backend_impl(
             validated_program,
             evidence_refs,
             lowering,
+            evidence_audit_status: if audit_policy.is_some() {
+                RhoEvidenceAuditStatus::Audited
+            } else {
+                RhoEvidenceAuditStatus::NotAudited
+            },
         })
     } else {
         Err(RhoDefaultBackendPlanError {

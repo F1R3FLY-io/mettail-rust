@@ -109,7 +109,7 @@ fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
         "all binary Int, Bool, and Str scalar ops in this fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan)
+    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
 }
 
 fn calculator_backend() -> PlannedRhoBackend {

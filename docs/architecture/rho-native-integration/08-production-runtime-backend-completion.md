@@ -342,7 +342,10 @@ Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
 future bytecode variants can use the same report boundary.
 The runtime integration tests share a strict evidence-audit policy helper, so
 stale proof, scheduler, or oracle evidence paths fail before a
-`PlannedRhoBackend` is constructed.
+`PlannedRhoBackend` is constructed. `RhoDefaultBackendPlan` also records whether
+that strict audit ran, and `PlannedRhoBackend::from_plan` rejects unaudited
+plans. A non-audited plan can still support codegen model tests, but it cannot
+become the executable generated-backend boundary.
 
 The wrapper has two capability surfaces, and the distinction is operationally
 important:

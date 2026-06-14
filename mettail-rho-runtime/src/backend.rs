@@ -3,20 +3,20 @@
 //! `run_validated_program*` is intentionally still available for oracle and
 //! debug code that needs to inject a shape-validated AST. Generated backend
 //! execution should use [`PlannedRhoBackend`]: it can only be built from a
-//! `RhoDefaultBackendPlan`, which is the codegen artifact produced after the
-//! proof, oracle, coverage, scheduler-fairness, validation, and deadlock gates
-//! pass.
+//! `RhoDefaultBackendPlan` whose proof, oracle, coverage,
+//! scheduler-fairness, validation, deadlock, and strict evidence-reference
+//! audit gates passed.
 
 #[cfg(feature = "runtime-report")]
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(feature = "runtime-report")]
 use std::fmt;
 #[cfg(feature = "runtime-report")]
 use std::thread;
 
 use mettail_rho_codegen::{
-    CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram,
+    CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, RhoEvidenceAuditStatus,
+    ValidatedRhoProgram,
 };
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
@@ -195,11 +195,37 @@ pub struct PlannedRhoBackend {
     plan: RhoDefaultBackendPlan,
 }
 
+/// Failure building an executable generated Rho backend from a codegen plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedRhoBackendError {
+    /// Runtime-default execution requires the strict evidence-reference audit;
+    /// non-audited plans are valid model artifacts but not executable defaults.
+    EvidenceNotAudited { language_name: String },
+}
+
+impl fmt::Display for PlannedRhoBackendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EvidenceNotAudited { language_name } => write!(
+                f,
+                "RhoMachine backend plan for language {language_name} was not built with evidence-reference auditing"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PlannedRhoBackendError {}
+
 impl PlannedRhoBackend {
     /// Accept a Rho-default backend plan that has already passed the codegen
-    /// flip gate.
-    pub fn from_plan(plan: RhoDefaultBackendPlan) -> Self {
-        Self { plan }
+    /// flip gate and strict evidence-reference audit.
+    pub fn from_plan(plan: RhoDefaultBackendPlan) -> Result<Self, PlannedRhoBackendError> {
+        match plan.evidence_audit_status() {
+            RhoEvidenceAuditStatus::Audited => Ok(Self { plan }),
+            RhoEvidenceAuditStatus::NotAudited => Err(PlannedRhoBackendError::EvidenceNotAudited {
+                language_name: plan.language_name().to_string(),
+            }),
+        }
     }
 
     /// The plan that selected this generated backend.

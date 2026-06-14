@@ -86,7 +86,7 @@ fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
         plan.lowering.rejected.is_empty(),
         "dynamic RhoCalc plan should not hide rejected static rules"
     );
-    PlannedRhoBackend::from_plan(plan)
+    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
 }
 
 fn quoted_name(value: &str) -> Name {

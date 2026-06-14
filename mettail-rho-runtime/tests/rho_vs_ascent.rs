@@ -69,7 +69,7 @@ fn calculator_backend() -> PlannedRhoBackend {
         "all five Int binary scalar ops must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan)
+    PlannedRhoBackend::from_plan(plan).expect("audited Rho plan should build executable backend")
 }
 
 /// The Ascent backend's normal-form display strings for `input`.
