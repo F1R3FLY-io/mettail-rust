@@ -1,9 +1,10 @@
 //! `ProgramTestSuite` builder for application-level testing.
 //!
 //! Tests programs written in MeTTaIL-defined languages by leveraging
-//! the language's semantics (parser, Ascent engine, type system, etc.)
-//! to auto-generate structural, semantic, and behavioral tests.
+//! the language's semantics (parser, selected runtime backend, type system,
+//! etc.) to auto-generate structural, semantic, and behavioral tests.
 
+use crate::runtime_report;
 #[allow(unused_imports)]
 use mettail_runtime::{Language, Term};
 
@@ -170,19 +171,35 @@ impl<'a> ProgramTestSuite<'a> {
                     .parse_term(source)
                     .map_err(|e| format!("Parse failed: {}", e))?;
 
-                mettail_runtime::clear_var_cache();
-                let results = self
-                    .language
-                    .run_ascent(term.as_ref())
-                    .map_err(|e| format!("Ascent failed: {}", e))?;
+                let report = runtime_report::run_default_backend_report(
+                    self.language,
+                    term.as_ref(),
+                    "program termination check",
+                )?;
 
-                let normal_forms = results.normal_forms();
-                if normal_forms.is_empty() && results.all_terms.len() > *max_steps {
-                    return Err(format!(
-                        "Program did not terminate within {} steps ({} terms explored)",
-                        max_steps,
-                        results.all_terms.len()
-                    ));
+                match report.output {
+                    mettail_runtime::RuntimeBackendOutput::Ascent(results) => {
+                        let normal_forms = results.normal_forms();
+                        if normal_forms.is_empty() && results.all_terms.len() > *max_steps {
+                            return Err(format!(
+                                "Program did not terminate within {} steps ({} terms explored)",
+                                max_steps,
+                                results.all_terms.len()
+                            ));
+                        }
+                    },
+                    mettail_runtime::RuntimeBackendOutput::Observations(_) => {
+                        // Observation-shaped backend reports are terminal runtime
+                        // outcomes; they are not rewrite graphs, but they do prove
+                        // the selected runtime backend returned within this check.
+                    },
+                    other => {
+                        return Err(format!(
+                            "Program termination check does not support {} output from {}",
+                            other.kind_name(),
+                            report.backend
+                        ));
+                    },
                 }
                 Ok(())
             },
@@ -293,7 +310,8 @@ impl<'a> ProgramTestSuite<'a> {
         // Step 2: Build a system Buchi automaton from the program's execution.
         // We construct a simple model:
         // - Parse the source to get the initial term.
-        // - Run Ascent to get the rewrite trace.
+        // - Run the selected runtime backend and require an Ascent-shaped
+        //   rewrite graph for this graph-only LTL model.
         // - Each term in the trace becomes a state.
         // - Transitions connect consecutive terms.
         // - Normal forms are accepting states.
@@ -303,11 +321,12 @@ impl<'a> ProgramTestSuite<'a> {
             .parse_term(source)
             .map_err(|e| format!("Parse failed for LTL check: {}", e))?;
 
-        mettail_runtime::clear_var_cache();
-        let results = self
-            .language
-            .run_ascent(term.as_ref())
-            .map_err(|e| format!("Ascent failed for LTL check: {}", e))?;
+        let report = runtime_report::run_default_backend_report(
+            self.language,
+            term.as_ref(),
+            "LTL execution-model check",
+        )?;
+        let results = runtime_report::expect_ascent_graph(report, "LTL execution-model check")?;
 
         // Build system Buchi automaton.
         let normal_forms = results.normal_forms();

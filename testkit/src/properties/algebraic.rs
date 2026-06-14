@@ -1,6 +1,7 @@
 //! Algebraic property assertions: equation symmetry, rewrite progress,
 //! rewrite-to, normal form checking.
 
+use crate::runtime_report;
 #[allow(unused_imports)]
 use mettail_runtime::{Language, Term};
 
@@ -16,10 +17,12 @@ pub fn assert_equation_symmetry(
         .parse_term(lhs_str)
         .map_err(|e| format!("Failed to parse LHS '{}': {}", lhs_str, e))?;
 
-    mettail_runtime::clear_var_cache();
-    let results = lang
-        .run_ascent(lhs.as_ref())
-        .map_err(|e| format!("Ascent failed on LHS '{}': {}", lhs_str, e))?;
+    let report = runtime_report::run_default_backend_report(
+        lang,
+        lhs.as_ref(),
+        &format!("equation symmetry LHS '{}'", lhs_str),
+    )?;
+    let results = runtime_report::expect_ascent_graph(report, "equation symmetry")?;
 
     // Check that rhs appears somewhere in the reachable terms
     let rhs_found = results.all_terms.iter().any(|t| t.display == rhs_str);
@@ -42,10 +45,12 @@ pub fn assert_equation_symmetry(
         .parse_term(rhs_str)
         .map_err(|e| format!("Failed to parse RHS '{}': {}", rhs_str, e))?;
 
-    mettail_runtime::clear_var_cache();
-    let results = lang
-        .run_ascent(rhs.as_ref())
-        .map_err(|e| format!("Ascent failed on RHS '{}': {}", rhs_str, e))?;
+    let report = runtime_report::run_default_backend_report(
+        lang,
+        rhs.as_ref(),
+        &format!("equation symmetry RHS '{}'", rhs_str),
+    )?;
+    let results = runtime_report::expect_ascent_graph(report, "equation symmetry")?;
 
     let lhs_found = results.all_terms.iter().any(|t| t.display == lhs_str);
 
@@ -71,10 +76,12 @@ pub fn assert_rewrite_fires(lang: &dyn Language, input: &str) -> Result<(), Stri
         .parse_term(input)
         .map_err(|e| format!("Failed to parse '{}': {}", input, e))?;
 
-    mettail_runtime::clear_var_cache();
-    let results = lang
-        .run_ascent(term.as_ref())
-        .map_err(|e| format!("Ascent failed for '{}': {}", input, e))?;
+    let report = runtime_report::run_default_backend_report(
+        lang,
+        term.as_ref(),
+        &format!("rewrite firing check for '{}'", input),
+    )?;
+    let results = runtime_report::expect_ascent_graph(report, "rewrite firing check")?;
 
     if results.rewrites.is_empty() {
         return Err(format!("Expected at least one rewrite to fire for '{}', but none did", input));
@@ -90,22 +97,19 @@ pub fn assert_rewrites_to(lang: &dyn Language, input: &str, expected: &str) -> R
         .parse_term(input)
         .map_err(|e| format!("Failed to parse '{}': {}", input, e))?;
 
-    mettail_runtime::clear_var_cache();
-    let results = lang
-        .run_ascent(term.as_ref())
-        .map_err(|e| format!("Ascent failed for '{}': {}", input, e))?;
-
-    let normal_forms = results.normal_forms();
-    for nf in &normal_forms {
-        if nf.display == expected {
-            return Ok(());
-        }
+    let report = runtime_report::run_default_backend_report(
+        lang,
+        term.as_ref(),
+        &format!("rewrite-to check for '{}'", input),
+    )?;
+    if runtime_report::report_contains_expected(&report, expected) {
+        return Ok(());
     }
 
-    let nf_displays: Vec<&str> = normal_forms.iter().map(|nf| nf.display.as_str()).collect();
+    let observed = runtime_report::report_observed_outputs(&report);
     Err(format!(
         "Rewrite mismatch:\n  input:    '{}'\n  expected: '{}'\n  got:      {:?}",
-        input, expected, nf_displays
+        input, expected, observed
     ))
 }
 
@@ -116,10 +120,12 @@ pub fn assert_normal_form(lang: &dyn Language, input: &str) -> Result<(), String
         .parse_term(input)
         .map_err(|e| format!("Failed to parse '{}': {}", input, e))?;
 
-    mettail_runtime::clear_var_cache();
-    let results = lang
-        .run_ascent(term.as_ref())
-        .map_err(|e| format!("Ascent failed for '{}': {}", input, e))?;
+    let report = runtime_report::run_default_backend_report(
+        lang,
+        term.as_ref(),
+        &format!("normal-form check for '{}'", input),
+    )?;
+    let results = runtime_report::expect_ascent_graph(report, "normal-form check")?;
 
     if !results.rewrites.is_empty() {
         let targets: Vec<String> = results

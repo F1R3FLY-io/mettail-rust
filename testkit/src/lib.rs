@@ -18,6 +18,8 @@ pub mod program;
 pub mod properties;
 pub mod strategies;
 
+mod runtime_report;
+
 // Re-export commonly used items for convenience in generated test code
 pub use alpha::assert_alpha_eq;
 pub use properties::algebraic;
