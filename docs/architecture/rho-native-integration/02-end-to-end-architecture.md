@@ -244,12 +244,20 @@ matches the repository-local Rho target design
 ([RHOLANG-TARGET-DESIGN](references.md#rholang-target-design)) and M-RHO
 execution contract ([RHO-FLIP-DESIGN](references.md#rho-flip-design)).
 
-## Source-to-Rho Lifecycle
+## Source-to-Runtime Lifecycle
 
-![Source snippet to Rho machine execution sequence](figures/02-end-to-end-architecture.svg)
+![Source snippet to selected runtime backend sequence](figures/02-end-to-end-architecture.svg)
 
 PlantUML source:
 [figures/02-end-to-end-architecture.puml](figures/02-end-to-end-architecture.puml).
+
+The diagram is intentionally drawn around the branch after
+`DovetailRunReport`. A direct Dovetail runtime backend returns a report-shaped
+`RuntimeBackendOutput::Dovetail`. A Rho runtime backend consumes the same
+complete report, lowers it to `rhoapi::Par`, injects that AST into F1r3node,
+and returns observation-shaped output through `RuntimeBackendReport`. The
+branch point is the cohesion rule: Dovetail finishes before runtime execution;
+selected runtime backends decide how the checked report is exposed or executed.
 
 ## Component Contracts
 

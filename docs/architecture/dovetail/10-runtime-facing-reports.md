@@ -486,6 +486,25 @@ This table is the complete high-level story. Later details elaborate these
 boundaries; they do not introduce a second language-definition mechanism or a
 source-text Rholang generation step.
 
+### How To Read This Example
+
+Read the MiniRhoFor example in four passes:
+
+1. Declaration view: the `language!` body is the author's source of truth and
+   parses to `LanguageDef`.
+2. Inventory view: generated `LanguageMetadata` exposes categories,
+   constructors, rewrites, guards, handlers, and backend capabilities.
+3. Report view: a parsed snippet plus metadata becomes `SatReport`,
+   `Extraction<T>`, and `DovetailRunReport`; this is checked rewrite evidence
+   before runtime execution.
+4. Runtime view: the selected backend either exposes the report directly as
+   `RuntimeBackendOutput::Dovetail` or consumes a complete report to generate
+   `rhoapi::Par` and observe RSpace through `RuntimeBackendReport`.
+
+Those passes share one semantic payload. They differ in shape and owner:
+language definition is macro-owned, report construction is Dovetail-owned, and
+Rho observation is runtime-owned.
+
 ### Reader Checkpoints For The Example
 
 The example is easiest to follow if each row is read as an answer to one
