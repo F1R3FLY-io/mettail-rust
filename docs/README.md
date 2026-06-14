@@ -25,6 +25,7 @@ machine backend:
 
 - **`architecture/dovetail/README.md`** - Overview, reading paths, diagrams, and validation
 - **`architecture/dovetail/00-executive-brief.md`** - One-page decision brief for principals
+- **`architecture/dovetail/00-requirements-traceability.md`** - Explicit Dovetail requirement-to-document coverage map
 - **`architecture/dovetail/01-concepts-and-glossary.md`** - Symbols, acronyms, and key terms
 - **`architecture/dovetail/02-engine-architecture.md`** - Layers, lifecycle, and component rationale
 - **`architecture/dovetail/03-data-model-and-exact-keys.md`** - E-graph model, content keys, framing, and reports

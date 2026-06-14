@@ -43,8 +43,9 @@ For implementers:
 For reviewers checking claims:
 
 1. [Formal Verification and Tests](07-formal-verification-and-tests.md)
-2. [References](references.md)
-3. [Validation Script](validate.sh)
+2. [Requirements Traceability](00-requirements-traceability.md)
+3. [References](references.md)
+4. [Validation Script](validate.sh)
 
 ## Reader Contract
 
@@ -76,6 +77,7 @@ the e-graph or extractor internals.
 | Document | Question answered |
 |---|---|
 | [00 - Executive Brief](00-executive-brief.md) | What is Dovetail and why does it replace the production Ascent rewrite path? |
+| [00 - Requirements Traceability](00-requirements-traceability.md) | Where is each explicit Dovetail documentation and verification requirement satisfied? |
 | [01 - Concepts and Glossary](01-concepts-and-glossary.md) | What do Dovetail symbols, acronyms, and terms mean? |
 | [02 - Engine Architecture](02-engine-architecture.md) | What are the modules, ownership boundaries, and execution phases? |
 | [03 - Data Model and Exact Keys](03-data-model-and-exact-keys.md) | How are e-classes, e-nodes, content keys, and reports represented? |

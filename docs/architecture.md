@@ -83,7 +83,8 @@ itself is documented in
 [architecture/dovetail/README.md](architecture/dovetail/README.md). That suite
 covers the standalone rewrite engine: exact-key equality saturation, rules as
 data, weighted-tree-automaton interpretation, checked extraction, cyclic
-boundedness, formal verification, tests, and engineering handoff.
+boundedness, formal verification, tests, traceability, and engineering
+handoff.
 
 The downstream Rho-native execution design is documented separately in
 [architecture/rho-native-integration/README.md](architecture/rho-native-integration/README.md).
