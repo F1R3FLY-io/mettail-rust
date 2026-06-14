@@ -176,6 +176,103 @@ boundary. It is the native fast path for a language whose semantic domain is
 already Rho-shaped, and it supplies evidence for how a covered Rho fragment is
 injected into the host interpreter without a source-text round trip.
 
+### Generic Call-By-Need Thunk Boundary
+
+Not every MeTTaIL-modeled language has a direct Rho process interpretation like
+rhocalc. The generic bridge for those computations is call-by-need: a source
+computation is represented as a private Rho thunk, and forcing the thunk sends
+its result to a continuation while memoizing the first result.
+
+The artifact chain for the current M-RHO.2 boundary is:
+
+`LanguageMetadata + typed computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par → RhoRuntime observations`
+
+`CallByNeedThunkSpec` is the generated-language parameter block. It carries:
+
+| Field | Meaning | Validation purpose |
+|---|---|---|
+| initial state | whether the thunk starts cold or already memoized | fixes the admission sequence: miss-then-hit or hit-then-hit |
+| value | generated-language result payload for the current thunk artifact | keeps the proof parametric in source value |
+| evaluation marker | observable marker for the cold computation branch | lets runtime tests distinguish compute-once from memo reuse |
+| output channel | public value-observation channel | separates value observations from evaluation traces |
+| evaluation channel | public evaluation-trace channel | prevents a compute marker from being confused with a result |
+
+The topology does not change across generated languages:
+
+`private thunk contract + state cell + memo cell + observer continuations`
+
+Only payload and public observation names are parameterized. This is what keeps
+the proof reusable: `RhoCallByNeedObservation.v` reasons about arbitrary source
+values and a fixed memoizing force topology, while Rust validation enforces the
+AST profile and the planner enforces lookahead/heap admission.
+
+Literate lowering sketch:
+
+```pseudocode
+Algorithm: Lower a generated computation to a planned call-by-need thunk
+
+Given:
+  a typed source computation c
+  generated language metadata M
+  an initial memo state s
+  a lookahead and heap budget b
+
+Produce:
+  a planned normalized Rho AST thunk or an explicit rejection
+
+Steps:
+  1. Derive the source value payload v for c under M's semantic inventory.
+
+  2. Derive distinct observation channels out and eval for this computation.
+
+  3. Build CallByNeedThunkSpec(s, v, eval-marker(c), out, eval).
+
+  4. Reject if any spec field is empty or if out = eval.
+
+  5. Admit the force sequence against b:
+     cold thunks require one memo miss followed by one memo hit;
+     hot thunks require two memo hits.
+
+  6. Construct rhoapi::Par directly:
+     create private thunk, state, memo, and continuation names;
+     install the persistent thunk contract;
+     seed state and, for hot thunks, seed the memo;
+     force twice through observer continuations.
+
+  7. Validate the AST with the CallByNeedThunk profile.
+
+  8. Return CallByNeedThunkPlan only if admission, validation, and evidence
+     gates all pass.
+```
+
+The readable Rholang shape is:
+
+```rholang
+new thunk, state, memo, ret1, ret2 in {
+  state!(initial) |
+  contract thunk(k) = {
+    for (@s <- state) {
+      match s {
+        "cold" => {
+          state!("hot") | memo!!(value) | eval!(marker) | k!(value)
+        }
+        "hot" => {
+          state!("hot") | for (@v <<- memo) { k!(v) }
+        }
+      }
+    }
+  } |
+  thunk!(*ret1) |
+  for (@v1 <- ret1) { out!(v1) | thunk!(*ret2) } |
+  for (@v2 <- ret2) { out!(v2) }
+}
+```
+
+The rendering is again documentation-only. The executable artifact is
+`models::rhoapi::Par`, produced by `mettail_rho_codegen::build_call_by_need_thunk_ast_from_spec`
+and accepted for execution only after `plan_call_by_need_thunk_with_spec`
+returns a `CallByNeedThunkPlan`.
+
 The supported transport-pure rhocalc core maps directly onto host Rho-machine
 constructs:
 

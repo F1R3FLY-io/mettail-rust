@@ -76,6 +76,7 @@ oracle.
 | `List::ListLit` | `ExprInstance::EListBody` |
 | `Map::MapLit` | `ExprInstance::EMapBody` |
 | `Bag::BagLit` | tagged `EList` ABI: private tag plus ordered `[element, count]` entries |
+| generic call-by-need computation | private thunk/state/memo `Par` topology from `CallByNeedThunkSpec` |
 
 Mapping a MeTTaIL bag to a Rholang set is incorrect because set lowering
 discards multiplicity. The tagged list ABI preserves multiplicity and keeps the
@@ -90,6 +91,15 @@ unforgeable names, closed list/tuple/set/map payloads, and rhocalc bags. The
 bag tag constant `RHOCALC_BAG_ABI_TAG` is defined in `mettail-rho-codegen` and
 re-exported by `mettail-rho-runtime`, so the producer and observer share one
 nominal ABI.
+
+Generic call-by-need artifacts use the same AST discipline. The generated
+language supplies a `CallByNeedThunkSpec` containing initial cold/hot state,
+result payload, evaluation marker, output channel, and evaluation-trace channel.
+`plan_call_by_need_thunk_with_spec` then admits the two-force sequence under
+lookahead/heap budgets, validates the normalized `rhoapi::Par` artifact with
+the call-by-need profile, and returns `CallByNeedThunkPlan`. Runtime execution
+uses `PlannedCallByNeedThunk`, which reads the spec-named channels rather than
+the sample fixture channel names.
 
 ## Runtime Observation Payloads
 

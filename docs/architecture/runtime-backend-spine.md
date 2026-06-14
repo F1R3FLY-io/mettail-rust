@@ -77,6 +77,12 @@ There are two production runtime lanes after the Dovetail report:
 | direct Dovetail runtime | `DovetailRunReport → RuntimeDovetailRunReport → RuntimeBackendOutput::Dovetail` | expose checked rewrite evidence as the selected runtime result |
 | Rho-native runtime | `DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → RSpace observations → RuntimeBackendReport` | execute covered rewrite semantics as host Rho-machine dataflow |
 
+The Rho-native lane has two generation shapes. Rho-shaped or directly covered
+rules lower through a RhoNet plan. Generic call-by-need computations lower
+through `CallByNeedThunkSpec → CallByNeedThunkPlan`, then to the same
+normalized `rhoapi::Par` artifact kind. Both shapes use AST-first generation
+and both execute through F1r3node's RhoRuntime.
+
 Both lanes are runtime-backend paths. Neither replaces the parser.
 
 ## Responsibilities
@@ -110,6 +116,8 @@ and not:
 | `SatReport` | Dovetail saturation terminal status and statistics | says how equality/rewrite growth stopped |
 | `Extraction<T>` | Dovetail extracted value plus terminal completeness | keeps `Complete` and `BoundedByCycleCut` explicit |
 | `DovetailRunReport` | exact-keyed derivation forest for downstream consumers | before runtime execution |
+| `CallByNeedThunkSpec` | generated-language parameter block for a memoizing Rho thunk | before planned CBN AST generation |
+| `CallByNeedThunkPlan` | budget-admitted and AST-validated call-by-need thunk plan | before RhoRuntime execution |
 | `rhoapi::Par` | normalized host Rholang AST value | executable artifact, not Rholang source text |
 | Rho observation | ground value left in RSpace after host execution | after runtime execution |
 | `RuntimeBackendReport` | generic MeTTaIL runtime envelope | shape must match selected backend |
@@ -134,7 +142,8 @@ projected Dovetail table consistency.
 | 4 | typed AST plus metadata | `SatReport` and `DovetailRunReport` | Dovetail preserves exact identity, ordering, and completeness |
 | 5a | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | direct Dovetail runtime stays report-shaped |
 | 5b | complete Dovetail report | `RhoNet plan` | Rho lowering is total-or-explicit-reject |
-| 6 | RhoNet plan | `rhoapi::Par` | generated execution artifact is AST, never text to reparse |
+| 5c | generated-language need computation | `CallByNeedThunkSpec → CallByNeedThunkPlan` | generic CBN lowering preserves thunk topology and makes bounded admission explicit |
+| 6 | RhoNet plan or `CallByNeedThunkPlan` | `rhoapi::Par` | generated execution artifact is AST, never text to reparse |
 | 7 | `rhoapi::Par` | RSpace resting observations | host RhoRuntime owns scheduling and COMM |
 | 8 | backend-specific result | `RuntimeBackendReport` | output shape must match backend identity |
 

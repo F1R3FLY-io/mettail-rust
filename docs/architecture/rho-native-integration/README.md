@@ -98,6 +98,15 @@ inspection, and simulation traces. The Rho-native chain starts from the same
 checked report but lowers it further to `rhoapi::Par` and observes RSpace after
 execution.
 
+For generic call-by-need execution, the Rho generation segment is:
+
+`generated-language computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
+
+This segment is still AST-first. The spec names the generated-language value,
+evaluation marker, output channel, and evaluation-trace channel; the plan proves
+budget admission and artifact validation before the RhoRuntime receives the
+normalized `Par`.
+
 The artifact spine below is the recommended mental model for the whole suite:
 
 | Step | Owner | Artifact | What must be true before the next step |

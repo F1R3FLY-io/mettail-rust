@@ -70,9 +70,13 @@ artifact is AST such as `rhoapi::Par`, not text that will be reparsed. That AST
 boundary is deliberately bytecode-ready: a later Rholang bytecode emitter can
 target the same normalized artifact contract.
 
-The ownership pipeline is:
+The ownership pipeline for directly covered Rho-native rewrites is:
 
 `language! spec → semantic inventory → Dovetail reports → RhoNet plan → rhoapi::Par → RhoRuntime observations → RuntimeBackendReport`
+
+The generic call-by-need segment uses the same AST-first execution boundary:
+
+`generated-language computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
 
 | Concern | `language!` | Dovetail | Rho backend |
 |---|---|---|---|
@@ -103,7 +107,8 @@ adds or preserves a specific contract.
 | 4. Dovetail execution | typed AST term plus metadata | `SatReport` and `DovetailRunReport` | rewrite consequences are exact-keyed, ordered, and explicitly complete or bounded |
 | 5a. direct Dovetail runtime | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | the runtime exposes Dovetail evidence without fabricating an Ascent graph |
 | 5b. Rho planning | complete Dovetail report | `RhoNet plan` | covered rewrites become dataflow contracts and uncovered rewrites are explicit rejections |
-| 6. AST generation | RhoNet plan | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
+| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and `CallByNeedThunkPlan` | thunk payload/channels are generated-language parameters, while budget admission and AST validation are explicit |
+| 6. AST generation | RhoNet plan or `CallByNeedThunkPlan` | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
 | 7. Rho execution | `rhoapi::Par` | RSpace observations | F1r3node's RhoRuntime and RSpace own COMM, joins, scheduling, replay, and checkpointing |
 | 8. runtime return | backend-specific output | `RuntimeBackendReport` | the caller receives an envelope whose shape matches the selected backend |
 
@@ -112,6 +117,8 @@ The split at stage 5 is intentional:
 `stage 5a = use Dovetail as the production rewrite backend`
 
 `stage 5b-7 = use Dovetail evidence to generate and execute Rho-native work`
+
+`stage 5c-7 = use a planned call-by-need thunk to execute a generated computation through RhoRuntime`
 
 Both are runtime-backend paths. Neither replaces the parser. The direct
 Dovetail path is valuable when the checked rewrite report itself is the runtime
