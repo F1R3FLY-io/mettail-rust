@@ -54,8 +54,15 @@ Given a set of seed terms and rewrite rules:
   Rebuild congruence indexes after rule firings.
   Stop with Converged, NodeLimit, or IterationLimit.
   Extract derivations from requested roots.
-  Return values with Complete or BoundedByCycleCut metadata.
+  Return extracted values with Complete or BoundedByCycleCut metadata.
+  Build a runtime-facing report when the result crosses a subsystem boundary.
 ```
+
+The final step is not decorative logging. It freezes Dovetail's checked
+rewrite result into exact roots, term records, ordered derivation edges, and
+terminal completeness so a backend or oracle can consume the result without
+reconstructing extractor internals. The detailed contract is
+[Runtime-Facing Reports](10-runtime-facing-reports.md).
 
 ## Dependency Direction
 

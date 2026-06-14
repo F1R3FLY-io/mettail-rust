@@ -35,6 +35,26 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | completeness | Terminal metadata saying whether extracted output is exhaustive or bounded by a cycle cut. |
 | tuple-space seam | Generic `TupleSpace` and `Match` traits used to model rendezvous without depending on RSpace. |
 
+## Report Terms
+
+Dovetail uses "report" in the API-contract sense, not the prose-document
+sense. A report is a typed handoff artifact that another subsystem may consume
+without depending on Dovetail's internal e-graph and extractor structures.
+
+| Artifact | Boundary | Main obligation |
+|---|---|---|
+| `SatReport` | saturation | inspect `Converged`, `NodeLimit`, or `IterationLimit` before claiming saturation success |
+| `Extraction<T>` | extraction | preserve the extracted value and the terminal `Complete` or `BoundedByCycleCut` status together |
+| `DovetailRunReport` | runtime/tool handoff | preserve exact root keys, term records, ordered derivation edges, and completeness |
+| runtime observation | backend execution | keep it separate from Dovetail reports because it is produced after a backend consumes an artifact |
+
+A Dovetail report is therefore closer to a small certificate than to a log:
+
+`report = semantic payload + exact identity + boundary status`
+
+The detailed contract is
+[Runtime-Facing Reports](10-runtime-facing-reports.md).
+
 ## Symbols
 
 | Symbol | Meaning |

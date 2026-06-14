@@ -40,6 +40,49 @@ So a report is not an extra logging layer. It is the reason Dovetail can remain
 substrate-neutral while still giving Rho, Ascent-oracle checks, tests, and
 future bytecode paths the same exact semantic payload.
 
+## Why This Belongs In A Rewrite Engine
+
+The word "report" can sound surprising because a rewrite engine is often
+introduced as if it only computes a rewritten term. Dovetail has a broader job:
+it computes a checked region of a rewrite search space and must hand that
+region to components that do not share Dovetail's internal data structures.
+
+That handoff has to answer four questions a plain term cannot answer:
+
+| Question | Why a term alone is insufficient |
+|---|---|
+| Which exact alternatives were found? | Display text can conflate distinct derivation trees. |
+| What derivation structure supports each alternative? | A backend may need ordered children, repeated operands, and shared subterms. |
+| Why did the search stop? | Convergence, node limits, iteration limits, and cycle cuts have different meanings. |
+| May the consumer claim exhaustiveness? | A finite prefix from a cyclic space is useful evidence, but it is not a complete result. |
+
+The report layer is therefore part of Dovetail's semantic API. It is not an
+optional observability feature. Removing it would force each consumer to
+reconstruct Dovetail-specific invariants from weaker values, which is exactly
+where boundedness, exact identity, and ordering bugs tend to enter runtime
+integrations.
+
+For engineering review, use this rule:
+
+`If a value crosses from Dovetail into another subsystem, it must either be a report or be explicitly derived from a report without weakening its obligations.`
+
+## Report Family
+
+"Report" is a family name for typed artifacts at Dovetail phase boundaries. The
+types are intentionally small and specific:
+
+| Type | Phase boundary | What it certifies | What it does not certify |
+|---|---|---|---|
+| `SatReport` | rule saturation | how equality growth stopped under the configured node and iteration bounds | that every possible rule universe was explored without caller-selected bounds |
+| `Extraction<T>` | extraction stream termination | the extracted value and whether the stream is exhaustive or cycle-bounded | that saturation converged |
+| `DovetailRunReport` | runtime/tool handoff | exact roots, term records, derivation edges, and extraction completeness in a substrate-neutral shape | that a runtime has executed the result |
+
+The end-to-end completeness claim is deliberately conjunctive:
+
+`EndToEndComplete = SaturationConverged ∧ ExtractionComplete`
+
+No single report is allowed to smuggle that stronger claim on its own.
+
 ## Definitions
 
 | Term | Meaning |
@@ -90,6 +133,24 @@ A report answers questions that a plain return value cannot answer:
 | Is the extracted set exhaustive? | `DovetailRunReport::completeness` |
 | May a downstream runtime treat the result as complete? | `DovetailRunReport::assert_complete()` |
 
+## Naming Discipline
+
+Dovetail documentation and code should use the noun precisely:
+
+| Phrase | Use it when... |
+|---|---|
+| Dovetail report | the artifact was produced by Dovetail and carries Dovetail's checked semantics |
+| saturation report | the topic is specifically `SatReport` and saturation terminal status |
+| extraction envelope | the topic is specifically `Extraction<T>` and terminal completeness |
+| runtime backend report | the topic is the `mettail-runtime` envelope around a backend's output |
+| runtime observation | the value was produced after a backend artifact was executed or observed |
+| diagnostic | the value is human-facing explanatory text, not a semantic handoff artifact |
+
+This distinction matters in the Rho-native path. A Dovetail report can be
+lowered into a Rho artifact; a Rho runtime observation is produced later by the
+Rho machine. Treating those as the same object would blur compilation evidence
+with execution evidence.
+
 ## Why Reports Exist
 
 A plain result shape such as `rewrite(input) -> value` is too weak for
@@ -137,6 +198,30 @@ The central report invariant is:
 and the safety condition for cyclic extraction is:
 
 `completeness(r) = BoundedByCycleCut ⇒ ¬ReportComplete(r)`
+
+## Consumer Decision Procedure
+
+Consumers should handle reports mechanically. The recommended control flow is:
+
+```text
+When a Dovetail consumer receives a report:
+  Read the paired saturation outcome if the consumer needs an end-to-end claim.
+  If saturation did not converge:
+    Keep the report as bounded evidence, but do not claim full language execution.
+  Read the report completeness field.
+  If completeness is BoundedByCycleCut:
+    Reject exhaustive execution or mark the result as explicitly bounded.
+  For every root key in extractor order:
+    Resolve the root through the term table by exact ContentKey.
+    Preserve ordered derivation edges when lowering or comparing.
+  Only after those checks:
+    Produce a runtime artifact, oracle comparison, or human presentation.
+```
+
+The important sequencing is that a report is consumed before runtime
+observation. A Rho backend must not produce a "complete" observation from a
+`BoundedByCycleCut` report, and an oracle must not compare display strings when
+exact keys are present.
 
 ## End-To-End Boundary
 
