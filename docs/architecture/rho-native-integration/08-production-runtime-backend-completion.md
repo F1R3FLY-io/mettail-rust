@@ -1,6 +1,6 @@
 # Production Runtime Backend Completion Guide
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This guide turns the architecture suite into an executable handoff for an
 agent completing the runtime backend replacement. Here, **backend** means
@@ -84,8 +84,8 @@ payloads it can lower as native Rholang ground data:
 | Rho ground payload | Generic runtime payload | Example lowerable rules |
 |---|---|---|
 | `GInt(n)` | `RuntimeObservationValue::Int(n)` | `AddInt`, `SubInt`, `MulInt`, `DivInt`, `ModInt`, unary `Neg` |
-| `GBool(b)` | `RuntimeObservationValue::Bool(b)` | `EqInt`, `LtInt`, `GtInt`, `And`, `Or`, `Not` |
-| `GString(s)` | `RuntimeObservationValue::Text(s)` | `Str` concatenation, ambiguity-witness key/payload facts |
+| `GBool(b)` | `RuntimeObservationValue::Bool(b)` | `EqInt`, `NeInt`, `LtInt`, `GtInt`, `LtEqInt`, `GtEqInt`, the same six comparisons for `Bool` and `Str`, plus `And`, `Or`, `Not` |
+| `GString(s)` | `RuntimeObservationValue::Text(s)` | `Concat`, `AddStr`, ambiguity-witness key/payload facts |
 
 Other generic payload variants, such as byte arrays, remain valid in the
 substrate-neutral runtime envelope but are not advertised by the planned Rho
@@ -93,6 +93,28 @@ backend until the generated AST builder and artifact validator expose matching
 Rho-native literals. A production flip must therefore prove coverage for the
 actual observed payload domain, not merely rely on the envelope having a wider
 future-proof type.
+
+Scalar operation coverage is type-sensitive. The generated Rho backend must not
+select Rholang operators from terminals alone because the same source token can
+have different meanings after MeTTaIL type checking. For the current scalar
+family:
+
+| Typed rule | Reader-facing source shape | Required Rho AST operator |
+|---|---|---|
+| `Int × Int → Int` addition | `a + b` | `EPlus` |
+| `Str × Str → Str` concatenation via `+` | `a + b` | `EPlusPlus` |
+| `Str × Str → Str` concatenation via `++` | `a ++ b` | `EPlusPlus` |
+| `τ × τ → Bool` comparisons for `τ ∈ {Int, Bool, Str}` | `==`, `!=`, `<`, `>`, `<=`, `>=` | matching comparison body |
+| `Bool × Bool → Bool` logic | `and`, `or` | matching boolean body |
+
+The proof `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` captures
+this contract. The executable regression
+`mettail-rho-codegen::string_plus_lowers_to_rholang_concat_not_integer_plus`
+then inspects the generated AST and requires Calculator `AddStr` to use
+`ExprInstance::EPlusPlusBody`. Runtime wrapper tests parse `"rho" + "net"` and
+observe `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end
+chain from source snippet through WPDA parsing, typed invocation mapping,
+validated `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
 
 ## Production Gates
 

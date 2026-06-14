@@ -75,9 +75,10 @@ mod tests {
     // The calculator's scalar-operator fragment, by its real rule names. Body-less
     // (the lowering keys on the concrete-syntax operator + operand types, not the
     // `![…]` eval body), so this parses by `syn::parse_str` without validation.
-    // First block = Rholang-native scalar ops (lower to contracts); last four =
-    // out-of-subset (`^`/`bitand` have no Rholang op; `!` is postfix; `AddBigInt`
-    // has non-native BigInt operands) and MUST be rejected, never silently dropped.
+    // First block = Rholang-native scalar ops (lower to contracts); last block =
+    // out-of-subset (`^`/`bitand` have no Rholang op; `!` is postfix;
+    // `AddFloat`/`AddBigInt` have non-native operands) and MUST be rejected,
+    // never silently dropped.
     const CALC_SCALAR_FRAGMENT: &str = r#"
         name: CalcScalarFrag,
         types { Proc }
@@ -91,11 +92,30 @@ mod tests {
             EqInt . a:Int, b:Int |- a "==" b : Bool ;
             NeInt . a:Int, b:Int |- a "!=" b : Bool ;
             LtInt . a:Int, b:Int |- a "<" b : Bool ;
+            GtInt . a:Int, b:Int |- a ">" b : Bool ;
+            LtEqInt . a:Int, b:Int |- a "<=" b : Bool ;
+            GtEqInt . a:Int, b:Int |- a ">=" b : Bool ;
+            EqBool . a:Bool, b:Bool |- a "==" b : Bool ;
+            NeBool . a:Bool, b:Bool |- a "!=" b : Bool ;
+            LtBool . a:Bool, b:Bool |- a "<" b : Bool ;
+            GtBool . a:Bool, b:Bool |- a ">" b : Bool ;
+            LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ;
+            GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ;
+            EqStr . a:Str, b:Str |- a "==" b : Bool ;
+            NeStr . a:Str, b:Str |- a "!=" b : Bool ;
+            LtStr . a:Str, b:Str |- a "<" b : Bool ;
+            GtStr . a:Str, b:Str |- a ">" b : Bool ;
+            LtEqStr . a:Str, b:Str |- a "<=" b : Bool ;
+            GtEqStr . a:Str, b:Str |- a ">=" b : Bool ;
             And . a:Bool, b:Bool |- a "and" b : Bool ;
+            Or . a:Bool, b:Bool |- a "or" b : Bool ;
             Not . a:Bool |- "not" a : Bool ;
+            Concat . a:Str, b:Str |- a "++" b : Str ;
+            AddStr . a:Str, b:Str |- a "+" b : Str ;
             PowInt . a:Int, b:Int |- a "^" b : Int ;
             BitAndInt . a:Int, b:Int |- a "bitand" b : Int ;
             Fact . a:Int |- a "!" : Int ;
+            AddFloat . a:Float, b:Float |- a "+" b : Float ;
             AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ;
         }
     "#;
@@ -136,13 +156,15 @@ mod tests {
             out.lowered,
             vec![
                 "AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg", "EqInt", "NeInt", "LtInt",
-                "And", "Not",
+                "GtInt", "LtEqInt", "GtEqInt", "EqBool", "NeBool", "LtBool", "GtBool", "LtEqBool",
+                "GtEqBool", "EqStr", "NeStr", "LtStr", "GtStr", "LtEqStr", "GtEqStr", "And", "Or",
+                "Not", "Concat", "AddStr",
             ],
             "Rholang-native scalar ops must lower to contracts"
         );
         assert_eq!(
             out.rejected,
-            vec!["PowInt", "BitAndInt", "Fact", "AddBigInt"],
+            vec!["PowInt", "BitAndInt", "Fact", "AddFloat", "AddBigInt"],
             "out-of-subset rules must be rejected (surfaced), never silently dropped"
         );
     }
@@ -244,6 +266,44 @@ mod tests {
             },
             other => panic!("AddInt must lower to EPlusBody, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn string_plus_lowers_to_rholang_concat_not_integer_plus() {
+        let def = parse_fragment();
+        let out = lower_language_def(&def);
+        assert!(
+            out.text_annotation()
+                .contains("contract @\"AddStr\"(@a, @b, ret) = { ret!(a ++ b) }"),
+            "the reader annotation must show the Rholang string-concat artifact"
+        );
+
+        let add_str = out
+            .ast_par()
+            .expect("current Rho artifact must be normalized Par")
+            .receives
+            .iter()
+            .find(|receive| {
+                receive
+                    .binds
+                    .first()
+                    .and_then(|bind| bind.source.as_ref())
+                    .and_then(gstring)
+                    == Some("AddStr")
+            })
+            .expect("AddStr contract must be present");
+        let result = add_str
+            .body
+            .as_ref()
+            .and_then(|body| body.sends.first())
+            .and_then(|send| send.data.first())
+            .and_then(|datum| datum.exprs.first())
+            .and_then(|expr| expr.expr_instance.as_ref())
+            .expect("AddStr must return one expression");
+        assert!(
+            matches!(result, ExprInstance::EPlusPlusBody(_)),
+            "Str '+' must lower to Rholang EPlusPlusBody, got {result:?}"
+        );
     }
 
     #[test]

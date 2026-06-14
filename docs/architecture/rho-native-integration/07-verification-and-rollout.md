@@ -1,6 +1,6 @@
 # Verification and Rollout
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document turns the architecture into an implementation evidence ledger and
 gate policy. It distinguishes mechanized bridge contracts from per-language
@@ -28,6 +28,7 @@ The current proof and coverage sources are
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
 | auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text |
+| type-sensitive scalar operator lowering | `RhoScalarOperatorTyping.v`, `mettail-rho-codegen::lower` | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, and ill-typed or mixed scalar operators are rejected |
 | rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::lower_rhocalc_proc`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
@@ -89,14 +90,18 @@ The current planned Rho backend observes lowered native `Int`, `Bool`, and
 `Str` payloads as `RuntimeObservationValue::Int`, `RuntimeObservationValue::Bool`,
 and `RuntimeObservationValue::Text`; `RhoRuntimeBackendReportBridge.v` names the
 tag-preservation contract, and `mettail-rho-runtime/tests/run_calculator.rs`
-executes integer-valued, boolean-valued, and string-valued lowered calculator
-contracts on the real in-memory RhoRuntime.
+executes the full native calculator scalar family currently admitted by the
+lowerer on the real in-memory RhoRuntime: integer arithmetic, integer, boolean,
+and string comparisons, boolean `and`/`or`/`not`, and string concatenation.
 The string-valued check is deliberately end-to-end at the wrapper boundary:
-the Calculator snippet `"rho" ++ "net"` is parsed by the retained MeTTaIL/WPDA
-frontend, mapped to a typed `Str::Concat` term, converted by the Rho wrapper's
-invocation mapper into a normalized `rhoapi::Par` contract call, executed by
-RhoRuntime, and returned as a `RuntimeObservationValue::Text("rhonet")`
-observation in the generic runtime report.
+the Calculator snippets `"rho" ++ "net"` and `"rho" + "net"` are parsed by the
+retained MeTTaIL/WPDA frontend, mapped to typed `Str::Concat` and `Str::AddStr`
+terms, converted by the Rho wrapper's invocation mapper into normalized
+`rhoapi::Par` contract calls, executed by RhoRuntime, and returned as
+`RuntimeObservationValue::Text("rhonet")` observations in the generic runtime
+report. The second snippet is an important regression: the source token is `+`,
+but the typed rule is `Str × Str → Str`, so the generated AST body must be
+`EPlusPlus`, not integer `EPlus`.
 Generated languages do not need to depend on `mettail-rho-runtime` to become
 Rho-default. `RhoRuntimeBackedLanguage<L, F>` lives in the Rho runtime crate and
 wraps an existing generated `Language`: `L` still owns parsing, environments,

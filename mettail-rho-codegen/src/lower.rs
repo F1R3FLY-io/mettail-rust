@@ -2,10 +2,9 @@
 //! `LanguageDef`'s scalar reduction rules to normalized f1r3node `Par`
 //! `contract`s.
 //!
-//! Each scalar operator rule whose concrete syntax is a supported infix/prefix
-//! operator (one with an exact Rholang `Expr` equivalent — `+ - * / %`,
-//! comparisons `== != < > <= >=`, `and`/`or`/`not`, `++`, unary `-`) lowers to a
-//! normalized Rholang AST equivalent to
+//! Each scalar operator rule whose operand types, result type, and concrete
+//! syntax have an exact Rholang `Expr` equivalent lowers to a normalized
+//! Rholang AST equivalent to
 //! `contract @"<Label>"(@a, @b, ret) = { ret!(a <op> b) }`. The Rholang-looking
 //! string is kept only as a human-readable annotation; execution feeds the AST
 //! directly to `RhoRuntime::inj`. Every other rule (BigInt/BigRat/Fixed/Float/
@@ -156,6 +155,13 @@ enum RhoBinaryOp {
     Concat,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RhoScalarTy {
+    Int,
+    Bool,
+    Str,
+}
+
 impl RhoBinaryOp {
     fn symbol(self) -> &'static str {
         match self {
@@ -223,52 +229,86 @@ struct LoweredRule {
     text_annotation: String,
 }
 
-/// Map a calculator infix terminal to its Rholang binary operator, if Rholang
-/// has an exact `Expr` equivalent. `None` = no Rholang equivalent (e.g. `^`,
-/// `bitand`, `bitor`, `xor`).
-fn rho_binop(terminal: &str) -> Option<RhoBinaryOp> {
-    match terminal {
-        "+" => Some(RhoBinaryOp::Add),
-        "-" => Some(RhoBinaryOp::Sub),
-        "*" => Some(RhoBinaryOp::Mul),
-        "/" => Some(RhoBinaryOp::Div),
-        "%" => Some(RhoBinaryOp::Mod),
-        "==" => Some(RhoBinaryOp::Eq),
-        "!=" => Some(RhoBinaryOp::Neq),
-        "<" => Some(RhoBinaryOp::Lt),
-        ">" => Some(RhoBinaryOp::Gt),
-        "<=" => Some(RhoBinaryOp::Lte),
-        ">=" => Some(RhoBinaryOp::Gte),
-        "and" => Some(RhoBinaryOp::And),
-        "or" => Some(RhoBinaryOp::Or),
-        "++" => Some(RhoBinaryOp::Concat),
+/// Map a typed infix scalar rule to its Rholang binary operator, if Rholang has
+/// an exact `Expr` equivalent for that type family.
+///
+/// The type check is part of correctness, not just validation. For example,
+/// Rholang `+` is integer addition only, while MeTTaIL Calculator also has
+/// `Str "+" Str`; that string rule must lower to Rholang `++`, not integer
+/// `EPlus`.
+fn rho_binop(
+    terminal: &str,
+    lhs: RhoScalarTy,
+    rhs: RhoScalarTy,
+    result: RhoScalarTy,
+) -> Option<RhoBinaryOp> {
+    use RhoScalarTy::{Bool, Int, Str};
+
+    if lhs != rhs {
+        return None;
+    }
+
+    match (terminal, lhs, result) {
+        ("+", Int, Int) => Some(RhoBinaryOp::Add),
+        ("+", Str, Str) => Some(RhoBinaryOp::Concat),
+        ("-", Int, Int) => Some(RhoBinaryOp::Sub),
+        ("*", Int, Int) => Some(RhoBinaryOp::Mul),
+        ("/", Int, Int) => Some(RhoBinaryOp::Div),
+        ("%", Int, Int) => Some(RhoBinaryOp::Mod),
+        ("==", Int | Bool | Str, Bool) => Some(RhoBinaryOp::Eq),
+        ("!=", Int | Bool | Str, Bool) => Some(RhoBinaryOp::Neq),
+        ("<", Int | Bool | Str, Bool) => Some(RhoBinaryOp::Lt),
+        (">", Int | Bool | Str, Bool) => Some(RhoBinaryOp::Gt),
+        ("<=", Int | Bool | Str, Bool) => Some(RhoBinaryOp::Lte),
+        (">=", Int | Bool | Str, Bool) => Some(RhoBinaryOp::Gte),
+        ("and", Bool, Bool) => Some(RhoBinaryOp::And),
+        ("or", Bool, Bool) => Some(RhoBinaryOp::Or),
+        ("++", Str, Str) => Some(RhoBinaryOp::Concat),
         _ => None,
     }
 }
 
-/// Map a calculator prefix terminal to its Rholang unary operator, if any
-/// (`not`, unary `-`).
-fn rho_unop(terminal: &str) -> Option<RhoUnaryOp> {
-    match terminal {
-        "not" => Some(RhoUnaryOp::Not),
-        "-" => Some(RhoUnaryOp::Neg),
+/// Map a typed prefix scalar rule to its Rholang unary operator, if any.
+fn rho_unop(terminal: &str, arg: RhoScalarTy, result: RhoScalarTy) -> Option<RhoUnaryOp> {
+    match (terminal, arg, result) {
+        ("not", RhoScalarTy::Bool, RhoScalarTy::Bool) => Some(RhoUnaryOp::Not),
+        ("-", RhoScalarTy::Int, RhoScalarTy::Int) => Some(RhoUnaryOp::Neg),
         _ => None,
     }
 }
 
-/// Whether a parameter's type is a Rholang-native scalar (`Int`→GInt,
-/// `Bool`→GBool, `Str`→GString). BigInt/BigRat/Fixed/Float/UInt32 and any
-/// non-`Simple` (binder/guard/optional) parameter are NOT native — lowering their
-/// operators to Rholang scalar `Expr`s would be semantically wrong, so such rules
-/// are rejected (recorded, never silently lowered with the wrong meaning).
-fn param_is_rho_native_scalar(p: &TermParam) -> bool {
+/// The Rholang-native scalar corresponding to a MeTTaIL type.
+fn rho_native_scalar_type(ty: &TypeExpr) -> Option<RhoScalarTy> {
+    match ty {
+        TypeExpr::Base(id) => match id.to_string().as_str() {
+            "Int" => Some(RhoScalarTy::Int),
+            "Bool" => Some(RhoScalarTy::Bool),
+            "Str" => Some(RhoScalarTy::Str),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The Rholang-native scalar corresponding to a simple parameter.
+///
+/// BigInt/BigRat/Fixed/Float/UInt32 and any non-`Simple`
+/// (binder/guard/optional) parameter are NOT native — lowering their operators
+/// to Rholang scalar `Expr`s would be semantically wrong, so such rules are
+/// rejected and surfaced to the coverage gate.
+fn param_rho_native_scalar(p: &TermParam) -> Option<RhoScalarTy> {
     match p {
-        TermParam::Simple { ty, .. } => matches!(
-            ty,
-            TypeExpr::Base(id)
-                if matches!(id.to_string().as_str(), "Int" | "Bool" | "Str")
-        ),
-        _ => false,
+        TermParam::Simple { ty, .. } => rho_native_scalar_type(ty),
+        _ => None,
+    }
+}
+
+fn result_rho_native_scalar(rule: &GrammarRule) -> Option<RhoScalarTy> {
+    match rule.category.to_string().as_str() {
+        "Int" => Some(RhoScalarTy::Int),
+        "Bool" => Some(RhoScalarTy::Bool),
+        "Str" => Some(RhoScalarTy::Str),
+        _ => None,
     }
 }
 
@@ -338,17 +378,24 @@ fn contract_ast(
 /// scalar-operator subset (→ to be recorded as rejected, never dropped).
 fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
     let pattern = rule.syntax_pattern.as_ref()?;
-    // Only lower rules whose operands are ALL Rholang-native scalar types — keying
-    // on the terminal alone would mis-lower e.g. `AddBigInt` (`a:BigInt "+" b`).
+    // Only lower rules whose operands and result have an exact Rholang scalar
+    // interpretation. Keying on the terminal alone would mis-lower e.g.
+    // `AddBigInt` (`a:BigInt "+" b`) or `AddStr` as integer `EPlus`.
     let ctx = rule.term_context.as_ref()?;
-    if ctx.is_empty() || !ctx.iter().all(param_is_rho_native_scalar) {
+    if ctx.is_empty() {
         return None;
     }
+    let result_ty = result_rho_native_scalar(rule)?;
     let label = rule.label.to_string();
     match pattern.as_slice() {
         // Binary infix: `a <op> b` → contract @"L"(@a, @b, ret) = { ret!(a <op> b) }
         [SyntaxExpr::Param(a), SyntaxExpr::Literal(op), SyntaxExpr::Param(b)] => {
-            let rop = rho_binop(op)?;
+            let [lhs_param, rhs_param] = ctx.as_slice() else {
+                return None;
+            };
+            let lhs_ty = param_rho_native_scalar(lhs_param)?;
+            let rhs_ty = param_rho_native_scalar(rhs_param)?;
+            let rop = rho_binop(op, lhs_ty, rhs_ty, result_ty)?;
             let formal_count = 3;
             let lhs = bound_formal(formal_count, 0);
             let rhs = bound_formal(formal_count, 1);
@@ -361,7 +408,11 @@ fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
         },
         // Unary prefix: `<op> a` → contract @"L"(@a, ret) = { ret!(<op> a) }
         [SyntaxExpr::Literal(op), SyntaxExpr::Param(a)] => {
-            let rop = rho_unop(op)?;
+            let [arg_param] = ctx.as_slice() else {
+                return None;
+            };
+            let arg_ty = param_rho_native_scalar(arg_param)?;
+            let rop = rho_unop(op, arg_ty, result_ty)?;
             let formal_count = 2;
             let arg = bound_formal(formal_count, 0);
             let result_expr = expr_par(rop.expr(arg), &[1]);

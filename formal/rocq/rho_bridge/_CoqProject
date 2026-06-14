@@ -14,6 +14,7 @@ theories/HostRhoMachineReuse.v
 theories/MettaGsltPresentation.v
 theories/MettaOslfLawsConformance.v
 theories/RhoLoweringTotalOrRejects.v
+theories/RhoScalarOperatorTyping.v
 theories/RhoRejectedCoverage.v
 theories/RhoParWellFormedness.v
 theories/RhoArtifactBoundary.v

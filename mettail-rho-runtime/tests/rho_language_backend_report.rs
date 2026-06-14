@@ -27,7 +27,28 @@ const CALC_RUN_FRAGMENT: &str = r#"
         DivInt . a:Int, b:Int |- a "/" b : Int ;
         ModInt . a:Int, b:Int |- a "%" b : Int ;
         EqInt . a:Int, b:Int |- a "==" b : Bool ;
+        NeInt . a:Int, b:Int |- a "!=" b : Bool ;
+        LtInt . a:Int, b:Int |- a "<" b : Bool ;
+        GtInt . a:Int, b:Int |- a ">" b : Bool ;
+        LtEqInt . a:Int, b:Int |- a "<=" b : Bool ;
+        GtEqInt . a:Int, b:Int |- a ">=" b : Bool ;
+        EqBool . a:Bool, b:Bool |- a "==" b : Bool ;
+        NeBool . a:Bool, b:Bool |- a "!=" b : Bool ;
+        LtBool . a:Bool, b:Bool |- a "<" b : Bool ;
+        GtBool . a:Bool, b:Bool |- a ">" b : Bool ;
+        LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ;
+        GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ;
+        EqStr . a:Str, b:Str |- a "==" b : Bool ;
+        NeStr . a:Str, b:Str |- a "!=" b : Bool ;
+        LtStr . a:Str, b:Str |- a "<" b : Bool ;
+        GtStr . a:Str, b:Str |- a ">" b : Bool ;
+        LtEqStr . a:Str, b:Str |- a "<=" b : Bool ;
+        GtEqStr . a:Str, b:Str |- a ">=" b : Bool ;
+        And . a:Bool, b:Bool |- a "and" b : Bool ;
+        Or . a:Bool, b:Bool |- a "or" b : Bool ;
+        Not . a:Bool |- "not" a : Bool ;
         Concat . a:Str, b:Str |- a "++" b : Str ;
+        AddStr . a:Str, b:Str |- a "+" b : Str ;
     }
 "#;
 
@@ -63,7 +84,12 @@ fn calculator_backend() -> PlannedRhoBackend {
             .expect("calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
-        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "EqInt", "Concat"],
+        vec![
+            "AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "EqInt", "NeInt", "LtInt", "GtInt",
+            "LtEqInt", "GtEqInt", "EqBool", "NeBool", "LtBool", "GtBool", "LtEqBool", "GtEqBool",
+            "EqStr", "NeStr", "LtStr", "GtStr", "LtEqStr", "GtEqStr", "And", "Or", "Not", "Concat",
+            "AddStr",
+        ],
         "all binary Int, Bool, and Str scalar ops in this fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
@@ -97,6 +123,40 @@ fn binary_bool_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvoc
     Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
 }
 
+fn bool_literal(term: &Bool) -> Result<bool, String> {
+    match term {
+        Bool::BoolLit(value) => Ok(*value),
+        other => Err(format!("Rho calculator bridge needs ground boolean literals, got {other:?}")),
+    }
+}
+
+fn binary_bool_payload_call(
+    op: &str,
+    left: &Bool,
+    right: &Bool,
+) -> Result<RhoBackendInvocation, String> {
+    let left = bool_literal(left)?;
+    let right = bool_literal(right)?;
+    let call = RhoAstSend::contract_call(
+        op,
+        vec![RhoAstLiteral::Bool(left), RhoAstLiteral::Bool(right)],
+        "OUT",
+    )
+    .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
+    .par()
+    .clone();
+    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+}
+
+fn unary_bool_payload_call(op: &str, value: &Bool) -> Result<RhoBackendInvocation, String> {
+    let value = bool_literal(value)?;
+    let call = RhoAstSend::contract_call(op, vec![RhoAstLiteral::Bool(value)], "OUT")
+        .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
+        .par()
+        .clone();
+    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+}
+
 fn string_literal(term: &Str) -> Result<String, String> {
     match term {
         Str::StringLit(value) => Ok(value.clone()),
@@ -116,6 +176,24 @@ fn binary_string_call(op: &str, left: &Str, right: &Str) -> Result<RhoBackendInv
     .par()
     .clone();
     Ok(RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel: "OUT".to_string() })
+}
+
+fn binary_string_bool_call(
+    op: &str,
+    left: &Str,
+    right: &Str,
+) -> Result<RhoBackendInvocation, String> {
+    let left = string_literal(left)?;
+    let right = string_literal(right)?;
+    let call = RhoAstSend::contract_call(
+        op,
+        vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)],
+        "OUT",
+    )
+    .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
+    .par()
+    .clone();
+    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
 }
 
 fn calculator_int(term: &dyn Term) -> Result<&Int, String> {
@@ -190,12 +268,63 @@ fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String
     if let Ok(bool_term) = calculator_bool(term) {
         return match bool_term {
             Bool::EqInt(left, right) => binary_bool_call("EqInt", left.as_ref(), right.as_ref()),
+            Bool::NeInt(left, right) => binary_bool_call("NeInt", left.as_ref(), right.as_ref()),
+            Bool::LtInt(left, right) => binary_bool_call("LtInt", left.as_ref(), right.as_ref()),
+            Bool::GtInt(left, right) => binary_bool_call("GtInt", left.as_ref(), right.as_ref()),
+            Bool::LtEqInt(left, right) => {
+                binary_bool_call("LtEqInt", left.as_ref(), right.as_ref())
+            },
+            Bool::GtEqInt(left, right) => {
+                binary_bool_call("GtEqInt", left.as_ref(), right.as_ref())
+            },
+            Bool::EqBool(left, right) => {
+                binary_bool_payload_call("EqBool", left.as_ref(), right.as_ref())
+            },
+            Bool::NeBool(left, right) => {
+                binary_bool_payload_call("NeBool", left.as_ref(), right.as_ref())
+            },
+            Bool::LtBool(left, right) => {
+                binary_bool_payload_call("LtBool", left.as_ref(), right.as_ref())
+            },
+            Bool::GtBool(left, right) => {
+                binary_bool_payload_call("GtBool", left.as_ref(), right.as_ref())
+            },
+            Bool::LtEqBool(left, right) => {
+                binary_bool_payload_call("LtEqBool", left.as_ref(), right.as_ref())
+            },
+            Bool::GtEqBool(left, right) => {
+                binary_bool_payload_call("GtEqBool", left.as_ref(), right.as_ref())
+            },
+            Bool::EqStr(left, right) => {
+                binary_string_bool_call("EqStr", left.as_ref(), right.as_ref())
+            },
+            Bool::NeStr(left, right) => {
+                binary_string_bool_call("NeStr", left.as_ref(), right.as_ref())
+            },
+            Bool::LtStr(left, right) => {
+                binary_string_bool_call("LtStr", left.as_ref(), right.as_ref())
+            },
+            Bool::GtStr(left, right) => {
+                binary_string_bool_call("GtStr", left.as_ref(), right.as_ref())
+            },
+            Bool::LtEqStr(left, right) => {
+                binary_string_bool_call("LtEqStr", left.as_ref(), right.as_ref())
+            },
+            Bool::GtEqStr(left, right) => {
+                binary_string_bool_call("GtEqStr", left.as_ref(), right.as_ref())
+            },
+            Bool::And(left, right) => {
+                binary_bool_payload_call("And", left.as_ref(), right.as_ref())
+            },
+            Bool::Or(left, right) => binary_bool_payload_call("Or", left.as_ref(), right.as_ref()),
+            Bool::Not(value) => unary_bool_payload_call("Not", value.as_ref()),
             other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
         };
     }
 
     match calculator_str(term)? {
         Str::Concat(left, right) => binary_string_call("Concat", left.as_ref(), right.as_ref()),
+        Str::AddStr(left, right) => binary_string_call("AddStr", left.as_ref(), right.as_ref()),
         other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
     }
 }
@@ -288,6 +417,39 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .expect("Rho report must expose OUT Bool observations");
     assert_eq!(bool_out.values, vec![RuntimeObservationValue::Bool(true)]);
 
+    let ne_int_term = language
+        .parse_term("2 != 3")
+        .expect("calculator Int comparison parse");
+    let ne_int_report = language
+        .run_default_backend_report(ne_int_term.as_ref())
+        .expect("Rho default backend must report Int-comparison observations");
+    let ne_int_out = ne_int_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT Int-comparison observations");
+    assert_eq!(ne_int_out.values, vec![RuntimeObservationValue::Bool(true)]);
+
+    let bool_order_term = language
+        .parse_term("true > false")
+        .expect("calculator Bool comparison parse");
+    let bool_order_report = language
+        .run_default_backend_report(bool_order_term.as_ref())
+        .expect("Rho default backend must report Bool-comparison observations");
+    let bool_order_out = bool_order_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT Bool-comparison observations");
+    assert_eq!(bool_order_out.values, vec![RuntimeObservationValue::Bool(true)]);
+
+    let str_predicate_term = language
+        .parse_term(r#""alpha" < "beta""#)
+        .expect("calculator Str comparison parse");
+    let str_predicate_report = language
+        .run_default_backend_report(str_predicate_term.as_ref())
+        .expect("Rho default backend must report Str-comparison observations");
+    let str_predicate_out = str_predicate_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT Str-comparison observations");
+    assert_eq!(str_predicate_out.values, vec![RuntimeObservationValue::Bool(true)]);
+
     let str_term = language
         .parse_term(r#""rho" ++ "net""#)
         .expect("calculator Str parse");
@@ -299,4 +461,15 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT Str observations");
     assert_eq!(str_out.values, vec![RuntimeObservationValue::Text("rhonet".to_string())]);
+
+    let add_str_term = language
+        .parse_term(r#""rho" + "net""#)
+        .expect("calculator Str plus parse");
+    let add_str_report = language
+        .run_default_backend_report(add_str_term.as_ref())
+        .expect("Rho default backend must report Str plus observations");
+    let add_str_out = add_str_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT Str plus observations");
+    assert_eq!(add_str_out.values, vec![RuntimeObservationValue::Text("rhonet".to_string())]);
 }

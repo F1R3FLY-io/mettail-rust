@@ -1,6 +1,6 @@
 # Rho-Native Dataflow Lowering
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document explains how Dovetail rewrite semantics are compiled into a
 Rho-native dataflow network. The generated execution artifact is normalized
@@ -175,6 +175,68 @@ constructs:
 | `PDrop(NVar(x))` | `BoundVar(i)` when `x` is input-bound | received process is executed by the host reducer |
 | `PNew(^[x̄].p)` | `New(|x̄|, lower(p))` | private names are allocated by the host reducer |
 | ground `Int`, `UInt32`, `BigInt`, `BigRat`, `Fixed`, `Float`, `Bool`, `Str` | native Rho ground expressions | payloads use host scalar representation |
+
+### Type-Sensitive Scalar Operator Lowering
+
+Scalar operator lowering is deliberately typed. A surface token is not enough
+to select the Rholang AST constructor because MeTTaIL languages may overload
+the same terminal at different semantic types. The canonical example is `+`:
+
+| Source rule shape | Operand types | Result type | Rho AST body |
+|---|---|---|---|
+| `AddInt(a, b) → a + b` | `Int × Int` | `Int` | `ExprInstance::EPlusBody` |
+| `AddStr(a, b) → a + b` | `Str × Str` | `Str` | `ExprInstance::EPlusPlusBody` |
+| `Concat(a, b) → a ++ b` | `Str × Str` | `Str` | `ExprInstance::EPlusPlusBody` |
+
+Thus the lowering classifier is a partial function:
+
+`classify_scalar_op : Terminal × Type × Type × Type ⇀ RhoOperator`
+
+The classifier is defined only when the operand and result types match a
+Rholang-native operator. For example, `classify_scalar_op(+, Int, Int, Int) =
+EPlus`, while `classify_scalar_op(+, Str, Str, Str) = EPlusPlus`. Mixed operand
+types, boolean `+`, arithmetic returning `Bool`, and logical operations outside
+`Bool × Bool → Bool` are rejected with explicit lowering diagnostics.
+
+Literate classifier sketch:
+
+```pseudocode
+Algorithm: Classify a scalar operator for Rho AST generation
+
+Given:
+  terminal token τ
+  left operand scalar type α
+  right operand scalar type β
+  result scalar type γ
+
+Produce:
+  a Rholang AST operator or an explicit rejection
+
+Steps:
+  1. If τ is `+`, α = Int, β = Int, and γ = Int, emit integer addition.
+
+  2. If τ is `+` or `++`, α = Str, β = Str, and γ = Str, emit string
+     concatenation.
+
+  3. If τ is one of `==`, `!=`, `<`, `>`, `<=`, or `>=`, α = β is one of
+     Int, Bool, or Str, and γ = Bool, emit the matching comparison.
+
+  4. If τ is `and` or `or`, α = Bool, β = Bool, and γ = Bool, emit the matching
+     boolean operator.
+
+  5. If τ is `-`, `*`, `/`, or `%`, α = Int, β = Int, and γ = Int, emit the
+     matching integer arithmetic operator.
+
+  6. Otherwise reject. Rejection is part of the coverage contract, not a
+     fallback to an untyped source-text operator.
+```
+
+This is a correctness boundary, not merely an implementation preference. The
+Rocq model
+`formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` proves that
+successful scalar lowerings use compatible operand/result types, that integer
+`+` lowers to integer addition, and that string `+` and `++` lower to string
+concatenation rather than integer addition.
 
 Input binders use f1r3node's de Bruijn convention:
 
