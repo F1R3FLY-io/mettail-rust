@@ -11,8 +11,8 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
-    plan_rho_default_backend_with_evidence_audit, RhoArtifactKind, RhoAstSend, RhoCoverageEvidence,
-    RhoDefaultBackendEvidence,
+    plan_rho_default_backend_with_evidence_audit, RhoArtifactKind, RhoAstLiteral, RhoAstSend,
+    RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
@@ -33,6 +33,11 @@ const CALC_RUN_FRAGMENT: &str = r#"
         DivInt . a:Int, b:Int |- a "/" b : Int ;
         ModInt . a:Int, b:Int |- a "%" b : Int ;
         Neg . a:Int |- "-" a : Int ;
+        EqInt . a:Int, b:Int |- a "==" b : Bool ;
+        LtInt . a:Int, b:Int |- a "<" b : Bool ;
+        And . a:Bool, b:Bool |- a "and" b : Bool ;
+        Or . a:Bool, b:Bool |- a "or" b : Bool ;
+        Not . a:Bool |- "not" a : Bool ;
     }
 "#;
 
@@ -65,8 +70,11 @@ fn calculator_backend() -> PlannedRhoBackend {
             .expect("all calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
-        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg"],
-        "all six Int scalar ops must lower"
+        vec![
+            "AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg", "EqInt", "LtInt", "And", "Or",
+            "Not",
+        ],
+        "all Int and Bool native scalar ops in the fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
@@ -84,6 +92,22 @@ fn binary_call(op: &str, a: i64, b: i64) -> Par {
 fn unary_call(op: &str, a: i64) -> Par {
     RhoAstSend::unary_int_call(op, a, "OUT")
         .expect("unary calculator call must build")
+        .par()
+        .clone()
+}
+
+/// `@"OP"!(a, b, @"OUT")` where the operands are booleans.
+fn binary_bool_call(op: &str, a: bool, b: bool) -> Par {
+    RhoAstSend::contract_call(op, vec![RhoAstLiteral::Bool(a), RhoAstLiteral::Bool(b)], "OUT")
+        .expect("binary Bool calculator call must build")
+        .par()
+        .clone()
+}
+
+/// `@"OP"!(a, @"OUT")` where the operand is a boolean.
+fn unary_bool_call(op: &str, a: bool) -> Par {
+    RhoAstSend::contract_call(op, vec![RhoAstLiteral::Bool(a)], "OUT")
+        .expect("unary Bool calculator call must build")
         .par()
         .clone()
 }
@@ -141,4 +165,51 @@ async fn lowered_calculator_int_ops_compute_correctly_on_rho_runtime() {
     assert_eq!(report.values, vec![-7], "Neg(7) on RhoRuntime");
     assert_eq!(report.membership_fingerprint(), BTreeSet::from([-7]));
     assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(-7, 1_usize)]));
+}
+
+#[tokio::test]
+async fn lowered_calculator_bool_ops_compute_correctly_on_rho_runtime() {
+    let backend = calculator_backend();
+
+    let int_predicates: &[(&str, i64, i64, bool)] =
+        &[("EqInt", 2, 2, true), ("EqInt", 2, 3, false), ("LtInt", 2, 3, true)];
+    for &(op, a, b, expected) in int_predicates {
+        let call = binary_call(op, a, b);
+        let report = backend
+            .run_with_call_and_observe_bools(&call, "OUT")
+            .await
+            .unwrap_or_else(|e| panic!("{op}({a},{b}) failed to run: {e}"));
+        assert_eq!(report.boundary, RhoExecutionBoundary::PlannedDefaultBackend);
+        assert_eq!(report.artifact_kind, RhoArtifactKind::NormalizedAst);
+        assert_eq!(report.channel, "OUT");
+        assert_eq!(report.values, vec![expected], "{op}({a}, {b}) on RhoRuntime");
+        assert_eq!(report.observed_count(), 1);
+        assert_eq!(report.membership_fingerprint(), BTreeSet::from([expected]));
+        assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(expected, 1_usize)]));
+    }
+
+    let bool_cases: &[(&str, bool, bool, bool)] = &[
+        ("And", true, true, true),
+        ("And", true, false, false),
+        ("Or", false, true, true),
+    ];
+    for &(op, a, b, expected) in bool_cases {
+        let call = binary_bool_call(op, a, b);
+        let report = backend
+            .run_with_call_and_observe_bools(&call, "OUT")
+            .await
+            .unwrap_or_else(|e| panic!("{op}({a},{b}) failed to run: {e}"));
+        assert_eq!(report.values, vec![expected], "{op}({a}, {b}) on RhoRuntime");
+        assert_eq!(report.membership_fingerprint(), BTreeSet::from([expected]));
+        assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(expected, 1_usize)]));
+    }
+
+    let call = unary_bool_call("Not", true);
+    let report = backend
+        .run_with_call_and_observe_bools(&call, "OUT")
+        .await
+        .unwrap_or_else(|e| panic!("Not(true) failed to run: {e}"));
+    assert_eq!(report.values, vec![false], "Not(true) on RhoRuntime");
+    assert_eq!(report.membership_fingerprint(), BTreeSet::from([false]));
+    assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(false, 1_usize)]));
 }

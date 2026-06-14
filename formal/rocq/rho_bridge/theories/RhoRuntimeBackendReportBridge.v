@@ -13,7 +13,7 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import Bool List.
 From RhoBridge Require Import RhoObservationReportBoundary.
 
 Import ListNotations.
@@ -31,9 +31,37 @@ Section RhoRuntimeBackendReportBridge.
   | RhoNormalizedAst
   | RhoBytecode.
 
+  Inductive RhoPayload : Type :=
+  | RhoInt : nat -> RhoPayload
+  | RhoBool : bool -> RhoPayload
+  | RhoText : nat -> RhoPayload.
+
+  Inductive RuntimeObservationValue : Type :=
+  | RuntimeFact : nat -> RuntimeObservationValue
+  | RuntimeInt : nat -> RuntimeObservationValue
+  | RuntimeBool : bool -> RuntimeObservationValue
+  | RuntimeText : nat -> RuntimeObservationValue.
+
+  Definition fact_to_runtime_value (fact : nat) : RuntimeObservationValue :=
+    RuntimeFact fact.
+
+  Definition payload_to_runtime_value
+      (payload : RhoPayload) : RuntimeObservationValue :=
+    match payload with
+    | RhoInt value => RuntimeInt value
+    | RhoBool value => RuntimeBool value
+    | RhoText value => RuntimeText value
+    end.
+
+  Lemma fact_to_runtime_value_map_length : forall values,
+    length (map fact_to_runtime_value values) = length values.
+  Proof.
+    induction values as [| value rest IH]; simpl; [reflexivity | rewrite IH; reflexivity].
+  Qed.
+
   Inductive RuntimeOutput : Type :=
   | AscentOutput
-  | ObservationOutput : nat -> list nat -> RuntimeOutput.
+  | ObservationOutput : nat -> list RuntimeObservationValue -> RuntimeOutput.
 
   Record RuntimeBackendReport : Type := {
     runtime_backend : RuntimeBackend;
@@ -49,7 +77,9 @@ Section RhoRuntimeBackendReportBridge.
       runtime_backend := RhoMachine;
       runtime_artifact := RhoNormalizedAst;
       runtime_output :=
-        ObservationOutput (observation_channel r) (observation_values r);
+        ObservationOutput
+          (observation_channel r)
+          (map fact_to_runtime_value (observation_values r));
       runtime_evidence_refs := evidence_refs
     |}.
 
@@ -87,13 +117,14 @@ Section RhoRuntimeBackendReportBridge.
   Theorem rho_runtime_report_preserves_channel : forall evidence_refs report,
     runtime_output (rho_report_to_runtime_report evidence_refs report) =
       ObservationOutput (observation_channel report)
-                        (observation_values report).
+                        (map fact_to_runtime_value (observation_values report)).
   Proof. intros evidence_refs report. reflexivity. Qed.
 
   Theorem rho_runtime_report_preserves_values : forall evidence_refs report,
     match runtime_output (rho_report_to_runtime_report evidence_refs report) with
     | AscentOutput => False
-    | ObservationOutput _ values => values = observation_values report
+    | ObservationOutput _ values =>
+        values = map fact_to_runtime_value (observation_values report)
     end.
   Proof. intros evidence_refs report. reflexivity. Qed.
 
@@ -102,7 +133,23 @@ Section RhoRuntimeBackendReportBridge.
       runtime_report_observed_count
         (rho_report_to_runtime_report evidence_refs report) =
       length (observation_values report).
-  Proof. intros evidence_refs report. reflexivity. Qed.
+  Proof.
+    intros evidence_refs report.
+    destruct report as [entry channel values]. simpl.
+    apply fact_to_runtime_value_map_length.
+  Qed.
+
+  Theorem runtime_payload_mapping_preserves_bool : forall value,
+    payload_to_runtime_value (RhoBool value) = RuntimeBool value.
+  Proof. intros value. reflexivity. Qed.
+
+  Theorem runtime_payload_mapping_preserves_int : forall value,
+    payload_to_runtime_value (RhoInt value) = RuntimeInt value.
+  Proof. intros value. reflexivity. Qed.
+
+  Theorem runtime_payload_mapping_preserves_text : forall value,
+    payload_to_runtime_value (RhoText value) = RuntimeText value.
+  Proof. intros value. reflexivity. Qed.
 
   Theorem rho_runtime_report_preserves_evidence_refs :
     forall evidence_refs report,

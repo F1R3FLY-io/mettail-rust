@@ -23,8 +23,9 @@ use mettail_runtime::{
 use models::rhoapi::Par;
 
 use crate::run::{
-    run_validated_program, run_validated_program_and_read_ints,
-    run_validated_program_and_read_strings, run_validated_program_with_call,
+    run_validated_program, run_validated_program_and_read_bools,
+    run_validated_program_and_read_ints, run_validated_program_and_read_strings,
+    run_validated_program_with_call, run_validated_program_with_call_and_read_bools,
     run_validated_program_with_call_and_read_ints,
     run_validated_program_with_call_and_read_strings,
 };
@@ -260,6 +261,44 @@ impl PlannedRhoBackend {
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
 
+    /// Run the generated backend artifact and read ground booleans from a quoted
+    /// output channel.
+    pub async fn run_and_read_bools(&self, out_channel: &str) -> Result<Vec<bool>, String> {
+        run_validated_program_and_read_bools(self.program(), out_channel).await
+    }
+
+    /// Run the generated backend artifact together with a dynamic call process
+    /// and read ground booleans from a quoted output channel.
+    pub async fn run_with_call_and_read_bools(
+        &self,
+        call: &Par,
+        out_channel: &str,
+    ) -> Result<Vec<bool>, String> {
+        run_validated_program_with_call_and_read_bools(self.program(), call, out_channel).await
+    }
+
+    /// Run the generated backend artifact and return a typed observation report
+    /// for ground booleans resting on a quoted output channel.
+    pub async fn run_and_observe_bools(
+        &self,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<bool>, String> {
+        let values = self.run_and_read_bools(out_channel).await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+
+    /// Run the generated backend artifact with a dynamic call process and
+    /// return a typed observation report for ground booleans resting on a quoted
+    /// output channel.
+    pub async fn run_with_call_and_observe_bools(
+        &self,
+        call: &Par,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<bool>, String> {
+        let values = self.run_with_call_and_read_bools(call, out_channel).await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+
     /// Run the generated backend artifact and read ground strings from a quoted
     /// output channel.
     pub async fn run_and_read_strings(&self, out_channel: &str) -> Result<Vec<String>, String> {
@@ -308,11 +347,16 @@ impl PlannedRhoBackend {
 pub enum RhoBackendInvocation {
     /// Run the planned backend and observe integer values on the channel.
     RunAndObserveInts { out_channel: String },
+    /// Run the planned backend and observe boolean values on the channel.
+    RunAndObserveBools { out_channel: String },
     /// Run the planned backend and observe string values on the channel.
     RunAndObserveStrings { out_channel: String },
     /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
     /// integer values on the channel.
     RunWithCallAndObserveInts { call: Par, out_channel: String },
+    /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
+    /// boolean values on the channel.
+    RunWithCallAndObserveBools { call: Par, out_channel: String },
     /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
     /// string values on the channel.
     RunWithCallAndObserveStrings { call: Par, out_channel: String },
@@ -330,6 +374,13 @@ impl RhoBackendInvocation {
                 .map_err(|err| {
                     format!("failed to convert Rho integer observation report: {err:?}")
                 }),
+            RhoBackendInvocation::RunAndObserveBools { out_channel } => backend
+                .run_and_observe_bools(&out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| {
+                    format!("failed to convert Rho boolean observation report: {err:?}")
+                }),
             RhoBackendInvocation::RunAndObserveStrings { out_channel } => backend
                 .run_and_observe_strings(&out_channel)
                 .await?
@@ -341,6 +392,13 @@ impl RhoBackendInvocation {
                 .try_into_runtime_backend_report(evidence_refs)
                 .map_err(|err| {
                     format!("failed to convert Rho integer observation report: {err:?}")
+                }),
+            RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel } => backend
+                .run_with_call_and_observe_bools(&call, &out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| {
+                    format!("failed to convert Rho boolean observation report: {err:?}")
                 }),
             RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel } => backend
                 .run_with_call_and_observe_strings(&call, &out_channel)

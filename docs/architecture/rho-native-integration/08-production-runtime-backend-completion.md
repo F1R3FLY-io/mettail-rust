@@ -63,7 +63,7 @@ oracle.
 | input join `(n₁?x₁,...,nₖ?xₖ).{p}` | one `Receive` with `k` `ReceiveBind` values |
 | new scope `new(x₁,...,xₖ)in{p}` | `New` with adjusted local-free metadata |
 | quote/drop `@(...)` and `*(...)` | direct `Par` embedding of the quoted process |
-| ground scalar literals | corresponding `ExprInstance` ground node |
+| ground scalar literals: `Int`, `Bool`, `Str` | corresponding `ExprInstance::GInt`, `ExprInstance::GBool`, or `ExprInstance::GString` ground node |
 | `List::ListLit` | `ExprInstance::EListBody` |
 | `Map::MapLit` | `ExprInstance::EMapBody` |
 | `Bag::BagLit` | tagged `EList` ABI: private tag plus ordered `[element, count]` entries |
@@ -72,6 +72,27 @@ Mapping a MeTTaIL bag to a Rholang set is incorrect because set lowering
 discards multiplicity. The tagged list ABI preserves multiplicity and keeps the
 representation nominal by using a private unforgeable tag rather than a user
 string.
+
+## Runtime Observation Payloads
+
+`RuntimeBackendReport` is the common user-facing envelope for Ascent,
+Dovetail, and Rho-backed execution. For Rho-backed execution the report is
+observation-shaped: it names a quoted RSpace channel and the ground values left
+resting there. The current planned Rho backend observes exactly the scalar
+payloads it can lower as native Rholang ground data:
+
+| Rho ground payload | Generic runtime payload | Example lowerable rules |
+|---|---|---|
+| `GInt(n)` | `RuntimeObservationValue::Int(n)` | `AddInt`, `SubInt`, `MulInt`, `DivInt`, `ModInt`, unary `Neg` |
+| `GBool(b)` | `RuntimeObservationValue::Bool(b)` | `EqInt`, `LtInt`, `GtInt`, `And`, `Or`, `Not` |
+| `GString(s)` | `RuntimeObservationValue::Text(s)` | `Str` concatenation, ambiguity-witness key/payload facts |
+
+Other generic payload variants, such as byte arrays, remain valid in the
+substrate-neutral runtime envelope but are not advertised by the planned Rho
+backend until the generated AST builder and artifact validator expose matching
+Rho-native literals. A production flip must therefore prove coverage for the
+actual observed payload domain, not merely rely on the envelope having a wider
+future-proof type.
 
 ## Production Gates
 

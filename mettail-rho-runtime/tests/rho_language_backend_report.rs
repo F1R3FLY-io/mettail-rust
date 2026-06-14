@@ -3,7 +3,9 @@
 //! `mettail-rho-runtime`.
 
 use mettail_ast::language::LanguageDef;
-use mettail_languages::calculator::{CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int};
+use mettail_languages::calculator::{
+    Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int,
+};
 use mettail_rho_codegen::{
     plan_rho_default_backend_with_evidence_audit, RhoAstSend, RhoCoverageEvidence,
     RhoDefaultBackendEvidence,
@@ -24,6 +26,7 @@ const CALC_RUN_FRAGMENT: &str = r#"
         MulInt . a:Int, b:Int |- a "*" b : Int ;
         DivInt . a:Int, b:Int |- a "/" b : Int ;
         ModInt . a:Int, b:Int |- a "%" b : Int ;
+        EqInt . a:Int, b:Int |- a "==" b : Bool ;
     }
 "#;
 
@@ -59,8 +62,8 @@ fn calculator_backend() -> PlannedRhoBackend {
             .expect("calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
-        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt"],
-        "all five binary Int scalar ops must lower"
+        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "EqInt"],
+        "all binary Int scalar ops and Bool predicates in this fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
@@ -83,6 +86,16 @@ fn binary_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvocation
     Ok(RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel: "OUT".to_string() })
 }
 
+fn binary_bool_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvocation, String> {
+    let left = int_literal(left)?;
+    let right = int_literal(right)?;
+    let call = RhoAstSend::binary_int_call(op, left, right, "OUT")
+        .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
+        .par()
+        .clone();
+    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+}
+
 fn calculator_int(term: &dyn Term) -> Result<&Int, String> {
     let term = term
         .as_any()
@@ -102,13 +115,39 @@ fn calculator_int_inner(inner: &CalculatorTermInner) -> Option<&Int> {
     }
 }
 
+fn calculator_bool(term: &dyn Term) -> Result<&Bool, String> {
+    let term = term
+        .as_any()
+        .downcast_ref::<CalculatorTerm>()
+        .ok_or_else(|| format!("expected CalculatorTerm, got {term:?}"))?;
+    calculator_bool_inner(&term.0)
+        .ok_or_else(|| format!("expected a Bool calculator alternative, got {:?}", term.0))
+}
+
+fn calculator_bool_inner(inner: &CalculatorTermInner) -> Option<&Bool> {
+    match inner {
+        CalculatorTermInner::Bool(bool_term) => Some(bool_term),
+        CalculatorTermInner::Ambiguous(alternatives) => {
+            alternatives.iter().find_map(calculator_bool_inner)
+        },
+        _ => None,
+    }
+}
+
 fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
-    match calculator_int(term)? {
-        Int::AddInt(left, right) => binary_call("AddInt", left.as_ref(), right.as_ref()),
-        Int::SubInt(left, right) => binary_call("SubInt", left.as_ref(), right.as_ref()),
-        Int::MulInt(left, right) => binary_call("MulInt", left.as_ref(), right.as_ref()),
-        Int::DivInt(left, right) => binary_call("DivInt", left.as_ref(), right.as_ref()),
-        Int::ModInt(left, right) => binary_call("ModInt", left.as_ref(), right.as_ref()),
+    if let Ok(int) = calculator_int(term) {
+        return match int {
+            Int::AddInt(left, right) => binary_call("AddInt", left.as_ref(), right.as_ref()),
+            Int::SubInt(left, right) => binary_call("SubInt", left.as_ref(), right.as_ref()),
+            Int::MulInt(left, right) => binary_call("MulInt", left.as_ref(), right.as_ref()),
+            Int::DivInt(left, right) => binary_call("DivInt", left.as_ref(), right.as_ref()),
+            Int::ModInt(left, right) => binary_call("ModInt", left.as_ref(), right.as_ref()),
+            other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
+        };
+    }
+
+    match calculator_bool(term)? {
+        Bool::EqInt(left, right) => binary_bool_call("EqInt", left.as_ref(), right.as_ref()),
         other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
     }
 }
@@ -188,4 +227,16 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         seeded_err.contains("does not accept Ascent-shaped seeded facts"),
         "{seeded_err}"
     );
+
+    let bool_term = language
+        .parse_term("2 == 2")
+        .expect("calculator Bool parse");
+    let bool_report = language
+        .run_default_backend_report(bool_term.as_ref())
+        .expect("Rho default backend must report Bool observations");
+    assert_eq!(bool_report.backend, RuntimeBackend::RhoMachine);
+    let bool_out = bool_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT Bool observations");
+    assert_eq!(bool_out.values, vec![RuntimeObservationValue::Bool(true)]);
 }

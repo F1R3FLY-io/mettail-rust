@@ -56,14 +56,18 @@ pub use run::{
     run_sequence_and_read_ints, run_sequence_and_read_strings,
 };
 pub use run::{
-    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_ints,
+    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_bools,
+    run_normalized_par_for_oracle_and_read_ints,
     run_normalized_par_for_oracle_and_read_string_tuples,
     run_normalized_par_for_oracle_and_read_strings, run_rholang_source_for_oracle,
-    run_rholang_source_for_oracle_and_read_ints, run_rholang_source_for_oracle_and_read_strings,
+    run_rholang_source_for_oracle_and_read_bools, run_rholang_source_for_oracle_and_read_ints,
+    run_rholang_source_for_oracle_and_read_strings,
     run_rholang_source_for_oracle_then_consume_strings,
+    run_rholang_source_sequence_for_oracle_and_read_bools,
     run_rholang_source_sequence_for_oracle_and_read_ints,
     run_rholang_source_sequence_for_oracle_and_read_strings, run_validated_program,
-    run_validated_program_and_read_ints, run_validated_program_and_read_strings,
-    run_validated_program_with_call, run_validated_program_with_call_and_read_ints,
+    run_validated_program_and_read_bools, run_validated_program_and_read_ints,
+    run_validated_program_and_read_strings, run_validated_program_with_call,
+    run_validated_program_with_call_and_read_bools, run_validated_program_with_call_and_read_ints,
     run_validated_program_with_call_and_read_strings,
 };

@@ -57,6 +57,17 @@ fn par_as_string(par: &Par) -> Option<String> {
     }
 }
 
+/// Pull the single ground boolean out of a `Par` of the form `Par{exprs:[GBool(b)]}`.
+fn par_as_bool(par: &Par) -> Option<bool> {
+    match par.exprs.as_slice() {
+        [e] => match &e.expr_instance {
+            Some(ExprInstance::GBool(b)) => Some(*b),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// A one-value wildcard binding pattern for direct `RhoRuntime::consume_result`
 /// checks. This mirrors the host normalizer's `for (@x <- @"c")` shape without
 /// routing the receive through source text.
@@ -364,6 +375,53 @@ pub async fn run_validated_program_with_call_and_read_strings(
     run_validated_program_with_call_and_read_ground(program, call, out_channel, par_as_string).await
 }
 
+/// Build an in-memory `RhoRuntime`, evaluate hand-authored Rholang source to
+/// quiescence, and return every ground boolean left resting on the quoted
+/// channel `@"<out_channel>"`.
+pub async fn run_rholang_source_for_oracle_and_read_bools(
+    program: &str,
+    out_channel: &str,
+) -> Result<Vec<bool>, String> {
+    run_and_read_ground(program, out_channel, par_as_bool).await
+}
+
+/// Build an in-memory `RhoRuntime`, inject a validated generated artifact to
+/// quiescence, and return every ground boolean left resting on the quoted
+/// channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
+pub async fn run_validated_program_and_read_bools(
+    program: &ValidatedRhoProgram,
+    out_channel: &str,
+) -> Result<Vec<bool>, String> {
+    run_validated_program_and_read_ground(program, out_channel, par_as_bool).await
+}
+
+/// Build an in-memory `RhoRuntime`, inject a validated generated artifact
+/// composed with a dynamic call process, and return every ground boolean left
+/// resting on the quoted channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
+pub async fn run_validated_program_with_call_and_read_bools(
+    program: &ValidatedRhoProgram,
+    call: &Par,
+    out_channel: &str,
+) -> Result<Vec<bool>, String> {
+    run_validated_program_with_call_and_read_ground(program, call, out_channel, par_as_bool).await
+}
+
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every ground boolean left resting on the quoted
+/// channel `@"<out_channel>"`.
+pub async fn run_normalized_par_for_oracle_and_read_bools(
+    program: &Par,
+    out_channel: &str,
+) -> Result<Vec<bool>, String> {
+    run_par_and_read_ground(program, out_channel, par_as_bool).await
+}
+
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every ground string left resting on the quoted
 /// channel `@"<out_channel>"`.
@@ -464,6 +522,28 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_ints(
         result.insert(
             (*channel).to_string(),
             read_ground_from_runtime(&runtime, channel, par_as_i64).await,
+        );
+    }
+    Ok(result)
+}
+
+/// Evaluate hand-authored Rholang source programs sequentially on one in-memory
+/// `RhoRuntime`, then return every ground boolean left resting on each requested
+/// quoted channel.
+pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
+    programs: &[&str],
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<bool>>, String> {
+    let mut runtime = build_runtime().await?;
+    for program in programs {
+        eval_on_runtime(&mut runtime, program).await?;
+    }
+
+    let mut result = HashMap::new();
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_as_bool).await,
         );
     }
     Ok(result)
