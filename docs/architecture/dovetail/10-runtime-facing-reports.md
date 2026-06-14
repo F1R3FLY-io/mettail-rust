@@ -465,6 +465,22 @@ and:
 `Language::metadata()`. Dovetail should consume those generated inventories; it
 should not duplicate category lists by hand.
 
+Those two pipelines meet at generated language inventory:
+
+| High-level step | Artifact | Owner | Reader question |
+|---:|---|---|---|
+| 1 | `language!` body | language author | What syntax and rewrite behavior is being declared? |
+| 2 | `LanguageDef` | macro parser and validator | Did the macro input become a valid language model definition? |
+| 3 | typed AST plus `LanguageMetadata` | generated language crate | What constructors, categories, rules, guards, and backend capabilities are available to engines? |
+| 4 | Dovetail rules and seed facts | Dovetail adapter | What exact-keyed rewrite problem should Dovetail solve? |
+| 5 | `DovetailRunReport` | Dovetail | What roots, term records, edges, order, and completeness were checked? |
+| 6a | `RuntimeBackendOutput::Dovetail` | direct Dovetail runtime adapter | How is the report exposed as the selected runtime backend output? |
+| 6b | `rhoapi::Par` | Rho backend | Which normalized AST should F1r3node execute for complete reports? |
+
+The example below uses Rholang-looking text for readability, but the runtime
+handoff is not text. Dovetail reports exact-keyed source-language derivations;
+the Rho backend constructs host Rholang AST values from complete reports.
+
 ![MiniRhoFor language spec to Rho AST runtime handoff](figures/10-minirho-end-to-end.svg)
 
 PlantUML source:

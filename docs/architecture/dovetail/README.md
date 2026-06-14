@@ -1,6 +1,6 @@
 # Dovetail Rewrite Engine Architecture
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 Dovetail is the standalone rewrite engine for MeTTaIL. It is not the Rho
 machine backend and it is not the WPDA parser. Dovetail owns the
@@ -115,6 +115,25 @@ Here `0̄` is the semiring zero, meaning semantic refutation for the chosen
 weight algebra, and `key(d) = key(d′)` means exact byte-for-byte derivation-tree
 identity.
 
+## Narrative Spine
+
+Read Dovetail as the middle layer of a three-layer story:
+
+| Layer | Owner | Main artifact | Question answered |
+|---|---|---|---|
+| language definition | MeTTaIL `language!` macro | `LanguageDef` and generated `LanguageMetadata` | What are the categories, constructors, syntax, rewrites, guards, and handlers? |
+| rewrite semantics | Dovetail | `SatReport`, `Extraction<T>`, and `DovetailRunReport` | What rewrite evidence was saturated, extracted, ordered, and marked complete or bounded? |
+| runtime consumption | selected backend | `RuntimeBackendOutput::Dovetail` or normalized `rhoapi::Par` plus later observations | How does the selected runtime expose or execute the checked rewrite evidence? |
+
+Dovetail does not own the first layer or the third layer. Its correctness claim
+is intentionally narrower and sharper:
+
+`language inventory + seed term + bounds → checked rewrite report`
+
+That is why Dovetail pages talk about exact keys, saturation, extraction,
+weights, and completeness. They mention Rho only when explaining one downstream
+consumer of a complete report.
+
 ## Cohesive Integration View
 
 Dovetail's standalone contract is the middle of the runtime replacement chain:
@@ -143,6 +162,19 @@ This separation is the main cohesiveness rule for the documentation: when a
 page describes a term before the report, it is talking about MeTTaIL inventory
 or Dovetail internals; when it describes `rhoapi::Par` or RSpace observations,
 it is talking about a downstream consumer of a complete report.
+
+The two runtime lanes are:
+
+| Lane | Artifact chain | Reader intuition |
+|---|---|---|
+| direct Dovetail backend | `DovetailRunReport → RuntimeDovetailRunReport → RuntimeBackendOutput::Dovetail` | expose the checked rewrite result as the runtime result |
+| Rho-native backend | `DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → RSpace observations` | compile the checked rewrite result into host Rho-machine work |
+
+Both lanes begin with the same Dovetail report. The direct lane stops at a
+report-shaped runtime output. The Rho lane executes a generated AST artifact
+and therefore returns observation-shaped runtime output. Keeping those lanes
+separate is the simplest way to read the design without conflating Dovetail
+correctness, Rho lowering correctness, and RhoRuntime execution evidence.
 
 ## Relation To Other Subsystems
 

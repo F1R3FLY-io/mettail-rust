@@ -6,6 +6,32 @@ Technical overview of MeTTaIL's implementation architecture.
 
 ## High-Level Architecture
 
+The current architecture should be read in two layers:
+
+| Layer | Current role |
+|---|---|
+| parser and language-definition layer | `language!` and the active WPDA parser remain the source of typed language terms and generated metadata |
+| runtime backend layer | Dovetail is the replacement rewrite engine, and the Rho-native backend is the replacement execution path for the CESK runtime backend |
+
+The older generated Ascent path still exists as reference/oracle evidence
+during rollout, but it is legacy for production rewrite execution. The runtime
+replacement spine is:
+
+`language! spec → LanguageDef → LanguageMetadata → typed AST → DovetailRunReport`
+
+and then either:
+
+`DovetailRunReport → RuntimeBackendOutput::Dovetail`
+
+or:
+
+`DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime observations → RuntimeBackendReport`
+
+This means an implementation discussion about parsing is usually about
+MeTTaIL/WPDA, an implementation discussion about rewrite correctness is usually
+about Dovetail, and an implementation discussion about host parallel execution
+is usually about the Rho backend and F1r3node.
+
 ```
 ┌─────────────────────────────────────────────┐
 │         User Theory Definition              │

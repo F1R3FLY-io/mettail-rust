@@ -1,6 +1,6 @@
 # Rho-Native MeTTaIL Integration
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This documentation explains how MeTTaIL, Dovetail, Rholang, F1r3node, RSpace,
 and the Rho machine fit together.
@@ -97,6 +97,25 @@ It is useful for production rewrite execution, differential checks, REPL
 inspection, and simulation traces. The Rho-native chain starts from the same
 checked report but lowers it further to `rhoapi::Par` and observes RSpace after
 execution.
+
+The artifact spine below is the recommended mental model for the whole suite:
+
+| Step | Owner | Artifact | What must be true before the next step |
+|---:|---|---|---|
+| 1 | MeTTaIL macro layer | `LanguageDef` | the `language!` body parsed and validated |
+| 2 | generated language crate | `LanguageMetadata` plus typed AST constructors | categories, constructors, rules, guards, and handlers are discoverable from generated inventory |
+| 3 | Dovetail | `SatReport` and `DovetailRunReport` | saturation outcome is explicit, extraction completeness is explicit, and exact keys identify every term |
+| 4a | direct Dovetail adapter | `RuntimeBackendOutput::Dovetail` | the report is complete and remains report-shaped |
+| 4b | Rho backend planner | `RhoNet plan` | every covered rule is lowered and every uncovered rule is rejected with evidence |
+| 5 | Rho AST generator | `rhoapi::Par` | the executable artifact is normalized AST, not Rholang source text |
+| 6 | F1r3node | RSpace resting facts and observations | host RhoRuntime executed the AST and RSpace scheduled enabled joins |
+| 7 | MeTTaIL runtime envelope | `RuntimeBackendReport` | the output shape matches the selected backend and does not pretend to be another backend's artifact |
+
+This table is also the vocabulary discipline for the documentation. A
+`DovetailRunReport` is rewrite evidence before runtime execution. A
+`rhoapi::Par` value is the generated executable artifact. A Rho observation is
+the post-execution fact seen in RSpace. A generic `RuntimeBackendReport` is only
+the outer language-level envelope returned to callers.
 
 ## Document Map
 

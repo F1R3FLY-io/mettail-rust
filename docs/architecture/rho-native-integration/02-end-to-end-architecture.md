@@ -1,6 +1,6 @@
 # End-to-End Architecture
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document explains the whole execution path from a source-language snippet
 to native execution on F1r3node's Rho machine, scoped to replacement of the CESK
@@ -88,6 +88,35 @@ The apparent overlap is therefore intentional provenance tracking. Dovetail and
 the Rho backend repeat enough rule and constructor information to prove that
 execution preserves the `language!` semantics, but they do not replace the
 macro as the language-definition authority.
+
+## End-To-End Artifact Spine
+
+The most useful way to read the design is as a sequence of typed artifacts. No
+stage should be understood as "the system just has a term now"; every stage
+adds or preserves a specific contract.
+
+| Stage | Input | Output | Contract preserved |
+|---:|---|---|---|
+| 1. macro parse | `language!` token stream | `LanguageDef` | the language specification has a typed macro-time model |
+| 2. code generation | validated `LanguageDef` | typed AST constructors and `LanguageMetadata` | downstream code can derive categories and rules from generated inventory, not hard-coded lists |
+| 3. snippet parse | source snippet | typed AST term | the active WPDA parser produced a source-language value |
+| 4. Dovetail execution | typed AST term plus metadata | `SatReport` and `DovetailRunReport` | rewrite consequences are exact-keyed, ordered, and explicitly complete or bounded |
+| 5a. direct Dovetail runtime | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | the runtime exposes Dovetail evidence without fabricating an Ascent graph |
+| 5b. Rho planning | complete Dovetail report | `RhoNet plan` | covered rewrites become dataflow contracts and uncovered rewrites are explicit rejections |
+| 6. AST generation | RhoNet plan | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
+| 7. Rho execution | `rhoapi::Par` | RSpace observations | F1r3node's RhoRuntime and RSpace own COMM, joins, scheduling, replay, and checkpointing |
+| 8. runtime return | backend-specific output | `RuntimeBackendReport` | the caller receives an envelope whose shape matches the selected backend |
+
+The split at stage 5 is intentional:
+
+`stage 5a = use Dovetail as the production rewrite backend`
+
+`stage 5b-7 = use Dovetail evidence to generate and execute Rho-native work`
+
+Both are runtime-backend paths. Neither replaces the parser. The direct
+Dovetail path is valuable when the checked rewrite report itself is the runtime
+answer. The Rho-native path is valuable when the checked report can be compiled
+into host Rho-machine parallelism.
 
 ## Bridge Crate Boundary
 

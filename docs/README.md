@@ -55,6 +55,14 @@ and Rho machine integration:
 - **`architecture/rho-native-integration/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/rho-native-integration/validate.sh`** - Reproducible local validation for the suite
 
+The cohesive runtime-backend reading path is:
+
+1. **`architecture/dovetail/README.md`** - Dovetail's standalone contract and the direct Dovetail runtime lane
+2. **`architecture/dovetail/10-runtime-facing-reports.md`** - the report artifact that connects Dovetail to downstream consumers
+3. **`architecture/rho-native-integration/README.md`** - the full artifact spine from `language!` to `RuntimeBackendReport`
+4. **`architecture/rho-native-integration/02-end-to-end-architecture.md`** - the stage-by-stage runtime backend replacement path
+5. **`architecture/rho-native-integration/04-rho-native-dataflow-lowering.md`** - the AST-first Rho-native lowering details
+
 ---
 
 ## Guides (Topical)
