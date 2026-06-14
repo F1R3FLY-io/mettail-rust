@@ -8,6 +8,9 @@
  *   - The wrapper selects `RuntimeBackend::RhoMachine` as its default backend.
  *   - `RuntimeBackend::Dovetail` is exposed only as the checked intermediate
  *     report for diagnostics/query tooling; it is not the default runtime.
+ *   - The wrapper can be constructed only when the planned Rho backend, the
+ *     Dovetail compiler stage, and the Rho invocation compiler stage were all
+ *     derived from the same macro-expanded generated `LanguageDef`.
  *   - The default Rho path first builds a Dovetail report, checks structural
  *     well-formedness and `Complete`, then passes that checked report to the
  *     Rho AST invocation builder.
@@ -17,7 +20,7 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
-From Stdlib Require Import Bool List.
+From Stdlib Require Import Bool List PeanoNat.
 
 Import ListNotations.
 
@@ -47,8 +50,11 @@ Section DovetailRhoLanguageBackendWrapper.
   }.
 
   Record DovetailRhoWrapper : Type := {
+    generated_definition_id : nat;
+    rho_plan_definition_id : nat;
+    dovetail_compiler_definition_id : nat;
+    invocation_compiler_definition_id : nat;
     planned_rho_backend : bool;
-    plan_matches_language : bool;
     dovetail_report_available : bool;
     dovetail_report_completeness : ExtractionCompleteness;
     dovetail_report_well_formed : bool;
@@ -70,8 +76,28 @@ Section DovetailRhoLanguageBackendWrapper.
     | BoundedByCycleCut => false
     end.
 
+  Definition plan_matches_language (wrapper : DovetailRhoWrapper) : bool :=
+    Nat.eqb
+      (rho_plan_definition_id wrapper)
+      (generated_definition_id wrapper).
+
+  Definition dovetail_compiler_matches_language
+      (wrapper : DovetailRhoWrapper) : bool :=
+    Nat.eqb
+      (dovetail_compiler_definition_id wrapper)
+      (generated_definition_id wrapper).
+
+  Definition invocation_compiler_matches_language
+      (wrapper : DovetailRhoWrapper) : bool :=
+    Nat.eqb
+      (invocation_compiler_definition_id wrapper)
+      (generated_definition_id wrapper).
+
   Definition wrapper_installs_rho (wrapper : DovetailRhoWrapper) : bool :=
-    planned_rho_backend wrapper && plan_matches_language wrapper.
+    planned_rho_backend wrapper &&
+    plan_matches_language wrapper &&
+    dovetail_compiler_matches_language wrapper &&
+    invocation_compiler_matches_language wrapper.
 
   Definition dovetail_report_checked (wrapper : DovetailRhoWrapper) : bool :=
     dovetail_report_available wrapper &&
@@ -82,11 +108,13 @@ Section DovetailRhoLanguageBackendWrapper.
     RhoMachine.
 
   Definition wrapper_runtime_capabilities
-      (_wrapper : DovetailRhoWrapper) : list RuntimeBackendCapability :=
-    [{| capability_backend := RhoMachine;
-        capability_is_default := true |};
-     {| capability_backend := Dovetail;
-        capability_is_default := false |}].
+      (wrapper : DovetailRhoWrapper) : list RuntimeBackendCapability :=
+    if wrapper_installs_rho wrapper
+    then [{| capability_backend := RhoMachine;
+            capability_is_default := true |};
+          {| capability_backend := Dovetail;
+            capability_is_default := false |}]
+    else [].
 
   Definition capabilities_support
       (capabilities : list RuntimeBackendCapability) (backend : Backend) : bool :=
@@ -96,10 +124,10 @@ Section DovetailRhoLanguageBackendWrapper.
       capabilities.
 
   Definition wrapper_supports
-      (_wrapper : DovetailRhoWrapper) (backend : Backend) : bool :=
+      (wrapper : DovetailRhoWrapper) (backend : Backend) : bool :=
     match backend with
-    | RhoMachine => true
-    | Dovetail => true
+    | RhoMachine => wrapper_installs_rho wrapper
+    | Dovetail => wrapper_installs_rho wrapper
     | Ascent => false
     end.
 
@@ -109,7 +137,7 @@ Section DovetailRhoLanguageBackendWrapper.
     invocation_total_after_dovetail wrapper.
 
   Definition wrapper_dovetail_report_runs (wrapper : DovetailRhoWrapper) : bool :=
-    dovetail_report_checked wrapper.
+    wrapper_installs_rho wrapper && dovetail_report_checked wrapper.
 
   Definition wrapper_report_shape
       (wrapper : DovetailRhoWrapper) (backend : Backend) : option ReportShape :=
@@ -153,11 +181,11 @@ Section DovetailRhoLanguageBackendWrapper.
   Proof. intros wrapper. reflexivity. Qed.
 
   Theorem wrapper_supports_rho : forall wrapper,
-    wrapper_supports wrapper RhoMachine = true.
+    wrapper_supports wrapper RhoMachine = wrapper_installs_rho wrapper.
   Proof. intros wrapper. reflexivity. Qed.
 
   Theorem wrapper_supports_dovetail_intermediate : forall wrapper,
-    wrapper_supports wrapper Dovetail = true.
+    wrapper_supports wrapper Dovetail = wrapper_installs_rho wrapper.
   Proof. intros wrapper. reflexivity. Qed.
 
   Theorem wrapper_rejects_ascent_support : forall wrapper,
@@ -170,18 +198,81 @@ Section DovetailRhoLanguageBackendWrapper.
         (wrapper_runtime_capabilities wrapper) backend =
       wrapper_supports wrapper backend.
   Proof.
-    intros wrapper backend.
-    destruct backend; reflexivity.
+    intros [definition_id plan_id dovetail_id invocation_id planned available
+              completeness well_formed invocation] backend.
+    unfold wrapper_runtime_capabilities, wrapper_supports,
+      wrapper_installs_rho, plan_matches_language,
+      dovetail_compiler_matches_language,
+      invocation_compiler_matches_language, capabilities_support,
+      backend_eqb.
+    destruct backend;
+      destruct planned;
+      simpl;
+      destruct (plan_id =? definition_id);
+      destruct (dovetail_id =? definition_id);
+      destruct (invocation_id =? definition_id);
+      reflexivity.
   Qed.
 
   Theorem wrapper_capabilities_are_rho_default_then_dovetail_intermediate :
     forall wrapper,
+      wrapper_installs_rho wrapper = true ->
       wrapper_runtime_capabilities wrapper =
       [{| capability_backend := RhoMachine;
           capability_is_default := true |};
        {| capability_backend := Dovetail;
           capability_is_default := false |}].
-  Proof. intros wrapper. reflexivity. Qed.
+  Proof.
+    intros wrapper Hinstall.
+    unfold wrapper_runtime_capabilities.
+    rewrite Hinstall.
+    reflexivity.
+  Qed.
+
+  Theorem failed_wrapper_exposes_no_runtime_backend : forall wrapper,
+    wrapper_installs_rho wrapper = false ->
+    wrapper_runtime_capabilities wrapper = [].
+  Proof.
+    intros wrapper Hfail.
+    unfold wrapper_runtime_capabilities.
+    rewrite Hfail.
+    reflexivity.
+  Qed.
+
+  Theorem mismatched_plan_blocks_installation : forall wrapper,
+    plan_matches_language wrapper = false ->
+    wrapper_installs_rho wrapper = false.
+  Proof.
+    intros wrapper Hmismatch.
+    unfold wrapper_installs_rho.
+    rewrite Hmismatch.
+    destruct (planned_rho_backend wrapper); reflexivity.
+  Qed.
+
+  Theorem mismatched_dovetail_compiler_blocks_installation : forall wrapper,
+    dovetail_compiler_matches_language wrapper = false ->
+    wrapper_installs_rho wrapper = false.
+  Proof.
+    intros wrapper Hmismatch.
+    unfold wrapper_installs_rho.
+    rewrite Hmismatch.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      reflexivity.
+  Qed.
+
+  Theorem mismatched_invocation_compiler_blocks_installation : forall wrapper,
+    invocation_compiler_matches_language wrapper = false ->
+    wrapper_installs_rho wrapper = false.
+  Proof.
+    intros wrapper Hmismatch.
+    unfold wrapper_installs_rho.
+    rewrite Hmismatch.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      destruct (dovetail_compiler_matches_language wrapper);
+      reflexivity.
+  Qed.
 
   Theorem wrapper_rho_report_requires_planned_backend : forall wrapper,
     wrapper_rho_report_runs wrapper = true ->
@@ -207,58 +298,91 @@ Section DovetailRhoLanguageBackendWrapper.
       discriminate Hrun.
   Qed.
 
+  Theorem wrapper_dovetail_report_requires_installation : forall wrapper,
+    wrapper_dovetail_report_runs wrapper = true ->
+    wrapper_installs_rho wrapper = true.
+  Proof.
+    intros wrapper Hrun.
+    unfold wrapper_dovetail_report_runs in Hrun.
+    apply andb_true_iff in Hrun as [Hinstall _].
+    exact Hinstall.
+  Qed.
+
+  Theorem wrapper_rho_report_requires_dovetail_compiler_match : forall wrapper,
+    wrapper_rho_report_runs wrapper = true ->
+    dovetail_compiler_matches_language wrapper = true.
+  Proof.
+    intros wrapper Hrun.
+    unfold wrapper_rho_report_runs, wrapper_installs_rho in Hrun.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      destruct (dovetail_compiler_matches_language wrapper);
+      simpl in Hrun;
+      try reflexivity;
+      discriminate Hrun.
+  Qed.
+
+  Theorem wrapper_rho_report_requires_invocation_compiler_match : forall wrapper,
+    wrapper_rho_report_runs wrapper = true ->
+    invocation_compiler_matches_language wrapper = true.
+  Proof.
+    intros wrapper Hrun.
+    unfold wrapper_rho_report_runs, wrapper_installs_rho in Hrun.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      destruct (dovetail_compiler_matches_language wrapper);
+      destruct (invocation_compiler_matches_language wrapper);
+      simpl in Hrun;
+      try reflexivity;
+      discriminate Hrun.
+  Qed.
+
   Theorem wrapper_rho_report_requires_dovetail_available : forall wrapper,
     wrapper_rho_report_runs wrapper = true ->
     dovetail_report_available wrapper = true.
   Proof.
-    intros [planned same_language available completeness well_formed invocation] Hrun.
-    unfold wrapper_rho_report_runs, wrapper_installs_rho,
-      dovetail_report_checked in Hrun.
-    destruct planned;
-      destruct same_language;
-      destruct available;
-      destruct completeness;
-      destruct well_formed;
-      destruct invocation;
-      simpl in Hrun;
-      try discriminate Hrun;
-      reflexivity.
+    intros wrapper Hrun.
+    unfold wrapper_rho_report_runs in Hrun.
+    apply andb_true_iff in Hrun as [Hrun _].
+    apply andb_true_iff in Hrun as [_ Hchecked].
+    unfold dovetail_report_checked in Hchecked.
+    destruct (dovetail_report_available wrapper); simpl in Hchecked.
+    - reflexivity.
+    - discriminate Hchecked.
   Qed.
 
   Theorem wrapper_rho_report_requires_complete_dovetail : forall wrapper,
     wrapper_rho_report_runs wrapper = true ->
     dovetail_report_completeness wrapper = Complete.
   Proof.
-    intros [planned same_language available completeness well_formed invocation] Hrun.
-    unfold wrapper_rho_report_runs, wrapper_installs_rho,
-      dovetail_report_checked in Hrun.
-    destruct planned;
-      destruct same_language;
-      destruct available;
-      destruct completeness;
-      destruct well_formed;
-      destruct invocation;
-      simpl in Hrun;
-      try discriminate Hrun;
-      reflexivity.
+    intros wrapper Hrun.
+    unfold wrapper_rho_report_runs in Hrun.
+    apply andb_true_iff in Hrun as [Hrun _].
+    apply andb_true_iff in Hrun as [_ Hchecked].
+    unfold dovetail_report_checked in Hchecked.
+    destruct (dovetail_report_available wrapper); simpl in Hchecked;
+      try discriminate Hchecked.
+    destruct (dovetail_report_completeness wrapper); simpl in Hchecked.
+    - reflexivity.
+    - discriminate Hchecked.
   Qed.
 
   Theorem wrapper_rho_report_requires_well_formed_dovetail : forall wrapper,
     wrapper_rho_report_runs wrapper = true ->
     dovetail_report_well_formed wrapper = true.
   Proof.
-    intros [planned same_language available completeness well_formed invocation] Hrun.
-    unfold wrapper_rho_report_runs, wrapper_installs_rho,
-      dovetail_report_checked in Hrun.
-    destruct planned;
-      destruct same_language;
-      destruct available;
-      destruct completeness;
-      destruct well_formed;
-      destruct invocation;
-      simpl in Hrun;
-      try discriminate Hrun;
-      reflexivity.
+    intros wrapper Hrun.
+    unfold wrapper_rho_report_runs in Hrun.
+    apply andb_true_iff in Hrun as [Hrun _].
+    apply andb_true_iff in Hrun as [_ Hchecked].
+    unfold dovetail_report_checked in Hchecked.
+    destruct (dovetail_report_available wrapper); simpl in Hchecked;
+      try discriminate Hchecked.
+    destruct (dovetail_report_completeness wrapper); simpl in Hchecked;
+      try discriminate Hchecked.
+    destruct (dovetail_report_well_formed wrapper); simpl in Hchecked.
+    - reflexivity.
+    - discriminate Hchecked.
   Qed.
 
   Theorem wrapper_rho_report_requires_total_invocation_after_dovetail :
@@ -312,22 +436,19 @@ Section DovetailRhoLanguageBackendWrapper.
   Proof.
     intros wrapper.
     unfold wrapper_default_ascent_compat, wrapper_default_backend,
-      wrapper_report_shape, wrapper_rho_report_runs, wrapper_installs_rho,
-      dovetail_report_checked, completeness_is_complete.
-    destruct (planned_rho_backend wrapper);
-      destruct (plan_matches_language wrapper);
-      destruct (dovetail_report_available wrapper);
-      destruct (dovetail_report_completeness wrapper);
-      destruct (dovetail_report_well_formed wrapper);
-      destruct (invocation_total_after_dovetail wrapper);
-      reflexivity.
+      wrapper_report_shape.
+    destruct (wrapper_rho_report_runs wrapper); reflexivity.
   Qed.
 
   Theorem bounded_dovetail_blocks_dovetail_and_rho :
-    forall planned same_language available well_formed invocation,
+    forall definition_id plan_id dovetail_id invocation_id planned
+      available well_formed invocation,
       let wrapper :=
-        {| planned_rho_backend := planned;
-           plan_matches_language := same_language;
+        {| generated_definition_id := definition_id;
+           rho_plan_definition_id := plan_id;
+           dovetail_compiler_definition_id := dovetail_id;
+           invocation_compiler_definition_id := invocation_id;
+           planned_rho_backend := planned;
            dovetail_report_available := available;
            dovetail_report_completeness := BoundedByCycleCut;
            dovetail_report_well_formed := well_formed;
@@ -335,10 +456,18 @@ Section DovetailRhoLanguageBackendWrapper.
       wrapper_dovetail_report_runs wrapper = false /\
       wrapper_rho_report_runs wrapper = false.
   Proof.
-    intros planned same_language available well_formed invocation.
+    intros definition_id plan_id dovetail_id invocation_id planned
+      available well_formed invocation.
+    unfold wrapper_dovetail_report_runs, wrapper_rho_report_runs,
+      wrapper_installs_rho, plan_matches_language,
+      dovetail_compiler_matches_language,
+      invocation_compiler_matches_language, dovetail_report_checked,
+      completeness_is_complete.
     simpl.
     destruct planned;
-      destruct same_language;
+      destruct (plan_id =? definition_id);
+      destruct (dovetail_id =? definition_id);
+      destruct (invocation_id =? definition_id);
       destruct available;
       destruct well_formed;
       destruct invocation;
@@ -347,10 +476,14 @@ Section DovetailRhoLanguageBackendWrapper.
   Qed.
 
   Theorem malformed_dovetail_blocks_dovetail_and_rho :
-    forall planned same_language available completeness invocation,
+    forall definition_id plan_id dovetail_id invocation_id planned
+      available completeness invocation,
       let wrapper :=
-        {| planned_rho_backend := planned;
-           plan_matches_language := same_language;
+        {| generated_definition_id := definition_id;
+           rho_plan_definition_id := plan_id;
+           dovetail_compiler_definition_id := dovetail_id;
+           invocation_compiler_definition_id := invocation_id;
+           planned_rho_backend := planned;
            dovetail_report_available := available;
            dovetail_report_completeness := completeness;
            dovetail_report_well_formed := false;
@@ -358,10 +491,17 @@ Section DovetailRhoLanguageBackendWrapper.
       wrapper_dovetail_report_runs wrapper = false /\
       wrapper_rho_report_runs wrapper = false.
   Proof.
-    intros planned same_language available completeness invocation.
+    intros definition_id plan_id dovetail_id invocation_id planned
+      available completeness invocation.
+    unfold wrapper_dovetail_report_runs, wrapper_rho_report_runs,
+      wrapper_installs_rho, plan_matches_language,
+      dovetail_compiler_matches_language,
+      invocation_compiler_matches_language, dovetail_report_checked.
     simpl.
     destruct planned;
-      destruct same_language;
+      destruct (plan_id =? definition_id);
+      destruct (dovetail_id =? definition_id);
+      destruct (invocation_id =? definition_id);
       destruct available;
       destruct completeness;
       destruct invocation;
