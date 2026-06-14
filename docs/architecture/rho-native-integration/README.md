@@ -145,6 +145,30 @@ common misreadings:
 | The Rho backend emits Rholang text. | Documentation may show Rholang-like text, but the executable artifact is normalized AST such as `rhoapi::Par`. |
 | A Dovetail report is the same thing as a runtime observation. | A report is pre-execution rewrite evidence; an observation is post-execution RSpace evidence. |
 
+## Cross-Suite Cohesion Rules
+
+The Dovetail suite and this Rho integration suite intentionally share one
+running chain:
+
+`language! → LanguageDef → LanguageMetadata → typed AST → DovetailRunReport → rhoapi::Par → RuntimeBackendReport`
+
+The difference is scope. The Dovetail suite stops at a checked report except
+when naming consumers. This suite starts with the same report and explains how
+a complete report becomes host Rho-machine work. To keep that handoff readable,
+apply these rules:
+
+| Rule | Practical consequence |
+|---|---|
+| One language source of truth | categories, constructors, guards, rewrites, and handlers are derived from generated `LanguageMetadata`, not backend-local lists |
+| One rewrite evidence boundary | the Rho backend consumes `DovetailRunReport`; it does not reconstruct Dovetail evidence from displayed terms |
+| One executable Rho artifact kind | generated execution values are normalized `rhoapi::Par`, with Rholang text kept as annotation |
+| One host runtime | F1r3node/RhoRuntime/RSpace schedule COMM and joins; MeTTaIL does not grow a second Rho machine |
+| One runtime envelope | callers receive `RuntimeBackendReport` values whose output variant matches the selected backend |
+
+The most important reader check is phase: before `DovetailRunReport`, the topic
+is language definition, parsing, or rewrite proof; after `DovetailRunReport`,
+the topic is lowering, host execution, or observation.
+
 ## Running Example Ownership
 
 The canonical end-to-end example is MiniRhoFor in

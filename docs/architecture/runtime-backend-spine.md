@@ -33,6 +33,46 @@ path answers "what happens to this particular snippet?" Keeping those questions
 separate is the simplest way to avoid conflating the macro, the rewrite engine,
 and the runtime backend.
 
+## How To Read The Whole Suite
+
+Use this page as the reader contract for both architecture suites. Every deeper
+document should preserve the same left-to-right interpretation:
+
+`declare → generate → parse → report → execute → observe`
+
+The words in that mnemonic are ownership boundaries:
+
+| Step | Owner | Reader checkpoint |
+|---|---|---|
+| declare | `language!` macro input | Is this describing the modeled language, before any runtime exists? |
+| generate | macro/codegen output | Did the category, constructor, rewrite, guard, and handler inventory come from generated metadata? |
+| parse | WPDA frontend | Is this about source text becoming a typed AST term? |
+| report | Dovetail | Is this exact-keyed rewrite evidence before runtime execution? |
+| execute | selected runtime backend | Is this direct Dovetail report exposure or Rho AST execution? |
+| observe | runtime envelope | Is this a post-runtime value inside `RuntimeBackendReport`? |
+
+That checkpoint table is deliberately stricter than the prose. It keeps the
+documentation cohesive when a page contains examples from several layers. If an
+artifact is before `report`, it belongs to MeTTaIL language definition or
+parsing. If an artifact is exactly `report`, it belongs to Dovetail. If an
+artifact is after `report`, it belongs to a runtime backend or to the generic
+runtime envelope.
+
+The most common comprehension failure is to treat readable notation as the
+artifact being executed. In this suite:
+
+| Reader-facing notation | Executable or semantic artifact |
+|---|---|
+| Rholang-looking snippets in examples | annotations for humans |
+| `language!` snippets | macro input parsed into `LanguageDef` |
+| constructor displays such as `Proc::PPar(...)` | typed AST values from generated language crates |
+| `DovetailRunReport { ... }` examples | exact-keyed report shape, not Rho execution |
+| `b!(z)` annotations | explanation of a send, not generated source text |
+| `rhoapi::Par` | generated host Rholang AST sent directly to `RhoRuntime` |
+
+When another document repeats the artifact chain, read the repetition as a
+local orientation marker. It should not introduce a second source of truth.
+
 ## Canonical Comprehension Path
 
 Use the MiniRhoFor fixture as the running example across the documentation. It

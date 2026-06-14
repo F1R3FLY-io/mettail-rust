@@ -137,6 +137,26 @@ that point forward, the backend does not rediscover syntax by string inspection
 or hard-coded category names. It consumes the typed term and inventory, then
 preserves the evidence through Dovetail and the selected runtime lane.
 
+### Cohesion Checkpoints
+
+Before reading a later section as an implementation detail, identify which
+checkpoint it belongs to:
+
+| Checkpoint | Stable artifact | Allowed next step |
+|---|---|---|
+| language definition | `LanguageDef` | generate typed AST constructors and metadata |
+| generated inventory | `LanguageMetadata` | derive Dovetail rules and backend coverage requirements |
+| parsed snippet | typed AST | select a runtime backend and seed Dovetail |
+| rewrite evidence | `SatReport` plus `DovetailRunReport` | return direct Dovetail output or lower a complete report |
+| Rho plan | `RhoNet plan` or `CallByNeedThunkPlan` | validate and build normalized `rhoapi::Par` |
+| executable artifact | `rhoapi::Par` | inject into host `RhoRuntime` |
+| runtime observation | resting RSpace facts | construct the selected `RuntimeBackendReport` |
+
+These checkpoints give each repeated diagram, formula, and example a fixed
+place in the architecture. They also make two negative claims precise:
+Dovetail does not execute Rho processes, and the Rho backend does not recover
+semantics by reparsing text.
+
 For the MiniRhoFor example used in the Dovetail report documentation, the
 cohesive trace is:
 

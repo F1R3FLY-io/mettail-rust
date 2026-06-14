@@ -46,6 +46,31 @@ For reviewers checking claims:
 2. [References](references.md)
 3. [Validation Script](validate.sh)
 
+## Reader Contract
+
+Dovetail is the middle layer. A cohesive reading of every page should be:
+
+`generated language inventory → exact-keyed rewrite engine → checked report`
+
+That is narrower than the full runtime story on purpose. The upstream
+`language!` system owns syntax and typed language inventory. Dovetail owns
+exact-keyed equality evidence, saturation, extraction, weights, boundedness,
+and reports. Downstream runtimes own execution or observation.
+
+Use these questions while reading:
+
+| Question | If yes, read it as... |
+|---|---|
+| Is the page declaring categories, constructors, syntax, guards, or native handlers? | upstream `language!` inventory consumed by Dovetail |
+| Is the page discussing e-classes, rules, weights, extraction, or completeness? | Dovetail core behavior |
+| Is the page showing `SatReport`, `Extraction<T>`, or `DovetailRunReport`? | a Dovetail phase-boundary artifact |
+| Is the page showing `rhoapi::Par`, RSpace, or runtime observations? | a downstream consumer of a complete Dovetail report |
+
+This contract is also the reason Dovetail documentation uses the word
+"report." A report is the point where the engine freezes checked rewrite
+evidence into a shape that another component can consume without depending on
+the e-graph or extractor internals.
+
 ## Document Map
 
 | Document | Question answered |

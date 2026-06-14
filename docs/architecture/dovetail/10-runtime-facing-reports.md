@@ -486,6 +486,28 @@ This table is the complete high-level story. Later details elaborate these
 boundaries; they do not introduce a second language-definition mechanism or a
 source-text Rholang generation step.
 
+### Reader Checkpoints For The Example
+
+The example is easiest to follow if each row is read as an answer to one
+question:
+
+| Question | Artifact in the example | What must stay cohesive |
+|---|---|---|
+| What did the language author declare? | `language! { name: MiniRhoFor, ... }` | the macro body is parsed into one `LanguageDef` |
+| What inventory did generated code expose? | `LanguageMetadata` | adapters derive categories, constructors, rewrites, guards, and handlers from metadata |
+| What source value is being run? | `Proc::PPar(...)` | the WPDA parser returns typed AST, not backend output |
+| What did Dovetail check? | `SatReport` and `DovetailRunReport` | exact keys, ordered edges, roots, weights, and completeness remain together |
+| What can the direct Dovetail backend return? | `RuntimeBackendOutput::Dovetail` | the runtime result is still report-shaped |
+| What can the Rho backend execute? | `rhoapi::Par` | the executable artifact is AST generated from a complete report |
+| What can a caller observe after Rho execution? | `RuntimeBackendReport` with observations | observations are post-runtime facts, not Dovetail reports |
+
+Those checkpoints are the cohesion test for the rest of this section. If a
+sentence says "report," it should be before runtime execution. If a sentence
+says "observation," it should be after a selected runtime has consumed an
+artifact. If a sentence shows Rholang-like text, it should either be source
+syntax for the modeled language or an annotation for readers, not an execution
+round trip.
+
 `LanguageDef` is the compile-time language model parsed from the macro input.
 `LanguageMetadata` is the generated runtime-facing inventory exposed by
 `Language::metadata()`. Dovetail should consume those generated inventories; it
