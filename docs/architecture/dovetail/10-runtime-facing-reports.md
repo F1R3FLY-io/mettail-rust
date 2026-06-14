@@ -429,7 +429,7 @@ The key distinction is that there are two pipelines:
 
 and:
 
-`code snippet → parser → typed AST → DovetailRunReport → rhoapi::Par`
+`code snippet → parser → typed AST → DovetailRunReport → rhoapi::Par → RuntimeBackendReport`
 
 `LanguageDef` is the compile-time language model parsed from the macro input.
 `LanguageMetadata` is the generated runtime-facing inventory exposed by
@@ -665,6 +665,12 @@ rhoapi::Par {
     sends: [send(channel = b, data = z)]
 }
 ```
+
+For dynamic calls and witness facts, the implementation constructs that AST
+with `mettail_rho_codegen::RhoAstSend` and structured `RhoAstLiteral` payloads.
+The payload builder covers simple scalar data and recursive ground data such as
+lists, maps, unforgeable names, and tagged rhocalc bags. That keeps the report
+handoff AST-first even when examples use Rholang-looking text for readability.
 
 That AST can be injected into F1r3node's Rho runtime today, and the same
 boundary can later feed a Rholang bytecode emitter without reparsing source

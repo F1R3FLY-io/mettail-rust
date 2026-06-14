@@ -27,7 +27,7 @@ The current proof and coverage sources are
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
 | auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate |
-| normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text |
+| normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text; structured dynamic payloads preserve list, map, and bag literals across the AST boundary |
 | type-sensitive scalar operator lowering | `RhoScalarOperatorTyping.v`, `mettail-rho-codegen::lower` | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, and ill-typed or mixed scalar operators are rejected |
 | rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::lower_rhocalc_proc`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
@@ -68,12 +68,16 @@ reports without observations.
 Generated Rho execution now starts from `PlannedRhoBackend`, which wraps the
 `RhoDefaultBackendPlan` produced by the flip gate; raw validated artifacts remain
 available for oracle/debug helpers only. Dynamic contract calls and ambiguity
-witnesses are constructed with `mettail_rho_codegen::RhoAstSend`, and the
-rhocalc process bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with
-`lower_rhocalc_proc` and `lower_rhocalc_name`, so both dynamic calls and
-transport-pure rhocalc programs cross the runtime boundary as normalized `Par`
-values. Their Rholang-looking strings are annotations for logs, tests, and
-documentation, not executable source.
+witnesses are constructed with `mettail_rho_codegen::RhoAstSend`. Its
+`RhoAstLiteral` payloads lower scalar values, collections, unforgeable names,
+and rhocalc bags directly to normalized `Par`; the rhocalc bag ABI tag is owned
+by `mettail-rho-codegen` and re-exported by `mettail-rho-runtime` so send-side
+encoding and runtime observation decoding cannot drift. The rhocalc process
+bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with `lower_rhocalc_proc`
+and `lower_rhocalc_name`, so both dynamic calls and transport-pure rhocalc
+programs cross the runtime boundary as normalized `Par` values. Their
+Rholang-looking strings are annotations for logs, tests, and documentation, not
+executable source.
 Generated Rho observations now use typed `RhoObservationReport<T>` at the
 Rho-runtime boundary and `mettail_runtime::RuntimeBackendReport` at the generic
 `Language` boundary rather than forcing Rho results into `AscentResults`.
@@ -290,7 +294,8 @@ Mechanized evidence:
 Rust adapter evidence:
 
 - `mettail_rho_codegen::RhoAstSend`
-- `mettail_rho_codegen::RhoAstLiteral`
+- `mettail_rho_codegen::RhoAstLiteral`, including scalar, collection,
+  unforgeable-name, and tagged rhocalc-bag payloads
 - `mettail_rho_adapter::DeltaOneCandidate`
 - `mettail_rho_adapter::DeltaOneMatchEdge`
 - `mettail_rho_adapter::DeltaOneMatching`

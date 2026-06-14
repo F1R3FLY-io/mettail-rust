@@ -76,14 +76,17 @@ For reviewers checking claims and citations:
 
 Read the suite as one artifact chain, not as independent subsystems:
 
-`language! specification → generated semantic inventory → DovetailRunReport → RhoNet plan → rhoapi::Par → RSpace observations`
+`language! specification → generated semantic inventory → DovetailRunReport → RhoNet plan → rhoapi::Par → RSpace observations → RuntimeBackendReport`
 
 The first two artifacts are MeTTaIL-owned. The middle report is Dovetail-owned:
 it is the exact-keyed, completeness-checked rewrite result. The Rho backend
-owns the plan and normalized AST artifact. F1r3node owns execution and
-observations. Each document in this suite explains one handoff in that chain,
-and the correctness documents prove that a downstream artifact does not claim
-more than its upstream artifact established.
+owns the plan and normalized AST artifact, including dynamic call and witness
+payloads constructed as structured `RhoAstLiteral` values. F1r3node owns
+execution and observations. The generic `RuntimeBackendReport` is produced only
+after runtime execution; it is not a Dovetail report. Each document in this
+suite explains one handoff in that chain, and the correctness documents prove
+that a downstream artifact does not claim more than its upstream artifact
+established.
 
 ## Document Map
 

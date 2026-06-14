@@ -62,3 +62,8 @@ required-features = ["oracle-ascent"]
 name = "rho_rhocalc_ast"
 path = "tests/rho_rhocalc_ast.rs"
 required-features = ["oracle-rhocalc"]
+
+[[test]]
+name = "rho_structured_ast_send"
+path = "tests/rho_structured_ast_send.rs"
+required-features = ["runtime-report"]

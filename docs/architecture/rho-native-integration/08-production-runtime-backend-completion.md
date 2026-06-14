@@ -73,6 +73,15 @@ discards multiplicity. The tagged list ABI preserves multiplicity and keeps the
 representation nominal by using a private unforgeable tag rather than a user
 string.
 
+Dynamic calls and witness facts use the same AST discipline. The generated
+builder `mettail_rho_codegen::RhoAstSend` takes `RhoAstLiteral` payloads and
+constructs `Par` directly; it does not emit text for the Rholang parser to
+recover. `RhoAstLiteral` covers scalar payloads, byte/URI/numeric payloads,
+unforgeable names, closed list/tuple/set/map payloads, and rhocalc bags. The
+bag tag constant `RHOCALC_BAG_ABI_TAG` is defined in `mettail-rho-codegen` and
+re-exported by `mettail-rho-runtime`, so the producer and observer share one
+nominal ABI.
+
 ## Runtime Observation Payloads
 
 `RuntimeBackendReport` is the common user-facing envelope for Ascent,
@@ -101,9 +110,11 @@ expression bodies as non-ground observations.
 A production flip must still prove coverage for the actual observed payload
 domain of the language being flipped. The envelope being wider than one
 language's current needs is not, by itself, a coverage proof. The current
-rhocalc gate exercises the structured path by lowering list, map, and bag typed
-AST payloads to `rhoapi::Par`, executing them on the host RhoRuntime, and
-observing the corresponding recursive runtime values.
+rhocalc gate exercises the structured path in two directions: direct rhocalc
+process lowering emits list, map, and bag typed AST payloads to `rhoapi::Par`,
+and `RhoAstSend` emits structured dynamic send payloads for list, map, bag,
+URI, byte, and private-name values. Both paths execute on the host RhoRuntime
+and observe the corresponding recursive runtime values.
 
 Scalar operation coverage is type-sensitive. The generated Rho backend must not
 select Rholang operators from terminals alone because the same source token can

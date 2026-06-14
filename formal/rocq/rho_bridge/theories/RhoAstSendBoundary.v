@@ -4,7 +4,8 @@
  *
  * Rust image:
  *   - `mettail-rho-codegen::RhoAstSend` constructs normalized `rhoapi::Par`
- *     sends for scalar-contract calls and ambiguity witness facts.
+ *     sends for scalar-contract calls, structured runtime payloads, and
+ *     ambiguity witness facts.
  *   - `RhoAstSend::text_annotation` is a reader/debug annotation only.
  *   - `mettail-rho-runtime` injects the `Par` value and can observe grouped
  *     witness tuples from receive-less channels.
@@ -26,6 +27,13 @@ Section RhoAstSendBoundary.
     | LitInt : nat -> AstLiteral
     | LitBool : bool -> AstLiteral
     | LitString : Atom -> AstLiteral
+    | LitBytes : Atom -> AstLiteral
+    | LitPrivateName : Atom -> AstLiteral
+    | LitList : list AstLiteral -> AstLiteral
+    | LitTuple : list AstLiteral -> AstLiteral
+    | LitSet : list AstLiteral -> AstLiteral
+    | LitMap : list (AstLiteral * AstLiteral) -> AstLiteral
+    | LitBag : list (AstLiteral * nat) -> AstLiteral
     | LitQuotedChannel : Atom -> AstLiteral.
 
   Record AstSend : Type := {
@@ -78,6 +86,13 @@ Section RhoAstSendBoundary.
     | SourceTextInput _ => None
     end.
 
+  Definition send_payloads_of
+      (artifact : DynamicInputArtifact) : option (list AstLiteral) :=
+    match artifact with
+    | AstSendArtifact send => Some (send_payloads send)
+    | SourceTextInput _ => None
+    end.
+
   Theorem source_text_dynamic_input_rejected : forall bytes,
     current_dynamic_input_accepts (SourceTextInput bytes) = false.
   Proof. intros bytes. reflexivity. Qed.
@@ -96,6 +111,33 @@ Section RhoAstSendBoundary.
       dynamic_input_is_source_text
         (contract_call operation return_channel arguments) = false.
   Proof. intros operation return_channel arguments. reflexivity. Qed.
+
+  Theorem contract_call_preserves_argument_payloads :
+    forall operation return_channel arguments,
+      send_payloads_of (contract_call operation return_channel arguments) =
+        Some (arguments ++ [LitQuotedChannel return_channel]).
+  Proof. intros operation return_channel arguments. reflexivity. Qed.
+
+  Theorem structured_contract_call_preserves_list_payload :
+    forall operation return_channel payloads,
+      send_payloads_of
+        (contract_call operation return_channel [LitList payloads]) =
+        Some [LitList payloads; LitQuotedChannel return_channel].
+  Proof. intros operation return_channel payloads. reflexivity. Qed.
+
+  Theorem structured_contract_call_preserves_map_payload :
+    forall operation return_channel entries,
+      send_payloads_of
+        (contract_call operation return_channel [LitMap entries]) =
+        Some [LitMap entries; LitQuotedChannel return_channel].
+  Proof. intros operation return_channel entries. reflexivity. Qed.
+
+  Theorem structured_contract_call_preserves_bag_payload :
+    forall operation return_channel entries,
+      send_payloads_of
+        (contract_call operation return_channel [LitBag entries]) =
+        Some [LitBag entries; LitQuotedChannel return_channel].
+  Proof. intros operation return_channel entries. reflexivity. Qed.
 
   Theorem accepted_contract_call_requires_nonempty_operation :
     forall operation return_channel arguments,

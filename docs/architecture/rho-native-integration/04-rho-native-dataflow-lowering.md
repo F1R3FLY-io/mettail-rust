@@ -430,8 +430,11 @@ In the implementation, an enabled ambiguity witness is a receive-less AST send:
 
 The expression above is reader notation. The generated value is
 `models::rhoapi::Par`, constructed by `mettail_rho_codegen::RhoAstSend`; it is
-not Rholang source text. Runtime observation reads the resting datum as the
-tuple `("exact-key", "payload")`, then the adapter inserts it into
+not Rholang source text. `RhoAstSend` accepts structured `RhoAstLiteral`
+payloads, so the same AST-first boundary carries scalar calls, ambiguity
+witness strings, collection payloads, unforgeable names, and rhocalc bags.
+Runtime observation reads the resting ambiguity datum as the tuple
+`("exact-key", "payload")`, then the adapter inserts it into
 `AmbiguityWitnessSet`. Exact duplicate tuples are idempotent, while the same
 key with a different payload rejects as an explicit conflict. This keeps RSpace
 free to schedule enabled communications in any order without letting the

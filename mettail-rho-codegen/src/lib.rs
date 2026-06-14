@@ -35,6 +35,16 @@
 
 #![forbid(unsafe_code)]
 
+/// Stable Rho AST ABI tag for rhocalc bag payloads.
+///
+/// Rholang has native list, tuple, set, and map bodies, but no native multiset
+/// expression body. MeTTaIL/rhocalc bags therefore lower as a tagged list:
+/// `[private_tag, [[value, count], ...]]`, where `private_tag` is constructed
+/// by F1r3node's `GPrivateBuilder::new_par_from_string(RHOCALC_BAG_ABI_TAG)`.
+/// The tag is not raw UTF-8 bytes; it must match the host private-name builder
+/// so codegen and runtime observation decode the same nominal bag ABI.
+pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
+
 pub mod ast;
 pub mod backend;
 pub mod deadlock;

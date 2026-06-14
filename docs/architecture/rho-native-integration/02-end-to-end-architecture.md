@@ -72,7 +72,7 @@ target the same normalized artifact contract.
 
 The ownership pipeline is:
 
-`language! spec → semantic inventory → Dovetail reports → RhoNet plan → rhoapi::Par → RhoRuntime observations`
+`language! spec → semantic inventory → Dovetail reports → RhoNet plan → rhoapi::Par → RhoRuntime observations → RuntimeBackendReport`
 
 | Concern | `language!` | Dovetail | Rho backend |
 |---|---|---|---|
@@ -163,6 +163,9 @@ The Rho backend consumes the Dovetail model and emits:
 
 - a RhoNet dataflow network;
 - normalized Rholang AST (`models::rhoapi::Par`) for the supported fragment;
+- structured dynamic call and witness payloads as `RhoAstLiteral` values that
+  lower directly to `Par`, including scalar, collection, unforgeable-name, and
+  rhocalc bag ABI payloads;
 - Rholang-text annotations for readers, logs, and documentation;
 - native handler registrations for operations that cannot be rendered as pure
   Rholang expressions;
@@ -269,7 +272,7 @@ Steps:
   6. Lower RhoNet to normalized Rholang AST.
      The AST generator constructs the host `Par` shape directly, including
      De Bruijn indices, locally-free metadata, connective flags, bind counts,
-     and receive conditions.
+     receive conditions, dynamic input sends, and structured ground payloads.
 
   7. Inject the normalized `Par` into F1r3node RhoRuntime.
      RSpace schedules every enabled COMM.
@@ -307,6 +310,8 @@ The AST generator must own and test:
 - normalization;
 - bind-count conventions;
 - receive condition representation.
+- dynamic-send payload encoding for scalar values, collections,
+  unforgeable names, and tagged rhocalc bags.
 
 The current Rust gate checks these invariants on the generated contracts. The
 Rholang-looking examples in this document are annotations for readers; they are
