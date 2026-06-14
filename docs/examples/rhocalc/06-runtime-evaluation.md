@@ -4,10 +4,27 @@
 `macros/src/gen/mod.rs`, `macros/src/gen/runtime/language.rs`,
 `macros/src/gen/term_ops/normalize.rs`
 
-This document traces the complete execution path from a source string
-to a displayed result, covering all six runtime stages.
+This document traces the Ascent-oriented reference path from a source string to
+a displayed graph result. It is still useful as oracle documentation, but it is
+not the production runtime-backend boundary for languages that select Dovetail
+or Rho.
 
-## The Six Stages
+The production `exec` boundary is:
+
+```text
+source string
+  -> WPDA parser
+  -> typed AST
+  -> Language::run_default_backend_report(selected backend)
+  -> RuntimeBackendReport
+```
+
+For the Rho-native path, the executable artifact is a normalized
+`rhoapi::Par` AST, not Rholang source text. See
+[`docs/architecture/rho-native-integration/`](../../architecture/rho-native-integration/README.md)
+for the current Dovetail/Rho runtime design.
+
+## The Six Ascent Reference Stages
 
 ```
  Source     Token       AST         Normalized     Ascent        Results
@@ -19,14 +36,17 @@ to a displayed result, covering all six runtime stages.
 
 ## Entry Points
 
-There are two main entry points:
+There are two important entry points:
 
-1. **REPL** (`repl/src/repl.rs`): the user types an expression, the REPL calls
-   `language.parse_term()`, then `language.normalize_term()`, optionally
-   `language.try_direct_eval()`, and finally `language.run_ascent()`.
+1. **REPL `exec`** (`repl/src/repl.rs`): the user types an expression, the REPL
+   parses and normalizes it, then asks the language's selected runtime backend
+   for a `RuntimeBackendReport`. The result may be Ascent-shaped,
+   Dovetail-report-shaped, or Rho-observation-shaped.
 
-2. **Programmatic** (`Language::run_ascent()`): any Rust code can call
-   `RhoCalcLanguage.run_ascent(term)` directly.
+2. **Ascent reference/oracle path** (`Language::run_ascent()`): Rust code can
+   call `RhoCalcLanguage.run_ascent(term)` directly when it specifically needs
+   an Ascent rewrite graph for graph navigation, regression comparison, or an
+   oracle during Dovetail/Rho rollout.
 
 Both paths go through the same generated `Language` trait implementation.
 
@@ -207,9 +227,11 @@ Congruence rules propagate rewrites through PPar
 Further rewrites and congruences until fixpoint
 ```
 
-### Short-Circuit: `try_direct_eval()`
+### Explicit Helper: `try_direct_eval()`
 
-Before running Ascent, the REPL checks if the term can be evaluated directly:
+`try_direct_eval()` is an explicit helper for ground native expressions. It is
+not the production REPL `exec` dispatch rule for a language that has selected a
+runtime backend:
 
 ```rust
 if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
@@ -221,8 +243,9 @@ if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
 both operands are literals) without the overhead of Ascent.  It recursively
 evaluates fold rules on ground (variable-free) terms.
 
-When `try_direct_eval()` returns `Some(result)`, the REPL wraps it in a
-trivial `AscentResults::from_single_term()` and skips Stage 5 entirely.
+When an explicit test or helper calls `try_direct_eval()` and receives
+`Some(result)`, that caller can avoid building a graph. The ordinary REPL
+runtime path records the selected backend's `RuntimeBackendReport` instead.
 
 ## Stage 6: Result Extraction
 
@@ -282,23 +305,28 @@ into `custom_relations` by name, accessible for query or display.
 
 ## REPL Display
 
-The REPL (`repl/src/repl.rs`) displays results depending on the command:
+The REPL (`repl/src/repl.rs`) displays results depending on the command and the
+stored runtime-report shape:
 
-- **`exec <expr>`**: shows the normal form (a term reachable from the input via
-  `rw_proc` that has no outgoing rewrites)
+- **`exec <expr>`**: asks the selected runtime backend for a
+  `RuntimeBackendReport`; Ascent-shaped reports display graph results,
+  Dovetail-shaped reports display checked report counts and completeness, and
+  Rho-shaped reports display observed channels and values
 - **`step <expr>`**: shows the initial term and lists available rewrites;
-  the user can `apply N` to step through them
+  the user can `apply N` to step through them when the selected path is
+  Ascent-shaped
 - **`equations`**: shows equivalence classes
 - **`rewrites`**: shows all rewrite pairs
 - **`terms`**: shows all discovered terms
-- **Queries** (`query <ascent-expr>`): evaluates custom Ascent expressions
-  against the `AscentResults`
+- **Queries** (`query <ascent-expr>`): evaluates against the current
+  runtime report through the report-aware query adapter; Ascent graph relations
+  are available only when the report is Ascent-shaped
 
-## Full Trace: `3 + 4`
+## Explicit Direct-Eval Helper Trace: `3 + 4`
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ REPL input: exec 3 + 4                                         │
+│ Helper input: direct-eval 3 + 4                                │
 └──────────────────────────────┬─────────────────────────────────┘
                                │
                                ▼
@@ -336,11 +364,11 @@ The REPL (`repl/src/repl.rs`) displays results depending on the command:
 └────────────────────────────────────────────────────────────────┘
 ```
 
-## Full Trace: `{ @({}) ! ({}) | *(@({})) }`
+## Ascent Oracle Trace: `{ @({}) ! ({}) | *(@({})) }`
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ REPL input: exec { @({}) ! ({}) | *(@({})) }                   │
+│ Oracle input: run_ascent { @({}) ! ({}) | *(@({})) }           │
 └──────────────────────────────┬─────────────────────────────────┘
                                │
                                ▼

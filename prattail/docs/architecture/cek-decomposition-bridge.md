@@ -251,9 +251,13 @@ Inner::Ambiguous(alts) => {
 }
 ```
 
-## 6. Graceful Fallback
+## 6. Failure Contract
 
-The decomposition bridge is designed to fail gracefully at two points:
+The decomposition bridge is an explicit CEK integration point. It reports
+whether a term shape was decomposed and leaves fallback policy to its caller.
+Production REPL `exec` does not call this bridge before the selected runtime
+backend; it asks `Language::run_default_backend_report` for a
+`RuntimeBackendReport`.
 
 ### 6.1 Decomposition Returns `false`
 
@@ -263,13 +267,14 @@ by the generated code. This happens when:
 - The `dyn Term` downcast fails (wrong language type)
 - The language has no CEK decomposition (default implementation returns `false`)
 
-The REPL falls through to Tier 3 (Ascent):
+An explicit CEK consumer can then report "unsupported by CEK", select a
+separate oracle, or stop. That policy is outside `decompose_into_cek`:
 
 ```rust
 if language.decompose_into_cek(term.as_ref(), &mut evaluator) {
     // ... try run_to_completion ...
 }
-// Fall through to run_ascent()
+// Caller-owned policy for unsupported CEK decomposition.
 ```
 
 ### 6.2 `run_to_completion` Returns `Err`
@@ -280,33 +285,40 @@ Even after successful decomposition, the evaluator may fail:
 - **Observer abort**: An observer returned `CekControl::Abort`
 - **Internal error**: Unexpected state transition
 
-In all cases, the REPL silently falls through to Ascent:
+The error is surfaced to the explicit CEK caller. It is not a signal for the
+REPL to silently fabricate an Ascent result:
 
 ```rust
 match evaluator.run_to_completion(&mut obs) {
     Ok(result_str) => {
         // Parse result, display, return
     },
-    Err(_) => {}, // Fall through to Ascent
+    Err(err) => {
+        // Caller reports or handles the CEK failure explicitly.
+    }
 }
 ```
 
-This ensures that every term that parses will eventually get a result,
-even if the CEK evaluator cannot handle it.
+This keeps unsupported CEK coverage from being mistaken for successful
+runtime-backend execution.
 
 ## 7. Integration Points
 
 ### 7.1 Environment Persistence
 
-The `CekEvaluator` supports environment persistence across REPL submissions
-via `reset_with_term()`, which clears the continuation stack and trace but
-preserves variable bindings and the memo cache. This enables:
+The `CekEvaluator` supports environment persistence across explicit CEK
+sessions via `reset_with_term()`, which clears the continuation stack and trace
+but preserves variable bindings and the memo cache. This enables CEK-focused
+tools to model a persistent session:
 
 ```
-> x = 5
-> exec x + 3
+cek> x = 5
+cek> eval x + 3
 CEK eval... 8
 ```
+
+The ordinary REPL `exec` command instead runs the language's selected runtime
+backend and stores the resulting `RuntimeBackendReport`.
 
 ### 7.2 Green Thread Fork
 
@@ -330,4 +342,4 @@ frames with multiple remaining sub-terms and returns
 | `prattail/src/cek_eval.rs` | `CekEvaluator`, `EvalFrame`, `EvalObserver` |
 | `runtime/src/language.rs` | `Language::decompose_into_cek` trait method |
 | `macros/src/gen/runtime/language.rs` | `generate_cek_decompose_single`, `generate_cek_decompose_multi` |
-| `repl/src/repl.rs` | Three-tier dispatch in `exec_or_step_term` |
+| `repl/src/repl.rs` | Runtime-backend report dispatch for `exec`; explicit Ascent-shaped graph stepping |

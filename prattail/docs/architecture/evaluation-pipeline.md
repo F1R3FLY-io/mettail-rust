@@ -2,20 +2,30 @@
 
 ## Why does this exist?
 
-MeTTaIL languages need to reduce terms to normal forms. A Rholang program
-`(1 + 2) + (3 + 4)` must evaluate to `10`. But the rewrite engine (Ascent)
-that computes full rewrite graphs is expensive: it builds every reachable
-term, every rewrite step, and every equivalence class. For a ground
-arithmetic expression, that machinery is unnecessary.
+MeTTaIL languages need to reduce terms to semantic results. A Rholang program
+`(1 + 2) + (3 + 4)` must evaluate to `10`, and a process-calculus program may
+need rewrite evidence or RSpace observations rather than a single scalar normal
+form.
 
-The evaluation pipeline exists to answer a single question: **what is the
-cheapest correct way to reduce this particular term?** It provides three
-tiers of increasing power (and cost), falling through automatically when a
-cheaper tier cannot handle the input.
+The production user-facing execution boundary is now the selected runtime
+backend:
 
-## 1. The Three Evaluation Tiers
+```text
+parsed term
+  -> Language::run_default_backend_report(default_backend)
+  -> RuntimeBackendReport
+```
 
-### 1.1 Decision Flowchart
+That report may be Ascent-shaped, Dovetail-report-shaped, or Rho-observation-
+shaped. The legacy direct evaluator and CEK evaluator remain useful explicit
+tools for tests, debugging, and specialized consumers, but REPL `exec` must not
+silently bypass the selected backend by trying direct evaluation or CEK first.
+Ascent likewise remains a graph oracle/reference path, not the unconditional
+production fallback once a language has selected Dovetail or Rho.
+
+## 1. Runtime Backend Boundary
+
+### 1.1 Production Flowchart
 
 ```
          ┌──────────────┐
@@ -23,26 +33,24 @@ cheaper tier cannot handle the input.
          └──────┬───────┘
                 │
                 ▼
-    ┌───────────────────────┐    yes    ┌────────────────┐
-    │  try_direct_eval(t)?  ├──────────▶│  Return result  │
-    │  (Tier 1: O(1) eval)  │           └────────────────┘
-    └───────────┬───────────┘
-                │ None
-                ▼
-    ┌───────────────────────┐    yes    ┌────────────────┐
-    │ decompose_into_cek(t, ├──────────▶│ run_to_       │
-    │   evaluator)?         │    ok     │ completion()   │
-    │  (Tier 2: CEK machine)│    ┌──────┤ → parse result │
-    └───────────┬───────────┘    │      └────────────────┘
-                │ false or Err   │
-                ▼                │
-    ┌───────────────────────┐    │
-    │   run_ascent(t)       │◀───┘ (fallback)
-    │  (Tier 3: full graph) │
-    └───────────────────────┘
+    ┌────────────────────────────────────┐
+    │ selected RuntimeBackend capability │
+    └──────────────┬─────────────────────┘
+                   │
+                   ▼
+    ┌────────────────────────────────────┐
+    │ Language::run_default_backend_     │
+    │ report(term, backend)              │
+    └──────────────┬─────────────────────┘
+                   │
+        ┌──────────┴───────────┬────────────────┐
+        ▼                      ▼                ▼
+ ┌──────────────┐      ┌────────────────┐ ┌────────────────┐
+ │ Ascent graph │      │ Dovetail report│ │ Rho observations│
+ └──────────────┘      └────────────────┘ └────────────────┘
 ```
 
-### 1.2 Tier 1: `try_direct_eval` -- Constant-Time Ground Evaluation
+### 1.2 Explicit Helper: `try_direct_eval`
 
 **When it fires.** The term is a fully-ground expression whose value can be
 computed by native Rust operations. Examples:
@@ -63,7 +71,7 @@ minimal constant factors (no allocation beyond the result term).
 Returns `None` when the term contains free variables, unknown operators,
 or constructs that require rewriting (e.g., `new x in { ... }`).
 
-### 1.3 Tier 2: CEK Decomposition + Evaluation
+### 1.3 Explicit Helper: CEK Decomposition + Evaluation
 
 **When it fires.** The term is structurally complex (nested binary operators,
 let-bindings, parallel compositions) but does not require the full Ascent
@@ -93,11 +101,13 @@ Language::decompose_into_cek(
 Returns `true` if frames were pushed; `false` if the language has no CEK
 decomposition for this term shape.
 
-### 1.4 Tier 3: Ascent Rewrite Graph
+### 1.4 Explicit Reference Path: Ascent Rewrite Graph
 
-**When it fires.** Always available as the final fallback. Used for terms
+**When it fires.** Ascent is available when the caller explicitly selects the
+Ascent runtime backend or asks for graph/oracle behavior. It is used for terms
 with rewrite rules, process-algebraic constructs (`P | Q` with channel
-communication), or when Tier 1 and Tier 2 both decline.
+communication), differential checks, graph navigation, and rollout comparison
+against Dovetail.
 
 **Why it exists.** Some terms genuinely need the full rewrite graph. A
 Rholang process `for (@x <- ch) { x!(42) } | ch!(true)` involves channel
@@ -111,13 +121,13 @@ graph and returns all normal forms reachable from the initial term.
 
 ### 1.5 Concrete Examples
 
-| Input | Tier | Why |
+| Input | Production backend result | Explicit helper/oracle use |
 |-------|------|-----|
-| `1 + 2` | 1 (direct) | Ground integer arithmetic |
-| `(1 + 2) + (3 + 4)` | 2 (CEK) | Nested: needs continuation stack to eval sub-expressions |
-| `let x = 5 in x + 1` | 2 (CEK) | Let-binding: environment + body evaluation |
-| `{P \| Q}` with rewrite rules | 3 (Ascent) | Process algebra: requires rewrite graph |
-| `x + 1` (x free) | 3 (Ascent) | Free variable: cannot directly evaluate |
+| `1 + 2` | selected backend report | `try_direct_eval` can test native ground arithmetic |
+| `(1 + 2) + (3 + 4)` | selected backend report | CEK can inspect continuation-stack evaluation |
+| `let x = 5 in x + 1` | selected backend report | CEK can inspect environment and body evaluation |
+| `{P \| Q}` with rewrite rules | selected backend report | Ascent can provide a graph oracle/reference |
+| `x + 1` (x free) | selected backend report or backend rejection | Ascent/Dovetail can report rewrite evidence; CEK may decline |
 
 ## 2. Why a CEK Machine?
 
@@ -244,9 +254,9 @@ allocation on the hot path) and returns a `CekControl` directive:
 | `TracingEvalObserver::with_event_recording()` | Full event log for replay | Moderate (String clones) |
 | `AbortAfterObserver(n)` | Aborts after n steps | Minimal (counter check) |
 
-### 3.5 How One Interface Serves All Consumers
+### 3.5 How One Interface Serves Explicit Consumers
 
-- **Batch evaluation (REPL `exec`)**: `NullEvalObserver` + `run_to_completion()`
+- **Focused CEK tests/tools**: `NullEvalObserver` + `run_to_completion()`
 - **Tracing/profiling**: `TracingEvalObserver` with aggregate statistics
 - **Breakpoints (debugger)**: Custom observer returning `CekControl::Abort`
   when a breakpoint predicate matches
@@ -302,4 +312,4 @@ sharing via path copying).
 | `prattail/src/green_thread.rs` | Green thread with persistent CEK triple |
 | `runtime/src/language.rs` | Language trait: try_direct_eval, decompose_into_cek |
 | `macros/src/gen/runtime/language.rs` | Code generation for decompose_into_cek |
-| `repl/src/repl.rs` | Three-tier dispatch in cmd_exec_term |
+| `repl/src/repl.rs` | `exec` dispatch through the selected runtime backend report |

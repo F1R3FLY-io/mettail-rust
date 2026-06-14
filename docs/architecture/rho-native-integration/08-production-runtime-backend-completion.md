@@ -208,6 +208,24 @@ The current Rust API is:
 | `RhoGuardCoverageEvidence` | supplies either `NoGuardObligations` or an exact `CoveredGuardObligations` list |
 | `RhoDefaultBackendPlanError` | reports uncovered obligations, extraneous dispositions, and invalid dispositions as blockers |
 
+The generalized predicate classifier may produce a wider disposition vocabulary
+than the current Rho flip gate admits directly:
+
+| Classifier disposition | Rho production meaning |
+|---|---|
+| `ExactDecidable` | may map to an accepted Dovetail-core, EBA, SFT, Rho-native join, native-handler, or external-contract disposition when the evidence reference names the exact mechanism |
+| `BoundedDecidable` | may support bounded reports or diagnostics, but is not enough for an unqualified Rho production default unless the bound is part of the selected runtime contract |
+| `RejectSafeApprox` | may reject enabled behavior conservatively; it is usable only where false negatives are an accepted approximation and must not be presented as complete Rho coverage |
+| `TrustedNativeGuard` | maps to native-handler coverage only when the assertion site and audit evidence are stable |
+| `ProofObject` | maps to the mechanism proved by the proof artifact; the proof object itself is not a rewrite rule |
+| `RuntimeObservation` | maps to Rho-native join or observation coverage when the named channel/join contract is the evidence |
+| `Unknown` | production-default Rho lowering is refused |
+
+This keeps a separate symbolic-transducer/EBA/tree/behavioral-predicate
+implementation complementary to the runtime backend. That implementation emits
+evidence; the Rho backend consumes only the dispositions that are compatible
+with the selected production contract.
+
 The admission equation is:
 
 `RhoDefault(L) ⇒ ∀o ∈ O(L). ∃!d. covers(d, o) ∧ evidence_ref(d) ≠ ""`

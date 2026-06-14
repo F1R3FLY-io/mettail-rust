@@ -88,6 +88,15 @@ suite explains one handoff in that chain, and the correctness documents prove
 that a downstream artifact does not claim more than its upstream artifact
 established.
 
+Predicated types add one upstream evidence lane to the same chain:
+
+`language! specification → LanguageDef → guard obligations → predicate dispositions → Dovetail guarded rules → RhoNet guarded plan`
+
+The symbolic-transducer/effective-Boolean-algebra/tree/behavioral-predicate
+substrate owns the obligation classification and disposition evidence.
+Dovetail and Rho consume those dispositions; they do not maintain backend-local
+category-head lists or reinterpret unknown behavioral evidence as complete.
+
 When `RuntimeBackend::Dovetail` is selected directly, the chain stops earlier:
 
 `language! specification → generated semantic inventory → DovetailRunReport → RuntimeBackendOutput::Dovetail`

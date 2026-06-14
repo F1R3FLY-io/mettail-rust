@@ -24,7 +24,7 @@ The CESK store provides address-based indirection for the PraTTaIL evaluation en
 │         ▼                     ▼                     ▼                │
 │  ┌──────────────────────────────────────────────────────────────┐    │
 │  │                    Evaluation Layer                            │    │
-│  │  cek_eval.rs: CekEvaluator (standalone, REPL)                 │    │
+│  │  cek_eval.rs: CekEvaluator (standalone, explicit CEK tools)   │    │
 │  │  green_thread.rs: GreenThread (concurrent, M:N scheduler)     │    │
 │  │  coordinator.rs: GC snapshot at ParkIdle                      │    │
 │  │  scheduler.rs: Backpressure-aware quantum dispatch             │    │
@@ -51,8 +51,14 @@ The CESK store provides address-based indirection for the PraTTaIL evaluation en
 
 ## Integration Points
 
-- **REPL** (`repl/src/repl.rs`): Uses `CekEvaluator` with persistent env across submissions
-- **Generated code** (`macros/src/gen/runtime/language.rs`): Drives `CekEvaluator` for term rewriting
+- **Explicit CEK tools/tests** (`prattail/src/cek_eval.rs`): Use `CekEvaluator`
+  with optional persistent environments across CEK sessions.
+- **Generated code** (`macros/src/gen/runtime/language.rs`): Emits
+  `decompose_into_cek` hooks for explicit CEK/debug consumers.
 - **Green threads** (`prattail/src/green_thread.rs`): Two-tier store with O(1) fork
 - **Ascent** (CESK-8): Store-resident relations for incremental fixpoint
 - **Pipeline** (`prattail/src/pipeline.rs`): E-graph export after saturation (CESK-11)
+
+The production REPL `exec` path is runtime-backend selected and stores a
+`RuntimeBackendReport`. CESK does not sit between parsed terms and the selected
+Dovetail or Rho runtime backend.

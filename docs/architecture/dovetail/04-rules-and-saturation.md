@@ -25,6 +25,37 @@ patterns, behavioral predicate premises, typed predicate metadata, and external
 coverage evidence from generated inventory. It does not infer guard meaning
 from predicate names or from a backend-local list of known category heads.
 
+## Predicate Evidence Boundary
+
+The generalized predicate substrate is upstream of Dovetail. Its job is to
+derive guard obligations from `LanguageDef`, generated type metadata, and
+rewrite metadata, then classify each obligation with an evidence disposition.
+Dovetail consumes that disposition; it does not re-derive symbolic automata,
+tree automata, behavioral model-checking, or effective-Boolean-algebra proofs.
+
+The intended disposition vocabulary is:
+
+| Disposition | Meaning for Dovetail |
+|---|---|
+| `ExactDecidable` | the predicate has complete static or runtime-decidable evidence, such as a structural matcher, EBA/SFT proof, or exact model-checker result |
+| `BoundedDecidable` | the predicate is sound and complete only under the recorded bound; Dovetail may report boundedness but must not advertise exhaustive coverage beyond that bound |
+| `RejectSafeApprox` | the predicate may conservatively reject matches; Dovetail may use it only in positions where false negatives do not fabricate successful rewrites |
+| `TrustedNativeGuard` | a native assertion site owns the contract; Dovetail records the evidence reference and treats missing or mismatched references as a flip-gate failure |
+| `ProofObject` | an explicit proof artifact discharges the guard obligation |
+| `RuntimeObservation` | the Rho runtime supplies the behavioral evidence through a named observation or join contract |
+| `Unknown` | production-default lowering is refused; Dovetail can still surface the uncovered obligation in a report |
+
+This boundary keeps a separate predicate-substrate implementation
+complementary to the Dovetail/Rho runtime-backend work:
+
+`language! → LanguageDef → guard obligations → predicate dispositions → Dovetail guarded rules → DovetailRunReport`
+
+For classical structural predicates, the upstream substrate may expose a full
+Boolean algebra. For semi-decidable behavioral predicates, it must expose only a
+reject-safe algebraic contract. Dovetail must therefore never reinterpret a
+behavioral or mixed structural-behavioral disposition as classical complement
+unless the disposition explicitly carries exact decidable evidence.
+
 ## Rule Shape
 
 A rule has:
