@@ -3,6 +3,10 @@ name = "mettail-repl"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["bundled-languages"]
+bundled-languages = ["dep:mettail-languages"]
+
 [[bin]]
 name = "mettail"
 path = "src/main.rs"
@@ -11,7 +15,7 @@ doc = false  # Same binary as root package; document only from workspace root to
 [dependencies]
 # Core MeTTaIL
 mettail-runtime = { path = "../runtime" }
-mettail-languages = { path = "../languages" }
+mettail-languages = { path = "../languages", optional = true }
 mettail-macros = { path = "../macros" }
 mettail-query = { path = "../query" }
 

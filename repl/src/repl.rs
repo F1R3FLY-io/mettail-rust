@@ -5,7 +5,7 @@ use crate::state::ReplState;
 use anyhow::Result;
 use colored::Colorize;
 use mettail_query::run_query as query_run_query;
-use mettail_runtime::{AscentResults, Language, TermInfo};
+use mettail_runtime::{AscentResults, Language, RuntimeBackend, RuntimeBackendOutput, TermInfo};
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
@@ -1153,122 +1153,221 @@ impl Repl {
         // Full rewrite graph using the language's selected backend (always for
         // step, fallback for exec).
         let backend = language.default_runtime_backend();
+        if step_mode && backend != RuntimeBackend::Ascent {
+            anyhow::bail!(
+                "step mode requires an Ascent-shaped rewrite graph; the selected default backend is {}. Use 'exec' for runtime observations or select an explicit Ascent/reference step path.",
+                backend
+            );
+        }
+
         print!("Running {} backend... ", backend);
         let start_time = Instant::now();
-        let results = language
-            .run_default_backend(term.as_ref())
+        let report = language
+            .run_default_backend_report(term.as_ref())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         let end_time = Instant::now();
         println!("Time taken: {:?}", end_time.duration_since(start_time));
         println!("{}", "Done!".green());
 
-        println!();
-        println!("Computed:");
-        println!("  - {} terms", results.all_terms.len());
-        println!("  - {} rewrites", results.rewrites.len());
-        println!("  - {} normal forms", results.normal_forms_iter().count());
-        println!();
-
         let initial_id = term.term_id();
 
-        if step_mode {
-            // Step: always show initial term so user can apply rewrites one by one
-            let available = results.rewrites_from_iter(initial_id).count();
-            println!("{}", "Current term (initial):".bold());
-            let formatted = format_term_pretty(&format!("{}", term));
-            println!("{}", formatted.cyan());
-            println!();
-            self.state.set_term_with_id(term, results, initial_id)?;
-            if available > 0 {
-                println!(
-                    "  Use {} to apply a rewrite ({} available).",
-                    "apply 0".cyan(),
-                    available
-                );
-            } else {
-                println!("  No rewrites from this term (already a normal form).");
-            }
-        } else {
-            // Exec: show normal forms reachable from the initial term.
-            //
-            // Phase F.12.A (2026-05-20): when the parsed term is an
-            // `Ambiguous` wrapper, `initial_id` (the wrapper hash) is
-            // structurally absent from `results.all_terms`. Use the
-            // multi-source helper which seeds from each exact `rewrite_seeds()`
-            // alt and preserves every reachable NF. For unambiguous inputs the default trait
-            // impl returns one legacy seed and behavior is
-            // identical to the prior single-source call.
-            let seeds = term.rewrite_seeds();
-            let reachable_nfs: Vec<(u64, String)> = results
-                .normal_forms_reachable_from_rewrite_seeds(&seeds)
-                .into_iter()
-                .map(|nf| (nf.term_id, nf.display.clone()))
-                .collect();
-            if reachable_nfs.len() == 1 {
-                let (nf_id, nf_display) = &reachable_nfs[0];
-                let result_term: Box<dyn mettail_runtime::Term> =
-                    match language.parse_term(nf_display) {
-                        Ok(t) => t,
-                        Err(_) => Box::new(DisplayTerm { display: nf_display.clone(), id: *nf_id }),
-                    };
-                println!("{}", "Current term (result):".bold());
-                let formatted = format_term_pretty(nf_display);
-                println!("{}", formatted.cyan());
+        match &report.output {
+            RuntimeBackendOutput::Ascent(results) => {
                 println!();
-                self.state
-                    .set_term_with_id(result_term, results.clone(), *nf_id)?;
-                return Ok(());
-            }
-            if !reachable_nfs.is_empty() {
-                println!("{}", "Current terms (results):".bold());
-                for (idx, (_, display)) in reachable_nfs.iter().enumerate() {
-                    println!("  {})", idx.to_string().cyan());
-                    let formatted = format_term_pretty(display);
-                    for line in formatted.lines() {
-                        println!("    {}", line.cyan());
-                    }
+                println!("Computed:");
+                println!("  - {} terms", results.all_terms.len());
+                println!("  - {} rewrites", results.rewrites.len());
+                println!("  - {} normal forms", results.normal_forms_iter().count());
+                println!();
+
+                if step_mode {
+                    // Step: always show initial term so user can apply rewrites one by one
+                    let available = results.rewrites_from_iter(initial_id).count();
+                    println!("{}", "Current term (initial):".bold());
+                    let formatted = format_term_pretty(&format!("{}", term));
+                    println!("{}", formatted.cyan());
                     println!();
+                    self.state
+                        .set_term_with_report(term, report.clone(), initial_id)?;
+                    if available > 0 {
+                        println!(
+                            "  Use {} to apply a rewrite ({} available).",
+                            "apply 0".cyan(),
+                            available
+                        );
+                    } else {
+                        println!("  No rewrites from this term (already a normal form).");
+                    }
+                } else {
+                    // Exec: show normal forms reachable from the initial term.
+                    //
+                    // Phase F.12.A (2026-05-20): when the parsed term is an
+                    // `Ambiguous` wrapper, `initial_id` (the wrapper hash) is
+                    // structurally absent from `results.all_terms`. Use the
+                    // multi-source helper which seeds from each exact `rewrite_seeds()`
+                    // alt and preserves every reachable NF. For unambiguous inputs the default trait
+                    // impl returns one legacy seed and behavior is
+                    // identical to the prior single-source call.
+                    let seeds = term.rewrite_seeds();
+                    let reachable_nfs: Vec<(u64, String)> = results
+                        .normal_forms_reachable_from_rewrite_seeds(&seeds)
+                        .into_iter()
+                        .map(|nf| (nf.term_id, nf.display.clone()))
+                        .collect();
+                    if reachable_nfs.len() == 1 {
+                        let (nf_id, nf_display) = &reachable_nfs[0];
+                        let result_term: Box<dyn mettail_runtime::Term> = match language
+                            .parse_term(nf_display)
+                        {
+                            Ok(t) => t,
+                            Err(_) => {
+                                Box::new(DisplayTerm { display: nf_display.clone(), id: *nf_id })
+                            },
+                        };
+                        println!("{}", "Current term (result):".bold());
+                        let formatted = format_term_pretty(nf_display);
+                        println!("{}", formatted.cyan());
+                        println!();
+                        self.state
+                            .set_term_with_report(result_term, report.clone(), *nf_id)?;
+                        return Ok(());
+                    }
+                    if !reachable_nfs.is_empty() {
+                        println!("{}", "Current terms (results):".bold());
+                        for (idx, (_, display)) in reachable_nfs.iter().enumerate() {
+                            println!("  {})", idx.to_string().cyan());
+                            let formatted = format_term_pretty(display);
+                            for line in formatted.lines() {
+                                println!("    {}", line.cyan());
+                            }
+                            println!();
+                        }
+
+                        let ambiguous_display = format!(
+                            "Ambiguous([{}])",
+                            reachable_nfs
+                                .iter()
+                                .map(|(_, display)| display.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        let ambiguous_id = {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = DefaultHasher::new();
+                            for nf in &reachable_nfs {
+                                nf.hash(&mut hasher);
+                            }
+                            hasher.finish()
+                        };
+                        let result_term: Box<dyn mettail_runtime::Term> = Box::new(DisplayTerm {
+                            display: ambiguous_display,
+                            id: ambiguous_id,
+                        });
+                        self.state.set_term_with_report(
+                            result_term,
+                            report.clone(),
+                            ambiguous_id,
+                        )?;
+                        return Ok(());
+                    }
+                    println!("{}", "Current term:".bold());
+                    let formatted = format_term_pretty(&format!("{}", term));
+                    println!("{}", formatted.cyan());
+                    println!();
+                    self.state
+                        .set_term_with_report(term, report.clone(), initial_id)?;
+                }
+            },
+            RuntimeBackendOutput::Observations(observations) => {
+                if step_mode {
+                    anyhow::bail!(
+                        "step mode requires an Ascent-shaped rewrite graph; {} returned runtime observations",
+                        backend
+                    );
                 }
 
-                let ambiguous_display = format!(
-                    "Ambiguous([{}])",
-                    reachable_nfs
+                println!();
+                println!("Computed:");
+                println!("  - backend: {}", report.backend);
+                println!("  - artifact: {}", report.artifact);
+                println!("  - {} observation channel(s)", observations.len());
+                for observation in observations {
+                    let rendered_values = observation
+                        .values
                         .iter()
-                        .map(|(_, display)| display.as_str())
+                        .map(|value| format!("{}", value))
                         .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                let ambiguous_id = {
+                        .join(", ");
+                    println!(
+                        "    {}: [{}] ({} value(s))",
+                        observation.channel.cyan(),
+                        rendered_values,
+                        observation.observed_count()
+                    );
+                }
+                println!();
+
+                let display = if observations.len() == 1 && observations[0].values.len() == 1 {
+                    format!("{}", observations[0].values[0])
+                } else {
+                    let channels = observations
+                        .iter()
+                        .map(|observation| {
+                            let values = observation
+                                .values
+                                .iter()
+                                .map(|value| format!("{}", value))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!("{}: [{}]", observation.channel, values)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("RuntimeObservations({channels})")
+                };
+                let result_id = {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
-                    for nf in &reachable_nfs {
-                        nf.hash(&mut hasher);
-                    }
+                    report.backend.hash(&mut hasher);
+                    report.artifact.hash(&mut hasher);
+                    display.hash(&mut hasher);
                     hasher.finish()
                 };
-                let result_term: Box<dyn mettail_runtime::Term> = Box::new(DisplayTerm {
-                    display: ambiguous_display,
-                    id: ambiguous_id,
-                });
+
+                println!("{}", "Current term (result):".bold());
+                println!("{}", format_term_pretty(&display).cyan());
+                println!();
+
+                let result_term: Box<dyn mettail_runtime::Term> =
+                    Box::new(DisplayTerm { display, id: result_id });
                 self.state
-                    .set_term_with_id(result_term, results.clone(), ambiguous_id)?;
-                return Ok(());
-            }
-            println!("{}", "Current term:".bold());
-            let formatted = format_term_pretty(&format!("{}", term));
-            println!("{}", formatted.cyan());
-            println!();
-            self.state.set_term(term, results)?;
+                    .set_term_with_report(result_term, report.clone(), result_id)?;
+            },
+            _ => {
+                anyhow::bail!("{} backend returned an unsupported report shape", backend);
+            },
         }
+
         println!();
         Ok(())
     }
 
     fn get_results(&self) -> Result<&AscentResults> {
-        self.state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))
+        if let Some(results) = self.state.ascent_results() {
+            return Ok(results);
+        }
+
+        if let Some(report) = self.state.backend_report() {
+            anyhow::bail!(
+                "Current {} backend report contains {}; this command requires an Ascent-shaped rewrite graph. Use 'exec' for runtime observations or run an explicit Ascent/reference step.",
+                report.backend,
+                report.output.kind_name()
+            );
+        }
+
+        anyhow::bail!("No term loaded. Use 'term: <expr>' first.")
     }
 
     fn cmd_equations(&self) -> Result<()> {

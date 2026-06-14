@@ -1,11 +1,15 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use mettail_runtime::Language;
 use std::collections::HashMap;
 
 // Import generated language implementations directly
+#[cfg(feature = "bundled-languages")]
 use mettail_languages::ambient::AmbientLanguage;
+#[cfg(feature = "bundled-languages")]
 use mettail_languages::calculator::CalculatorLanguage;
+#[cfg(feature = "bundled-languages")]
 use mettail_languages::lambda::LambdaLanguage;
+#[cfg(feature = "bundled-languages")]
 use mettail_languages::rhocalc::RhoCalcLanguage;
 
 /// Registry of available languages
@@ -52,17 +56,21 @@ impl Default for LanguageRegistry {
 
 /// Build the default registry with all available languages
 pub fn build_registry() -> Result<LanguageRegistry> {
-    let mut registry = LanguageRegistry::new();
+    #[cfg(feature = "bundled-languages")]
+    {
+        let mut registry = LanguageRegistry::new();
 
-    // Register auto-generated language implementations
-    registry.register(Box::new(AmbientLanguage));
-    registry.register(Box::new(CalculatorLanguage));
-    registry.register(Box::new(LambdaLanguage));
-    registry.register(Box::new(RhoCalcLanguage));
+        // Register auto-generated language implementations.
+        registry.register(Box::new(AmbientLanguage));
+        registry.register(Box::new(CalculatorLanguage));
+        registry.register(Box::new(LambdaLanguage));
+        registry.register(Box::new(RhoCalcLanguage));
 
-    if registry.languages.is_empty() {
-        bail!("No languages available.");
+        Ok(registry)
     }
 
-    Ok(registry)
+    #[cfg(not(feature = "bundled-languages"))]
+    {
+        Ok(LanguageRegistry::new())
+    }
 }

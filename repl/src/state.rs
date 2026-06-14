@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mettail_runtime::{AscentResults, Term};
+use mettail_runtime::{AscentResults, RuntimeBackendReport, Term};
 use std::any::Any;
 
 /// The current state of the REPL session
@@ -19,8 +19,8 @@ pub struct ReplState {
     /// Current position in history
     history_idx: usize,
 
-    /// Cached Ascent results
-    ascent_results: Option<AscentResults>,
+    /// Cached runtime backend report for the current term.
+    backend_report: Option<RuntimeBackendReport>,
 
     /// Environment for variable bindings (theory-specific type)
     environment: Option<Box<dyn Any + Send + Sync>>,
@@ -43,7 +43,7 @@ impl ReplState {
             current_graph_id: None,
             history: Vec::new(),
             history_idx: 0,
-            ascent_results: None,
+            backend_report: None,
             environment: None,
         }
     }
@@ -55,7 +55,7 @@ impl ReplState {
         self.current_graph_id = None;
         self.history.clear();
         self.history_idx = 0;
-        self.ascent_results = None;
+        self.backend_report = None;
         self.environment = None;
     }
 
@@ -90,23 +90,36 @@ impl ReplState {
         self.language_name.as_deref()
     }
 
-    /// Set the current term (without running Ascent - that's done externally now)
+    /// Set the current term from legacy/reference Ascent results.
     pub fn set_term(&mut self, term: Box<dyn Term>, results: AscentResults) -> Result<()> {
         let graph_id = term.term_id();
         self.set_term_with_id(term, results, graph_id)
     }
 
-    /// Set the current term with an explicit graph ID
+    /// Set the current term with an explicit graph ID from legacy/reference
+    /// Ascent results.
     pub fn set_term_with_id(
         &mut self,
         term: Box<dyn Term>,
         results: AscentResults,
         graph_id: u64,
     ) -> Result<()> {
+        self.set_term_with_report(term, RuntimeBackendReport::ascent(results), graph_id)
+    }
+
+    /// Set the current term with an explicit graph ID and runtime backend
+    /// report. Non-Ascent reports keep the REPL state current, but
+    /// graph-navigation/query commands require `ascent_results()`.
+    pub fn set_term_with_report(
+        &mut self,
+        term: Box<dyn Term>,
+        report: RuntimeBackendReport,
+        graph_id: u64,
+    ) -> Result<()> {
         // Update state
         self.current_term = Some(term.clone_box());
         self.current_graph_id = Some(graph_id);
-        self.ascent_results = Some(results);
+        self.backend_report = Some(report);
 
         // Add to history
         let entry = HistoryEntry {
@@ -132,7 +145,14 @@ impl ReplState {
 
     /// Get the Ascent results
     pub fn ascent_results(&self) -> Option<&AscentResults> {
-        self.ascent_results.as_ref()
+        self.backend_report
+            .as_ref()
+            .and_then(RuntimeBackendReport::as_ascent_results)
+    }
+
+    /// Get the current runtime backend report.
+    pub fn backend_report(&self) -> Option<&RuntimeBackendReport> {
+        self.backend_report.as_ref()
     }
 
     /// Get the history
@@ -185,5 +205,79 @@ impl ReplState {
 impl Default for ReplState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_runtime::{
+        RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
+        RuntimeObservationValue,
+    };
+
+    #[derive(Debug, Clone)]
+    struct TestTerm {
+        display: &'static str,
+        id: u64,
+    }
+
+    impl std::fmt::Display for TestTerm {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.display)
+        }
+    }
+
+    impl Term for TestTerm {
+        fn clone_box(&self) -> Box<dyn Term> {
+            Box::new(self.clone())
+        }
+
+        fn term_id(&self) -> u64 {
+            self.id
+        }
+
+        fn term_eq(&self, other: &dyn Term) -> bool {
+            self.term_id() == other.term_id()
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn ascent_results_are_projected_from_backend_report() {
+        let mut state = ReplState::new();
+        let term: Box<dyn Term> = Box::new(TestTerm { display: "x", id: 7 });
+        state
+            .set_term(term, AscentResults::empty())
+            .expect("set Ascent term");
+
+        assert!(state.backend_report().is_some());
+        assert!(state.ascent_results().is_some());
+        assert_eq!(state.current_graph_id(), Some(7));
+    }
+
+    #[test]
+    fn observation_report_does_not_fabricate_ascent_results() {
+        let mut state = ReplState::new();
+        let term: Box<dyn Term> = Box::new(TestTerm { display: "5", id: 5 });
+        let report = RuntimeBackendReport::observations(
+            RuntimeBackend::RhoMachine,
+            RuntimeBackendArtifact::RhoNormalizedAst,
+            vec![RuntimeChannelObservation::new("OUT", vec![RuntimeObservationValue::Int(5)])],
+            vec!["test:evidence".to_string()],
+        );
+        state
+            .set_term_with_report(term, report, 5)
+            .expect("set Rho observation term");
+
+        let report = state
+            .backend_report()
+            .expect("runtime backend report must be cached");
+        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
+        assert!(state.ascent_results().is_none());
+        assert_eq!(state.current_graph_id(), Some(5));
     }
 }

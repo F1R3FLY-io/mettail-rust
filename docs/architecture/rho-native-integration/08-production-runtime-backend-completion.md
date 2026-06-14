@@ -180,6 +180,38 @@ language instance to become Rho-default. The wrapper does not parse generated
 Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
 future bytecode variants can use the same report boundary.
 
+## User-Facing REPL Boundary
+
+The REPL is part of the runtime-backend replacement surface because `exec`
+selects the language's default runtime backend. Its production-facing execution
+path must therefore consume `RuntimeBackendReport`, not only `AscentResults`.
+
+The intended REPL behavior is:
+
+```text
+When a user runs exec:
+  parse the source with the retained WPDA language frontend
+  ask the selected default backend for a RuntimeBackendReport
+  if the report is Ascent-shaped:
+    keep the historical rewrite-graph display and navigation behavior
+  if the report is observation-shaped:
+    display backend, artifact, channel, and observed values
+    store the report as the current runtime result
+    do not fabricate Ascent rewrite facts
+
+When a user runs step, apply, equations, rewrites, normal-forms, or queries:
+  require an Ascent-shaped rewrite graph
+  reject non-Ascent selected backends before executing step
+  reject observation-shaped reports with an explicit message
+```
+
+This preserves old graph-navigation ergonomics while allowing Rho-default
+languages to return typed RSpace observations. The REPL crate also exposes the
+bundled generated language registry behind its default `bundled-languages`
+feature. Normal CLI builds keep that feature enabled. Focused state tests may
+disable default features so report-state behavior can be checked without
+compiling every generated language.
+
 ## Diagram Tooling Policy
 
 pgmcp's local diagramming toolbox includes PlantUML, Structurizr CLI, D2,
