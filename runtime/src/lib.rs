@@ -78,6 +78,9 @@ pub use metadata::*;
 mod language;
 pub use language::*;
 
+mod semantic_key;
+pub use semantic_key::FramedSemanticKeyHasher;
+
 // Matchings enumeration for zip+map correlated search (used by generated rewrite clauses)
 mod matchings;
 pub use matchings::*;

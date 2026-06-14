@@ -7,14 +7,17 @@
 use std::sync::Arc;
 
 use mettail_ast::language::LanguageDef;
-use mettail_languages::rhocalc::{Bag, Int, List, Map, Name, Proc, Str};
+use mettail_languages::rhocalc::{
+    Bag, Int, List, Map, Name, Proc, RhoCalcTerm, RhoCalcTermInner, Str,
+};
 use mettail_rho_codegen::{
     plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{
-    lower_rhocalc_proc, rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
-    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_strings,
-    PlannedRhoBackend, RHOCALC_BAG_ABI_TAG,
+    lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_strings,
+    rho_runtime_backed_rhocalc_values, run_normalized_par_for_oracle,
+    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
+    RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::{
     clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
@@ -92,11 +95,23 @@ fn output_to_out(payload: Proc) -> Proc {
     Proc::POutput(Arc::new(quoted_name("OUT")), Arc::new(payload))
 }
 
+fn text_proc(value: &str) -> Proc {
+    Proc::CastStr(Arc::new(Str::StringLit(value.to_string())))
+}
+
 async fn read_strings(source: &str) -> Vec<String> {
     let par = parse_lower(source);
     let mut values = run_normalized_par_for_oracle_and_read_strings(&par, "OUT")
         .await
         .unwrap_or_else(|err| panic!("lowered rhocalc execution failed for {source:?}: {err}"));
+    values.sort();
+    values
+}
+
+async fn read_strings_from_par(par: &Par) -> Vec<String> {
+    let mut values = run_normalized_par_for_oracle_and_read_strings(par, "OUT")
+        .await
+        .expect("lowered rhocalc execution failed");
     values.sort();
     values
 }
@@ -115,6 +130,46 @@ async fn single_channel_comm_executes_payload_process() {
     let source = r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#;
 
     assert_eq!(read_strings(source).await, vec!["p".to_string()]);
+}
+
+#[tokio::test]
+async fn ambiguous_term_lowers_every_distinct_proc_alternative() {
+    let left = output_to_out(text_proc("left"));
+    let right = output_to_out(text_proc("right"));
+    let term = RhoCalcTerm(RhoCalcTermInner::Ambiguous(vec![
+        RhoCalcTermInner::Proc(left),
+        RhoCalcTermInner::Proc(right),
+    ]));
+
+    let par = lower_rhocalc_term(&term).expect("ambiguous Proc term should lower");
+
+    assert_eq!(read_strings_from_par(&par).await, vec!["left".to_string(), "right".to_string()]);
+}
+
+#[tokio::test]
+async fn ambiguous_term_deduplicates_exact_semantic_proc_alternatives() {
+    let duplicated = output_to_out(text_proc("same"));
+    let term = RhoCalcTerm(RhoCalcTermInner::Ambiguous(vec![
+        RhoCalcTermInner::Proc(duplicated.clone()),
+        RhoCalcTermInner::Proc(duplicated),
+    ]));
+
+    let par = lower_rhocalc_term(&term).expect("duplicate Proc alternatives should lower once");
+
+    assert_eq!(read_strings_from_par(&par).await, vec!["same".to_string()]);
+}
+
+#[test]
+fn ambiguous_term_rejects_cross_category_alternative_instead_of_dropping_it() {
+    let term = RhoCalcTerm(RhoCalcTermInner::Ambiguous(vec![
+        RhoCalcTermInner::Proc(output_to_out(text_proc("kept"))),
+        RhoCalcTermInner::Name(quoted_name("not-a-proc")),
+    ]));
+
+    let err = lower_rhocalc_term(&term)
+        .expect_err("cross-category ambiguity must not silently drop non-Proc alternatives");
+
+    assert_eq!(err, RhocalcAstLowerError::ExpectedProcTerm);
 }
 
 #[test]

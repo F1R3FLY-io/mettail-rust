@@ -212,6 +212,17 @@ Section RhocalcAstLowering.
     | Rejected => None
     end.
 
+  Fixpoint lower_proc_branches (procs : list Proc) : LowerResult :=
+    match procs with
+    | [] => Rejected
+    | [proc] => lower_proc proc
+    | proc :: rest =>
+        match lower_proc proc, lower_proc_branches rest with
+        | Lowered branch_ast, Lowered rest_ast => Lowered (APar branch_ast rest_ast)
+        | _, _ => Rejected
+        end
+    end.
+
   Inductive HostCommStep : Ast -> Ast -> Prop :=
     | Comm1 : forall channel payload body,
         HostCommStep
@@ -232,6 +243,16 @@ Section RhocalcAstLowering.
     intros proc artifact Hlower.
     unfold lower_artifact in Hlower.
     destruct (lower_proc proc) as [ast |] eqn:Hproc; inversion Hlower; reflexivity.
+  Qed.
+
+  Theorem ambiguous_two_proc_lowering_preserves_both_branches :
+    forall lhs rhs lhs_ast rhs_ast,
+      lower_proc lhs = Lowered lhs_ast ->
+      lower_proc rhs = Lowered rhs_ast ->
+      lower_proc_branches [lhs; rhs] = Lowered (APar lhs_ast rhs_ast).
+  Proof.
+    intros lhs rhs lhs_ast rhs_ast Hlhs Hrhs.
+    simpl. rewrite Hlhs, Hrhs. reflexivity.
   Qed.
 
   Theorem quote_drop_lowering_preserves_body :

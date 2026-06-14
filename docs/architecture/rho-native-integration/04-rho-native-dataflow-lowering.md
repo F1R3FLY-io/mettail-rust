@@ -154,13 +154,14 @@ The executable rhocalc bridge follows this pipeline:
 
 `rhocalc source → MeTTaIL/WPDA Proc AST → normalized rhoapi::Par → RhoRuntime::inj`
 
-The bridge is implemented by `mettail-rho-runtime::lower_rhocalc_proc` and
-`lower_rhocalc_name`. It does not generate Rholang source text. Reader-facing
-documents may display an equivalent Rholang rendering, but the generated value
-is the Rholang AST form consumed by the interpreter. This keeps the path aligned
-with the forward-looking bytecode plan: bytecode can become another artifact
-kind after `Par`, while source text remains a diagnostic annotation rather than
-an execution dependency.
+The bridge is implemented by `mettail-rho-runtime::lower_rhocalc_proc`,
+`lower_rhocalc_name`, and the generated-term boundary `lower_rhocalc_term`. It
+does not generate Rholang source text. Reader-facing documents may display an
+equivalent Rholang rendering, but the generated value is the Rholang AST form
+consumed by the interpreter. This keeps the path aligned with the
+forward-looking bytecode plan: bytecode can become another artifact kind after
+`Par`, while source text remains a diagnostic annotation rather than an
+execution dependency.
 
 The supported transport-pure rhocalc core maps directly onto host Rho-machine
 constructs:
@@ -175,6 +176,13 @@ constructs:
 | `PDrop(NVar(x))` | `BoundVar(i)` when `x` is input-bound | received process is executed by the host reducer |
 | `PNew(^[x̄].p)` | `New(|x̄|, lower(p))` | private names are allocated by the host reducer |
 | ground `Int`, `UInt32`, `BigInt`, `BigRat`, `Fixed`, `Float`, `Bool`, `Str` | native Rho ground expressions | payloads use host scalar representation |
+
+At the `RhoCalcTerm` boundary, ambiguity is explicit. If the generated term is
+`Ambiguous([Proc p₁, ..., Proc pₙ])`, the bridge derives exact semantic keys for
+the `Proc` alternatives, deduplicates exact duplicates, lowers every remaining
+branch, and appends the resulting `Par` values. A cross-category ambiguous
+alternative rejects the lowering instead of being dropped. The runtime backend
+therefore cannot select the first parse alternative by traversal accident.
 
 ### Type-Sensitive Scalar Operator Lowering
 
@@ -253,36 +261,41 @@ Literate lowering sketch:
 Algorithm: Lower a rhocalc process to normalized Rho AST
 
 Given:
-  rhocalc process p
+  rhocalc process p, or a generated RhoCalcTerm containing Proc alternatives
   bound-name environment Γ mapping free variables to de Bruijn indices
 
 Produce:
   normalized Rholang AST value A or an explicit rejection
 
 Steps:
-  1. If p is zero, return the empty Par.
+  1. If the input is an ambiguous generated term, collect every Proc
+     alternative. If any alternative is not Proc-shaped, reject. Deduplicate
+     by exact semantic key and lower every remaining branch, appending the
+     branches as parallel Par members.
 
-  2. If p is parallel composition, lower each subprocess and append the Par
+  2. If p is zero, return the empty Par.
+
+  3. If p is parallel composition, lower each subprocess and append the Par
      values. Appending preserves parallelism for the host scheduler.
 
-  3. If p is output n!(q), lower n as a channel, lower q as a payload process,
+  4. If p is output n!(q), lower n as a channel, lower q as a payload process,
      and build one Send node.
 
-  4. If p is input `(n₁?x₁,...,nₖ?xₖ).{body}`, lower each source name under Γ.
+  5. If p is input `(n₁?x₁,...,nₖ?xₖ).{body}`, lower each source name under Γ.
      Extend Γ by shifting existing entries by k and assigning
      `xᵢ ↦ k - 1 - i`. Lower the body under the extended Γ and build one
      Receive node with k sources.
 
-  5. If p is drop of a quoted process, lower the quoted process directly.
+  6. If p is drop of a quoted process, lower the quoted process directly.
      If p is drop of a bound name, emit the corresponding BoundVar.
 
-  6. If p introduces new names, extend Γ using the same de Bruijn convention
+  7. If p introduces new names, extend Γ using the same de Bruijn convention
      and build one New node around the lowered body.
 
-  7. If p is a ground scalar supported by Rho, emit the corresponding native
+  8. If p is a ground scalar supported by Rho, emit the corresponding native
      Rho expression.
 
-  8. Otherwise reject explicitly. Rejection is data for the rollout gate, not a
+  9. Otherwise reject explicitly. Rejection is data for the rollout gate, not a
      silent fallback to source-text generation.
 ```
 
@@ -294,9 +307,11 @@ for the transport-pure COMM subset, where `≈` is the documented observation
 quotient over public resting facts. The mechanized bridge proof
 `formal/rocq/rho_bridge/theories/RhocalcAstLowering.v` proves the AST-only
 artifact boundary, quote/drop preservation, one-input COMM correspondence,
-two-input atomic-join correspondence, and de Bruijn binder ordering. The runtime
-test `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the same path with
-WPDA parsing, direct `Par` lowering, RhoRuntime injection, received-name channel
+two-input atomic-join correspondence, de Bruijn binder ordering, and
+two-branch ambiguous-term preservation. The runtime test
+`mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the same path with
+WPDA parsing, direct `Par` lowering, exact-key ambiguous-branch preservation,
+exact duplicate deduplication, RhoRuntime injection, received-name channel
 reuse, and private-name non-leakage.
 
 ## Semi-Naive Channels

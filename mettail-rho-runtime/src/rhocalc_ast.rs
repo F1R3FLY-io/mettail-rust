@@ -5,12 +5,12 @@
 //! `rhoapi::Par` directly. Rholang-looking strings in docs/tests are reader
 //! annotations only; they are never parsed on this execution path.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mettail_languages::rhocalc::{
     Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
-use mettail_runtime::{Binder, FreeVar, OrdVar, Term, Var};
+use mettail_runtime::{Binder, FramedSemanticKeyHasher, FreeVar, OrdVar, Term, Var};
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
@@ -27,6 +27,8 @@ type BoundEnv = HashMap<FreeVar<String>, usize>;
 /// Fallible rhocalc-to-Rholang-AST lowering error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhocalcAstLowerError {
+    ExpectedRhoCalcTerm,
+    ExpectedProcTerm,
     UnsupportedProc(&'static str),
     UnsupportedName(&'static str),
     FreeVarWithoutName,
@@ -40,7 +42,7 @@ pub fn rhocalc_observe_strings_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoBackendInvocation, String> {
-    let call = lower_rhocalc_proc(rhocalc_proc_from_term(term)?)
+    let call = lower_rhocalc_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveStrings {
         call,
@@ -54,7 +56,7 @@ pub fn rhocalc_observe_ints_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoBackendInvocation, String> {
-    let call = lower_rhocalc_proc(rhocalc_proc_from_term(term)?)
+    let call = lower_rhocalc_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveInts {
         call,
@@ -68,7 +70,7 @@ pub fn rhocalc_observe_values_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoBackendInvocation, String> {
-    let call = lower_rhocalc_proc(rhocalc_proc_from_term(term)?)
+    let call = lower_rhocalc_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveRuntimeValues {
         call,
@@ -126,29 +128,81 @@ pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
     lower_proc(proc, &BoundEnv::new())
 }
 
+/// Lower a parsed `RhoCalcLanguage` term into normalized Rholang `Par`.
+///
+/// Ambiguous generated terms are preserved as parallel branches after exact
+/// semantic-key deduplication. This prevents the runtime backend from silently
+/// choosing the first parse alternative.
+pub fn lower_rhocalc_term(term: &dyn Term) -> Result<Par, RhocalcAstLowerError> {
+    let alternatives = rhocalc_proc_alternatives_from_term(term)?;
+    lower_proc_alternatives(alternatives)
+}
+
 /// Lower a rhocalc name into the normalized Rholang `Par` representation used
 /// for channels.
 pub fn lower_rhocalc_name(name: &Name) -> Result<Par, RhocalcAstLowerError> {
     lower_name(name, &BoundEnv::new())
 }
 
-fn rhocalc_proc_from_term(term: &dyn Term) -> Result<&Proc, String> {
+fn rhocalc_proc_alternatives_from_term(
+    term: &dyn Term,
+) -> Result<Vec<&Proc>, RhocalcAstLowerError> {
     let typed = term
         .as_any()
         .downcast_ref::<RhoCalcTerm>()
-        .ok_or_else(|| format!("expected RhoCalcTerm, got {term:?}"))?;
-    rhocalc_proc_from_inner(&typed.0)
-        .ok_or_else(|| format!("expected a Proc rhocalc alternative, got {:?}", typed.0))
+        .ok_or(RhocalcAstLowerError::ExpectedRhoCalcTerm)?;
+    let mut alternatives = Vec::new();
+    collect_proc_alternatives(&typed.0, &mut alternatives)?;
+    if alternatives.is_empty() {
+        Err(RhocalcAstLowerError::ExpectedProcTerm)
+    } else {
+        Ok(alternatives)
+    }
 }
 
-fn rhocalc_proc_from_inner(inner: &RhoCalcTermInner) -> Option<&Proc> {
+fn collect_proc_alternatives<'a>(
+    inner: &'a RhoCalcTermInner,
+    alternatives: &mut Vec<&'a Proc>,
+) -> Result<(), RhocalcAstLowerError> {
     match inner {
-        RhoCalcTermInner::Proc(proc) => Some(proc),
-        RhoCalcTermInner::Ambiguous(alternatives) => {
-            alternatives.iter().find_map(rhocalc_proc_from_inner)
+        RhoCalcTermInner::Proc(proc) => {
+            alternatives.push(proc);
+            Ok(())
         },
-        _ => None,
+        RhoCalcTermInner::Ambiguous(inner_alternatives) => {
+            for alternative in inner_alternatives {
+                collect_proc_alternatives(alternative, alternatives)?;
+            }
+            Ok(())
+        },
+        _ => Err(RhocalcAstLowerError::ExpectedProcTerm),
     }
+}
+
+fn lower_proc_alternatives<'a>(
+    alternatives: impl IntoIterator<Item = &'a Proc>,
+) -> Result<Par, RhocalcAstLowerError> {
+    let mut seen = BTreeSet::new();
+    let mut lowered = Vec::new();
+    for proc in alternatives {
+        if seen.insert(rhocalc_proc_semantic_key(proc)) {
+            lowered.push(lower_rhocalc_proc(proc)?);
+        }
+    }
+
+    match lowered.len() {
+        0 => Err(RhocalcAstLowerError::ExpectedProcTerm),
+        1 => Ok(lowered.pop().expect("checked len == 1")),
+        _ => Ok(lowered
+            .into_iter()
+            .fold(Par::default(), |program, branch| program.append(branch))),
+    }
+}
+
+fn rhocalc_proc_semantic_key(proc: &Proc) -> Vec<u8> {
+    let mut hasher = FramedSemanticKeyHasher::default();
+    proc.semantic_hash(&mut hasher);
+    hasher.into_key()
 }
 
 fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
@@ -286,7 +340,7 @@ fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     match bag {
         Bag::BagLit(entries) => {
             let mut entries = entries.iter().collect::<Vec<_>>();
-            entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+            entries.sort_by_key(|(item, _)| *item);
 
             let mut pairs = Vec::with_capacity(entries.len());
             for (item, count) in entries {

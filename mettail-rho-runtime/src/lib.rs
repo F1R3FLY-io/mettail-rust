@@ -46,7 +46,7 @@ pub use backend::{PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport}
 pub use mettail_rho_codegen::RHOCALC_BAG_ABI_TAG;
 #[cfg(feature = "oracle-rhocalc")]
 pub use rhocalc_ast::{
-    lower_rhocalc_name, lower_rhocalc_proc, rho_runtime_backed_rhocalc_ints,
+    lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_ints,
     rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
     rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
     rhocalc_observe_values_invocation, RhocalcAstLowerError,

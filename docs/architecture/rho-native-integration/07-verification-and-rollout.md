@@ -29,7 +29,7 @@ The current proof and coverage sources are
 | auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text; structured dynamic payloads preserve list, map, and bag literals across the AST boundary |
 | type-sensitive scalar operator lowering | `RhoScalarOperatorTyping.v`, `mettail-rho-codegen::lower` | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, and ill-typed or mixed scalar operators are rejected |
-| rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::lower_rhocalc_proc`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
+| rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::{lower_rhocalc_proc,lower_rhocalc_term}`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
@@ -74,8 +74,11 @@ and rhocalc bags directly to normalized `Par`; the rhocalc bag ABI tag is owned
 by `mettail-rho-codegen` and re-exported by `mettail-rho-runtime` so send-side
 encoding and runtime observation decoding cannot drift. The rhocalc process
 bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with `lower_rhocalc_proc`
-and `lower_rhocalc_name`, so both dynamic calls and transport-pure rhocalc
-programs cross the runtime boundary as normalized `Par` values. Their
+and `lower_rhocalc_name`, and lowers generated `RhoCalcTerm` values with
+`lower_rhocalc_term`, so both dynamic calls and transport-pure rhocalc
+programs cross the runtime boundary as normalized `Par` values. Ambiguous
+`Proc` terms cross as exact-key-deduplicated parallel branches, while
+cross-category ambiguity fails closed rather than choosing one branch. Their
 Rholang-looking strings are annotations for logs, tests, and documentation, not
 executable source.
 Generated Rho observations now use typed `RhoObservationReport<T>` at the
@@ -165,10 +168,11 @@ Mechanized coverage:
   fences for strong-bisimulation/full-abstraction non-claims.
 - `RhocalcAstLowering.v` proves the concrete AST-first rhocalc bridge model:
   accepted lowerings produce AST artifacts rather than source text, quote/drop
-  lowers to the quoted body, one-input COMM fires the lowered payload, two-input
-  COMM is one atomic receive over both channels, syntactic binder order matches
-  f1r3node's `k - 1 - i` de Bruijn convention, and receive-local bound bits are
-  removed from the enclosing local-free set.
+  lowers to the quoted body, ambiguous two-branch Proc terms preserve both
+  branches, one-input COMM fires the lowered payload, two-input COMM is one
+  atomic receive over both channels, syntactic binder order matches f1r3node's
+  `k - 1 - i` de Bruijn convention, and receive-local bound bits are removed
+  from the enclosing local-free set.
 - `RhoGroundingAndNames.v` proves fresh `new` names do not capture grounded
   existing fact names and alpha-renaming a fresh private name is observationally
   inert for existing public names.
@@ -193,6 +197,8 @@ Runtime corpus:
 - process-valued payloads;
 - `new` smoke behavior;
 - WPDA rhocalc source parsing followed by direct normalized-`Par` lowering;
+- generated-term ambiguity followed by exact-key branch preservation, exact
+  duplicate deduplication, and fail-closed cross-category ambiguity rejection;
 - received-name channel reuse through the AST path;
 - order-sensitive one-bind contention by deterministic send-arrival
   enumeration;
