@@ -13,6 +13,7 @@ use models::rust::utils::{
     new_receive_par, new_send_par, union,
 };
 
+use crate::ast::{RhoAstBuildError, RhoAstLiteral};
 use crate::lower::{RhoAstProgram, RhoAstValidationProfile, RhoProgram};
 use crate::validate::{RhoValidationError, ValidatedRhoProgram};
 
@@ -116,7 +117,7 @@ impl CallByNeedInitialState {
 /// Invalid parameterization for a generated call-by-need thunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallByNeedThunkSpecError {
-    EmptyValue,
+    InvalidValue(RhoAstBuildError),
     EmptyEvalMarker,
     EmptyOutputChannel,
     EmptyEvalChannel,
@@ -132,7 +133,7 @@ pub enum CallByNeedThunkSpecError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallByNeedThunkSpec {
     initial_state: CallByNeedInitialState,
-    value: String,
+    value: RhoAstLiteral,
     eval_marker: String,
     out_channel: String,
     eval_channel: String,
@@ -141,14 +142,14 @@ pub struct CallByNeedThunkSpec {
 impl CallByNeedThunkSpec {
     pub fn new(
         initial_state: CallByNeedInitialState,
-        value: impl Into<String>,
+        value: RhoAstLiteral,
         eval_marker: impl Into<String>,
         out_channel: impl Into<String>,
         eval_channel: impl Into<String>,
     ) -> Result<Self, CallByNeedThunkSpecError> {
         let spec = Self {
             initial_state,
-            value: value.into(),
+            value,
             eval_marker: eval_marker.into(),
             out_channel: out_channel.into(),
             eval_channel: eval_channel.into(),
@@ -160,7 +161,7 @@ impl CallByNeedThunkSpec {
     pub fn default_for(initial_state: CallByNeedInitialState) -> Self {
         Self {
             initial_state,
-            value: "value".to_string(),
+            value: RhoAstLiteral::String("value".to_string()),
             eval_marker: "compute".to_string(),
             out_channel: "OUT".to_string(),
             eval_channel: "EVAL".to_string(),
@@ -171,7 +172,7 @@ impl CallByNeedThunkSpec {
         self.initial_state
     }
 
-    pub fn value(&self) -> &str {
+    pub fn value(&self) -> &RhoAstLiteral {
         &self.value
     }
 
@@ -188,9 +189,9 @@ impl CallByNeedThunkSpec {
     }
 
     fn validate(&self) -> Result<(), CallByNeedThunkSpecError> {
-        if self.value.is_empty() {
-            return Err(CallByNeedThunkSpecError::EmptyValue);
-        }
+        self.value
+            .try_to_par()
+            .map_err(CallByNeedThunkSpecError::InvalidValue)?;
         if self.eval_marker.is_empty() {
             return Err(CallByNeedThunkSpecError::EmptyEvalMarker);
         }
@@ -547,7 +548,7 @@ pub fn build_call_by_need_thunk_ast_from_spec(spec: CallByNeedThunkSpec) -> Call
 
     let mut body = send_name(STATE, vec![string_par(spec.initial_state().token())], false);
     if spec.initial_state() == CallByNeedInitialState::Hot {
-        body = body.append(send_name(MEMO, vec![string_par(spec.value())], true));
+        body = body.append(send_name(MEMO, vec![value_par(&spec)], true));
     }
     body = body
         .append(thunk_contract(THUNK, STATE, MEMO, &spec))
@@ -556,19 +557,20 @@ pub fn build_call_by_need_thunk_ast_from_spec(spec: CallByNeedThunkSpec) -> Call
         .append(second_force_observer(RET2, spec.out_channel()));
 
     let par = new_new_par(5, body, Vec::new(), BTreeMap::new(), Vec::new(), Vec::new(), false);
+    let value = spec.value().annotation();
     let text_annotation = match spec.initial_state() {
         CallByNeedInitialState::Cold => {
             format!(
-                "call-by-need thunk AST: cold initial force computes {marker:?}, memoizes {value:?}, and second force reads memo on {out:?}",
+                "call-by-need thunk AST: cold initial force computes {marker:?}, memoizes {value}, and second force reads memo on {out:?}",
                 marker = spec.eval_marker(),
-                value = spec.value(),
+                value = value,
                 out = spec.out_channel(),
             )
         },
         CallByNeedInitialState::Hot => {
             format!(
-                "call-by-need thunk AST: hot initial force reads existing memo {value:?} on {out:?} without compute marker {marker:?}",
-                value = spec.value(),
+                "call-by-need thunk AST: hot initial force reads existing memo {value} on {out:?} without compute marker {marker:?}",
+                value = value,
                 out = spec.out_channel(),
                 marker = spec.eval_marker(),
             )
@@ -645,7 +647,7 @@ fn cold_branch(state: i32, memo: i32, spec: &CallByNeedThunkSpec) -> Par {
     // Inside the state receive body, BoundVar(1) is the thunk return channel k
     // and BoundVar(0) is the matched state token.
     send_name(state, vec![string_par("hot")], false)
-        .append(send_name(memo, vec![string_par(spec.value())], true))
+        .append(send_name(memo, vec![value_par(spec)], true))
         .append(send_text_channel(
             spec.eval_channel(),
             vec![string_par(spec.eval_marker())],
@@ -653,7 +655,7 @@ fn cold_branch(state: i32, memo: i32, spec: &CallByNeedThunkSpec) -> Par {
         ))
         .append(new_send_par(
             bound_value(1),
-            vec![string_par(spec.value())],
+            vec![value_par(spec)],
             false,
             bitvec(&[1]),
             false,
@@ -758,6 +760,12 @@ fn bound_value(index: i32) -> Par {
 
 fn string_par(value: &str) -> Par {
     new_gstring_par(value.to_string(), Vec::new(), false)
+}
+
+fn value_par(spec: &CallByNeedThunkSpec) -> Par {
+    spec.value()
+        .try_to_par()
+        .expect("CallByNeedThunkSpec validation guarantees a closed Rho value payload")
 }
 
 fn locally_free_union<'a>(parts: impl IntoIterator<Item = &'a Par>) -> Vec<u8> {
@@ -891,7 +899,7 @@ mod tests {
     fn parameterized_thunk_builder_uses_generated_payload_and_channels() {
         let spec = CallByNeedThunkSpec::new(
             CallByNeedInitialState::Hot,
-            "answer",
+            RhoAstLiteral::Int(42),
             "calculator-add",
             "RESULT",
             "TRACE",
@@ -904,35 +912,53 @@ mod tests {
             .expect("new body should be present");
 
         assert_eq!(program.spec(), &spec);
-        assert_eq!(gstring(&new_body.sends[1].data[0]), Some("answer"));
+        assert!(matches!(only_expr(&new_body.sends[1].data[0]), ExprInstance::GInt(42)));
         assert!(
             program.text_annotation().contains("calculator-add"),
             "reader annotation should preserve the generated eval marker"
+        );
+        assert!(
+            program.text_annotation().contains("42"),
+            "reader annotation should preserve the generated value for diagnostics"
         );
     }
 
     #[test]
     fn thunk_spec_rejects_empty_or_ambiguous_observation_parameters() {
         assert_eq!(
-            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "", "compute", "OUT", "EVAL"),
-            Err(CallByNeedThunkSpecError::EmptyValue)
-        );
-        assert_eq!(
-            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "value", "", "OUT", "EVAL"),
+            CallByNeedThunkSpec::new(
+                CallByNeedInitialState::Cold,
+                RhoAstLiteral::String("value".to_string()),
+                "",
+                "OUT",
+                "EVAL",
+            ),
             Err(CallByNeedThunkSpecError::EmptyEvalMarker)
         );
         assert_eq!(
-            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "value", "compute", "", "EVAL"),
+            CallByNeedThunkSpec::new(
+                CallByNeedInitialState::Cold,
+                RhoAstLiteral::String("value".to_string()),
+                "compute",
+                "",
+                "EVAL",
+            ),
             Err(CallByNeedThunkSpecError::EmptyOutputChannel)
         );
         assert_eq!(
-            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "value", "compute", "OUT", ""),
+            CallByNeedThunkSpec::new(
+                CallByNeedInitialState::Cold,
+                RhoAstLiteral::String("value".to_string()),
+                "compute",
+                "OUT",
+                "",
+            ),
             Err(CallByNeedThunkSpecError::EmptyEvalChannel)
         );
         assert_eq!(
             CallByNeedThunkSpec::new(
                 CallByNeedInitialState::Cold,
-                "value",
+                RhoAstLiteral::String("value".to_string()),
                 "compute",
                 "OUT",
                 "OUT",
@@ -965,7 +991,7 @@ mod tests {
     fn planned_parameterized_thunk_preserves_spec() {
         let spec = CallByNeedThunkSpec::new(
             CallByNeedInitialState::Cold,
-            "forty-two",
+            RhoAstLiteral::String("forty-two".to_string()),
             "eval-add",
             "RESULT",
             "TRACE",
@@ -1052,5 +1078,14 @@ mod tests {
             ExprInstance::GString(value) => Some(value),
             _ => None,
         }
+    }
+
+    fn only_expr(par: &Par) -> &ExprInstance {
+        let [expr] = par.exprs.as_slice() else {
+            panic!("expected exactly one expression");
+        };
+        expr.expr_instance
+            .as_ref()
+            .expect("expected expression payload")
     }
 }

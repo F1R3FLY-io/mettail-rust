@@ -102,10 +102,10 @@ For generic call-by-need execution, the Rho generation segment is:
 
 `generated-language computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
 
-This segment is still AST-first. The spec names the generated-language value,
-evaluation marker, output channel, and evaluation-trace channel; the plan proves
-budget admission and artifact validation before the RhoRuntime receives the
-normalized `Par`.
+This segment is still AST-first. The spec carries the generated-language value
+as a closed `RhoAstLiteral`, names the evaluation marker, output channel, and
+evaluation-trace channel, and the plan proves budget admission and artifact
+validation before the RhoRuntime receives the normalized `Par`.
 
 The artifact spine below is the recommended mental model for the whole suite:
 

@@ -7,8 +7,8 @@
  * continuation to that private channel and memoizes the first result.  The
  * internal force/memo COMM steps are deliberately hidden by the observation
  * function; the public observation is the value delivered to the continuation.
- * Rust's CallByNeedThunkSpec supplies generated-language values and observation
- * channels for the AST artifact while preserving this topology.
+ * Rust's CallByNeedThunkSpec supplies generated-language value payloads and
+ * observation channels for the AST artifact while preserving this topology.
  *
  * Proven here:
  *   - forcing a sound memoized thunk observes the same value as source_eval;
@@ -25,7 +25,9 @@
  *     observations as source evaluation;
  *   - the runtime report boundary for a planned need invocation preserves the
  *     generated output/evaluation channels and reports the cold evaluation
- *     marker exactly once.
+ *     marker exactly once;
+ *   - typed need reports preserve runtime payload tags separately from textual
+ *     evaluation markers.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -420,6 +422,90 @@ Section RhoCallByNeedObservation.
 
   Theorem hot_need_runtime_report_has_no_eval_marker : forall e spec,
     need_report_eval_values (hot_need_runtime_report e spec) = [].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Inductive NeedPayloadKind : Type :=
+    | NeedPayloadInt
+    | NeedPayloadBool
+    | NeedPayloadText
+    | NeedPayloadStructured.
+
+  Record NeedRuntimeValue : Type := {
+    need_runtime_value_kind : NeedPayloadKind;
+    need_runtime_value_id : Value
+  }.
+
+  Record TypedExpr : Type := {
+    typed_expr_base : Expr;
+    typed_expr_payload_kind : NeedPayloadKind
+  }.
+
+  Definition typed_source_eval (e : TypedExpr) : NeedRuntimeValue :=
+    {| need_runtime_value_kind := typed_expr_payload_kind e;
+       need_runtime_value_id := source_eval (typed_expr_base e) |}.
+
+  Record TypedNeedRuntimeReport : Type := {
+    typed_need_report_artifact_kind : NeedArtifactKind;
+    typed_need_report_output_channel : nat;
+    typed_need_report_output_values : list NeedRuntimeValue;
+    typed_need_report_eval_channel : nat;
+    typed_need_report_eval_values : list Value;
+    typed_need_report_evidence_ref_count : nat
+  }.
+
+  Definition cold_typed_need_runtime_report
+      (e : TypedExpr) (spec : NeedRuntimeSpec) : TypedNeedRuntimeReport :=
+    {| typed_need_report_artifact_kind := NeedAst;
+       typed_need_report_output_channel := need_output_channel spec;
+       typed_need_report_output_values :=
+         [typed_source_eval e; typed_source_eval e];
+       typed_need_report_eval_channel := need_eval_channel spec;
+       typed_need_report_eval_values := [need_eval_marker spec];
+       typed_need_report_evidence_ref_count :=
+         need_evidence_ref_count
+           (cold_need_execution_plan (typed_expr_base e)) |}.
+
+  Definition hot_typed_need_runtime_report
+      (e : TypedExpr) (spec : NeedRuntimeSpec) : TypedNeedRuntimeReport :=
+    {| typed_need_report_artifact_kind := NeedAst;
+       typed_need_report_output_channel := need_output_channel spec;
+       typed_need_report_output_values :=
+         [typed_source_eval e; typed_source_eval e];
+       typed_need_report_eval_channel := need_eval_channel spec;
+       typed_need_report_eval_values := [];
+       typed_need_report_evidence_ref_count :=
+         need_evidence_ref_count
+           (hot_need_execution_plan (typed_expr_base e)) |}.
+
+  Theorem cold_typed_need_runtime_report_preserves_payload_values : forall e spec,
+    typed_need_report_output_values (cold_typed_need_runtime_report e spec) =
+    [typed_source_eval e; typed_source_eval e].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem hot_typed_need_runtime_report_preserves_payload_values : forall e spec,
+    typed_need_report_output_values (hot_typed_need_runtime_report e spec) =
+    [typed_source_eval e; typed_source_eval e].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem cold_typed_need_runtime_report_preserves_payload_tags : forall e spec,
+    map need_runtime_value_kind
+      (typed_need_report_output_values (cold_typed_need_runtime_report e spec)) =
+    [typed_expr_payload_kind e; typed_expr_payload_kind e].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem hot_typed_need_runtime_report_preserves_payload_tags : forall e spec,
+    map need_runtime_value_kind
+      (typed_need_report_output_values (hot_typed_need_runtime_report e spec)) =
+    [typed_expr_payload_kind e; typed_expr_payload_kind e].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem cold_typed_need_runtime_report_keeps_eval_marker_separate : forall e spec,
+    typed_need_report_eval_values (cold_typed_need_runtime_report e spec) =
+    [need_eval_marker spec].
+  Proof. intros e spec. reflexivity. Qed.
+
+  Theorem hot_typed_need_runtime_report_keeps_eval_marker_separate : forall e spec,
+    typed_need_report_eval_values (hot_typed_need_runtime_report e spec) = [].
   Proof. intros e spec. reflexivity. Qed.
 
 End RhoCallByNeedObservation.

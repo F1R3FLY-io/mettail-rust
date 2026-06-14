@@ -36,7 +36,7 @@ The current proof and coverage sources are
 | resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, evidence references, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
-| call-by-need observation, planned AST artifact, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, accepted planned need execution wraps an accepted artifact, admits both force steps, carries evidence references, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, and bounded force admission respects lookahead and heap budgets |
+| call-by-need observation, planned AST artifact, typed payloads, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, accepted planned need execution wraps an accepted artifact, admits both force steps, carries evidence references, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, typed need reports preserve runtime payload tags separately from textual eval markers, and bounded force admission respects lookahead and heap budgets |
 | Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
 | Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
@@ -100,6 +100,12 @@ payloads through `RuntimeObservationValue`: `Int`, `Bool`, and `Str` become
 `Int`, `Bool`, and `Text`; byte, URI, bit-exact numeric, unforgeable-name, list,
 tuple, set, map, and tagged rhocalc-bag payloads retain their own runtime value
 tags. `RhoRuntimeBackendReportBridge.v` names the tag-preservation contract.
+The generic call-by-need path now uses the same value domain: a
+`CallByNeedThunkSpec` carries its computed payload as a closed `RhoAstLiteral`,
+the planned thunk writes that payload directly into the memo and value channel,
+and `PlannedCallByNeedThunk::run_and_observe_need_report` decodes the value
+channel as typed `RuntimeObservationValue`s while decoding the evaluation
+channel only as textual trace markers.
 `mettail-rho-runtime/tests/run_calculator.rs` executes the full native
 calculator scalar family currently admitted by the lowerer on the real
 in-memory RhoRuntime: integer arithmetic, integer, boolean, and string
@@ -247,7 +253,9 @@ source value twice while preserving the expected memo state. The runtime-report
 boundary for planned need execution preserves the generated output/evaluation
 channels; a cold need report observes the source value twice and emits the
 evaluation marker once, while a hot need report observes the source value twice
-with no evaluation marker.
+with no evaluation marker. The typed-report layer models `Int`, `Bool`, `Text`,
+and structured payload tags explicitly, proving that the value channel preserves
+the source payload tag and that the eval marker stays a separate trace value.
 
 `RhoCallByNeedBudget.v` proves the bounded admission contract for
 `Lookahead[n] + HeapBudget`: zero lookahead blocks a force before observation,
@@ -267,9 +275,11 @@ Rust/runtime gate:
   explicit boundedness reason.
 - `mettail_rho_codegen::CallByNeedThunkSpec` is the generated-language
   parameter block for the thunk artifact. It carries the initial cold/hot state,
-  source value, evaluation marker, public value channel, and evaluation-trace
-  channel; it rejects empty fields and rejects equal public/evaluation channels
-  so observations remain unambiguous.
+  typed source value as `RhoAstLiteral`, evaluation marker, public value
+  channel, and evaluation-trace channel. It rejects an unencodable value,
+  empty trace/channel fields, and equal public/evaluation channels so
+  observations remain unambiguous while still allowing an empty string as a
+  legitimate computed value.
 - `mettail_rho_codegen::build_call_by_need_thunk_ast` constructs the current
   memoized-thunk execution slice as normalized `rhoapi::Par`; its
   `text_annotation` is reader/debug metadata and is not parsed for execution.

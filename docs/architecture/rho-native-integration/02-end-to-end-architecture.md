@@ -76,7 +76,7 @@ The ownership pipeline for directly covered Rho-native rewrites is:
 
 The generic call-by-need segment uses the same AST-first execution boundary:
 
-`generated-language computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
+`generated-language computation → RhoAstLiteral payload → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par`
 
 | Concern | `language!` | Dovetail | Rho backend |
 |---|---|---|---|
@@ -107,7 +107,7 @@ adds or preserves a specific contract.
 | 4. Dovetail execution | typed AST term plus metadata | `SatReport` and `DovetailRunReport` | rewrite consequences are exact-keyed, ordered, and explicitly complete or bounded |
 | 5a. direct Dovetail runtime | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | the runtime exposes Dovetail evidence without fabricating an Ascent graph |
 | 5b. Rho planning | complete Dovetail report | `RhoNet plan` | covered rewrites become dataflow contracts and uncovered rewrites are explicit rejections |
-| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and `CallByNeedThunkPlan` | thunk payload/channels are generated-language parameters, while budget admission and AST validation are explicit |
+| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and `CallByNeedThunkPlan` | thunk payload is a closed `RhoAstLiteral`, channels are generated-language parameters, and budget admission plus AST validation are explicit |
 | 6. AST generation | RhoNet plan or `CallByNeedThunkPlan` | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
 | 7. Rho execution | `rhoapi::Par` | RSpace observations | F1r3node's RhoRuntime and RSpace own COMM, joins, scheduling, replay, and checkpointing |
 | 8. runtime return | backend-specific output | `RuntimeBackendReport` | the caller receives an envelope whose shape matches the selected backend |

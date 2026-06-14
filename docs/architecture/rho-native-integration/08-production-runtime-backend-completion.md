@@ -94,15 +94,19 @@ nominal ABI.
 
 Generic call-by-need artifacts use the same AST discipline. The generated
 language supplies a `CallByNeedThunkSpec` containing initial cold/hot state,
-result payload, evaluation marker, output channel, and evaluation-trace channel.
-`plan_call_by_need_thunk_with_spec` then admits the two-force sequence under
-lookahead/heap budgets, validates the normalized `rhoapi::Par` artifact with
-the call-by-need profile, and returns `CallByNeedThunkPlan`. Runtime execution
-uses `PlannedCallByNeedThunk`, which reads the spec-named channels rather than
-the sample fixture channel names. Generated-language wrappers can return that
-plan through `RhoBackendInvocation::RunCallByNeedThunk`; the Rho runtime adapter
-then produces an observation-shaped `RuntimeBackendReport` containing the
-spec-named value and evaluation-trace channels.
+result payload as a closed `RhoAstLiteral`, evaluation marker, output channel,
+and evaluation-trace channel. `plan_call_by_need_thunk_with_spec` then admits
+the two-force sequence under lookahead/heap budgets, validates the normalized
+`rhoapi::Par` artifact with the call-by-need profile, and returns
+`CallByNeedThunkPlan`. Runtime execution uses `PlannedCallByNeedThunk`, which
+reads the spec-named channels rather than the sample fixture channel names.
+Generated-language wrappers can return that plan through
+`RhoBackendInvocation::RunCallByNeedThunk`; the Rho runtime adapter then
+produces an observation-shaped `RuntimeBackendReport` containing the spec-named
+value and evaluation-trace channels. The value channel is decoded as typed
+`RuntimeObservationValue`s; the evaluation-trace channel remains textual, so a
+reported `RuntimeObservationValue::Int(5)` is not confused with a trace marker
+such as `RuntimeObservationValue::Text("AddInt")`.
 
 ## Runtime Observation Payloads
 
@@ -161,6 +165,12 @@ then inspects the generated AST and requires Calculator `AddStr` to use
 observe `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end
 chain from source snippet through WPDA parsing, typed invocation mapping,
 validated `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
+The call-by-need wrapper test covers the same value domain in two layers:
+cheap planning assertions check every currently supported scalar family
+(`Int`, `Bool`, and `Str` arithmetic/predicates/logical/string operations), and
+full RhoRuntime executions sample representative `Int`, `Bool`, and `Str`
+payloads to ensure the thunked path reports typed values rather than
+stringifying all computed results.
 
 Rejected-rule coverage should start from generated inventory, not hand-written
 category lists. `mettail_rho_codegen::classify_rejected_rules(def, lowering)`

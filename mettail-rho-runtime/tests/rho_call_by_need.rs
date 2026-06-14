@@ -7,7 +7,7 @@
 
 use mettail_rho_codegen::{
     plan_call_by_need_thunk_with_spec, CallByNeedBudget, CallByNeedInitialState,
-    CallByNeedPlanEvidence, CallByNeedThunkSpec,
+    CallByNeedPlanEvidence, CallByNeedThunkSpec, RhoAstLiteral,
 };
 use mettail_rho_runtime::PlannedCallByNeedThunk;
 
@@ -85,7 +85,7 @@ async fn call_by_need_memo_hit_observes_value_without_compute_marker() {
 async fn call_by_need_parameterized_payload_and_channels_observe_generated_values() {
     let spec = CallByNeedThunkSpec::new(
         CallByNeedInitialState::Cold,
-        "answer",
+        RhoAstLiteral::String("answer".to_string()),
         "calculator-add",
         "RESULT",
         "TRACE",

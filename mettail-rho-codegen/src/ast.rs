@@ -42,7 +42,7 @@ pub enum RhoAstLiteral {
 }
 
 impl RhoAstLiteral {
-    fn try_to_par(&self) -> Result<Par, RhoAstBuildError> {
+    pub(crate) fn try_to_par(&self) -> Result<Par, RhoAstBuildError> {
         match self {
             Self::Int(value) => Ok(new_gint_par(*value, Vec::new(), false)),
             Self::Bool(value) => Ok(new_gbool_par(*value, Vec::new(), false)),
@@ -132,7 +132,7 @@ impl RhoAstLiteral {
         }
     }
 
-    fn annotation(&self) -> String {
+    pub(crate) fn annotation(&self) -> String {
         match self {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),

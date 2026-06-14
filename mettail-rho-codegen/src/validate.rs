@@ -213,7 +213,7 @@ fn validate_call_by_need_thunk_program(par: &Par) -> Result<(), Vec<RhoValidatio
             if body
                 .sends
                 .get(1)
-                .and_then(|send| validate_bound_string_send(send, 2, true))
+                .and_then(|send| validate_bound_ground_value_send(send, 2, true))
                 .is_none()
             {
                 errors.push(RhoValidationError::CallByNeedMemoSeed);
@@ -374,6 +374,19 @@ fn validate_bound_string_send(
         return None;
     }
     ground_string(&send.data[0])
+}
+
+fn validate_bound_ground_value_send(
+    send: &models::rhoapi::Send,
+    channel_index: i32,
+    persistent: bool,
+) -> Option<()> {
+    if send.persistent != persistent || send.data.len() != 1 {
+        return None;
+    }
+    (bound_var_index(send.chan.as_ref()) == Some(channel_index)
+        && is_closed_ground_value(&send.data[0]))
+    .then_some(())
 }
 
 fn validate_bound_name_send(
@@ -659,6 +672,66 @@ fn ground_string(par: &Par) -> Option<&str> {
     }
 }
 
+fn is_closed_ground_value(par: &Par) -> bool {
+    if !par.sends.is_empty()
+        || !par.receives.is_empty()
+        || !par.news.is_empty()
+        || !par.matches.is_empty()
+        || !par.bundles.is_empty()
+        || !par.connectives.is_empty()
+        || !par.conditionals.is_empty()
+        || !metadata_eq(par, &[], false)
+    {
+        return false;
+    }
+
+    if par.exprs.is_empty() {
+        return par.unforgeables.len() == 1 && par.unforgeables[0].unf_instance.is_some();
+    }
+    if !par.unforgeables.is_empty() {
+        return false;
+    }
+
+    let [expr] = par.exprs.as_slice() else {
+        return false;
+    };
+    let Some(expr) = expr.expr_instance.as_ref() else {
+        return false;
+    };
+
+    match expr {
+        ExprInstance::GBool(_)
+        | ExprInstance::GInt(_)
+        | ExprInstance::GString(_)
+        | ExprInstance::GUri(_)
+        | ExprInstance::GByteArray(_)
+        | ExprInstance::GDouble(_)
+        | ExprInstance::GBigInt(_)
+        | ExprInstance::GBigRat(_)
+        | ExprInstance::GFixedPoint(_) => true,
+        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
+            list.ps.iter().all(is_closed_ground_value)
+        },
+        ExprInstance::ETupleBody(tuple) if !tuple.connective_used => {
+            tuple.ps.iter().all(is_closed_ground_value)
+        },
+        ExprInstance::ESetBody(set) if set.remainder.is_none() && !set.connective_used => {
+            set.ps.iter().all(is_closed_ground_value)
+        },
+        ExprInstance::EMapBody(map) if map.remainder.is_none() && !map.connective_used => {
+            map.kvs.iter().all(|pair| {
+                pair.key
+                    .as_ref()
+                    .zip(pair.value.as_ref())
+                    .is_some_and(|(key, value)| {
+                        is_closed_ground_value(key) && is_closed_ground_value(value)
+                    })
+            })
+        },
+        _ => false,
+    }
+}
+
 fn free_var_index(par: &Par) -> Option<i32> {
     match only_expr_instance(par)? {
         ExprInstance::EVarBody(var) => match var.v.as_ref()?.var_instance.as_ref()? {
@@ -687,6 +760,7 @@ mod tests {
         build_call_by_need_thunk_ast, build_call_by_need_thunk_program,
         build_call_by_need_thunk_program_from_spec, CallByNeedInitialState, CallByNeedThunkSpec,
     };
+    use crate::RhoAstLiteral;
     use mettail_ast::language::LanguageDef;
 
     const FRAGMENT: &str = r#"
@@ -753,7 +827,7 @@ mod tests {
     fn validates_parameterized_call_by_need_thunk_programs() {
         let spec = CallByNeedThunkSpec::new(
             CallByNeedInitialState::Hot,
-            "answer",
+            RhoAstLiteral::Bool(true),
             "calculator-add",
             "RESULT",
             "TRACE",
@@ -765,7 +839,7 @@ mod tests {
         let validated = ValidatedRhoProgram::try_from(program)
             .expect("parameterized CBN thunk converts to validated artifact");
         assert!(
-            validated.text_annotation().contains("answer"),
+            validated.text_annotation().contains("true"),
             "reader annotation should retain the generated-language payload"
         );
     }

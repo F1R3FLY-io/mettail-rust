@@ -546,6 +546,26 @@ pub async fn run_validated_program_and_read_string_channels(
     Ok(result)
 }
 
+/// Build an in-memory `RhoRuntime`, inject a validated generated artifact to
+/// quiescence, and read one closed-ground-value channel plus one string trace
+/// channel from the same execution.
+///
+/// This is used by planned call-by-need reports, where the computed payload is
+/// typed generated-language data and the evaluation channel is intentionally a
+/// textual trace marker.
+#[cfg(feature = "runtime-report")]
+pub async fn run_validated_program_and_read_runtime_value_and_string_channels(
+    program: &ValidatedRhoProgram,
+    value_channel: &str,
+    string_channel: &str,
+) -> Result<(Vec<RuntimeObservationValue>, Vec<String>), String> {
+    let runtime = evaluate_validated_program(program).await?;
+    let values =
+        read_ground_from_runtime(&runtime, value_channel, par_as_runtime_observation_value).await;
+    let strings = read_ground_from_runtime(&runtime, string_channel, par_as_string).await;
+    Ok((values, strings))
+}
+
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact
 /// composed with a dynamic call process, and return every ground string left
 /// resting on the quoted channel `@"<out_channel>"`.

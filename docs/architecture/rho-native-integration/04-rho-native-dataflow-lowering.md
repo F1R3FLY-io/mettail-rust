@@ -192,7 +192,7 @@ The artifact chain for the current M-RHO.2 boundary is:
 | Field | Meaning | Validation purpose |
 |---|---|---|
 | initial state | whether the thunk starts cold or already memoized | fixes the admission sequence: miss-then-hit or hit-then-hit |
-| value | generated-language result payload for the current thunk artifact | keeps the proof parametric in source value |
+| value | generated-language result payload as a closed `RhoAstLiteral` for the current thunk artifact | keeps the proof parametric in source value while preserving runtime type tags |
 | evaluation marker | observable marker for the cold computation branch | lets runtime tests distinguish compute-once from memo reuse |
 | output channel | public value-observation channel | separates value observations from evaluation traces |
 | evaluation channel | public evaluation-trace channel | prevents a compute marker from being confused with a result |
@@ -221,13 +221,15 @@ Produce:
   a planned normalized Rho AST thunk or an explicit rejection
 
 Steps:
-  1. Derive the source value payload v for c under M's semantic inventory.
+  1. Derive the source value payload v for c under M's semantic inventory
+     as a closed RhoAstLiteral.
 
   2. Derive distinct observation channels out and eval for this computation.
 
   3. Build CallByNeedThunkSpec(s, v, eval-marker(c), out, eval).
 
-  4. Reject if any spec field is empty or if out = eval.
+  4. Reject if eval-marker, out, or eval is empty, if out = eval, or if v
+     cannot be encoded as normalized rhoapi::Par.
 
   5. Admit the force sequence against b:
      cold thunks require one memo miss followed by one memo hit;
@@ -244,6 +246,15 @@ Steps:
   8. Return CallByNeedThunkPlan only if admission, validation, and evidence
      gates all pass.
 ```
+
+At runtime the value channel is decoded with the same closed-ground-value reader
+used by native Rho sends: integer computations report
+`RuntimeObservationValue::Int(n)`, predicates report
+`RuntimeObservationValue::Bool(b)`, and string computations report
+`RuntimeObservationValue::Text(s)`. The evaluation channel is intentionally
+separate: it carries only textual trace markers such as `"AddInt"` so
+compute-once behavior can be tested without confusing the marker with the
+computed value.
 
 The readable Rholang shape is:
 

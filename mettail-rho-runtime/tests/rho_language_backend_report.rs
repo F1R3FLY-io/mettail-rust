@@ -345,15 +345,142 @@ fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String
 }
 
 fn calculator_call_by_need_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
-    let int = calculator_int(term)?;
-    let Int::AddInt(left, right) = int else {
-        return Err(format!("calculator CBN bridge only covers AddInt in this test, got {int:?}"));
-    };
-    let value = int_literal(left.as_ref())? + int_literal(right.as_ref())?;
+    if let Ok(int) = calculator_int(term) {
+        return match int {
+            Int::AddInt(left, right) => need_int_binary("AddInt", left, right, |a, b| Ok(a + b)),
+            Int::SubInt(left, right) => need_int_binary("SubInt", left, right, |a, b| Ok(a - b)),
+            Int::MulInt(left, right) => need_int_binary("MulInt", left, right, |a, b| Ok(a * b)),
+            Int::DivInt(left, right) => need_int_binary("DivInt", left, right, checked_div),
+            Int::ModInt(left, right) => need_int_binary("ModInt", left, right, checked_rem),
+            other => Err(format!("calculator CBN bridge has no Int invocation for {other:?}")),
+        };
+    }
+
+    if let Ok(bool_term) = calculator_bool(term) {
+        return match bool_term {
+            Bool::EqInt(left, right) => need_int_predicate("EqInt", left, right, |a, b| a == b),
+            Bool::NeInt(left, right) => need_int_predicate("NeInt", left, right, |a, b| a != b),
+            Bool::LtInt(left, right) => need_int_predicate("LtInt", left, right, |a, b| a < b),
+            Bool::GtInt(left, right) => need_int_predicate("GtInt", left, right, |a, b| a > b),
+            Bool::LtEqInt(left, right) => need_int_predicate("LtEqInt", left, right, |a, b| a <= b),
+            Bool::GtEqInt(left, right) => need_int_predicate("GtEqInt", left, right, |a, b| a >= b),
+            Bool::EqBool(left, right) => need_bool_predicate("EqBool", left, right, |a, b| a == b),
+            Bool::NeBool(left, right) => need_bool_predicate("NeBool", left, right, |a, b| a != b),
+            Bool::LtBool(left, right) => need_bool_predicate("LtBool", left, right, |a, b| !a && b),
+            Bool::GtBool(left, right) => need_bool_predicate("GtBool", left, right, |a, b| a && !b),
+            Bool::LtEqBool(left, right) => {
+                need_bool_predicate("LtEqBool", left, right, |a, b| !a || b)
+            },
+            Bool::GtEqBool(left, right) => {
+                need_bool_predicate("GtEqBool", left, right, |a, b| a || !b)
+            },
+            Bool::EqStr(left, right) => need_string_predicate("EqStr", left, right, |a, b| a == b),
+            Bool::NeStr(left, right) => need_string_predicate("NeStr", left, right, |a, b| a != b),
+            Bool::LtStr(left, right) => need_string_predicate("LtStr", left, right, |a, b| a < b),
+            Bool::GtStr(left, right) => need_string_predicate("GtStr", left, right, |a, b| a > b),
+            Bool::LtEqStr(left, right) => {
+                need_string_predicate("LtEqStr", left, right, |a, b| a <= b)
+            },
+            Bool::GtEqStr(left, right) => {
+                need_string_predicate("GtEqStr", left, right, |a, b| a >= b)
+            },
+            Bool::And(left, right) => need_bool_predicate("And", left, right, |a, b| a && b),
+            Bool::Or(left, right) => need_bool_predicate("Or", left, right, |a, b| a || b),
+            Bool::Not(value) => {
+                let value = bool_literal(value.as_ref())?;
+                plan_need(RhoAstLiteral::Bool(!value), "Not")
+            },
+            other => Err(format!("calculator CBN bridge has no Bool invocation for {other:?}")),
+        };
+    }
+
+    match calculator_str(term)? {
+        Str::Concat(left, right) => {
+            need_string_binary("Concat", left, right, |a, b| format!("{a}{b}"))
+        },
+        Str::AddStr(left, right) => {
+            need_string_binary("AddStr", left, right, |a, b| format!("{a}{b}"))
+        },
+        other => Err(format!("calculator CBN bridge has no Str invocation for {other:?}")),
+    }
+}
+
+fn checked_div(left: i64, right: i64) -> Result<i64, String> {
+    if right == 0 {
+        Err("calculator CBN bridge cannot divide by zero".to_string())
+    } else {
+        Ok(left / right)
+    }
+}
+
+fn checked_rem(left: i64, right: i64) -> Result<i64, String> {
+    if right == 0 {
+        Err("calculator CBN bridge cannot take remainder by zero".to_string())
+    } else {
+        Ok(left % right)
+    }
+}
+
+fn need_int_binary(
+    marker: &str,
+    left: &Int,
+    right: &Int,
+    op: impl FnOnce(i64, i64) -> Result<i64, String>,
+) -> Result<RhoBackendInvocation, String> {
+    let left = int_literal(left)?;
+    let right = int_literal(right)?;
+    plan_need(RhoAstLiteral::Int(op(left, right)?), marker)
+}
+
+fn need_int_predicate(
+    marker: &str,
+    left: &Int,
+    right: &Int,
+    op: impl FnOnce(i64, i64) -> bool,
+) -> Result<RhoBackendInvocation, String> {
+    let left = int_literal(left)?;
+    let right = int_literal(right)?;
+    plan_need(RhoAstLiteral::Bool(op(left, right)), marker)
+}
+
+fn need_bool_predicate(
+    marker: &str,
+    left: &Bool,
+    right: &Bool,
+    op: impl FnOnce(bool, bool) -> bool,
+) -> Result<RhoBackendInvocation, String> {
+    let left = bool_literal(left)?;
+    let right = bool_literal(right)?;
+    plan_need(RhoAstLiteral::Bool(op(left, right)), marker)
+}
+
+fn need_string_binary(
+    marker: &str,
+    left: &Str,
+    right: &Str,
+    op: impl FnOnce(&str, &str) -> String,
+) -> Result<RhoBackendInvocation, String> {
+    let left = string_literal(left)?;
+    let right = string_literal(right)?;
+    plan_need(RhoAstLiteral::String(op(&left, &right)), marker)
+}
+
+fn need_string_predicate(
+    marker: &str,
+    left: &Str,
+    right: &Str,
+    op: impl FnOnce(&str, &str) -> bool,
+) -> Result<RhoBackendInvocation, String> {
+    let left = string_literal(left)?;
+    let right = string_literal(right)?;
+    plan_need(RhoAstLiteral::Bool(op(&left, &right)), marker)
+}
+
+fn plan_need(value: RhoAstLiteral, eval_marker: &str) -> Result<RhoBackendInvocation, String> {
     let spec = CallByNeedThunkSpec::new(
         CallByNeedInitialState::Cold,
-        value.to_string(),
-        "AddInt",
+        value,
+        eval_marker,
         "NEED_OUT",
         "NEED_EVAL",
     )
@@ -361,7 +488,61 @@ fn calculator_call_by_need_invocation(term: &dyn Term) -> Result<RhoBackendInvoc
     let plan =
         plan_call_by_need_thunk_with_spec(spec, CallByNeedBudget::new(2, 1), need_evidence())
             .map_err(|err| format!("failed to plan calculator CBN thunk: {err:?}"))?;
-    Ok(RhoBackendInvocation::RunCallByNeedThunk { plan })
+    Ok(RhoBackendInvocation::RunCallByNeedThunk { plan: Box::new(plan) })
+}
+
+fn planned_need_spec_for(snippet: &str) -> (RhoAstLiteral, String) {
+    let term = CalculatorLanguage
+        .parse_term(snippet)
+        .unwrap_or_else(|err| panic!("calculator parse failed for {snippet:?}: {err}"));
+    match calculator_call_by_need_invocation(term.as_ref())
+        .unwrap_or_else(|err| panic!("CBN invocation failed for {snippet:?}: {err}"))
+    {
+        RhoBackendInvocation::RunCallByNeedThunk { plan } => {
+            (plan.spec().value().clone(), plan.spec().eval_marker().to_string())
+        },
+        other => panic!("expected CBN thunk invocation for {snippet:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn call_by_need_planning_preserves_typed_payloads_for_scalar_families() {
+    let cases = [
+        ("2 + 3", RhoAstLiteral::Int(5), "AddInt"),
+        ("10 - 4", RhoAstLiteral::Int(6), "SubInt"),
+        ("3 * 7", RhoAstLiteral::Int(21), "MulInt"),
+        ("20 / 4", RhoAstLiteral::Int(5), "DivInt"),
+        ("17 % 5", RhoAstLiteral::Int(2), "ModInt"),
+        ("2 == 2", RhoAstLiteral::Bool(true), "EqInt"),
+        ("2 != 3", RhoAstLiteral::Bool(true), "NeInt"),
+        ("2 < 3", RhoAstLiteral::Bool(true), "LtInt"),
+        ("3 > 2", RhoAstLiteral::Bool(true), "GtInt"),
+        ("2 <= 2", RhoAstLiteral::Bool(true), "LtEqInt"),
+        ("3 >= 2", RhoAstLiteral::Bool(true), "GtEqInt"),
+        ("true == true", RhoAstLiteral::Bool(true), "EqBool"),
+        ("true != false", RhoAstLiteral::Bool(true), "NeBool"),
+        ("false < true", RhoAstLiteral::Bool(true), "LtBool"),
+        ("true > false", RhoAstLiteral::Bool(true), "GtBool"),
+        ("false <= false", RhoAstLiteral::Bool(true), "LtEqBool"),
+        ("true >= false", RhoAstLiteral::Bool(true), "GtEqBool"),
+        ("true and false", RhoAstLiteral::Bool(false), "And"),
+        ("true or false", RhoAstLiteral::Bool(true), "Or"),
+        ("not false", RhoAstLiteral::Bool(true), "Not"),
+        (r#""rho" ++ "net""#, RhoAstLiteral::String("rhonet".to_string()), "Concat"),
+        (r#""rho" + "net""#, RhoAstLiteral::String("rhonet".to_string()), "AddStr"),
+        (r#""alpha" == "alpha""#, RhoAstLiteral::Bool(true), "EqStr"),
+        (r#""alpha" != "beta""#, RhoAstLiteral::Bool(true), "NeStr"),
+        (r#""alpha" < "beta""#, RhoAstLiteral::Bool(true), "LtStr"),
+        (r#""beta" > "alpha""#, RhoAstLiteral::Bool(true), "GtStr"),
+        (r#""alpha" <= "alpha""#, RhoAstLiteral::Bool(true), "LtEqStr"),
+        (r#""beta" >= "alpha""#, RhoAstLiteral::Bool(true), "GtEqStr"),
+    ];
+
+    for (snippet, expected_value, expected_marker) in cases {
+        let (value, marker) = planned_need_spec_for(snippet);
+        assert_eq!(value, expected_value, "typed CBN value mismatch for {snippet:?}");
+        assert_eq!(marker, expected_marker, "CBN eval marker mismatch for {snippet:?}");
+    }
 }
 
 #[test]
@@ -516,33 +697,50 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
         calculator_backend(),
         calculator_call_by_need_invocation,
     );
-    let term = language.parse_term("2 + 3").expect("calculator parse");
 
-    let report = language
-        .run_default_backend_report(term.as_ref())
-        .expect("Rho default backend must execute the planned CBN thunk invocation");
-    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
-    assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
-    assert!(
-        report.evidence_refs().iter().any(
-            |evidence| evidence == "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v"
+    let cases = [
+        ("2 + 3", RuntimeObservationValue::Int(5), "AddInt"),
+        ("2 == 2", RuntimeObservationValue::Bool(true), "EqInt"),
+        (
+            r#""rho" ++ "net""#,
+            RuntimeObservationValue::Text("rhonet".to_string()),
+            "Concat",
         ),
-        "CBN runtime report must carry need proof evidence refs"
-    );
+    ];
 
-    let out = report
-        .observations_for_channel("NEED_OUT")
-        .expect("CBN report must expose generated value observations");
-    assert_eq!(
-        out.values,
-        vec![
-            RuntimeObservationValue::Text("5".to_string()),
-            RuntimeObservationValue::Text("5".to_string()),
-        ]
-    );
+    for (snippet, expected_value, expected_marker) in cases {
+        let term = language.parse_term(snippet).expect("calculator parse");
 
-    let eval = report
-        .observations_for_channel("NEED_EVAL")
-        .expect("CBN report must expose generated evaluation trace observations");
-    assert_eq!(eval.values, vec![RuntimeObservationValue::Text("AddInt".to_string())]);
+        let report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("Rho default backend must execute the planned CBN thunk invocation");
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+        assert!(
+            report
+                .evidence_refs()
+                .iter()
+                .any(|evidence| evidence
+                    == "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v"),
+            "CBN runtime report must carry need proof evidence refs"
+        );
+
+        let out = report
+            .observations_for_channel("NEED_OUT")
+            .expect("CBN report must expose generated value observations");
+        assert_eq!(
+            out.values,
+            vec![expected_value.clone(), expected_value],
+            "CBN report must preserve typed generated value observations for {snippet:?}"
+        );
+
+        let eval = report
+            .observations_for_channel("NEED_EVAL")
+            .expect("CBN report must expose generated evaluation trace observations");
+        assert_eq!(
+            eval.values,
+            vec![RuntimeObservationValue::Text(expected_marker.to_string())],
+            "CBN report must preserve textual eval marker for {snippet:?}"
+        );
+    }
 }

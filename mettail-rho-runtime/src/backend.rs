@@ -34,6 +34,7 @@ use crate::run::{
 };
 #[cfg(feature = "runtime-report")]
 use crate::run::{
+    run_validated_program_and_read_runtime_value_and_string_channels,
     run_validated_program_and_read_runtime_values,
     run_validated_program_with_call_and_read_runtime_values,
 };
@@ -453,7 +454,11 @@ impl PlannedCallByNeedThunk {
     }
 
     /// Run the planned thunk artifact and read the output/evaluation channels
-    /// named by its generated-language thunk spec.
+    /// named by its generated-language thunk spec as ground strings.
+    ///
+    /// This compatibility helper is for string-valued CBN fixtures. Generic
+    /// runtime reports use [`Self::run_and_observe_need_report`] so typed
+    /// generated-language values are preserved.
     pub async fn run_and_read_need_channels(
         &self,
     ) -> Result<BTreeMap<String, Vec<String>>, String> {
@@ -478,16 +483,14 @@ impl PlannedCallByNeedThunk {
     #[cfg(feature = "runtime-report")]
     pub async fn run_and_observe_need_report(&self) -> Result<RuntimeBackendReport, String> {
         let spec = self.plan.spec();
-        let mut observed = self.run_and_read_need_channels().await?;
-        let out_values = observed
-            .remove(spec.out_channel())
-            .unwrap_or_default()
-            .into_iter()
-            .map(RuntimeObservationValue::Text)
-            .collect();
-        let eval_values = observed
-            .remove(spec.eval_channel())
-            .unwrap_or_default()
+        let (out_values, eval_strings) =
+            run_validated_program_and_read_runtime_value_and_string_channels(
+                self.program(),
+                spec.out_channel(),
+                spec.eval_channel(),
+            )
+            .await?;
+        let eval_values = eval_strings
             .into_iter()
             .map(RuntimeObservationValue::Text)
             .collect();
@@ -534,7 +537,7 @@ pub enum RhoBackendInvocation {
     RunWithCallAndObserveRuntimeValues { call: Par, out_channel: String },
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
-    RunCallByNeedThunk { plan: CallByNeedThunkPlan },
+    RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
 }
 
 #[cfg(feature = "runtime-report")]
@@ -597,7 +600,7 @@ impl RhoBackendInvocation {
                     })
             },
             RhoBackendInvocation::RunCallByNeedThunk { plan } => {
-                PlannedCallByNeedThunk::from_plan(plan)
+                PlannedCallByNeedThunk::from_plan(*plan)
                     .run_and_observe_need_report()
                     .await
             },
