@@ -263,12 +263,13 @@ mod tests {
     fn observation_report_does_not_fabricate_ascent_results() {
         let mut state = ReplState::new();
         let term: Box<dyn Term> = Box::new(TestTerm { display: "5", id: 5 });
-        let report = RuntimeBackendReport::observations(
+        let report = RuntimeBackendReport::try_observations(
             RuntimeBackend::RhoMachine,
             RuntimeBackendArtifact::RhoNormalizedAst,
             vec![RuntimeChannelObservation::new("OUT", vec![RuntimeObservationValue::Int(5)])],
             vec!["test:evidence".to_string()],
-        );
+        )
+        .expect("test Rho observation report is shape-valid");
         state
             .set_term_with_report(term, report, 5)
             .expect("set Rho observation term");

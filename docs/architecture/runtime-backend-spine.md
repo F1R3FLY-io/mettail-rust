@@ -139,6 +139,7 @@ When changing runtime backend behavior:
   Reject incomplete Dovetail reports before production Rho execution.
   Generate normalized rhoapi::Par AST values, not Rholang source text.
   Let F1r3node/RSpace schedule enabled Rho communications.
+  Build RuntimeBackendReport values through the checked try_* constructors.
   Return a RuntimeBackendReport whose output shape matches the selected backend.
   Update the relevant Dovetail proof, Rho bridge proof, docs, and coverage matrix.
 ```

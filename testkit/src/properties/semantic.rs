@@ -190,7 +190,7 @@ mod tests {
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
                 RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
-                RuntimeBackend::RhoMachine => Ok(RuntimeBackendReport::observations(
+                RuntimeBackend::RhoMachine => RuntimeBackendReport::try_observations(
                     RuntimeBackend::RhoMachine,
                     RuntimeBackendArtifact::RhoNormalizedAst,
                     vec![RuntimeChannelObservation::new(
@@ -198,7 +198,8 @@ mod tests {
                         vec![RuntimeObservationValue::Int(5)],
                     )],
                     vec!["testkit:runtime-report-observations".to_string()],
-                )),
+                )
+                .map_err(|err| err.to_string()),
                 other => Err(format!("{other} is not installed")),
             }
         }

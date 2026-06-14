@@ -158,7 +158,7 @@ validated `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
 | RSpace schedule correctness | independent-redex schedules erase to the same visible Dovetail observations |
 | guarded join correctness | failed guards release data and valid joins can commit afterward |
 | extraction completeness honesty | complete reports and cycle-bounded reports are distinguishable at the API and proof boundary |
-| runtime report shape honesty | Dovetail outputs are Dovetail-report-shaped, Rho outputs are observation-shaped and backed by Rho runtime artifacts, and Ascent outputs remain Ascent-shaped |
+| runtime report shape honesty | Dovetail outputs are Dovetail-report-shaped, Rho outputs are observation-shaped and backed by Rho runtime artifacts, Ascent outputs remain Ascent-shaped, and public non-Ascent runtime reports enter only through checked constructors |
 | oracle agreement | Rho observations match Ascent oracle observations for the language corpus selected for rollout |
 | memory bound | capped tests and stress workloads stay within the agreed RSS envelope |
 | backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, evidence-reference audit, and deadlock gates all pass, and every positive external gate carries nonblank stable evidence references that are either existing repository-local artifacts or explicitly allowed logical evidence namespaces |

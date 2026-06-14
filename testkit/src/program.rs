@@ -601,7 +601,8 @@ mod tests {
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
                 RuntimeBackend::Dovetail => {
-                    Ok(RuntimeBackendReport::dovetail(self.report(), Vec::new()))
+                    RuntimeBackendReport::try_dovetail(self.report(), Vec::new())
+                        .map_err(|err| err.to_string())
                 },
                 RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{} backend is not installed", other)),

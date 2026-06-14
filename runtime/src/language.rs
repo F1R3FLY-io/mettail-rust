@@ -596,16 +596,6 @@ impl RuntimeBackendReport {
         })
     }
 
-    pub fn observations(
-        backend: RuntimeBackend,
-        artifact: RuntimeBackendArtifact,
-        observations: Vec<RuntimeChannelObservation>,
-        evidence_refs: Vec<String>,
-    ) -> Self {
-        Self::try_observations(backend, artifact, observations, evidence_refs)
-            .expect("observation-shaped runtime output must match a Rho runtime artifact")
-    }
-
     pub fn try_dovetail(
         report: RuntimeDovetailRunReport,
         evidence_refs: Vec<String>,
@@ -617,11 +607,6 @@ impl RuntimeBackendReport {
             output: RuntimeBackendOutput::Dovetail(report),
             evidence_refs,
         })
-    }
-
-    pub fn dovetail(report: RuntimeDovetailRunReport, evidence_refs: Vec<String>) -> Self {
-        Self::try_dovetail(report, evidence_refs)
-            .expect("malformed Dovetail runtime report must not enter RuntimeBackendReport")
     }
 
     pub fn as_ascent_results(&self) -> Option<&AscentResults> {
@@ -2063,7 +2048,7 @@ mod tests {
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
                 RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
-                RuntimeBackend::RhoMachine => Ok(RuntimeBackendReport::observations(
+                RuntimeBackend::RhoMachine => RuntimeBackendReport::try_observations(
                     RuntimeBackend::RhoMachine,
                     RuntimeBackendArtifact::RhoNormalizedAst,
                     vec![RuntimeChannelObservation::new(
@@ -2071,7 +2056,8 @@ mod tests {
                         vec![RuntimeObservationValue::Text("rho-default".to_string())],
                     )],
                     vec!["runtime-test:rho-dispatch".to_string()],
-                )),
+                )
+                .map_err(|err| err.to_string()),
                 other => {
                     Err(format!("{} backend is not installed for language {}", other, self.name()))
                 },

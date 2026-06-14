@@ -239,7 +239,7 @@ mod tests {
     use super::*;
 
     fn sample_dovetail_report() -> RuntimeBackendReport {
-        RuntimeBackendReport::dovetail(
+        RuntimeBackendReport::try_dovetail(
             RuntimeDovetailRunReport {
                 roots: vec![b"root".to_vec()],
                 root_ordinals: vec![0],
@@ -256,6 +256,7 @@ mod tests {
             },
             vec!["testkit:dovetail-report".to_string()],
         )
+        .expect("sample Dovetail report is shape-valid")
     }
 
     #[test]

@@ -1332,7 +1332,7 @@ mod tests {
             _term: &dyn Term,
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
-                RuntimeBackend::RhoMachine => Ok(RuntimeBackendReport::observations(
+                RuntimeBackend::RhoMachine => RuntimeBackendReport::try_observations(
                     RuntimeBackend::RhoMachine,
                     RuntimeBackendArtifact::RhoNormalizedAst,
                     vec![RuntimeChannelObservation::new(
@@ -1340,7 +1340,8 @@ mod tests {
                         vec![RuntimeObservationValue::Int(5)],
                     )],
                     vec!["simulation-test:runtime-observations".to_string()],
-                )),
+                )
+                .map_err(|err| err.to_string()),
                 RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{other} is not installed")),
             }
@@ -1426,10 +1427,11 @@ mod tests {
             _term: &dyn Term,
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
-                RuntimeBackend::Dovetail => Ok(RuntimeBackendReport::dovetail(
+                RuntimeBackend::Dovetail => RuntimeBackendReport::try_dovetail(
                     complete_dovetail_runtime_report(),
                     vec!["simulation-test:dovetail-report".to_string()],
-                )),
+                )
+                .map_err(|err| err.to_string()),
                 RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{other} is not installed")),
             }
