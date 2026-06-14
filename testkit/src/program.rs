@@ -5,8 +5,10 @@
 //! etc.) to auto-generate structural, semantic, and behavioral tests.
 
 use crate::runtime_report;
-#[allow(unused_imports)]
-use mettail_runtime::{Language, Term};
+use mettail_runtime::{
+    AscentResults, Language, RuntimeBackend, RuntimeBackendOutput, RuntimeBackendReport,
+    RuntimeDovetailRunReport,
+};
 
 /// Builder for auto-generating tests for a program written in a MeTTaIL language.
 ///
@@ -36,6 +38,123 @@ enum ProgramCheck {
     RewritesInputTo { input: String, expected: String },
     NoDeadlock,
     Ltl { formula: String },
+}
+
+struct RuntimeExecutionNode {
+    label: String,
+    is_accepting: bool,
+}
+
+struct RuntimeExecutionModel {
+    nodes: Vec<RuntimeExecutionNode>,
+    transitions: Vec<(usize, usize, String)>,
+    initial_nodes: Vec<usize>,
+}
+
+impl RuntimeExecutionModel {
+    fn from_report(report: RuntimeBackendReport, context: &str) -> Result<Self, String> {
+        let backend = report.backend();
+        match report.into_output() {
+            RuntimeBackendOutput::Ascent(results) => Ok(Self::from_ascent_results(results)),
+            RuntimeBackendOutput::Dovetail(report) => Self::from_dovetail_report(report, context),
+            RuntimeBackendOutput::Observations(_) => Err(format!(
+                "{} requires rewrite-graph evidence; {} returned runtime observations",
+                context, backend
+            )),
+            other => Err(format!(
+                "{} requires rewrite-graph evidence; {} returned {}",
+                context,
+                backend,
+                other.kind_name()
+            )),
+        }
+    }
+
+    fn from_ascent_results(results: AscentResults) -> Self {
+        let normal_forms = results.normal_forms();
+        let nodes = results
+            .all_terms
+            .iter()
+            .map(|term| RuntimeExecutionNode {
+                label: term.display.clone(),
+                is_accepting: normal_forms
+                    .iter()
+                    .any(|normal_form| normal_form.display == term.display),
+            })
+            .collect::<Vec<_>>();
+        let transitions = results
+            .all_terms
+            .windows(2)
+            .enumerate()
+            .map(|(index, terms)| (index, index + 1, terms[0].display.clone()))
+            .collect();
+        let initial_nodes = if nodes.is_empty() {
+            Vec::new()
+        } else {
+            vec![0]
+        };
+        Self { nodes, transitions, initial_nodes }
+    }
+
+    fn from_dovetail_report(
+        report: RuntimeDovetailRunReport,
+        context: &str,
+    ) -> Result<Self, String> {
+        report
+            .validate_shape()
+            .map_err(|err| format!("{} received malformed Dovetail report: {}", context, err))?;
+        report.assert_complete().map_err(|status| {
+            format!("{} requires a complete Dovetail report, but received {}", context, status)
+        })?;
+
+        let nodes = report
+            .terms
+            .iter()
+            .map(|term| RuntimeExecutionNode {
+                label: term.op_display.clone(),
+                is_accepting: term.is_root,
+            })
+            .collect::<Vec<_>>();
+        let key_to_ordinal = report
+            .terms
+            .iter()
+            .map(|term| (term.key.as_slice(), term.ordinal))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut has_incoming = vec![false; report.terms.len()];
+        let mut transitions = Vec::with_capacity(report.derivation_edges.len());
+
+        for edge in &report.derivation_edges {
+            let parent = *key_to_ordinal
+                .get(edge.parent_key.as_slice())
+                .ok_or_else(|| {
+                    format!(
+                        "{} received Dovetail edge {} with missing parent",
+                        context, edge.ordinal
+                    )
+                })?;
+            let child = *key_to_ordinal
+                .get(edge.child_key.as_slice())
+                .ok_or_else(|| {
+                    format!(
+                        "{} received Dovetail edge {} with missing child",
+                        context, edge.ordinal
+                    )
+                })?;
+            has_incoming[parent] = true;
+            transitions.push((child, parent, report.terms[child].op_display.clone()));
+        }
+
+        let mut initial_nodes = has_incoming
+            .iter()
+            .enumerate()
+            .filter_map(|(ordinal, incoming)| (!incoming).then_some(ordinal))
+            .collect::<Vec<_>>();
+        if initial_nodes.is_empty() && !nodes.is_empty() {
+            initial_nodes.extend(report.root_ordinals.iter().copied());
+        }
+
+        Ok(Self { nodes, transitions, initial_nodes })
+    }
 }
 
 impl<'a> ProgramTestSuite<'a> {
@@ -320,31 +439,33 @@ impl<'a> ProgramTestSuite<'a> {
         // Step 2: Build a system Buchi automaton from the program's execution.
         // We construct a simple model:
         // - Parse the source to get the initial term.
-        // - Run the selected runtime backend and require an Ascent-shaped
-        //   rewrite graph for this graph-only LTL model.
+        // - Prefer a Dovetail report when the language exposes one; otherwise
+        //   run the selected runtime backend.
         // - Each term in the trace becomes a state.
         // - Transitions connect consecutive terms.
-        // - Normal forms are accepting states.
+        // - Ascent normal forms or Dovetail roots are accepting states.
         mettail_runtime::clear_var_cache();
         let term = self
             .language
             .parse_term(source)
             .map_err(|e| format!("Parse failed for LTL check: {}", e))?;
 
-        let report = runtime_report::run_default_backend_report(
-            self.language,
-            term.as_ref(),
-            "LTL execution-model check",
-        )?;
-        let results = runtime_report::expect_ascent_graph(report, "LTL execution-model check")?;
-
-        // Build system Buchi automaton.
-        let normal_forms = results.normal_forms();
-        let all_terms = &results.all_terms;
+        let context = "LTL execution-model check";
+        let report = if self
+            .language
+            .supports_runtime_backend(RuntimeBackend::Dovetail)
+        {
+            self.language
+                .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+                .map_err(|error| format!("{} failed on Dovetail backend: {}", context, error))?
+        } else {
+            runtime_report::run_default_backend_report(self.language, term.as_ref(), context)?
+        };
+        let model = RuntimeExecutionModel::from_report(report, context)?;
 
         let mut system = BuchiAutomaton::new();
 
-        if all_terms.is_empty() {
+        if model.nodes.is_empty() {
             // Empty execution: the system has no states.
             // The LTL property holds vacuously.
             return Ok(());
@@ -352,33 +473,33 @@ impl<'a> ProgramTestSuite<'a> {
 
         // Add a state for each term in the execution. Normal forms are accepting.
         let mut term_to_state = std::collections::HashMap::new();
-        for (i, t) in all_terms.iter().enumerate() {
-            let is_accepting = normal_forms.iter().any(|nf| nf.display == t.display);
-            let state_id = system.add_state(is_accepting);
+        for (i, node) in model.nodes.iter().enumerate() {
+            let state_id = system.add_state(node.is_accepting);
             term_to_state.insert(i, state_id);
         }
 
-        // Add transitions: connect consecutive terms in the rewrite chain.
+        // Add transitions from the runtime report's execution model.
         // Also add self-loops on normal forms (infinite acceptance).
-        for i in 0..all_terms.len().saturating_sub(1) {
-            if let (Some(&src), Some(&tgt)) = (term_to_state.get(&i), term_to_state.get(&(i + 1))) {
-                let label = all_terms[i].display.clone();
+        for (from, to, label) in model.transitions {
+            if let (Some(&src), Some(&tgt)) = (term_to_state.get(&from), term_to_state.get(&to)) {
                 system.add_transition(src, Some(label), tgt);
             }
         }
 
-        // Self-loop on normal forms (for Buchi acceptance of infinite words).
-        for (i, t) in all_terms.iter().enumerate() {
-            if normal_forms.iter().any(|nf| nf.display == t.display) {
+        // Self-loop on accepting terms (for Buchi acceptance of infinite words).
+        for (i, node) in model.nodes.iter().enumerate() {
+            if node.is_accepting {
                 if let Some(&state_id) = term_to_state.get(&i) {
-                    system.add_transition(state_id, Some(t.display.clone()), state_id);
+                    system.add_transition(state_id, Some(node.label.clone()), state_id);
                 }
             }
         }
 
-        // Set the initial state (first term).
-        if let Some(&initial) = term_to_state.get(&0) {
-            system.initial_states.insert(initial);
+        // Set initial states. Ascent uses the first term; Dovetail uses leaves.
+        for initial_node in model.initial_nodes {
+            if let Some(&initial) = term_to_state.get(&initial_node) {
+                system.initial_states.insert(initial);
+            }
         }
 
         // Step 3: Check the LTL property.
@@ -476,7 +597,7 @@ mod tests {
     use mettail_runtime::{
         AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackend,
         RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailRunReport,
-        RuntimeDovetailTermRecord, TermType, VarTypeInfo,
+        RuntimeDovetailTermRecord, Term, TermType, VarTypeInfo,
     };
 
     use super::*;
@@ -679,6 +800,31 @@ mod tests {
             .expect_terminates(0)
             .run()
             .expect_err("bounded Dovetail report must not prove termination");
+        assert!(
+            err.contains("requires a complete Dovetail report")
+                && err.contains("BoundedByCycleCut"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ltl_check_accepts_complete_dovetail_report() {
+        let language = DovetailProgramLanguage::new(RuntimeDovetailCompleteness::Complete);
+        ProgramTestSuite::new(&language)
+            .source("done")
+            .expect_ltl("F done")
+            .run()
+            .expect("LTL model should use complete Dovetail report evidence");
+    }
+
+    #[test]
+    fn ltl_check_rejects_bounded_dovetail_report() {
+        let language = DovetailProgramLanguage::new(RuntimeDovetailCompleteness::BoundedByCycleCut);
+        let err = ProgramTestSuite::new(&language)
+            .source("cycle")
+            .expect_ltl("F done")
+            .run()
+            .expect_err("bounded Dovetail report must not prove LTL properties");
         assert!(
             err.contains("requires a complete Dovetail report")
                 && err.contains("BoundedByCycleCut"),

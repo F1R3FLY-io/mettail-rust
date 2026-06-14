@@ -369,6 +369,13 @@ This is the rule implemented by `run_default_*`, the REPL, the simulation
 runner, and testkit helpers. The older `default_runtime_backend()` method is
 therefore only a transition-era metadata query; it is not an authority for
 executing Ascent, Dovetail, or Rho.
+Graph-shaped test utilities follow the same runtime-view rule. When a property
+such as an LTL execution-model check needs rewrite-graph evidence, it prefers
+an installed `Dovetail` report over the selected default report: a selected
+`RhoMachine` default returns observations, while the companion `Dovetail`
+capability carries the complete checked rewrite graph. A complete Dovetail
+report is graph evidence; a `BoundedByCycleCut` report is not proof of
+termination or temporal-property satisfaction.
 The runtime integration tests construct `RhoDefaultBackendPlan` values through
 the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
