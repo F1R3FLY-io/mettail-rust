@@ -17,8 +17,9 @@ use mettail_rho_codegen::{RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoPr
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendCapability,
-    RuntimeBackendReport, RuntimeChannelObservation, RuntimeObservationValue, SeedFacts, Term,
-    TermType, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
+    RuntimeBackendReport, RuntimeChannelObservation, RuntimeObservationReportError,
+    RuntimeObservationValue, SeedFacts, Term, TermType, VarTypeInfo, WeightedRewriteSeed,
+    WeightedSeedId,
 };
 use models::rhoapi::Par;
 
@@ -75,6 +76,9 @@ pub enum RuntimeReportConversionError {
     /// A future Rho artifact kind was observed before the generic runtime
     /// report layer learned how to represent it.
     UnsupportedArtifactKind,
+    /// The generic runtime report layer rejected the backend/artifact/output
+    /// combination as not observation-shaped.
+    InvalidRuntimeReportShape(RuntimeObservationReportError),
 }
 
 /// Conversion from typed Rho observation payloads into the generic runtime
@@ -152,12 +156,13 @@ where
             .into_iter()
             .map(IntoRuntimeObservationValue::into_runtime_observation_value)
             .collect();
-        Ok(RuntimeBackendReport::observations(
+        RuntimeBackendReport::try_observations(
             RuntimeBackend::RhoMachine,
             artifact,
             vec![RuntimeChannelObservation::new(self.channel, values)],
             evidence_refs,
-        ))
+        )
+        .map_err(RuntimeReportConversionError::InvalidRuntimeReportShape)
     }
 }
 

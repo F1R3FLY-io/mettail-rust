@@ -251,6 +251,37 @@ impl RuntimeChannelObservation {
     }
 }
 
+/// Structural validation failure for an observation-shaped runtime report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RuntimeObservationReportError {
+    InvalidObservationBackend {
+        backend: RuntimeBackend,
+    },
+    InvalidObservationArtifact {
+        backend: RuntimeBackend,
+        artifact: RuntimeBackendArtifact,
+    },
+}
+
+impl fmt::Display for RuntimeObservationReportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeObservationReportError::InvalidObservationBackend { backend } => {
+                write!(f, "observation-shaped output is not valid for backend {backend}")
+            },
+            RuntimeObservationReportError::InvalidObservationArtifact { backend, artifact } => {
+                write!(
+                    f,
+                    "observation-shaped output for backend {backend} cannot use artifact {artifact}"
+                )
+            },
+        }
+    }
+}
+
+impl std::error::Error for RuntimeObservationReportError {}
+
 /// Completeness status of a Dovetail runtime report projected into the generic
 /// runtime layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -539,18 +570,40 @@ impl RuntimeBackendReport {
         }
     }
 
+    pub fn try_observations(
+        backend: RuntimeBackend,
+        artifact: RuntimeBackendArtifact,
+        observations: Vec<RuntimeChannelObservation>,
+        evidence_refs: Vec<String>,
+    ) -> Result<Self, RuntimeObservationReportError> {
+        if backend != RuntimeBackend::RhoMachine {
+            return Err(RuntimeObservationReportError::InvalidObservationBackend { backend });
+        }
+        match artifact {
+            RuntimeBackendArtifact::RhoNormalizedAst | RuntimeBackendArtifact::RhoBytecode => {},
+            artifact => {
+                return Err(RuntimeObservationReportError::InvalidObservationArtifact {
+                    backend,
+                    artifact,
+                });
+            },
+        }
+        Ok(Self {
+            backend,
+            artifact,
+            output: RuntimeBackendOutput::Observations(observations),
+            evidence_refs,
+        })
+    }
+
     pub fn observations(
         backend: RuntimeBackend,
         artifact: RuntimeBackendArtifact,
         observations: Vec<RuntimeChannelObservation>,
         evidence_refs: Vec<String>,
     ) -> Self {
-        Self {
-            backend,
-            artifact,
-            output: RuntimeBackendOutput::Observations(observations),
-            evidence_refs,
-        }
+        Self::try_observations(backend, artifact, observations, evidence_refs)
+            .expect("observation-shaped runtime output must match a Rho runtime artifact")
     }
 
     pub fn try_dovetail(
@@ -2214,6 +2267,58 @@ mod tests {
             .validate_shape()
             .expect_err("term records must be unique by exact key");
         assert!(matches!(err, RuntimeDovetailReportError::DuplicateTermKey { ordinal: 2 }));
+    }
+
+    #[test]
+    fn observation_report_shape_validation_accepts_rho_ast_observations() {
+        let report = RuntimeBackendReport::try_observations(
+            RuntimeBackend::RhoMachine,
+            RuntimeBackendArtifact::RhoNormalizedAst,
+            vec![RuntimeChannelObservation::new("OUT", vec![RuntimeObservationValue::Int(5)])],
+            vec!["runtime-test:rho-observation-shape".to_string()],
+        )
+        .expect("Rho normalized AST may produce observation-shaped runtime output");
+
+        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+        assert!(report.observations_for_channel("OUT").is_some());
+    }
+
+    #[test]
+    fn observation_report_shape_validation_rejects_ascent_backend() {
+        let err = RuntimeBackendReport::try_observations(
+            RuntimeBackend::Ascent,
+            RuntimeBackendArtifact::RhoNormalizedAst,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("Ascent reports must remain Ascent-shaped");
+
+        assert!(matches!(
+            err,
+            RuntimeObservationReportError::InvalidObservationBackend {
+                backend: RuntimeBackend::Ascent
+            }
+        ));
+    }
+
+    #[test]
+    fn observation_report_shape_validation_rejects_non_rho_artifact() {
+        let err = RuntimeBackendReport::try_observations(
+            RuntimeBackend::RhoMachine,
+            RuntimeBackendArtifact::DovetailRunReport,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("Rho observations must be backed by a Rho runtime artifact");
+
+        assert!(matches!(
+            err,
+            RuntimeObservationReportError::InvalidObservationArtifact {
+                backend: RuntimeBackend::RhoMachine,
+                artifact: RuntimeBackendArtifact::DovetailRunReport
+            }
+        ));
     }
 
     #[test]

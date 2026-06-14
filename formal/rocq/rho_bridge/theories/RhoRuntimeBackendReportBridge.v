@@ -165,6 +165,22 @@ Section RhoRuntimeBackendReportBridge.
     | ObservationOutput _ values => length values
     end.
 
+  Definition artifact_is_rho_runtime (artifact : RuntimeArtifact) : bool :=
+    match artifact with
+    | RhoNormalizedAst => true
+    | RhoBytecode => true
+    | AscentFixpoint => false
+    | DovetailRunReport => false
+    end.
+
+  Definition runtime_report_is_valid_observation_shape
+      (r : RuntimeBackendReport) : bool :=
+    match runtime_backend r, runtime_output r with
+    | RhoMachine, ObservationOutput _ _ =>
+        artifact_is_rho_runtime (runtime_artifact r)
+    | _, _ => false
+    end.
+
   Theorem rho_runtime_report_backend_is_rho : forall evidence_refs report,
     runtime_backend (rho_report_to_runtime_report evidence_refs report) =
       RhoMachine.
@@ -181,6 +197,30 @@ Section RhoRuntimeBackendReportBridge.
       runtime_report_is_ascent_output
         (rho_report_to_runtime_report evidence_refs report) = false.
   Proof. intros evidence_refs report. reflexivity. Qed.
+
+  Theorem rho_runtime_report_has_valid_observation_shape :
+    forall evidence_refs report,
+      runtime_report_is_valid_observation_shape
+        (rho_report_to_runtime_report evidence_refs report) = true.
+  Proof. intros evidence_refs report. reflexivity. Qed.
+
+  Theorem ascent_backend_observation_shape_is_invalid :
+    forall artifact channel values evidence_refs,
+      runtime_report_is_valid_observation_shape
+        {| runtime_backend := Ascent;
+           runtime_artifact := artifact;
+           runtime_output := ObservationOutput channel values;
+           runtime_evidence_refs := evidence_refs |} = false.
+  Proof. intros artifact channel values evidence_refs. reflexivity. Qed.
+
+  Theorem rho_backend_dovetail_artifact_observation_shape_is_invalid :
+    forall channel values evidence_refs,
+      runtime_report_is_valid_observation_shape
+        {| runtime_backend := RhoMachine;
+           runtime_artifact := DovetailRunReport;
+           runtime_output := ObservationOutput channel values;
+           runtime_evidence_refs := evidence_refs |} = false.
+  Proof. intros channel values evidence_refs. reflexivity. Qed.
 
   Theorem rho_runtime_report_preserves_channel : forall evidence_refs report,
     runtime_output (rho_report_to_runtime_report evidence_refs report) =

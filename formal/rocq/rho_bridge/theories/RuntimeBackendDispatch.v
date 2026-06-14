@@ -204,4 +204,13 @@ Section RuntimeBackendDispatch.
          default_output_shape := AscentResultsShape |} = false.
   Proof. reflexivity. Qed.
 
+  Theorem rho_default_with_dovetail_shape_is_rejected : forall ascent dovetail,
+    can_run_default_backend_report
+      {| ascent_installed := ascent;
+         dovetail_installed := dovetail;
+         rho_machine_installed := true;
+         default_backend := RhoMachine;
+         default_output_shape := DovetailReportShape |} = false.
+  Proof. reflexivity. Qed.
+
 End RuntimeBackendDispatch.
