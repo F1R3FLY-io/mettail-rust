@@ -466,6 +466,13 @@ and:
 
 `code snippet → parser → typed AST → DovetailRunReport → rhoapi::Par → RuntimeBackendReport`
 
+The first pipeline is static: it happens when the language is parsed,
+validated, and compiled. The second pipeline is dynamic: it happens when a
+particular source snippet is run. They meet at generated metadata. Dovetail
+does not parse the snippet and does not own the language definition; it consumes
+the generated inventory plus the parsed term and returns checked rewrite
+evidence.
+
 `LanguageDef` is the compile-time language model parsed from the macro input.
 `LanguageMetadata` is the generated runtime-facing inventory exposed by
 `Language::metadata()`. Dovetail should consume those generated inventories; it
@@ -503,6 +510,20 @@ reports to an executable `rhoapi::Par` AST. The for-comprehension is therefore
 not special runtime syntax bolted onto Dovetail; it is a language-level
 constructor whose communication behavior is declared by `language!`, checked by
 Dovetail, and executed by RSpace once the backend has emitted Rho-native AST.
+
+The end-to-end trace for this example is:
+
+| Phase | Artifact | Reader interpretation |
+|---:|---|---|
+| static specification | `language! { name: MiniRhoFor, ... }` | author declares the language surface and semantic rules |
+| macro model | `LanguageDef` | the macro parser has a typed, validated model of the declaration |
+| generated inventory | `LanguageMetadata` | runtime backends can discover categories, constructors, rules, guards, and handlers |
+| Dovetail rule inventory | `Comm`, `ParCong` | rewrite requirements are converted to exact-keyed rules |
+| runtime input | `{ for (x <- a) { x!(z) } | a!(b) }` | source text in the modeled language |
+| parsed term | `Proc::PPar({PFor(a, λx. POutput(x, z)), POutput(a, b)})` | the retained parser returns a typed AST |
+| checked rewrite evidence | `DovetailRunReport` rooted at `{ b!(z) }` | Dovetail reports exact roots, term records, edges, order, and completeness |
+| Rho artifact | `rhoapi::Par` equivalent to `b!(z)` | the Rho backend emits host AST, with Rholang text only as documentation |
+| runtime result | `RuntimeBackendReport` with observations | F1r3node executed the AST; this is no longer a Dovetail report |
 
 ```rust
 language! {
@@ -573,6 +594,13 @@ inventory to Dovetail rules. For the important rule, the high-level meaning is:
 That is the semantic rule Dovetail must preserve. The displayed Rholang-like
 surface is for readers; the generated values are typed AST and metadata.
 
+In implementation terms, this is a metadata-derived lowering. A correct adapter
+does not ask "is `Proc` a known category in my hard-coded list?" It asks the
+generated `LanguageMetadata` which categories and constructors exist, then
+derives the Dovetail rule inventory from that authoritative source. That keeps
+future language evolution local to the language definition instead of spreading
+category lists across runtime backends.
+
 ### Runtime Snippet Path
 
 Consider this source-level example:
@@ -605,6 +633,20 @@ Proc::PPar {
 Applying `Comm` substitutes `b` for the bound name `x`:
 
 `{ for (x <- a) { x!(z) } | a!(b) } → { b!(z) }`
+
+The same transition can be read at three abstraction levels:
+
+| Level | Representation | What is preserved |
+|---|---|---|
+| source language | `{ for (x <- a) { x!(z) } | a!(b) } → { b!(z) }` | reader-facing syntax and intended behavior |
+| Dovetail | `k_par_comm →* k_par_out_b_z` | exact identity, derivation support, ordering, and completeness |
+| Rho backend | `rhoapi::Par(send(channel = b, data = z))` | executable host AST whose observation matches the checked report root |
+
+The arrows intentionally do not rely on reparsing Rholang text.
+Rholang-looking snippets in this section are annotations for readers. The
+generated runtime value is `rhoapi::Par`, so the path can feed the current
+interpreter directly and later feed bytecode generation at the same artifact
+boundary.
 
 At the Dovetail boundary, the same idea is represented as exact-keyed terms:
 

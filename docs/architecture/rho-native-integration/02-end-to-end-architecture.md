@@ -118,6 +118,32 @@ Dovetail path is valuable when the checked rewrite report itself is the runtime
 answer. The Rho-native path is valuable when the checked report can be compiled
 into host Rho-machine parallelism.
 
+The same split can be read as two cohesive tracks:
+
+| Track | Starts with | Ends with | Main invariant |
+|---|---|---|---|
+| language-definition track | `language!` body | generated `LanguageMetadata` | categories, constructors, rules, guards, and handlers come from one source of truth |
+| snippet-execution track | parsed typed AST | selected runtime output | the runtime output must be derived from checked Dovetail evidence or explicit rejected/delegated contracts |
+
+Those tracks meet when a parsed term is paired with generated metadata. From
+that point forward, the backend does not rediscover syntax by string inspection
+or hard-coded category names. It consumes the typed term and inventory, then
+preserves the evidence through Dovetail and the selected runtime lane.
+
+For the MiniRhoFor example used in the Dovetail report documentation, the
+cohesive trace is:
+
+`language! MiniRhoFor → LanguageDef → LanguageMetadata → Comm Dovetail rule`
+
+then, for one run:
+
+`{ for (x <- a) { x!(z) } | a!(b) } → Proc::PPar(...) → DovetailRunReport({ b!(z) }) → rhoapi::Par(send b z) → RSpace observation`
+
+The Rholang-looking `send b z` notation in that trace is a reader annotation.
+The generated runtime artifact is a normalized `rhoapi::Par` AST. This is both
+the current fast path into `RhoRuntime::inj` and the future handoff point for a
+Rholang bytecode artifact.
+
 ## Bridge Crate Boundary
 
 The design uses small one-way bridge crates rather than a runtime fork:

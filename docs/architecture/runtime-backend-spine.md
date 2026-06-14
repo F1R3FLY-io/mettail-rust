@@ -22,6 +22,17 @@ The compact artifact spine is:
 
 `language! specification → LanguageDef → LanguageMetadata → typed AST → DovetailRunReport → backend artifact → RuntimeBackendReport`
 
+Read that as two paths that join at generated language metadata:
+
+`static path: language! specification → LanguageDef → LanguageMetadata → Dovetail rewrite inventory`
+
+`runtime path: source snippet → WPDA parser → typed AST → DovetailRunReport → selected runtime backend`
+
+The static path answers "what language did the author define?" The runtime
+path answers "what happens to this particular snippet?" Keeping those questions
+separate is the simplest way to avoid conflating the macro, the rewrite engine,
+and the runtime backend.
+
 There are two production runtime lanes after the Dovetail report:
 
 | Lane | Artifact chain | Purpose |
@@ -92,6 +103,42 @@ projected Dovetail table consistency.
 
 The direct Dovetail lane uses steps 1 through 5a and 8. The Rho-native lane
 uses steps 1 through 4 and then 5b through 8.
+
+## One Running Example
+
+For a small Rholang-like language fragment with a one-input for-comprehension,
+the static path is:
+
+| Static step | Example artifact | Meaning |
+|---:|---|---|
+| 1 | `language! { name: MiniRhoFor, ... }` | the author declares `Proc`, `Name`, `PFor`, `POutput`, `PPar`, and `Comm` |
+| 2 | `LanguageDef(MiniRhoFor)` | the macro parser has a typed model of that declaration |
+| 3 | `LanguageMetadata` | generated inventory lists the categories, constructors, and rewrite rules |
+| 4 | `Comm` Dovetail rule | `{ for (x <- N) { cont(x) } | N!(Q) | rest } → { cont(Q) | rest }` becomes an exact-keyed rewrite requirement |
+
+The runtime path for one snippet is:
+
+| Runtime step | Example artifact | Meaning |
+|---:|---|---|
+| 1 | `{ for (x <- a) { x!(z) } | a!(b) }` | source text in the modeled language |
+| 2 | `Proc::PPar({PFor(a, λx. POutput(x, z)), POutput(a, b)})` | the retained parser returns typed AST, not a backend result |
+| 3 | `SatReport + DovetailRunReport` | Dovetail proves the communication rewrite and reports `{ b!(z) }` with exact keys and completeness |
+| 4a | `RuntimeBackendOutput::Dovetail` | the direct Dovetail runtime exposes the checked report as the result |
+| 4b | `RhoNet plan → rhoapi::Par` | the Rho backend compiles the complete report to normalized host Rholang AST |
+| 5 | RSpace observation on the selected channel | F1r3node executes the AST and records the runtime-visible datum |
+| 6 | `RuntimeBackendReport` | callers receive a generic envelope whose output shape matches the selected backend |
+
+The same source-level behavior appears in three different representations:
+
+`source syntax: { for (x <- a) { x!(z) } | a!(b) }`
+
+`Dovetail report root: exact-keyed derivation for { b!(z) }`
+
+`Rho artifact: rhoapi::Par send on channel b with payload z`
+
+These are intentionally not the same object. The source syntax is parsed, the
+Dovetail report is checked rewrite evidence, and the Rho artifact is executable
+host AST.
 
 ## Correctness Spine
 
