@@ -151,15 +151,18 @@ The semantic split is:
 
 | Predicated-type layer | Dovetail interpretation |
 |---|---|
-| structural guard pattern | first-order match that extends `σ` or fails with `no_commit` |
-| built-in typed predicate | total boolean guard or explicit external/native contract |
+| structural predicated type | first-order or exact-key match that extends `σ` or fails with `no_commit` |
+| structural AC or collection pattern | structural obligation that Dovetail can discharge directly or delegate to SFT evidence |
+| behavioral predicated type | predicate over matched values, derived facts, channels, or host state, checked after structural bindings exist |
+| EBA-backed predicate | decidable behavioral predicate whose domain supplies effective `⊥`, `⊤`, `∧`, `∨`, `¬`, satisfiability, and witness operations |
+| SFT-backed transformation | symbolic transformation or pre-image/post-image obligation, such as normalization before comparison or join-input pruning |
 | `logic {}` relation query | premise membership check over the generated language relation inventory |
 | quantified or theory-backed predicate | explicit theory/native contract, with boundedness recorded in coverage |
-| channel/join declaration | source of multi-premise guarded rule shape |
+| channel/join declaration | source of multi-premise guarded rule shape and Rho-native atomicity obligation |
 
 The production coverage obligation is:
 
-`∀g ∈ guards(LanguageDef). DovetailCore(g) ∨ RhoNetLowerable(g) ∨ NativeGuard(g) ∨ ExternalContract(g) ∨ Rejected(g)`
+`∀g ∈ guards(LanguageDef). DovetailCore(g) ∨ EBA(g) ∨ SFT(g) ∨ RhoNetLowerable(g) ∨ NativeGuard(g) ∨ ExternalContract(g) ∨ Rejected(g)`
 
 Thus a guard that is parsed but not classified is a coverage failure, not a
 runtime best effort.
@@ -346,7 +349,11 @@ Dovetail classifies MeTTaIL requirements into:
 | directional rewrites | saturation and derivation facts | lower rule firing faithfully |
 | congruence | generated parent rewrites | preserve constructor contexts |
 | folds/native handlers | classify and call contract | execute deterministic handler |
-| guards | classify predicate dependency | implement atomic no-commit on failure |
+| structural predicated types | exact-key and pattern matching, or explicit SFT/native contract | preserve match/no-match without consuming hidden alternatives |
+| behavioral predicated types | classify dependency and require compatible evidence | implement atomic no-commit on false |
+| EBA-backed guards | record theory obligation and coverage evidence | decide predicates over the declared data domain |
+| SFT-backed guards | record transducer obligation and coverage evidence | preserve transformation, pre-image, or post-image semantics |
+| WFST/selectivity evidence | keep weights/order separate from derivation identity | use only for scheduling or ordering, never candidate deletion |
 | collections/patterns | pattern lowering requirements | preserve arity and binding |
 | cyclic weights | inside-weight closure | preserve reported boundedness |
 | ambiguity | candidate-set preservation | avoid scheduler-choice collapse |

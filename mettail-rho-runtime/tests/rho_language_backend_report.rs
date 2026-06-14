@@ -10,6 +10,7 @@ use mettail_rho_codegen::{
     plan_call_by_need_thunk_with_spec, plan_rho_default_backend_with_evidence_audit,
     CallByNeedBudget, CallByNeedInitialState, CallByNeedPlanEvidence, CallByNeedThunkSpec,
     RhoAstLiteral, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
 use mettail_runtime::{
@@ -73,6 +74,7 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
             "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
         ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 

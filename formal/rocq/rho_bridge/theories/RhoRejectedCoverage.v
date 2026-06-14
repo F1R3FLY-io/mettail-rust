@@ -225,7 +225,10 @@ Section RhoRejectedCoverage.
       coverage_audit_passed := audit;
       uncovered_rejections := length (uncovered_rejection_ids rejected covered);
       extraneous_dispositions := length (extraneous_disposition_ids rejected covered);
-      invalid_dispositions := invalid
+      invalid_dispositions := invalid;
+      uncovered_guard_obligations := 0;
+      extraneous_guard_dispositions := 0;
+      invalid_guard_dispositions := 0
     |}.
 
   Lemma inhabited_list_has_nonzero_length : forall (A : Type) (xs : list A) x,

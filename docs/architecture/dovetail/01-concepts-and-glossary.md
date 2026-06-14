@@ -10,6 +10,10 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | `language!` | The MeTTaIL specification macro that declares categories, constructors, syntax, rewrites, native hooks, and metadata for a modeled language. |
 | Dovetail | The standalone MeTTaIL rewrite engine crate at `dovetail/`. |
 | rewrite rule | A data value with a left-hand pattern and right-hand pattern. |
+| guard | A predicate attached to a rule or term slot; it is evaluated over the match substitution and must fail with no derived fact when false. |
+| predicated type | A type-like language constraint expressed as a guard over values or patterns. Dovetail consumes predicated types as guarded rules and coverage obligations from generated inventory. |
+| structural predicated type | A guard whose truth is determined by constructor shape, exact keys, binding layout, AC decomposition, or other pattern structure. |
+| behavioral predicated type | A guard whose truth depends on a relation, theory, host operation, channel compatibility, or other behavior beyond immediate shape. |
 | equality saturation | Iterative growth of an equality graph until no new equalities are found or a bound stops the run. |
 | e-graph | A graph of equivalence classes and expression nodes. |
 | e-class | An equivalence class of terms, identified by `EClassId`. |
@@ -20,6 +24,9 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | weight | A semiring value used to order derivations. |
 | semiring | Algebra with `⊕`, `⊗`, `0̄`, and `1̄`. |
 | weighted tree automaton | A tree automaton whose transitions carry weights. |
+| effective Boolean algebra | A decidable Boolean algebra over a predicate domain; it is external evidence for behavioral guard analysis, not a Dovetail extraction weight. |
+| symbolic finite-state transducer | A symbolic transducer used to prove guard-preserving transformations, pre-images, post-images, or normalizations. |
+| WFST | Weighted finite-state transducer; useful for weighted language/transduction analyses and selectivity evidence, distinct from Dovetail's weighted tree automaton extraction model. |
 | DFTA | Deterministic finite tree automaton; Dovetail views e-classes as states and e-nodes as transitions. |
 | inside weight | The aggregate weight of all derivations rooted at an e-class. |
 | SCC | Strongly connected component in the e-class dependency graph. |

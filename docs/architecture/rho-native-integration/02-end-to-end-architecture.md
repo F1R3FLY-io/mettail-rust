@@ -84,7 +84,7 @@ The generic call-by-need segment uses the same AST-first execution boundary:
 | typed AST | generates source-language terms | stores exact-keyed terms and derivations | lowers covered terms to Rholang AST |
 | concrete syntax | owns parser/display hooks | does not parse source text | may attach reader text only as annotation |
 | rewrite declarations | declares rules and metadata | saturates, extracts, and reports checked consequences | compiles covered rule instances to Rho dataflow |
-| predicated types | declares `guards {}` syntax, typed predicates, theory routing, and channels | consumes generated guard inventory as guarded rules | lowers covered guards to RhoNet guards, atomic joins, or native guard handlers |
+| predicated types | declares `guards {}` syntax, structural and behavioral predicates, typed overloads, theory routing, data domains, and channels | consumes generated guard inventory as guarded rules and coverage obligations | lowers covered guards through Dovetail structural matching, EBA/SFT evidence, RhoNet guards, atomic joins, or native guard handlers |
 | native operations | declares and binds handlers | records explicit external contracts | routes handlers through Rho/native boundary |
 | runtime scheduling | does not schedule | defines substrate-neutral rewrite semantics | lets RSpace schedule enabled COMM events |
 | completeness status | supplies requirement inventory | reports `Complete` or `BoundedByCycleCut` | rejects incomplete reports for production execution |
@@ -99,6 +99,14 @@ the guard sublanguage and typed predicate metadata; Dovetail turns that
 inventory into guarded rewrite obligations; the Rho backend can execute only
 covered guards whose no-commit behavior is preserved by RSpace or a verified
 native guard handler.
+Structural predicates are shape constraints, so Dovetail can often discharge
+them with exact-key pattern matching or pass them to an SFT that preserves the
+same shape semantics. Behavioral predicates are relation, theory, or runtime
+constraints, so they require an effective Boolean algebra, SFT, Rho-native
+join, native handler, or external contract. The mechanism is generalized over
+generated data domains: a predicate over a list, map, bag, process, name, byte
+array, exact number, or host-backed value is admitted by its generated
+metadata plus evidence-backed disposition, not by a scalar whitelist.
 
 ## End-To-End Artifact Spine
 
@@ -289,6 +297,8 @@ Dovetail consumes MeTTaIL metadata and produces a rewrite model:
 - exact term/e-class keys;
 - initial facts;
 - rule instances;
+- guarded structural and behavioral predicate obligations derived from
+  generated inventory;
 - saturation outcomes;
 - candidate derivations;
 - normal-form candidate sets;
@@ -301,6 +311,12 @@ The Dovetail contract can be summarized as:
 That formula means each MeTTaIL rewrite requirement must either be handled by
 proved Dovetail core behavior or delegated to an explicit native/Rho contract.
 Silent gaps are not allowed.
+Dovetail owns the structural rewrite side of this contract: exact-key patterns,
+guarded rule premises, saturation, extraction, boundedness, and reports. It
+does not own the implementation of every effective Boolean algebra, symbolic
+finite-state transducer, weighted finite-state transducer, or native theory
+handler. Those are admitted only as explicit evidence-bearing dispositions in
+the Rho backend plan or external coverage matrix.
 
 ### Rho Backend Contract
 
@@ -320,6 +336,17 @@ The Rho backend consumes the Dovetail model and emits:
 The Rho backend must be total-or-explicit-reject:
 
 `∀r ∈ Rules. lowered(r) ∨ rejected(r)`
+
+For predicated types, the corresponding gate is:
+
+`∀g ∈ Guards(LanguageDef). covered_guard(g) ∨ rejected_guard(g)`
+
+where `covered_guard(g)` means one compatible disposition exists with an
+audited evidence reference. EBA evidence covers decidable predicate domains,
+SFT evidence covers symbolic transformations and pre-image pruning, WFST or
+other weighted-analysis evidence may inform selectivity or ordering but cannot
+delete candidates, and Rho-native join evidence covers atomic scheduling plus
+no-consumption behavior.
 
 The existing M-RHO.0 lowering proof establishes this shape for the scalar
 operator subset. The Rho-native roadmap generalizes the same discipline to

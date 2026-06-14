@@ -102,6 +102,92 @@ A guard with unknown predicate meaning, missing typed-predicate metadata, or
 unapproved native-handler evidence is rejected during planning rather than
 encoded as a permissive Rho contract.
 
+### Guard-Obligation Coverage
+
+The production backend does not maintain a hand-written list of known guard
+categories. It derives a finite obligation set from `LanguageDef`:
+
+`O(L) = collect_guard_obligations(LanguageDef(L))`
+
+Each obligation is one of:
+
+| Obligation kind | Induced by | Reader intuition |
+|---|---|---|
+| `BehavioralPredicate` | `guards {}` built-ins, standard built-ins selected by the language, `?guard:Guard` term slots, and non-structural `BehavioralGuard` premises | a runtime or theory must decide a predicate over already matched values |
+| `StructuralPattern` | AC matching and guard premises whose truth depends on decomposing a value shape | Dovetail or an SFT must preserve pattern structure |
+| `TheoryRegistration` | `guards { theories { ... } }` entries | the named theory must supply an effective Boolean algebra or equivalent verified adapter |
+| `RhoNativeJoin` | `guards { channels { ... } }` and `join` declarations | RSpace must enforce atomic guarded receive behavior |
+
+The gate then checks an evidence value:
+
+`RhoGuardCoverageEvidence = NoGuardObligations ∨ CoveredGuardObligations(dispositions)`
+
+`NoGuardObligations` accepts only when `O(L) = ∅`. Otherwise every obligation
+must have exactly one compatible `RhoGuardDisposition`, every disposition must
+refer to an existing obligation, and every disposition must carry a nonblank
+evidence reference. Extra, duplicate, evidence-less, or incompatible
+dispositions block Rho-default selection.
+
+The accepted compatibility matrix is:
+
+| Obligation kind | Accepted dispositions |
+|---|---|
+| `BehavioralPredicate` | `EffectiveBooleanAlgebra`, `SymbolicFiniteTransducer`, `RhoNativeJoin`, `NativeHandler`, `ExternalContract` |
+| `StructuralPattern` | `DovetailCoreStructural`, `SymbolicFiniteTransducer`, `RhoNativeJoin`, `NativeHandler`, `ExternalContract` |
+| `TheoryRegistration` | `EffectiveBooleanAlgebra`, `SymbolicFiniteTransducer`, `NativeHandler`, `ExternalContract` |
+| `RhoNativeJoin` | `RhoNativeJoin`, `NativeHandler`, `ExternalContract` |
+
+The EBA/SFT split is intentional. An effective Boolean algebra handles
+decision problems of the form `x ∈ φ`, `φ ∧ ψ` satisfiable, or `¬φ`; it is the
+right disposition for arithmetic ranges, finite enumerations, lattices, and
+other decidable predicate domains. A symbolic finite-state transducer handles
+guard-preserving transformations, such as normalization before comparison,
+structural decomposition of sequences, pre-image pruning across join inputs, or
+functional value rewriting. Both are admitted only as evidence-backed
+dispositions; neither is assumed from a predicate name.
+
+Literate planning sketch:
+
+```pseudocode
+Algorithm: Admit a guarded language to the Rho default backend
+
+Given:
+  a parsed and validated LanguageDef L
+  a proposed Rho backend evidence bundle E
+
+Produce:
+  a RhoDefaultBackendPlan or a complete blocker report
+
+Steps:
+  1. Derive O(L), the sorted set of guard obligations, from the generated
+     language inventory.
+
+  2. If E.guard_coverage is NoGuardObligations, require O(L) to be empty.
+     Otherwise record every obligation id in O(L) as uncovered.
+
+  3. If E.guard_coverage is CoveredGuardObligations(D), check D as an exact
+     cover of O(L):
+       - no obligation in O(L) may be missing from D;
+       - no disposition in D may name an obligation outside O(L);
+       - no obligation may appear twice in D;
+       - every disposition must carry a stable evidence reference;
+       - every disposition kind must be compatible with the obligation kind.
+
+  4. Combine the guard result with the existing proof, oracle,
+     rejected-rule coverage, artifact, scheduler-fairness, and deadlock gates.
+
+  5. Emit a plan only when every gate passes; otherwise emit all blockers.
+```
+
+This is how the plan covers fully generalized predicated types. The subject
+domain of a predicate may be any MeTTaIL-modeled data type: scalar, algebraic
+tree, collection, process, name, or host-backed value. Generality comes from
+the obligation interface and the evidence-backed disposition, not from one
+universal built-in solver. If a language adds a new predicated type over a new
+data domain, `LanguageDef` induces a new obligation and the Rho backend stays
+fail-closed until Dovetail, an EBA, an SFT, a Rho-native join, a native handler,
+or an external contract covers it.
+
 ## Lowering Shape
 
 ![Dovetail rule to RhoNet and Rholang dataflow lowering](figures/04-rho-native-dataflow-lowering.svg)

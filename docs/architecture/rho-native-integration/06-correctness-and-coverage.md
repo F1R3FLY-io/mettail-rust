@@ -1,6 +1,6 @@
 # Correctness and Coverage
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 This document states the correctness argument for the Rho-native MeTTaIL
 integration. The proofs here are mathematical prose proofs for the architecture.
@@ -24,7 +24,7 @@ All symbols used here are defined in
 
 The claim is intentionally scoped:
 
-`Dovetail-supported requirements + explicit native/Rho contracts`
+`Dovetail-supported requirements + generated guard/predicate/data-domain requirements + explicit native/Rho contracts`
 
 For those requirements, the Rho-native backend should preserve Dovetail's
 observable rewrite semantics when replacing the CESK runtime backend. The claim
@@ -252,6 +252,85 @@ both cases, the generated receive is specified to commit only when the guard
 returns true. Therefore if the guard returns false, the RSpace operation behaves
 as no match: data remains available and the continuation remains installed.
 Consequently no source fact is consumed by a failed guard.
+The same argument covers structural and behavioral failure. If structural
+matching fails, no substitution `σ` is produced, so the receive is not enabled.
+If structural matching succeeds but a behavioral predicate is false, the guard
+position rejects the candidate before commit. In both cases the effect is
+`no_commit`.
+
+Mechanized support:
+`GuardedCommSoundness.v` proves the modeled no-commit property. Runtime support
+is exercised by `mettail-rho-runtime/tests/rho_guard_oracle.rs`, which checks
+that failed single-bind and cross-bind guards leave data available and allow a
+valid candidate to commit later.
+
+## Theorem 7a: Guard-Obligation Coverage
+
+Statement:
+
+If the Rho default backend planner accepts a language `L`, then every
+predicated-type obligation induced by `L` is either covered by a compatible
+verified disposition or `L` induced no guard obligations:
+
+`plan_Rho(L, E) = accepted ⇒ exact_cover(O(L), D(E))`
+
+where `O(L) = collect_guard_obligations(LanguageDef(L))` and `D(E)` is the
+set of guard dispositions supplied by `RhoGuardCoverageEvidence`.
+
+Proof:
+
+The planner derives `O(L)` from the parsed `LanguageDef`, not from a
+backend-local category list. The derivation includes declared built-in
+predicates, selected standard built-ins, theory registrations, channel and join
+declarations, `?guard:Guard` term slots, and guarded rewrite premises. The
+planner then computes three blocker sets:
+
+`uncovered = O(L) ∖ dom(D(E))`
+
+`extraneous = dom(D(E)) ∖ O(L)`
+
+`invalid = { d ∈ D(E) | missing_evidence(d) ∨ duplicate(d) ∨ incompatible(d, O(L)) }`
+
+The Rho default gate requires:
+
+`uncovered = ∅ ∧ extraneous = ∅ ∧ invalid = ∅`
+
+If any set is non-empty, `coverage_passed = false`, so the default backend plan
+is rejected. Therefore an accepted plan has an exact cover of all guard
+obligations, and every covered obligation has a compatible evidence-backed
+disposition.
+
+The compatibility relation is intentionally typed:
+
+| Obligation kind | Compatible verified dispositions |
+|---|---|
+| behavioral predicate | effective Boolean algebra, symbolic finite-state transducer, Rho-native join, native handler, external contract |
+| structural pattern | Dovetail-core structural matching, symbolic finite-state transducer, Rho-native join, native handler, external contract |
+| theory registration | effective Boolean algebra, symbolic finite-state transducer, native handler, external contract |
+| Rho-native join | Rho-native join, native handler, external contract |
+
+This proves the admission property for generalized predicated types over all
+MeTTaIL-modeled data domains. The theorem does not claim that every predicate
+is decidable by one universal solver. Instead, each structural or behavioral
+predicate must select a verified mechanism appropriate to its domain. Effective
+Boolean algebras cover decidable predicate domains such as arithmetic ranges,
+finite sets, lattice intervals, or theory-specific relations. Symbolic
+finite-state transducers cover value transformations and pre-image/post-image
+reasoning such as string normalization, sequence decomposition, and multi-input
+guard pruning. Rho-native joins cover atomic scheduling and no-consumption
+behavior. Native handlers and external contracts cover host-specific domains
+only when their evidence references are accepted by the audit.
+
+Mechanized support:
+`RhoBackendFlipGate.v` extends `CoverageState` with
+`uncovered_guard_obligations`, `extraneous_guard_dispositions`, and
+`invalid_guard_dispositions`. Its `exact_coverage_evidence_iff` theorem states
+that all three counters must be zero along with the existing rejected-rule
+coverage counters. The theorems
+`uncovered_guard_obligation_blocks_default_backend`,
+`extraneous_guard_disposition_blocks_default_backend`, and
+`invalid_guard_disposition_blocks_default_backend` prove that each non-zero
+guard counter rejects the default backend.
 
 ## Theorem 8: Parallel Permutation Independence
 
@@ -295,7 +374,8 @@ This is precisely `canon(project(resting(ρ*)))`.
 
 Statement:
 
-For every MeTTaIL rewrite requirement:
+For every MeTTaIL rewrite, guard, predicate, and declared data-domain
+requirement:
 
 `Covered(req) ∨ Rejected(req, reason) ∨ ExternalContract(req)`
 
@@ -309,6 +389,15 @@ records one of three statuses: handled by Dovetail core, rejected with an
 explicit reason, or delegated to an external/native/Rho contract. Therefore no
 requirement remains unclassified. The statement is a coverage theorem, not a
 claim that every external contract is already mechanized.
+For predicated types, the inventory includes `guards(LanguageDef)`, typed
+predicate overloads, theory registrations, channel/join declarations, guarded
+term slots, guarded rule premises, and the data domains referenced by those
+items. A structural predicate is covered by Dovetail-core pattern semantics,
+SFT evidence, Rho-native join evidence, a native handler, or an external
+contract. A behavioral predicate is covered by EBA evidence, SFT evidence,
+Rho-native join evidence, a native handler, or an external contract. WFST or
+other weighted-analysis evidence may justify ordering, selectivity, or
+scheduling choices, but not semantic deletion of candidates.
 
 For the Rho lowering gate, disposition coverage is exact at the rule-identity
 level:

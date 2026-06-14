@@ -13,7 +13,7 @@
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
     plan_rho_default_backend_with_evidence_audit, RhoArtifactKind, RhoAstLiteral, RhoAstSend,
-    RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    RhoCoverageEvidence, RhoDefaultBackendEvidence, RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
@@ -77,6 +77,7 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
             "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
         ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 

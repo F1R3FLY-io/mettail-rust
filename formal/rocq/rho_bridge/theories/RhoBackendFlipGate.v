@@ -184,14 +184,20 @@ Section RhoBackendFlipGate.
     coverage_audit_passed : bool;
     uncovered_rejections : nat;
     extraneous_dispositions : nat;
-    invalid_dispositions : nat
+    invalid_dispositions : nat;
+    uncovered_guard_obligations : nat;
+    extraneous_guard_dispositions : nat;
+    invalid_guard_dispositions : nat
   }.
 
   Definition exact_coverage_evidence (c : CoverageState) : bool :=
     coverage_audit_passed c
-    && (Nat.eqb (uncovered_rejections c) 0
-        && (Nat.eqb (extraneous_dispositions c) 0
-            && Nat.eqb (invalid_dispositions c) 0)).
+    && Nat.eqb (uncovered_rejections c) 0
+    && Nat.eqb (extraneous_dispositions c) 0
+    && Nat.eqb (invalid_dispositions c) 0
+    && Nat.eqb (uncovered_guard_obligations c) 0
+    && Nat.eqb (extraneous_guard_dispositions c) 0
+    && Nat.eqb (invalid_guard_dispositions c) 0.
 
   Definition default_backend_gate
       (proofs oracle artifact fairness : bool)
@@ -206,39 +212,43 @@ Section RhoBackendFlipGate.
     <-> coverage_audit_passed c = true
         /\ uncovered_rejections c = 0
         /\ extraneous_dispositions c = 0
-        /\ invalid_dispositions c = 0.
+        /\ invalid_dispositions c = 0
+        /\ uncovered_guard_obligations c = 0
+        /\ extraneous_guard_dispositions c = 0
+        /\ invalid_guard_dispositions c = 0.
   Proof.
-    intros [audit uncovered extra invalid].
+    intros [audit uncovered extra invalid uncovered_guard extra_guard invalid_guard].
     unfold exact_coverage_evidence. simpl.
     destruct audit; simpl.
-    - split.
-      + intro H.
-        apply andb_true_iff in H as [Huncovered Hrest].
-        apply andb_true_iff in Hrest as [Hextra Hinvalid].
-        apply Nat.eqb_eq in Huncovered.
-        apply Nat.eqb_eq in Hextra.
-        apply Nat.eqb_eq in Hinvalid.
+    - repeat rewrite andb_true_iff. repeat rewrite Nat.eqb_eq.
+      split.
+      + intros [[[[[Huncovered Hextra] Hinvalid] Huncovered_guard]
+          Hextra_guard] Hinvalid_guard].
         repeat split; assumption.
-      + intros [_ [Huncovered [Hextra Hinvalid]]].
-        apply andb_true_iff. split.
-        * apply Nat.eqb_eq. exact Huncovered.
-        * apply andb_true_iff. split; apply Nat.eqb_eq; assumption.
+      + intros [_ [Huncovered [Hextra [Hinvalid
+          [Huncovered_guard [Hextra_guard Hinvalid_guard]]]]]].
+        repeat split; assumption.
     - split; intro H.
       + discriminate H.
       + destruct H as [Haudit _]. discriminate Haudit.
   Qed.
 
   Theorem uncovered_rejection_blocks_default_backend :
-    forall proofs oracle artifact fairness audit n extra invalid diagnostics,
+    forall proofs oracle artifact fairness audit n extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics,
     n <> 0 ->
     default_backend_gate proofs oracle artifact fairness
       {| coverage_audit_passed := audit;
          uncovered_rejections := n;
          extraneous_dispositions := extra;
-         invalid_dispositions := invalid |}
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact fairness audit n extra invalid diagnostics Hnonzero.
+    intros proofs oracle artifact fairness audit n extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics Hnonzero.
     unfold default_backend_gate, gate_state_from_deadlock_report,
       exact_coverage_evidence, deadlock_report_passes.
     simpl.
@@ -249,16 +259,21 @@ Section RhoBackendFlipGate.
   Qed.
 
   Theorem extraneous_delegation_blocks_default_backend :
-    forall proofs oracle artifact fairness audit uncovered extra invalid diagnostics,
+    forall proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics,
     extra <> 0 ->
     default_backend_gate proofs oracle artifact fairness
       {| coverage_audit_passed := audit;
          uncovered_rejections := uncovered;
          extraneous_dispositions := extra;
-         invalid_dispositions := invalid |}
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact fairness audit uncovered extra invalid diagnostics Hnonzero.
+    intros proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics Hnonzero.
     unfold default_backend_gate, gate_state_from_deadlock_report,
       exact_coverage_evidence, deadlock_report_passes.
     simpl.
@@ -270,16 +285,21 @@ Section RhoBackendFlipGate.
   Qed.
 
   Theorem invalid_disposition_blocks_default_backend :
-    forall proofs oracle artifact fairness audit uncovered extra invalid diagnostics,
+    forall proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics,
     invalid <> 0 ->
     default_backend_gate proofs oracle artifact fairness
       {| coverage_audit_passed := audit;
          uncovered_rejections := uncovered;
          extraneous_dispositions := extra;
-         invalid_dispositions := invalid |}
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
       diagnostics = false.
   Proof.
-    intros proofs oracle artifact fairness audit uncovered extra invalid diagnostics Hnonzero.
+    intros proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics Hnonzero.
     unfold default_backend_gate, gate_state_from_deadlock_report,
       exact_coverage_evidence, deadlock_report_passes.
     simpl.
@@ -288,6 +308,88 @@ Section RhoBackendFlipGate.
     rewrite Hinvalid.
     destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
       destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0); reflexivity.
+  Qed.
+
+  Theorem uncovered_guard_obligation_blocks_default_backend :
+    forall proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics,
+    uncovered_guard <> 0 ->
+    default_backend_gate proofs oracle artifact fairness
+      {| coverage_audit_passed := audit;
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics Hnonzero.
+    unfold default_backend_gate, gate_state_from_deadlock_report,
+      exact_coverage_evidence, deadlock_report_passes.
+    simpl.
+    assert (Hguard : Nat.eqb uncovered_guard 0 = false).
+    { rewrite Nat.eqb_neq. assumption. }
+    rewrite Hguard.
+    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+      destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0);
+      destruct (Nat.eqb invalid 0); reflexivity.
+  Qed.
+
+  Theorem extraneous_guard_disposition_blocks_default_backend :
+    forall proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics,
+    extra_guard <> 0 ->
+    default_backend_gate proofs oracle artifact fairness
+      {| coverage_audit_passed := audit;
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics Hnonzero.
+    unfold default_backend_gate, gate_state_from_deadlock_report,
+      exact_coverage_evidence, deadlock_report_passes.
+    simpl.
+    assert (Hguard : Nat.eqb extra_guard 0 = false).
+    { rewrite Nat.eqb_neq. assumption. }
+    rewrite Hguard.
+    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+      destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0);
+      destruct (Nat.eqb invalid 0); destruct (Nat.eqb uncovered_guard 0); reflexivity.
+  Qed.
+
+  Theorem invalid_guard_disposition_blocks_default_backend :
+    forall proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics,
+    invalid_guard <> 0 ->
+    default_backend_gate proofs oracle artifact fairness
+      {| coverage_audit_passed := audit;
+         uncovered_rejections := uncovered;
+         extraneous_dispositions := extra;
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
+      diagnostics = false.
+  Proof.
+    intros proofs oracle artifact fairness audit uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics Hnonzero.
+    unfold default_backend_gate, gate_state_from_deadlock_report,
+      exact_coverage_evidence, deadlock_report_passes.
+    simpl.
+    assert (Hguard : Nat.eqb invalid_guard 0 = false).
+    { rewrite Nat.eqb_neq. assumption. }
+    rewrite Hguard.
+    destruct proofs; destruct oracle; destruct artifact; destruct fairness; destruct audit;
+      destruct (Nat.eqb uncovered 0); destruct (Nat.eqb extra 0);
+      destruct (Nat.eqb invalid 0); destruct (Nat.eqb uncovered_guard 0);
+      destruct (Nat.eqb extra_guard 0); reflexivity.
   Qed.
 
   Theorem missing_artifact_validation_blocks_default_backend : forall proofs oracle fairness coverage diagnostics,
@@ -318,6 +420,9 @@ Section RhoBackendFlipGate.
         /\ uncovered_rejections coverage = 0
         /\ extraneous_dispositions coverage = 0
         /\ invalid_dispositions coverage = 0
+        /\ uncovered_guard_obligations coverage = 0
+        /\ extraneous_guard_dispositions coverage = 0
+        /\ invalid_guard_dispositions coverage = 0
         /\ diagnostics = 0.
   Proof.
     intros proofs oracle artifact fairness coverage diagnostics.
@@ -328,9 +433,15 @@ Section RhoBackendFlipGate.
     rewrite deadlock_report_passes_iff_empty.
     split.
     - intros [Hproofs [Horacle [Hcoverage [Hartifact [Hfairness Hdiagnostics]]]]].
-      destruct Hcoverage as [Haudit [Huncovered [Hextra Hinvalid]]].
+      destruct Hcoverage as
+        [Haudit [Huncovered [Hextra [Hinvalid [Hguard [Hextra_guard Hinvalid_guard]]]]]].
       repeat split; assumption.
-    - intros [Hproofs [Horacle [Hartifact [Hfairness [Haudit [Huncovered [Hextra [Hinvalid Hdiagnostics]]]]]]]].
+    - intro H.
+      destruct H as [Hproofs [Horacle H]].
+      destruct H as [Hartifact [Hfairness H]].
+      destruct H as [Haudit [Huncovered H]].
+      destruct H as [Hextra [Hinvalid H]].
+      destruct H as [Hguard [Hextra_guard [Hinvalid_guard Hdiagnostics]]].
       split; [assumption|].
       split; [assumption|].
       split.
@@ -398,16 +509,21 @@ Section RhoBackendFlipGate.
   Qed.
 
   Theorem missing_coverage_audit_evidence_ref_blocks_default_backend_with_refs :
-    forall proofs oracle artifact fairness uncovered extra invalid diagnostics refs,
+    forall proofs oracle artifact fairness uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics refs,
     coverage_audit_evidence_ref_count refs = 0 ->
     default_backend_gate_with_refs proofs oracle artifact fairness
       {| coverage_audit_passed := true;
          uncovered_rejections := uncovered;
          extraneous_dispositions := extra;
-         invalid_dispositions := invalid |}
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |}
       diagnostics refs = false.
   Proof.
-    intros proofs oracle artifact fairness uncovered extra invalid diagnostics
+    intros proofs oracle artifact fairness uncovered extra invalid
+      uncovered_guard extra_guard invalid_guard diagnostics
       [proof_refs oracle_refs coverage_refs fairness_refs blank_refs invalid_refs] Hmissing.
     simpl in Hmissing. subst coverage_refs.
     unfold default_backend_gate_with_refs, evidence_refs_present,
@@ -416,7 +532,10 @@ Section RhoBackendFlipGate.
       {| coverage_audit_passed := true;
          uncovered_rejections := uncovered;
          extraneous_dispositions := extra;
-         invalid_dispositions := invalid |} diagnostics);
+         invalid_dispositions := invalid;
+         uncovered_guard_obligations := uncovered_guard;
+         extraneous_guard_dispositions := extra_guard;
+         invalid_guard_dispositions := invalid_guard |} diagnostics);
       destruct proofs; destruct oracle;
       destruct (Nat.eqb proof_refs 0); destruct (Nat.eqb oracle_refs 0);
       reflexivity.

@@ -40,11 +40,12 @@ The current proof and coverage sources are
 | Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
 | Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
+| predicated-type guard coverage | `RhoBackendFlipGate.v`, `mettail-rho-codegen::collect_guard_obligations`, `mettail-rho-codegen::RhoGuardCoverageEvidence` | proved and tested that Rho-default selection requires exact coverage of every guard obligation induced by `LanguageDef`: behavioral predicates, structural patterns, theory registrations, and Rho-native channel/join declarations; uncovered, extraneous, duplicate, evidence-less, or incompatible guard dispositions block the default backend |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | escrow/refund settlement | `RhoEscrowSettlement.v`, `mettail-rho-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
 | per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
-| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, evidence-reference validity, and deadlock gates |
+| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, exact coverage of guard/predicated-type obligations, artifact validation, scheduler-fairness, evidence-reference validity, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch and wrappers | `RuntimeBackendDispatch.v`, `DovetailLanguageBackendWrapper.v`, `RhoLanguageBackendWrapper.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage`, `mettail_rho_runtime::RhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Dovetail defaults require normalized nonblank evidence references, return Dovetail-report-shaped runtime output, and are rejected by the legacy Ascent-shaped compatibility wrapper; the Dovetail wrapper selects `Dovetail` as the default, delegates non-Dovetail backend support to the inner generated language, requires a complete and structurally well-formed checked report, rejects `BoundedByCycleCut`, rejects malformed projected report tables, and rejects Ascent-shaped seeded facts on the Dovetail path; installed Rho defaults return observation-shaped reports backed by Rho runtime artifacts and are rejected by the legacy Ascent-shaped compatibility wrapper; checked `RuntimeBackendReport::try_dovetail` and `try_observations` constructors are the only public non-Ascent report constructors, and `RuntimeBackendReport` fields are private, so malformed report-shaped and observation-shaped outputs cannot enter through an unchecked runtime API or external struct literal; the runtime report bridge preserves observation value tags for native scalar payloads and structured list/map/bag payloads; the Rho wrapper selects `RhoMachine` as the default, delegates non-Rho backend support to the inner generated language, requires a planned backend whose `LanguageDef` identity matches the wrapped language plus a total typed invocation for Rho reports, and rejects Ascent-shaped seeded facts on the Rho path |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
@@ -60,6 +61,17 @@ cost-axis separation, escrow/refund settlement, per-purse determinism, exact
 rejected-rule delegation, normalized-`Par`
 well-formedness, source-text artifact exclusion, backend flip gating, and
 fail-closed runtime dispatch.
+The flip gate now treats predicated types as first-class coverage obligations:
+`mettail-rho-codegen::collect_guard_obligations` derives behavioral predicates,
+structural predicates, theory registrations, and Rho-native channel/join
+requirements from `LanguageDef`, while
+`RhoGuardCoverageEvidence::CoveredGuardObligations` must give every obligation
+one compatible evidence-backed disposition. The accepted dispositions are
+Dovetail-core structural matching, effective Boolean algebra, symbolic
+finite-state transducer, Rho-native join, native handler, and external
+contract. This is the mechanism that admits fully generalized predicated types
+over scalar, algebraic, collection, process/name, and host-backed data domains
+without hard-coded category heads.
 Dovetail-to-runtime handoff now starts from a checked Dovetail report rather
 than an Ascent-shaped success value. The handoff proof requires complete
 reports before emitting Rho-visible observations, preserves the extractor root
@@ -364,6 +376,17 @@ Gate clauses:
 - escrow settlement: reserve before candidate commit, charge only committed
   winners, and refund failed or abandoned candidates;
 - guarded-COMM soundness;
+- structural predicated-type guards: failed pattern, AC, or exact-key shape
+  matches must behave as no match and leave candidate data available;
+- behavioral predicated-type guards: false relation, theory, or host predicate
+  results must fail before commit;
+- EBA-backed decisions: every admitted predicate domain must provide decidable
+  Boolean operations, satisfiability, and witness behavior appropriate to that
+  domain;
+- SFT-backed transformations: every admitted transducer must preserve the
+  specified transformation, composition, pre-image, or post-image semantics;
+- generalized data-domain coverage: guard evidence must name the generated
+  source domain it covers rather than relying on scalar-only assumptions;
 - ambiguity-set preservation under nondeterministic schedules;
 - mergeable-channel optimization only when the algebraic contract matches.
 

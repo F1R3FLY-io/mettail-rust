@@ -41,9 +41,16 @@ is used formally elsewhere.
 | exact key | A byte-level key that is injective with respect to the observational identity being represented. It is not a lossy hash. |
 | semantic hash | A hash derived from an exact key. It may be used for indexing, but it must not be the identity proof unless its safety contract establishes injectivity for the domain. |
 | predicated type | A type-like communication or rewrite constraint expressed as a guard predicate over matched terms. Predicated types are declared by the language layer, consumed by Dovetail as guarded rules, and lowered by the Rho backend only through covered guards, native guard handlers, or explicit rejections. |
+| structural predicate | A predicate whose truth is determined by the shape of a value: constructor head, field layout, binding structure, associative-commutative decomposition, or exact-key pattern membership. |
+| behavioral predicate | A predicate whose truth depends on a relation, theory, host operation, or runtime state beyond immediate constructor shape, such as arithmetic comparison, reachability, channel compatibility, relation membership, or bounded quantified search. |
 | guard sublanguage | The language-defined syntax and semantics for guard predicates, including connective keywords, built-in predicates, typed predicate signatures, theory registrations, and channel/join declarations. |
 | typed predicate | A guard predicate whose parameters carry source-language category or type annotations, such as `gt(x: Int, y: Int)`. Typed predicates drive validation, theory routing, and type-specific lowering; they do not create a backend-local type system. |
 | theory routing | The mapping from typed guard predicates to analysis or decision procedures, such as arithmetic, unification, or lattice reasoning. The mapping is derived from generated language inventory rather than keyword heuristics. |
+| effective Boolean algebra | A decidable Boolean algebra over a possibly infinite domain. It supplies computable `⊥`, `⊤`, `∧`, `∨`, `¬`, and satisfiability operations so symbolic automata can reason over predicates instead of enumerating concrete values. |
+| symbolic finite automaton | A finite automaton whose transitions are labeled by predicates from an effective Boolean algebra rather than by individual alphabet symbols. |
+| symbolic finite-state transducer | A symbolic automaton with output. It transforms values or value sequences while preserving symbolic guards; useful operations include composition, pre-image, post-image, and functionality checking. |
+| guard obligation | A compile-time coverage item induced by `LanguageDef`, such as a declared predicate, a theory registration, a guarded term slot, a structural guard premise, or a Rho-native channel/join declaration. Rust names this item `RhoGuardObligation`. |
+| guard disposition | The audited explanation for one guard obligation. Rust names this item `RhoGuardDisposition`; accepted dispositions are Dovetail-core structural matching, effective Boolean algebra, symbolic finite-state transducer, Rho-native join, native handler, or external contract. |
 
 ## Rho and RSpace Terms
 
@@ -96,6 +103,7 @@ is used formally elsewhere.
 | CBN/Need | Call by Need | CBN plus memoization of forced thunks. |
 | COMM | Communication | The send/receive synchronization rule. |
 | DOI | Digital Object Identifier | Persistent identifier for scholarly references. |
+| EBA | Effective Boolean Algebra | A decidable Boolean algebra used by symbolic automata and guard theory routing. |
 | FV | Formal Verification | Mechanized or mathematically stated correctness evidence. |
 | IR | Intermediate Representation | A representation between source terms and emitted runtime code. |
 | LTS | Labelled Transition System | A transition system used to state operational correspondence. |
@@ -103,6 +111,9 @@ is used formally elsewhere.
 | OSLF | Ordered Linear-Substructural Funding | The funding/cost discipline reused from F1r3node's cost-accounted Rho work. |
 | RHO / `ρ` | Reflective Higher-Order | The process-calculus family underlying Rholang. |
 | SCC | Strongly Connected Component | A mutually recursive component in a graph. |
+| SFA | Symbolic Finite Automaton | A finite automaton over predicates from an effective Boolean algebra. |
+| SFT | Symbolic Finite-State Transducer | An output-producing symbolic automaton used for guard-preserving transformations and pre-image reasoning. |
+| WFST | Weighted Finite-State Transducer | A finite-state transducer with semiring weights; useful for ranked parsing, extraction, or transformation costs. |
 | WTA | Weighted Tree Automaton | A weighted automaton representation used by Dovetail extraction. |
 
 ## Naming Convention for Channels

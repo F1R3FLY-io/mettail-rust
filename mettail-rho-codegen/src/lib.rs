@@ -60,10 +60,12 @@ pub mod need;
 pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
-    classify_rejected_rules, plan_rho_default_backend,
+    classify_rejected_rules, collect_guard_obligations, plan_rho_default_backend,
     plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
     RhoDefaultBackendEvidenceGate, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
     RhoEvidenceRefAuditDiagnostic, RhoEvidenceRefAuditPolicy, RhoGateEvidenceDiagnostic,
+    RhoGuardCoverageEvidence, RhoGuardDisposition, RhoGuardDispositionDiagnostic,
+    RhoGuardDispositionKind, RhoGuardObligation, RhoGuardObligationKind,
     RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
 };

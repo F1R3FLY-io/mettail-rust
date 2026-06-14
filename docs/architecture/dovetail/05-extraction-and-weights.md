@@ -84,6 +84,24 @@ cannot make the parent candidate strictly better under the selected best order.
 Dovetail seals the marker and implements it only for checked weight types used
 by the engine.
 
+### WFST, SFT, And Dovetail Weights
+
+Dovetail extraction is modeled as weighted tree derivation enumeration: e-classes
+act like tree-automaton states, e-nodes act like tree transitions, and semiring
+weights order derivation trees. This is distinct from WFST or SFT evidence used
+by predicated-type analysis.
+
+| Term | Used for | May delete candidates? |
+|---|---|---|
+| Dovetail WTA/semiring weight | ordering derivation trees and detecting explicit `0̄` refutation | only when the composed weight is `0̄` |
+| WFST analysis | weighted string/sequence transduction or selectivity evidence for scheduling | no; it may guide order, not remove semantic alternatives |
+| SFT analysis | symbolic guard transformations, pre-image, post-image, or normalization evidence | only by proving the transformed guard is equivalent under its contract |
+
+The rule is:
+
+`analysis_weight(d)` may reorder work, but `key(d)` and Dovetail's extraction
+completeness decide which derivations remain visible.
+
 ## Equal-Weight Alternatives
 
 Equal weight does not merge alternatives:

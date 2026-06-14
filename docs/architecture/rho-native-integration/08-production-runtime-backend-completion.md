@@ -184,12 +184,107 @@ This helper is for planning and review. It does not satisfy the production
 coverage gate until each suggestion is paired with a stable evidence reference
 and supplied as `RhoCoverageEvidence::CoveredRejectedRules`.
 
+## Predicated-Type And Guard Coverage
+
+Predicated types have the same fail-closed shape as rejected-rule coverage, but
+their unit of evidence is a guard obligation rather than a lowered rewrite
+rule. The planner derives the obligation set directly from `LanguageDef`:
+
+`language! spec → LanguageDef.guards + guarded terms + guarded rules → RhoGuardObligation[]`
+
+No backend-local function should ask whether a constructor is in a known
+category list. The generated inventory already contains the relevant facts:
+typed predicate declarations, theory registrations, channel declarations,
+join declarations, term parameters such as `?guard:Guard`, and rewrite
+premises such as `BehavioralGuard`.
+
+The current Rust API is:
+
+| API | Role |
+|---|---|
+| `collect_guard_obligations(def)` | derives the exact obligation set from a parsed language definition |
+| `RhoGuardObligationKind` | classifies each obligation as behavioral predicate, structural pattern, theory registration, or Rho-native join |
+| `RhoGuardDispositionKind` | records how the obligation is covered: Dovetail structural matching, EBA, SFT, Rho-native join, native handler, or external contract |
+| `RhoGuardCoverageEvidence` | supplies either `NoGuardObligations` or an exact `CoveredGuardObligations` list |
+| `RhoDefaultBackendPlanError` | reports uncovered obligations, extraneous dispositions, and invalid dispositions as blockers |
+
+The admission equation is:
+
+`RhoDefault(L) ⇒ ∀o ∈ O(L). ∃!d. covers(d, o) ∧ evidence_ref(d) ≠ ""`
+
+where `O(L)` is `collect_guard_obligations(LanguageDef(L))`. The existential
+is unique: a duplicated disposition is invalid because duplicated evidence can
+hide disagreement about which mechanism owns a guard.
+
+The disposition compatibility table is:
+
+| Obligation | Why it exists | Compatible dispositions |
+|---|---|---|
+| behavioral predicate | runtime predicate over already matched values or derived relations | effective Boolean algebra, symbolic finite-state transducer, Rho-native join, native handler, external contract |
+| structural pattern | value-shape, binding-shape, AC, or exact-key decomposition | Dovetail-core structural matching, symbolic finite-state transducer, Rho-native join, native handler, external contract |
+| theory registration | typed predicate domain needs a decision procedure | effective Boolean algebra, symbolic finite-state transducer, native handler, external contract |
+| Rho-native join | channel/join declaration needs atomic RSpace scheduling | Rho-native join, native handler, external contract |
+
+Effective Boolean algebras and symbolic finite-state transducers are not
+side-channel documentation terms; they are production admission choices.
+Use an EBA disposition when the guard reduces to decidable predicate algebra
+over a domain, such as interval arithmetic, finite enumerations, lattice
+membership, byte ranges, URI classes, or a verified theory adapter. Use an SFT
+disposition when the guard performs or requires a value transformation while
+preserving symbolic reasoning, such as normalization before comparison,
+sequence transduction, pre-image pruning for multi-channel joins, or
+guard-directed structural rewriting. Use a Rho-native join disposition only
+when the host RSpace receive/guard mechanism itself is the evidence for
+atomicity and no-consumption behavior.
+
+This scheme is fully generalized over MeTTaIL data domains. A predicate may be
+over `Int`, `Bool`, `Str`, bytes, URIs, exact numerics, lists, maps, bags,
+algebraic syntax trees, Rho processes, Rho names, or host-backed values. The
+planner does not need a case for every data type; it needs the generated
+language inventory to induce the obligation and an evidence-backed disposition
+whose theory or handler is valid for that domain. A new data type therefore
+extends the system by adding generated metadata and a disposition/evidence
+artifact, not by patching a backend-local category table.
+
+Literate implementation checklist:
+
+```pseudocode
+Algorithm: Add a new predicated type to a Rho-default language
+
+Given:
+  a language edit that introduces a new guard predicate or guarded pattern
+
+Produce:
+  a flip-gated Rho default plan or a precise blocker
+
+Steps:
+  1. Declare the predicate, theory, channel, join, or guarded term slot in the
+     language specification so the generated LanguageDef records it.
+
+  2. Run the guard-obligation collector and inspect the new obligation id.
+
+  3. Choose the narrowest compatible disposition:
+       - DovetailCoreStructural for pure exact-key structural matching;
+       - EffectiveBooleanAlgebra for decidable predicate domains;
+       - SymbolicFiniteTransducer for symbolic transformations and pre-images;
+       - RhoNativeJoin for host RSpace atomic guarded joins;
+       - NativeHandler or ExternalContract only when the evidence is outside
+         the generated RhoNet contract.
+
+  4. Add a stable evidence reference for the disposition. Prefer repository
+     local proof, test, or design artifacts; use logical evidence namespaces
+     only when the audited planner explicitly allows them.
+
+  5. Rebuild the Rho default backend plan. Treat any uncovered, extraneous, or
+     invalid guard disposition as a production blocker.
+```
+
 ## Production Gates
 
 | Gate | Required evidence |
 |---|---|
 | semantic coverage | coverage matrix maps each language rewrite requirement to Dovetail, RhoNet, native handler, or exact rejection |
-| predicated-type coverage | every `guards {}` predicate, typed predicate overload, theory registration, channel/join declaration, and guarded rule is derived from generated inventory and classified as Dovetail-core, RhoNet-lowerable, native-guard, external-contract, or exact rejection |
+| predicated-type coverage | every `guards {}` predicate, typed predicate overload, theory registration, channel/join declaration, and guarded rule is derived from generated inventory and exactly covered by a compatible Dovetail-core, EBA, SFT, Rho-native join, native-handler, or external-contract disposition |
 | AST artifact purity | generated backend accepts `rhoapi::Par` artifacts and rejects source-text artifacts |
 | RSpace schedule correctness | independent-redex schedules erase to the same visible Dovetail observations |
 | guarded join correctness | failed guards release data and valid joins can commit afterward |
@@ -426,15 +521,24 @@ order:
 2. Classify every predicated-type guard from generated `guards {}` inventory:
    structural patterns, typed predicate overloads, theory-routed predicates,
    relation queries, channel declarations, and guarded joins.
-3. Add Dovetail proofs for Dovetail-core rules and external contracts for
+3. For every structural guard, record whether the evidence is
+   Dovetail-core structural matching, SFT transformation/pre-image evidence,
+   Rho-native join behavior, native handler, or external contract.
+4. For every behavioral guard, record whether the evidence is EBA decision
+   evidence, SFT transformation evidence, Rho-native join behavior, native
+   handler, or external contract.
+5. Confirm that every generated data domain referenced by a guard has a
+   matching disposition and that WFST/selectivity evidence is used only for
+   ordering or scheduling, never for dropping semantic candidates.
+6. Add Dovetail proofs for Dovetail-core rules and external contracts for
    native-handler rules.
-4. Implement RhoNet lowering to `rhoapi::Par` for each lowerable rule.
-5. Add RhoRuntime observation tests that execute the validated `Par` artifact.
-6. Add differential oracle tests against the Ascent reference path.
-7. Add process-calculus and schedule-family checks for the rule's concurrency
+7. Implement RhoNet lowering to `rhoapi::Par` for each lowerable rule.
+8. Add RhoRuntime observation tests that execute the validated `Par` artifact.
+9. Add differential oracle tests against the Ascent reference path.
+10. Add process-calculus and schedule-family checks for the rule's concurrency
    shape when the rule has multiple independent redexes or guarded joins.
-8. Run the language's capped Dovetail/Rho proof and runtime gate suite.
-9. Enable the language's Dovetail/Rho backend selection only through the
+11. Run the language's capped Dovetail/Rho proof and runtime gate suite.
+12. Enable the language's Dovetail/Rho backend selection only through the
    flip-gated planner.
 
 Completion means the strict backend selection gate succeeds from current

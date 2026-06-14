@@ -220,6 +220,13 @@ It does not invent category lists, parse source text, or select a runtime.
 Downstream consumers then choose their own artifact: the Rho backend lowers a
 complete report to normalized `rhoapi::Par`, an oracle compares exact keys with
 a reference backend, and tests inspect the same roots and derivation edges.
+Dovetail also consumes structural and behavioral predicated-type inventory as
+guarded rewrite obligations. Pure structural obligations may be discharged by
+Dovetail's exact-key and pattern semantics; behavioral obligations, effective
+Boolean algebras, symbolic finite-state transducers, weighted transducer
+analysis, native handlers, and external contracts remain explicit coverage
+evidence. Dovetail preserves those distinctions in reports and handoff
+metadata; it does not implement every predicate theory itself.
 
 There is also a runtime-facing adapter boundary:
 

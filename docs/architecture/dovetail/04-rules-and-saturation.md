@@ -20,6 +20,10 @@ separate hard-coded list of language categories or constructor heads. It should
 ask the generated inventory what exists, then lower that inventory into
 pattern-and-rule data. A future language edit should therefore flow through the
 language definition and generated metadata before reaching Dovetail.
+Guarded rules follow the same path. Dovetail receives structural guard
+patterns, behavioral predicate premises, typed predicate metadata, and external
+coverage evidence from generated inventory. It does not infer guard meaning
+from predicate names or from a backend-local list of known category heads.
 
 ## Rule Shape
 
@@ -29,6 +33,8 @@ A rule has:
 |---|---|
 | `lhs` | pattern matched against e-classes |
 | `rhs` | pattern instantiated under a match substitution |
+| `guard` | optional structural or behavioral predicate over the match substitution |
+| `evidence` | optional coverage reference for a native, theory, SFT, Rho, or external guard/handler contract |
 | `label` | optional diagnostic name |
 
 Patterns are:
@@ -64,6 +70,25 @@ Instantiation rejects ill-formed right-hand sides:
 `vars(rhs) ⊆ vars(lhs)`
 
 If a right-hand-side variable is unbound, Dovetail adds no partial term.
+
+Guarded instantiation is structural first, behavioral second:
+
+```text
+To apply a guarded rule:
+  Match the left-hand pattern and build substitution σ.
+  If structural guard matching fails, derive no fact.
+  If structural matching succeeds, evaluate behavioral predicates over σ.
+  If any behavioral predicate is false or unsupported, derive no fact unless
+  an explicit external contract reports a covered result.
+  Instantiate the right-hand side only after all covered guards pass.
+```
+
+The no-commit rule is semantic, not just operational:
+
+`guard(σ) = false ⇒ no derived fact`
+
+For Rho consumers, the same rule becomes no RSpace consumption on a failed
+guard. For direct Dovetail consumers, it means no rewrite edge is added.
 
 ## Saturation Outcomes
 

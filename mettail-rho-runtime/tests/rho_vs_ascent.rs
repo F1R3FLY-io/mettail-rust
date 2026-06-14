@@ -15,7 +15,7 @@ use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_rho_codegen::{
     plan_rho_default_backend_with_evidence_audit, RhoAstSend, RhoCoverageEvidence,
-    RhoDefaultBackendEvidence,
+    RhoDefaultBackendEvidence, RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::PlannedRhoBackend;
 use mettail_runtime::Language;
@@ -52,6 +52,7 @@ fn passing_evidence() -> RhoDefaultBackendEvidence {
             "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
         ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 

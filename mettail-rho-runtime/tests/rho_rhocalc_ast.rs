@@ -12,6 +12,7 @@ use mettail_languages::rhocalc::{
 };
 use mettail_rho_codegen::{
     plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
+    RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{
     lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_strings,
@@ -63,6 +64,7 @@ fn passing_dynamic_evidence() -> RhoDefaultBackendEvidence {
             "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
         ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 

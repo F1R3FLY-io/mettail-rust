@@ -164,11 +164,10 @@ twenty-six sections in three parts:
   §10 and understand single-channel guards.
 - **Part II** (§§11–14A, 15–18): Formal framework — decidability tiering,
   the five-stage pipeline, guard compilation strategies, compile-time/
-  runtime boundary, theory-guided LogicT evaluation (§14A), the
-  BooleanAlgebra algebraic foundation, constraint theories (including
-  pipeline flow, dispatch gating, and extension mechanism), and automata
-  modules (including symbolic finite transducers and e-graph equality
-  saturation).
+  runtime boundary, theory-guided LogicT evaluation (§14A), the effective
+  Boolean algebra foundation, constraint theories (including pipeline flow,
+  dispatch gating, and extension mechanism), and automata modules (including
+  symbolic finite-state transducers and e-graph equality saturation).
 - **Part III** (§§19–25): Architecture and implementation — lint
   integration, pluggable type system framework (refinement types,
   set-theoretic types, Hindley-Milner), implementation architecture,
@@ -273,6 +272,7 @@ also explained in context at its point of introduction.
 | CHAM    | Chemical Abstract Machine                    |
 | DFA     | Deterministic Finite Automaton               |
 | DNF     | Disjunctive Normal Form                      |
+| EBA     | Effective Boolean Algebra                    |
 | EBNF    | Extended Backus-Naur Form                    |
 | EWPDS   | Extended Weighted Pushdown System            |
 | FOL     | First-Order Logic                            |
@@ -284,7 +284,8 @@ also explained in context at its point of introduction.
 | PATA    | Parity Alternating Tree Automaton            |
 | RD      | Recursive Descent (parsing)                  |
 | SFA     | Symbolic Finite Automaton                    |
-| SFT     | Symbolic Finite Transducer                   |
+| SFT     | Symbolic Finite-State Transducer             |
+| SFST    | Symbolic Finite-State Transducer             |
 | SMT     | Satisfiability Modulo Theories               |
 | TLS     | Thread-Local Storage                         |
 | TRS     | Term Rewriting System                        |
@@ -6749,15 +6750,16 @@ Channel type: `ch : Channel<PosInt>`
 
 ---
 
-## 15. The BooleanAlgebra Framework
+## 15. The Effective Boolean Algebra Framework
 
 ### Motivation
 
 All guard analysis — satisfiability, subsumption, overlap detection,
-equivalence — reduces to operations over Boolean algebras. The
-`BooleanAlgebra` trait provides the algebraic foundation for the entire
-predicated types pipeline. (For how SFA intersection supports guard
-selectivity and overlap analysis, see §13.)
+equivalence — reduces to operations over effective Boolean algebras. An
+effective Boolean algebra is a Boolean algebra with computable operations and a
+decidable satisfiability test. The `BooleanAlgebra` trait provides that
+algebraic foundation for the entire predicated types pipeline. (For how SFA
+intersection supports guard selectivity and overlap analysis, see §13.)
 
 ### The BooleanAlgebra Trait
 
@@ -6773,6 +6775,13 @@ represents guard conditions, while `Domain` represents the concrete values
 those conditions constrain. The trait requires `Clone + Debug + Send + Sync`
 because SFA operations may run in parallel during the compile-time pipeline
 (§12, Stage 4).
+
+For Rho/Dovetail backend coverage, an EBA disposition is valid only when the
+implementation provides the effective operations, satisfiability, membership
+evaluation, and witness behavior needed by the declared guard domain. Merely
+naming a theory is not enough; the production gate needs evidence that the
+domain-specific algebra is decidable and agrees with the generated predicate
+typing.
 
 The trait separates *core operations* (the Boolean algebra axioms) from
 *derived operations* (which have default implementations using the core
@@ -8463,11 +8472,12 @@ These modules run on every guard regardless of the predicate signature
 | **ARA** (Affine-Relation Analysis)  | Affine invariant discovery (subsumes constant/copy/linear propagation)   |
 | **Relational WPDS**                 | Binary relation weight domain (`HeapSemiring`) for heap analysis         |
 
-### Symbolic Finite Transducers (M15)
+### Symbolic Finite-State Transducers (M15)
 
 **Motivation.** Some guards do not merely accept or reject — they *transform*
 values before comparison. Case-folding (`"Hello" → "hello"`), whitespace
-normalization, and guard-conditional rewrites all produce output. SFTs extend
+normalization, and guard-conditional rewrites all produce output. Symbolic
+finite-state transducers (SFTs, also written SFSTs when clarity helps) extend
 SFAs with output functions: where SFAs accept/reject, SFTs transform inputs
 to outputs. Source: [sft.rs](../../prattail/src/sft.rs) (feature gate `sft`).
 Design doc: [symbolic-finite-transducer.md](../../prattail/docs/design/symbolic-finite-transducer.md).
@@ -8479,8 +8489,8 @@ the input of the next. The pre-image operation asks: "what inputs could have
 produced outputs in this target set?" — enabling backward reasoning about
 transformations.
 
-**Formal Definition.** A **Symbolic Finite Transducer** (SFT) over input
-Boolean algebra A and output Boolean algebra B is a tuple
+**Formal Definition.** A **symbolic finite-state transducer** (SFT/SFST) over
+input Boolean algebra A and output Boolean algebra B is a tuple
 M = (Q, A, B, δ, I, F) where:
 
 - Q is a finite set of states
@@ -8500,6 +8510,13 @@ The output function f on each transition is one of:
 - `FlatMap(g)` — apply function g: A.Domain → Vec<B.Domain>
 
 An SFA is a degenerate SFT where every transition has `Epsilon` output.
+An SFT is not the same thing as a weighted finite-state transducer (WFST):
+SFTs use symbolic predicates to transform or constrain values, while WFSTs add
+semiring weights to transductions for ranking or cost analysis. Rho/Dovetail
+guard coverage admits SFT evidence when transformation, composition, pre-image,
+or post-image semantics are proved for the guard domain. WFST evidence may
+inform selectivity or scheduling order, but it must not delete semantic
+candidates unless a separate refutation proof justifies that deletion.
 
 **Key operations:**
 
@@ -9232,6 +9249,20 @@ codegen) for free. Three implementations planned:
 3. **`SetTheoreticTypeSystem`** — CDuce/XDuce-style types modeled as
    regular tree languages via `WeightedTreeAutomaton<BooleanWeight>`, with
    union/intersection/negation types and subtyping as language inclusion
+
+Predicated types generalize over all language data types, not only scalar
+refinements. The intended bridge is:
+
+`TypeSystem + ConstraintTheory + BooleanAlgebra → generated guard obligation`
+
+A structural predicate over an algebraic tree, collection, process, name, or
+host-backed value is handled by the type system's shape and subtyping model. A
+behavioral predicate over the same data is handled by its constraint theory and
+effective Boolean algebra, or by an explicit native/external contract. This is
+the bridge used by the Dovetail/Rho backend gate: adding a new data type should
+produce generated metadata and a guard obligation, then require compatible EBA,
+SFT, structural, native, or external evidence before the Rho backend can become
+the default.
 
 ### Architecture
 
