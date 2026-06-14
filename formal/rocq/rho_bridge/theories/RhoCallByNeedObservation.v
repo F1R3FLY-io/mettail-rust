@@ -2,11 +2,13 @@
  * RhoCallByNeedObservation: weak observation correctness for the generic
  * call-by-need encoding.
  *
- * A source computation is represented by a private thunk id and a deterministic
- * value.  The Rho encoding forces the thunk by sending a continuation to that
- * private channel and memoizes the first result.  The internal force/memo COMM
- * steps are deliberately hidden by the observation function; the public
- * observation is the value delivered to the continuation.
+ * A source computation is represented by a private thunk id and an arbitrary
+ * deterministic value.  The Rho encoding forces the thunk by sending a
+ * continuation to that private channel and memoizes the first result.  The
+ * internal force/memo COMM steps are deliberately hidden by the observation
+ * function; the public observation is the value delivered to the continuation.
+ * Rust's CallByNeedThunkSpec supplies generated-language values and observation
+ * channels for the AST artifact while preserving this topology.
  *
  * Proven here:
  *   - forcing a sound memoized thunk observes the same value as source_eval;

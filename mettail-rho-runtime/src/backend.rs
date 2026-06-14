@@ -452,6 +452,16 @@ impl PlannedCallByNeedThunk {
         Ok(observed.into_iter().collect())
     }
 
+    /// Run the planned thunk artifact and read the output/evaluation channels
+    /// named by its generated-language thunk spec.
+    pub async fn run_and_read_need_channels(
+        &self,
+    ) -> Result<BTreeMap<String, Vec<String>>, String> {
+        let spec = self.plan.spec();
+        self.run_and_read_string_channels(&[spec.out_channel(), spec.eval_channel()])
+            .await
+    }
+
     /// Run the planned thunk artifact and return a typed observation report for
     /// one quoted output channel.
     pub async fn run_and_observe_strings(

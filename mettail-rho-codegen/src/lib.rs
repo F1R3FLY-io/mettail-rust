@@ -29,11 +29,13 @@
 //! `plan_rho_default_backend` then ties that lowering to proof, oracle, coverage,
 //! artifact-validation, scheduler-fairness, and deadlock evidence before
 //! returning the concrete backend plan. Generic call-by-need admission is bounded
-//! by explicit lookahead and heap budgets, and the current memoized-thunk slice
-//! builds a normalized `rhoapi::Par` `RhoProgram` with a call-by-need validation
-//! profile, then wraps it in `CallByNeedThunkPlan` after budget admission,
-//! validation, and evidence-reference checks before runtime execution. The
-//! totality-or-explicit-rejection proof is
+//! by explicit lookahead and heap budgets, and the memoized-thunk slice keeps a
+//! verified contract/state/memo topology while `CallByNeedThunkSpec`
+//! parameterizes generated-language values, evaluation markers, and observation
+//! channels. The builder emits a normalized `rhoapi::Par` `RhoProgram` with a
+//! call-by-need validation profile, then wraps it in `CallByNeedThunkPlan` after
+//! budget admission, validation, and evidence-reference checks before runtime
+//! execution. The totality-or-explicit-rejection proof is
 //! `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the flip-gate
 //! proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
 
@@ -74,11 +76,13 @@ pub use lower::{
     RhoProgram,
 };
 pub use need::{
-    admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_program,
-    plan_call_by_need_thunk, CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker,
-    CallByNeedForce, CallByNeedForceAdmissionRecord, CallByNeedInitialState,
-    CallByNeedPlanEvidence, CallByNeedPlanEvidenceDiagnostic, CallByNeedPlanEvidenceGate,
-    CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
+    admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
+    build_call_by_need_thunk_program, build_call_by_need_thunk_program_from_spec,
+    plan_call_by_need_thunk, plan_call_by_need_thunk_with_spec, CallByNeedAdmission,
+    CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce, CallByNeedForceAdmissionRecord,
+    CallByNeedInitialState, CallByNeedPlanEvidence, CallByNeedPlanEvidenceDiagnostic,
+    CallByNeedPlanEvidenceGate, CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
+    CallByNeedThunkSpec, CallByNeedThunkSpecError,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

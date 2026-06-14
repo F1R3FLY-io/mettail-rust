@@ -6,7 +6,8 @@
 //! are read from RSpace after one runtime evaluation.
 
 use mettail_rho_codegen::{
-    plan_call_by_need_thunk, CallByNeedBudget, CallByNeedInitialState, CallByNeedPlanEvidence,
+    plan_call_by_need_thunk_with_spec, CallByNeedBudget, CallByNeedInitialState,
+    CallByNeedPlanEvidence, CallByNeedThunkSpec,
 };
 use mettail_rho_runtime::PlannedCallByNeedThunk;
 
@@ -32,16 +33,24 @@ fn budget_for(initial_state: CallByNeedInitialState) -> CallByNeedBudget {
 }
 
 async fn run_need(initial_state: CallByNeedInitialState) -> (Vec<String>, Vec<String>) {
-    let plan = plan_call_by_need_thunk(initial_state, budget_for(initial_state), evidence())
-        .expect("call-by-need thunk plan must pass budget, evidence, and artifact gates");
+    run_need_spec(CallByNeedThunkSpec::default_for(initial_state)).await
+}
+
+async fn run_need_spec(spec: CallByNeedThunkSpec) -> (Vec<String>, Vec<String>) {
+    let plan = plan_call_by_need_thunk_with_spec(
+        spec.clone(),
+        budget_for(spec.initial_state()),
+        evidence(),
+    )
+    .expect("call-by-need thunk plan must pass budget, evidence, and artifact gates");
     let backend = PlannedCallByNeedThunk::from_plan(plan);
     let mut observed = backend
-        .run_and_read_string_channels(&["OUT", "EVAL"])
+        .run_and_read_need_channels()
         .await
         .unwrap_or_else(|e| panic!("planned call-by-need AST program failed:\n{e}"));
-    let mut out = observed.remove("OUT").unwrap_or_default();
+    let mut out = observed.remove(spec.out_channel()).unwrap_or_default();
     out.sort();
-    let mut evals = observed.remove("EVAL").unwrap_or_default();
+    let mut evals = observed.remove(spec.eval_channel()).unwrap_or_default();
     evals.sort();
     (out, evals)
 }
@@ -70,4 +79,28 @@ async fn call_by_need_memo_hit_observes_value_without_compute_marker() {
         "memo-hit forces must observe the memoized value"
     );
     assert!(evals.is_empty(), "a hot thunk must not execute the cold compute branch");
+}
+
+#[tokio::test]
+async fn call_by_need_parameterized_payload_and_channels_observe_generated_values() {
+    let spec = CallByNeedThunkSpec::new(
+        CallByNeedInitialState::Cold,
+        "answer",
+        "calculator-add",
+        "RESULT",
+        "TRACE",
+    )
+    .expect("generated-language thunk spec should be valid");
+
+    let (out, evals) = run_need_spec(spec).await;
+    assert_eq!(
+        out,
+        vec!["answer".to_string(), "answer".to_string()],
+        "both forces must observe the generated-language value"
+    );
+    assert_eq!(
+        evals,
+        vec!["calculator-add".to_string()],
+        "a cold generated-language thunk must compute exactly once"
+    );
 }

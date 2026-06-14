@@ -113,6 +113,100 @@ impl CallByNeedInitialState {
     }
 }
 
+/// Invalid parameterization for a generated call-by-need thunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallByNeedThunkSpecError {
+    EmptyValue,
+    EmptyEvalMarker,
+    EmptyOutputChannel,
+    EmptyEvalChannel,
+    ObservationChannelsMustDiffer,
+}
+
+/// Parameterization for a generated M-RHO.2 call-by-need thunk.
+///
+/// The shape stays fixed so the validator can continue proving the topology:
+/// one private thunk contract, one state cell, one memo cell, and two observer
+/// continuations. The payload, compute marker, and public observation channels
+/// are generated-language parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallByNeedThunkSpec {
+    initial_state: CallByNeedInitialState,
+    value: String,
+    eval_marker: String,
+    out_channel: String,
+    eval_channel: String,
+}
+
+impl CallByNeedThunkSpec {
+    pub fn new(
+        initial_state: CallByNeedInitialState,
+        value: impl Into<String>,
+        eval_marker: impl Into<String>,
+        out_channel: impl Into<String>,
+        eval_channel: impl Into<String>,
+    ) -> Result<Self, CallByNeedThunkSpecError> {
+        let spec = Self {
+            initial_state,
+            value: value.into(),
+            eval_marker: eval_marker.into(),
+            out_channel: out_channel.into(),
+            eval_channel: eval_channel.into(),
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    pub fn default_for(initial_state: CallByNeedInitialState) -> Self {
+        Self {
+            initial_state,
+            value: "value".to_string(),
+            eval_marker: "compute".to_string(),
+            out_channel: "OUT".to_string(),
+            eval_channel: "EVAL".to_string(),
+        }
+    }
+
+    pub fn initial_state(&self) -> CallByNeedInitialState {
+        self.initial_state
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    pub fn eval_marker(&self) -> &str {
+        &self.eval_marker
+    }
+
+    pub fn out_channel(&self) -> &str {
+        &self.out_channel
+    }
+
+    pub fn eval_channel(&self) -> &str {
+        &self.eval_channel
+    }
+
+    fn validate(&self) -> Result<(), CallByNeedThunkSpecError> {
+        if self.value.is_empty() {
+            return Err(CallByNeedThunkSpecError::EmptyValue);
+        }
+        if self.eval_marker.is_empty() {
+            return Err(CallByNeedThunkSpecError::EmptyEvalMarker);
+        }
+        if self.out_channel.is_empty() {
+            return Err(CallByNeedThunkSpecError::EmptyOutputChannel);
+        }
+        if self.eval_channel.is_empty() {
+            return Err(CallByNeedThunkSpecError::EmptyEvalChannel);
+        }
+        if self.out_channel == self.eval_channel {
+            return Err(CallByNeedThunkSpecError::ObservationChannelsMustDiffer);
+        }
+        Ok(())
+    }
+}
+
 /// Named evidence gate for accepting a planned call-by-need thunk artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CallByNeedPlanEvidenceGate {
@@ -186,7 +280,7 @@ pub struct CallByNeedForceAdmissionRecord {
 /// shape-validated artifact by accident.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallByNeedThunkPlan {
-    initial_state: CallByNeedInitialState,
+    spec: CallByNeedThunkSpec,
     budget_before: CallByNeedBudget,
     budget_after: CallByNeedBudget,
     force_admissions: Vec<CallByNeedForceAdmissionRecord>,
@@ -195,8 +289,12 @@ pub struct CallByNeedThunkPlan {
 }
 
 impl CallByNeedThunkPlan {
+    pub fn spec(&self) -> &CallByNeedThunkSpec {
+        &self.spec
+    }
+
     pub fn initial_state(&self) -> CallByNeedInitialState {
-        self.initial_state
+        self.spec.initial_state()
     }
 
     pub fn budget_before(&self) -> CallByNeedBudget {
@@ -237,18 +335,33 @@ pub fn plan_call_by_need_thunk(
     budget: CallByNeedBudget,
     evidence: CallByNeedPlanEvidence,
 ) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
+    plan_call_by_need_thunk_with_spec(
+        CallByNeedThunkSpec::default_for(initial_state),
+        budget,
+        evidence,
+    )
+}
+
+/// Build a planned call-by-need thunk with generated-language payload and
+/// observation-channel parameters.
+pub fn plan_call_by_need_thunk_with_spec(
+    spec: CallByNeedThunkSpec,
+    budget: CallByNeedBudget,
+    evidence: CallByNeedPlanEvidence,
+) -> Result<CallByNeedThunkPlan, CallByNeedThunkPlanError> {
+    let initial_state = spec.initial_state();
     let (force_admissions, budget_after) = admit_force_sequence(initial_state, budget);
     let blocked_by_budget = force_admissions
         .iter()
         .any(|record| !record.admission.is_allowed());
     let validated_program =
-        ValidatedRhoProgram::try_from(build_call_by_need_thunk_program(initial_state));
+        ValidatedRhoProgram::try_from(build_call_by_need_thunk_program_from_spec(spec.clone()));
     let validation_errors = validated_program.clone().err().unwrap_or_default();
     let evidence_diagnostics = evidence.diagnostics();
 
     if !blocked_by_budget && validation_errors.is_empty() && evidence_diagnostics.is_empty() {
         Ok(CallByNeedThunkPlan {
-            initial_state,
+            spec,
             budget_before: budget,
             budget_after,
             force_admissions,
@@ -327,14 +440,18 @@ fn push_evidence_refs(out: &mut BTreeSet<String>, refs: &[String]) {
 /// Normalized AST artifact for the current M-RHO.2 call-by-need thunk slice.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallByNeedThunkAst {
-    initial_state: CallByNeedInitialState,
+    spec: CallByNeedThunkSpec,
     par: Par,
     text_annotation: String,
 }
 
 impl CallByNeedThunkAst {
+    pub fn spec(&self) -> &CallByNeedThunkSpec {
+        &self.spec
+    }
+
     pub fn initial_state(&self) -> CallByNeedInitialState {
-        self.initial_state
+        self.spec.initial_state()
     }
 
     pub fn par(&self) -> &Par {
@@ -367,13 +484,22 @@ impl CallByNeedThunkAst {
 /// injection instead of executing the raw `Par` returned by
 /// [`CallByNeedThunkAst::par`].
 pub fn build_call_by_need_thunk_program(initial_state: CallByNeedInitialState) -> RhoProgram {
-    build_call_by_need_thunk_ast(initial_state).into_program()
+    build_call_by_need_thunk_program_from_spec(CallByNeedThunkSpec::default_for(initial_state))
 }
 
-/// Build the AST-first call-by-need thunk used by the generic CBN/need runtime
-/// oracle.
+/// Build a validation-gated Rho program for a parameterized generated-language
+/// call-by-need thunk.
+pub fn build_call_by_need_thunk_program_from_spec(spec: CallByNeedThunkSpec) -> RhoProgram {
+    build_call_by_need_thunk_ast_from_spec(spec).into_program()
+}
+
+/// Build the default AST-first call-by-need thunk used by the generic CBN/need
+/// runtime oracle.
 ///
-/// The generated process is equivalent to this reader annotation:
+/// This compatibility helper delegates to
+/// [`build_call_by_need_thunk_ast_from_spec`] with the sample fixture
+/// `value`/`compute`/`OUT`/`EVAL`. The generated process is equivalent to this
+/// reader annotation:
 ///
 /// ```text
 /// new thunk, state, memo, ret1, ret2 in {
@@ -397,9 +523,18 @@ pub fn build_call_by_need_thunk_program(initial_state: CallByNeedInitialState) -
 /// }
 /// ```
 ///
-/// The function constructs `rhoapi::Par` directly. The annotation above is not
-/// a source-text round trip.
+/// The function constructs `rhoapi::Par` directly. The annotation above is a
+/// readable projection, not a source-text round trip.
 pub fn build_call_by_need_thunk_ast(initial_state: CallByNeedInitialState) -> CallByNeedThunkAst {
+    build_call_by_need_thunk_ast_from_spec(CallByNeedThunkSpec::default_for(initial_state))
+}
+
+/// Build a parameterized AST-first call-by-need thunk.
+///
+/// The topology matches the verified default thunk exactly; only the
+/// generated-language value, evaluation marker, and public observation channels
+/// come from [`CallByNeedThunkSpec`].
+pub fn build_call_by_need_thunk_ast_from_spec(spec: CallByNeedThunkSpec) -> CallByNeedThunkAst {
     // new thunk, state, memo, ret1, ret2 in ...
     //
     // f1r3node's normalizer indexes new-bound names in reverse syntactic order:
@@ -410,33 +545,42 @@ pub fn build_call_by_need_thunk_ast(initial_state: CallByNeedInitialState) -> Ca
     const RET1: i32 = 1;
     const RET2: i32 = 0;
 
-    let mut body = send_name(STATE, vec![string_par(initial_state.token())], false);
-    if initial_state == CallByNeedInitialState::Hot {
-        body = body.append(send_name(MEMO, vec![string_par("value")], true));
+    let mut body = send_name(STATE, vec![string_par(spec.initial_state().token())], false);
+    if spec.initial_state() == CallByNeedInitialState::Hot {
+        body = body.append(send_name(MEMO, vec![string_par(spec.value())], true));
     }
     body = body
-        .append(thunk_contract(THUNK, STATE, MEMO))
+        .append(thunk_contract(THUNK, STATE, MEMO, &spec))
         .append(send_name(THUNK, vec![bound_name(RET1)], false))
-        .append(first_force_observer(RET1, THUNK, RET2))
-        .append(second_force_observer(RET2));
+        .append(first_force_observer(RET1, THUNK, RET2, spec.out_channel()))
+        .append(second_force_observer(RET2, spec.out_channel()));
 
     let par = new_new_par(5, body, Vec::new(), BTreeMap::new(), Vec::new(), Vec::new(), false);
-    let text_annotation = match initial_state {
+    let text_annotation = match spec.initial_state() {
         CallByNeedInitialState::Cold => {
-            "call-by-need thunk AST: cold initial force computes once, memoizes, and second force reads memo"
+            format!(
+                "call-by-need thunk AST: cold initial force computes {marker:?}, memoizes {value:?}, and second force reads memo on {out:?}",
+                marker = spec.eval_marker(),
+                value = spec.value(),
+                out = spec.out_channel(),
+            )
         },
         CallByNeedInitialState::Hot => {
-            "call-by-need thunk AST: hot initial force reads existing memo without compute marker"
+            format!(
+                "call-by-need thunk AST: hot initial force reads existing memo {value:?} on {out:?} without compute marker {marker:?}",
+                value = spec.value(),
+                out = spec.out_channel(),
+                marker = spec.eval_marker(),
+            )
         },
-    }
-    .to_string();
+    };
 
-    CallByNeedThunkAst { initial_state, par, text_annotation }
+    CallByNeedThunkAst { spec, par, text_annotation }
 }
 
-fn thunk_contract(thunk: i32, state: i32, memo: i32) -> Par {
+fn thunk_contract(thunk: i32, state: i32, memo: i32, spec: &CallByNeedThunkSpec) -> Par {
     let source = bound_name(thunk);
-    let body = state_receive(state, memo);
+    let body = state_receive(state, memo, spec);
     let locally_free =
         union(source.locally_free.clone(), filter_and_adjust_bitset(&body.locally_free, 1));
     let receive = Receive {
@@ -467,8 +611,8 @@ fn thunk_contract(thunk: i32, state: i32, memo: i32) -> Par {
     )
 }
 
-fn state_receive(state: i32, memo: i32) -> Par {
-    let cold = cold_branch(state + 2, memo + 2);
+fn state_receive(state: i32, memo: i32, spec: &CallByNeedThunkSpec) -> Par {
+    let cold = cold_branch(state + 2, memo + 2, spec);
     let hot = hot_branch(state + 2, memo + 2);
     let target = bound_value(0);
     let match_locally_free = locally_free_union([&target, &cold, &hot]);
@@ -497,15 +641,19 @@ fn state_receive(state: i32, memo: i32) -> Par {
     receive_one_from_par(bound_name(state + 1), body, false)
 }
 
-fn cold_branch(state: i32, memo: i32) -> Par {
+fn cold_branch(state: i32, memo: i32, spec: &CallByNeedThunkSpec) -> Par {
     // Inside the state receive body, BoundVar(1) is the thunk return channel k
     // and BoundVar(0) is the matched state token.
     send_name(state, vec![string_par("hot")], false)
-        .append(send_name(memo, vec![string_par("value")], true))
-        .append(send_text_channel("EVAL", vec![string_par("compute")], false))
+        .append(send_name(memo, vec![string_par(spec.value())], true))
+        .append(send_text_channel(
+            spec.eval_channel(),
+            vec![string_par(spec.eval_marker())],
+            false,
+        ))
         .append(new_send_par(
             bound_value(1),
-            vec![string_par("value")],
+            vec![string_par(spec.value())],
             false,
             bitvec(&[1]),
             false,
@@ -531,8 +679,8 @@ fn hot_branch(state: i32, memo: i32) -> Par {
     send_name(state, vec![string_par("hot")], false).append(memo_receive)
 }
 
-fn first_force_observer(ret1: i32, thunk: i32, ret2: i32) -> Par {
-    let body = send_text_channel("OUT", vec![bound_value(0)], false).append(send_name(
+fn first_force_observer(ret1: i32, thunk: i32, ret2: i32, out_channel: &str) -> Par {
+    let body = send_text_channel(out_channel, vec![bound_value(0)], false).append(send_name(
         thunk + 1,
         vec![bound_name(ret2 + 1)],
         false,
@@ -540,8 +688,8 @@ fn first_force_observer(ret1: i32, thunk: i32, ret2: i32) -> Par {
     receive_one(ret1, body)
 }
 
-fn second_force_observer(ret2: i32) -> Par {
-    let body = send_text_channel("OUT", vec![bound_value(0)], false);
+fn second_force_observer(ret2: i32, out_channel: &str) -> Par {
+    let body = send_text_channel(out_channel, vec![bound_value(0)], false);
     receive_one(ret2, body)
 }
 
@@ -740,6 +888,60 @@ mod tests {
     }
 
     #[test]
+    fn parameterized_thunk_builder_uses_generated_payload_and_channels() {
+        let spec = CallByNeedThunkSpec::new(
+            CallByNeedInitialState::Hot,
+            "answer",
+            "calculator-add",
+            "RESULT",
+            "TRACE",
+        )
+        .expect("parameterized spec is valid");
+        let program = build_call_by_need_thunk_ast_from_spec(spec.clone());
+        let new_body = program.par().news[0]
+            .p
+            .as_ref()
+            .expect("new body should be present");
+
+        assert_eq!(program.spec(), &spec);
+        assert_eq!(gstring(&new_body.sends[1].data[0]), Some("answer"));
+        assert!(
+            program.text_annotation().contains("calculator-add"),
+            "reader annotation should preserve the generated eval marker"
+        );
+    }
+
+    #[test]
+    fn thunk_spec_rejects_empty_or_ambiguous_observation_parameters() {
+        assert_eq!(
+            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "", "compute", "OUT", "EVAL"),
+            Err(CallByNeedThunkSpecError::EmptyValue)
+        );
+        assert_eq!(
+            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "value", "", "OUT", "EVAL"),
+            Err(CallByNeedThunkSpecError::EmptyEvalMarker)
+        );
+        assert_eq!(
+            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "value", "compute", "", "EVAL"),
+            Err(CallByNeedThunkSpecError::EmptyOutputChannel)
+        );
+        assert_eq!(
+            CallByNeedThunkSpec::new(CallByNeedInitialState::Cold, "value", "compute", "OUT", ""),
+            Err(CallByNeedThunkSpecError::EmptyEvalChannel)
+        );
+        assert_eq!(
+            CallByNeedThunkSpec::new(
+                CallByNeedInitialState::Cold,
+                "value",
+                "compute",
+                "OUT",
+                "OUT",
+            ),
+            Err(CallByNeedThunkSpecError::ObservationChannelsMustDiffer)
+        );
+    }
+
+    #[test]
     fn planned_cold_thunk_records_budget_validation_and_evidence() {
         let plan = plan_call_by_need_thunk(
             CallByNeedInitialState::Cold,
@@ -749,6 +951,7 @@ mod tests {
         .expect("cold thunk has enough lookahead and heap budget");
 
         assert_eq!(plan.initial_state(), CallByNeedInitialState::Cold);
+        assert_eq!(plan.spec(), &CallByNeedThunkSpec::default_for(CallByNeedInitialState::Cold));
         assert_eq!(plan.budget_before(), CallByNeedBudget::new(2, 1));
         assert_eq!(plan.budget_after(), CallByNeedBudget::new(0, 0));
         assert_eq!(plan.force_admissions().len(), 2);
@@ -756,6 +959,27 @@ mod tests {
         assert_eq!(plan.force_admissions()[1].force, CallByNeedForce::MemoHit);
         assert!(!plan.evidence_refs().is_empty());
         assert_eq!(plan.program().artifact_kind(), crate::lower::RhoArtifactKind::NormalizedAst);
+    }
+
+    #[test]
+    fn planned_parameterized_thunk_preserves_spec() {
+        let spec = CallByNeedThunkSpec::new(
+            CallByNeedInitialState::Cold,
+            "forty-two",
+            "eval-add",
+            "RESULT",
+            "TRACE",
+        )
+        .expect("parameterized spec is valid");
+        let plan = plan_call_by_need_thunk_with_spec(
+            spec.clone(),
+            CallByNeedBudget::new(2, 1),
+            passing_evidence(),
+        )
+        .expect("parameterized cold thunk has enough budget");
+
+        assert_eq!(plan.spec(), &spec);
+        assert!(plan.program().text_annotation().contains("forty-two"));
     }
 
     #[test]

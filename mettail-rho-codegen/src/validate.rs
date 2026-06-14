@@ -214,7 +214,7 @@ fn validate_call_by_need_thunk_program(par: &Par) -> Result<(), Vec<RhoValidatio
                 .sends
                 .get(1)
                 .and_then(|send| validate_bound_string_send(send, 2, true))
-                != Some("value")
+                .is_none()
             {
                 errors.push(RhoValidationError::CallByNeedMemoSeed);
             }
@@ -684,7 +684,8 @@ mod tests {
     use super::*;
     use crate::lower::lower_language_def;
     use crate::need::{
-        build_call_by_need_thunk_ast, build_call_by_need_thunk_program, CallByNeedInitialState,
+        build_call_by_need_thunk_ast, build_call_by_need_thunk_program,
+        build_call_by_need_thunk_program_from_spec, CallByNeedInitialState, CallByNeedThunkSpec,
     };
     use mettail_ast::language::LanguageDef;
 
@@ -746,6 +747,27 @@ mod tests {
                 "validated CBN artifact must retain reader annotation without source parsing"
             );
         }
+    }
+
+    #[test]
+    fn validates_parameterized_call_by_need_thunk_programs() {
+        let spec = CallByNeedThunkSpec::new(
+            CallByNeedInitialState::Hot,
+            "answer",
+            "calculator-add",
+            "RESULT",
+            "TRACE",
+        )
+        .expect("parameterized spec is valid");
+        let program = build_call_by_need_thunk_program_from_spec(spec);
+
+        validate_rho_program(&program).expect("parameterized CBN thunk validates");
+        let validated = ValidatedRhoProgram::try_from(program)
+            .expect("parameterized CBN thunk converts to validated artifact");
+        assert!(
+            validated.text_annotation().contains("answer"),
+            "reader annotation should retain the generated-language payload"
+        );
     }
 
     #[test]

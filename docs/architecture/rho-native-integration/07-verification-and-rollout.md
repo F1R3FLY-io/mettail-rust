@@ -237,11 +237,13 @@ Mechanized evidence:
 `RhoCallByNeedObservation.v` proves that forcing a sound memoized thunk
 observes the same value as source evaluation, that a force miss memoizes the
 source value, that repeated force is observationally idempotent, and that a
-repeated force after a miss preserves the memo. It also models the generated
-artifact boundary: accepted call-by-need plans are AST artifacts, not Rholang
-source text, and they must carry the call-by-need validation profile rather
-than the scalar-contract profile. The current cold/hot thunk plans both observe
-the source value twice while preserving the expected memo state.
+repeated force after a miss preserves the memo. The source value is arbitrary in
+the model, so the proof applies to generated-language payloads rather than only
+to the sample string used by tests. It also models the generated artifact
+boundary: accepted call-by-need plans are AST artifacts, not Rholang source
+text, and they must carry the call-by-need validation profile rather than the
+scalar-contract profile. The current cold/hot thunk plans both observe the
+source value twice while preserving the expected memo state.
 
 `RhoCallByNeedBudget.v` proves the bounded admission contract for
 `Lookahead[n] + HeapBudget`: zero lookahead blocks a force before observation,
@@ -259,9 +261,18 @@ Rust/runtime gate:
 - `mettail_rho_codegen::CallByNeedBudgetBlocker::LookaheadExceeded` and
   `mettail_rho_codegen::CallByNeedBudgetBlocker::HeapBudgetExceeded` report the
   explicit boundedness reason.
+- `mettail_rho_codegen::CallByNeedThunkSpec` is the generated-language
+  parameter block for the thunk artifact. It carries the initial cold/hot state,
+  source value, evaluation marker, public value channel, and evaluation-trace
+  channel; it rejects empty fields and rejects equal public/evaluation channels
+  so observations remain unambiguous.
 - `mettail_rho_codegen::build_call_by_need_thunk_ast` constructs the current
   memoized-thunk execution slice as normalized `rhoapi::Par`; its
   `text_annotation` is reader/debug metadata and is not parsed for execution.
+- `mettail_rho_codegen::build_call_by_need_thunk_ast_from_spec` constructs the
+  same verified topology from generated-language parameters: one private thunk
+  contract, one state cell, one memo cell, and two observer continuations. The
+  parameterized value and channels are embedded directly in the AST.
 - `mettail_rho_codegen::build_call_by_need_thunk_program` wraps that AST in a
   `RhoProgram` carrying `RhoAstValidationProfile::CallByNeedThunk`, and
   `ValidatedRhoProgram::try_from` rejects the same thunk if it is mislabeled as
@@ -271,6 +282,10 @@ Rust/runtime gate:
   lookahead/heap budget, validates the call-by-need AST artifact, and requires
   proof/runtime-oracle/budget evidence references before returning a
   `CallByNeedThunkPlan`.
+- `mettail_rho_codegen::plan_call_by_need_thunk_with_spec` is the
+  generated-language entry point. The compatibility helper
+  `plan_call_by_need_thunk` delegates to it with the sample
+  `value`/`compute`/`OUT`/`EVAL` fixture.
 - `mettail_rho_runtime::PlannedCallByNeedThunk` consumes `CallByNeedThunkPlan`
   for runtime execution, so M-RHO.2 tests do not inject a bare
   `ValidatedRhoProgram` as the generated need path.
@@ -282,6 +297,11 @@ Rust/runtime gate:
 - `rho_call_by_need::call_by_need_memo_hit_observes_value_without_compute_marker`
   validates a generated hot thunk AST, injects the validated artifact, forces it
   twice in one RhoRuntime run, and observes no compute marker.
+- `rho_call_by_need::call_by_need_parameterized_payload_and_channels_observe_generated_values`
+  validates a generated cold thunk AST with value `answer`, evaluation marker
+  `calculator-add`, public channel `RESULT`, and trace channel `TRACE`; runtime
+  execution observes `answer` twice on `RESULT` and `calculator-add` once on
+  `TRACE`.
 
 Strong bisimulation is not the contract across force boundaries because the
 target has internal communication steps that the source observation hides.
