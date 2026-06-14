@@ -1,11 +1,11 @@
-//! Run a query string against Ascent results: parse → plan → execute.
+//! Run a query string against runtime results: parse → plan → execute.
 
-use crate::data_source::AscentResultsDataSource;
+use crate::data_source::{AscentResultsDataSource, RuntimeReportDataSource};
 use crate::executor::{execute, ExecuteError};
 use crate::parse::{parse_query, ParseError};
 use crate::planner::{PlanError, Planner};
 use crate::schema::QuerySchema;
-use mettail_runtime::AscentResults;
+use mettail_runtime::{AscentResults, RuntimeBackendReport};
 
 #[derive(Debug)]
 pub enum QueryError {
@@ -47,11 +47,31 @@ impl From<ExecuteError> for QueryError {
 /// Parse, plan, and execute a single rule over the given Ascent results.
 /// Schema is derived from `results.custom_relations`. Returns one row per result tuple (head columns).
 pub fn run_query(rule_str: &str, results: &AscentResults) -> Result<Vec<Vec<String>>, QueryError> {
-    let schema = QuerySchema::from_custom_relations(&results.custom_relations);
+    let data = AscentResultsDataSource::new(results);
+    run_query_with_schema_and_data(rule_str, data.schema(), &data)
+}
+
+/// Parse, plan, and execute a single rule over a runtime backend report.
+///
+/// Ascent-shaped reports expose their extracted custom relations. Dovetail and
+/// Rho-machine reports expose report/observation relations without fabricating
+/// `AscentResults`.
+pub fn run_query_report(
+    rule_str: &str,
+    report: &RuntimeBackendReport,
+) -> Result<Vec<Vec<String>>, QueryError> {
+    let data = RuntimeReportDataSource::new(report);
+    run_query_with_schema_and_data(rule_str, data.schema(), &data)
+}
+
+fn run_query_with_schema_and_data(
+    rule_str: &str,
+    schema: QuerySchema,
+    data: &impl crate::data_source::QueryDataSource,
+) -> Result<Vec<Vec<String>>, QueryError> {
     let query = parse_query(rule_str, &schema)?;
     let plan = Planner::plan(&query)?;
-    let data = AscentResultsDataSource::new(results);
-    let rows = execute(&plan, &data)?;
+    let rows = execute(&plan, data)?;
     Ok(rows)
 }
 
@@ -67,7 +87,11 @@ mod tests {
             "path".to_string(),
             RelationData {
                 param_types: vec!["Proc".into(), "Proc".into()],
-                tuples: vec![vec!["a".into(), "b".into()], vec!["a".into(), "c".into()]],
+                tuples: vec![
+                    vec!["a".into(), "b".into()],
+                    vec!["a".into(), "c".into()],
+                    vec!["z".into(), "d".into()],
+                ],
             },
         );
         custom_relations.insert(
@@ -84,9 +108,62 @@ mod tests {
             custom_relations,
         };
         let rows =
-            run_query("query(result) <-- path(a, result), !rw_proc(result, _).", &results).unwrap();
-        // path(a, result) gives result=b and result=c. !rw_proc(result,_) removes result in rw_proc's first col {a,b}. So only c remains.
+            run_query("query(result) <-- path(\"a\", result), !rw_proc(result, _).", &results)
+                .unwrap();
+        // path("a", result) gives result=b and result=c. !rw_proc(result,_) removes result in rw_proc's first col {a,b}. So only c remains.
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], vec!["c"]);
+    }
+
+    #[test]
+    fn test_run_query_report_observations() {
+        let report = RuntimeBackendReport::try_observations(
+            mettail_runtime::RuntimeBackend::RhoMachine,
+            mettail_runtime::RuntimeBackendArtifact::RhoNormalizedAst,
+            vec![mettail_runtime::RuntimeChannelObservation::new(
+                "OUT",
+                vec![
+                    mettail_runtime::RuntimeObservationValue::Text("rho-backend".to_string()),
+                    mettail_runtime::RuntimeObservationValue::Text("other".to_string()),
+                ],
+            )],
+            vec!["query-test:rho-report".to_string()],
+        )
+        .expect("sample observation report is valid");
+
+        let rows = run_query_report("query(value) <-- runtime_observation(OUT, value).", &report)
+            .expect("runtime observations are queryable");
+        assert_eq!(rows, vec![vec!["rho-backend"], vec!["other"]]);
+
+        let evidence =
+            run_query_report("query(reference) <-- runtime_evidence(reference).", &report)
+                .expect("runtime metadata is queryable");
+        assert_eq!(evidence, vec![vec!["query-test:rho-report"]]);
+    }
+
+    #[test]
+    fn test_run_query_report_dovetail_roots() {
+        let report = RuntimeBackendReport::try_dovetail(
+            mettail_runtime::RuntimeDovetailRunReport {
+                roots: vec![b"root".to_vec()],
+                root_ordinals: vec![0],
+                terms: vec![mettail_runtime::RuntimeDovetailTermRecord {
+                    ordinal: 0,
+                    class_id: 7,
+                    key: b"root".to_vec(),
+                    op_display: "ForComprehension".to_string(),
+                    weight_display: "0".to_string(),
+                    is_root: true,
+                }],
+                derivation_edges: Vec::new(),
+                completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
+            },
+            vec!["query-test:dovetail-report".to_string()],
+        )
+        .expect("sample Dovetail report is valid");
+
+        let rows = run_query_report("query(op) <-- dovetail_root(_, _, op, _).", &report)
+            .expect("Dovetail roots are queryable");
+        assert_eq!(rows, vec![vec!["ForComprehension"]]);
     }
 }

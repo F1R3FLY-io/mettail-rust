@@ -13,9 +13,11 @@ pub struct Plan {
 pub enum Step {
     Scan {
         relation: String,
+        terms: Vec<Term>,
     },
     Join {
         relation: String,
+        terms: Vec<Term>,
         left_indices: Vec<usize>,
         right_indices: Vec<usize>,
     },
@@ -24,6 +26,7 @@ pub enum Step {
     },
     Difference {
         relation: String,
+        terms: Vec<Term>,
         join_indices: Vec<(usize, usize)>,
     },
 }
@@ -140,7 +143,10 @@ impl Planner {
                 },
             }
         }
-        self.steps.push(Step::Scan { relation: name.clone() });
+        self.steps.push(Step::Scan {
+            relation: name.clone(),
+            terms: terms.clone(),
+        });
         Ok(())
     }
 
@@ -189,6 +195,7 @@ impl Planner {
 
         self.steps.push(Step::Join {
             relation: name.clone(),
+            terms: terms.clone(),
             left_indices,
             right_indices,
         });
@@ -254,8 +261,11 @@ impl Planner {
                 }
             }
         }
-        self.steps
-            .push(Step::Difference { relation: name.clone(), join_indices });
+        self.steps.push(Step::Difference {
+            relation: name.clone(),
+            terms: terms.clone(),
+            join_indices,
+        });
         Ok(())
     }
 

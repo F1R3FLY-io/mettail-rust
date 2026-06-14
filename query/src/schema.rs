@@ -26,6 +26,12 @@ impl QuerySchema {
         QuerySchema { relations }
     }
 
+    pub fn from_relation_types(relations: impl IntoIterator<Item = (String, Vec<String>)>) -> Self {
+        QuerySchema {
+            relations: relations.into_iter().collect(),
+        }
+    }
+
     pub fn get(&self, relation: &str) -> Option<&[String]> {
         self.relations.get(relation).map(|v| v.as_slice())
     }

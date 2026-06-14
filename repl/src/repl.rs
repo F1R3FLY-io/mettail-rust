@@ -4,7 +4,7 @@ use crate::registry::LanguageRegistry;
 use crate::state::ReplState;
 use anyhow::Result;
 use colored::Colorize;
-use mettail_query::run_query as query_run_query;
+use mettail_query::run_query_report as query_run_query_report;
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendOutput, RuntimeDovetailRunReport,
     TermInfo,
@@ -256,6 +256,21 @@ mod tests {
             )])
         );
         assert_eq!(format!("{}", repl.state.current_term().unwrap()), "\"rho-backend\"");
+    }
+
+    #[test]
+    fn query_command_reads_rho_runtime_report_observations() {
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(RhoDefaultLanguage));
+        let mut repl = Repl::new(registry).expect("test REPL can be constructed");
+
+        repl.load_language("BypassProbe")
+            .expect("test language is registered");
+        repl.cmd_exec_term("input")
+            .expect("Rho backend observations should execute through exec");
+
+        repl.cmd_query("query(value) <-- runtime_observation(OUT, value).")
+            .expect("query command should read observation-shaped runtime reports");
     }
 }
 
@@ -606,7 +621,7 @@ impl Repl {
         println!();
         println!("{}", "  Query:".yellow());
         println!(
-            "    {}  Run a Datalog rule over step results (e.g. {}).",
+            "    {}  Run a Datalog rule over the current runtime report (e.g. {}).",
             "head(args) <-- body.".green(),
             "query(result) <-- path(current_term, result), !rw_proc(result, _)".dimmed()
         );
@@ -1932,8 +1947,8 @@ impl Repl {
         Ok(())
     }
 
-    /// Run a single Datalog-style rule over the current Ascent results.
-    /// Requires a loaded language, a prior step (so ascent_results exists), and a current term for env substitution.
+    /// Run a single Datalog-style rule over the current runtime backend report.
+    /// Requires a loaded language, a prior exec/step, and a current term for env substitution.
     /// Environment substitution includes REPL bindings plus "current_term" (display of the current stepped term).
     fn cmd_query(&mut self, line: &str) -> Result<()> {
         let language_name = self
@@ -1954,7 +1969,7 @@ impl Repl {
         // Substitute env bindings (save t, etc.). We do *not* add "current_term" to env here.
         let mut substituted = pre_substitute_env(line, language, self.state.environment().unwrap());
 
-        // Substitute "current_term" with a Rust string literal so the Ascent (syn) parser sees one argument.
+        // Substitute "current_term" with a Rust string literal so the query parser sees one argument.
         // The term's display can contain { } | . etc. which are valid Rust tokens; only a string literal is safe.
         let current_display = format!("{}", current_term);
         let current_literal = format!(
@@ -1968,12 +1983,11 @@ impl Repl {
         );
         substituted = replace_whole_word(&substituted, "current_term", &current_literal);
 
-        let results = self
-            .state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No step results. Use 'step <term>' first."))?;
+        let report = self.state.backend_report().ok_or_else(|| {
+            anyhow::anyhow!("No runtime report. Use 'exec <term>' or 'step <term>' first.")
+        })?;
 
-        match query_run_query(&substituted, results) {
+        match query_run_query_report(&substituted, report) {
             Ok(rows) => {
                 println!();
                 if rows.is_empty() {

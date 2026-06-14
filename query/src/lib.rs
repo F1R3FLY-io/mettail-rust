@@ -1,4 +1,4 @@
-//! Runtime query interpreter for MeTTaIL: parse and execute Datalog-style rules over Ascent results.
+//! Runtime query interpreter for MeTTaIL: parse and execute Datalog-style rules over runtime reports.
 
 pub mod ast;
 pub mod data_source;
@@ -10,9 +10,9 @@ pub mod run;
 pub mod schema;
 
 pub use ast::{BodyAtom, CompareOp, IfExpr, Query, Term, Variable};
-pub use data_source::AscentResultsDataSource;
+pub use data_source::{AscentResultsDataSource, QueryDataSource, RuntimeReportDataSource};
 pub use executor::{execute, ExecuteError};
 pub use parse::{parse_query, pre_parse_rule, ParseError, PreParseError, PreParsedRule};
 pub use planner::{Plan, PlanError, Planner, Step};
-pub use run::{run_query, QueryError};
+pub use run::{run_query, run_query_report, QueryError};
 pub use schema::QuerySchema;
