@@ -1,5 +1,5 @@
 @startuml
-title MiniRhoFor Language Spec to Rho AST Runtime Handoff
+title MiniRhoFor Language Spec to Runtime Backend Handoff
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -26,6 +26,11 @@ rectangle "Runtime Snippet Path" as RuntimePath #DCFCE7 {
   rectangle "DovetailRunReport\nexact keys, edges, completeness" as Report #FEF3C7
 }
 
+rectangle "Direct Dovetail Runtime Path" as DirectPath #E0F2FE {
+  rectangle "Dovetail runtime adapter\nreport projection" as DirectAdapter #BAE6FD
+  rectangle "RuntimeBackendOutput::Dovetail\nreport-shaped result" as DirectOutput #CFFAFE
+}
+
 rectangle "Rho Runtime Path" as RhoPath #FCE7F3 {
   rectangle "Rho backend lowerer\ncomplete reports only" as Lowerer #FBCFE8
   rectangle "rhoapi::Par\nnormalized AST artifact" as Par #FDE68A
@@ -43,7 +48,10 @@ Parser --> TypedAst : emit typed term
 TypedAst --> Dovetail : seed exact root
 Dovetail --> Report : freeze checked derivation forest
 
-Report --> Lowerer : require Complete
+Report --> DirectAdapter : RuntimeBackend::Dovetail
+DirectAdapter --> DirectOutput : preserve report shape
+
+Report --> Lowerer : RuntimeBackend::RhoMachine\nrequire Complete
 Lowerer --> Par : emit AST, not text
 Par --> Runtime : inject executable artifact
 Runtime --> RuntimeReport : observations plus evidence refs
@@ -55,6 +63,12 @@ note bottom of Report #FFFBEB
   The report is a typed handoff artifact:
   it is not a prose log, not Rholang text,
   and not proof that the runtime already executed.
+end note
+
+note bottom of DirectOutput #EFF6FF
+  Direct Dovetail execution stops here.
+  The caller receives checked rewrite evidence,
+  not post-Rho runtime observations.
 end note
 
 note right of Par #FFFBEB

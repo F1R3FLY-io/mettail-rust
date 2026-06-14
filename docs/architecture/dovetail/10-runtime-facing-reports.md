@@ -573,10 +573,18 @@ This table is the reason the example can be readable without weakening the
 AST-first design. The prose may show Rholang-like text, but the generated Rho
 lane constructs `rhoapi::Par` directly.
 
-![MiniRhoFor language spec to Rho AST runtime handoff](figures/10-minirho-end-to-end.svg)
+![MiniRhoFor language spec to selected runtime backend handoff](figures/10-minirho-end-to-end.svg)
 
 PlantUML source:
 [figures/10-minirho-end-to-end.puml](figures/10-minirho-end-to-end.puml).
+
+The diagram has one deliberate branch. Both runtime lanes begin with the same
+`DovetailRunReport`. The direct Dovetail lane projects that report into
+`RuntimeBackendOutput::Dovetail`. The Rho lane accepts only complete reports,
+lowers the report to `rhoapi::Par`, injects that AST into F1r3node, and returns
+post-execution observations. That branch is the page's main cohesion device:
+the report is the rewrite-evidence boundary, and each selected runtime backend
+has a distinct output shape.
 
 A cohesive way to read the example is to keep one invariant in view:
 
