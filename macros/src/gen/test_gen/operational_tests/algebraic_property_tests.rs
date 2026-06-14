@@ -35,7 +35,17 @@ pub enum AlgebraicProperty {
         equation_name: String,
         constructor: String,
         identity_element: String,
+        identity_position: IdentityPosition,
     },
+}
+
+/// Position of the identity element in a binary algebraic law.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityPosition {
+    /// The law has shape `f(e, a) = a`.
+    LeftArgument,
+    /// The law has shape `f(a, e) = a`.
+    RightArgument,
 }
 
 /// Generate algebraic property tests for the language.
@@ -191,6 +201,7 @@ pub fn generate_algebraic_tests(
                 equation_name,
                 constructor,
                 identity_element,
+                identity_position,
             } => {
                 if ambiguous_prefix_rules.contains(constructor) {
                     continue;
@@ -210,31 +221,35 @@ pub fn generate_algebraic_tests(
                     continue;
                 }
 
-                let cat = &param_info[0].category;
-                let leaf = match leaf_map.get(cat.as_str()) {
+                let (term_arg_index, identity_arg_index) = identity_arg_indexes(*identity_position);
+                let term_cat = &param_info[term_arg_index].category;
+                let identity_cat = &param_info[identity_arg_index].category;
+                let leaf = match leaf_map.get(term_cat.as_str()) {
                     Some(l) => l,
                     None => continue,
                 };
 
-                // f(a, e) should equal a
-                // We construct f(a, e) and compare its eval to a's eval
                 let test_name = format!(
                     "alg_{}_identity_{}_concrete",
                     lang_name_lower,
                     constructor.to_lowercase()
                 );
 
-                // For identity, we compare eval(f(a,e)) with eval(a)
-                // Generated as a test that evaluates both sides and compares
-                test_cases.push(generate_identity_test(
-                    &test_name,
-                    &leaf.construction,
-                    constructor,
+                let identity_construction = format!("{}::{}", identity_cat, identity_element);
+                let combined_construction = construct_identity_application(
                     &category,
-                    identity_element,
+                    constructor,
+                    &leaf.construction,
+                    &identity_construction,
+                    *identity_position,
+                );
+
+                test_cases.push(generate_algebraic_eq_test(
+                    &test_name,
+                    &combined_construction,
+                    &leaf.construction,
                     &lang_struct,
                     equation_name,
-                    language,
                 ));
             },
         }
@@ -366,6 +381,7 @@ fn detect_identity(eq: &Equation) -> Option<AlgebraicProperty> {
                     equation_name: eq.name.to_string(),
                     constructor: lhs_ctor,
                     identity_element: identity,
+                    identity_position: IdentityPosition::RightArgument,
                 });
             }
         }
@@ -379,6 +395,7 @@ fn detect_identity(eq: &Equation) -> Option<AlgebraicProperty> {
                     equation_name: eq.name.to_string(),
                     constructor: lhs_ctor,
                     identity_element: identity,
+                    identity_position: IdentityPosition::LeftArgument,
                 });
             }
         }
@@ -435,8 +452,8 @@ fn generate_algebraic_eq_test(
 ) -> TestCase {
     // We generate a custom test that:
     // 1. Constructs both terms
-    // 2. Displays both, parses both, runs Ascent on both
-    // 3. Asserts that their normal forms overlap
+    // 2. Displays both, parses both, runs the selected backend on both
+    // 3. Asserts that their semantic backend outputs overlap
     let construction_code = format!(
         r#"{{ // algebraic eq test for equation '{eq}'
     let lhs_term = {lhs};
@@ -446,12 +463,14 @@ fn generate_algebraic_eq_test(
     let lang = {lang_struct};
     let lhs_parsed = lang.parse_term(&lhs_str).expect("LHS parse should succeed");
     let rhs_parsed = lang.parse_term(&rhs_str).expect("RHS parse should succeed");
-    let lhs_results = lang.run_ascent(lhs_parsed.as_ref()).expect("LHS eval should succeed");
-    let rhs_results = lang.run_ascent(rhs_parsed.as_ref()).expect("RHS eval should succeed");
-    let lhs_nfs: std::collections::HashSet<String> = lhs_results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    let rhs_nfs: std::collections::HashSet<String> = rhs_results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(!lhs_nfs.is_disjoint(&rhs_nfs),
-        "Equation '{eq}': LHS normal forms {{:?}} and RHS normal forms {{:?}} should overlap", lhs_nfs, rhs_nfs);
+    let lhs_report = mettail_testkit::runtime_report::run_default_backend_report(&lang, lhs_parsed.as_ref(), "generated algebraic LHS eval")
+        .expect("LHS eval should succeed");
+    let rhs_report = mettail_testkit::runtime_report::run_default_backend_report(&lang, rhs_parsed.as_ref(), "generated algebraic RHS eval")
+        .expect("RHS eval should succeed");
+    let lhs_outputs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lhs_report).into_iter().collect();
+    let rhs_outputs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rhs_report).into_iter().collect();
+    assert!(!lhs_outputs.is_disjoint(&rhs_outputs),
+        "Equation '{eq}': LHS backend outputs {{:?}} and RHS backend outputs {{:?}} should overlap", lhs_outputs, rhs_outputs);
 }}"#,
         eq = equation_name,
         lhs = lhs_construction,
@@ -479,34 +498,29 @@ fn generate_algebraic_eq_test_source(tc: &TestCase) -> String {
     out
 }
 
-/// Generate an identity test.
-fn generate_identity_test(
-    test_name: &str,
-    leaf_construction: &str,
-    constructor: &str,
+fn construct_identity_application(
     category: &str,
-    identity_element: &str,
-    lang_struct: &str,
-    _equation_name: &str,
-    _language: &LanguageDef,
-) -> TestCase {
-    // Build identity element construction.
-    // Identity element could be a nullary constructor or literal.
-    let identity_construction = format!("{}::{}", category, identity_element);
+    constructor: &str,
+    term_construction: &str,
+    identity_construction: &str,
+    identity_position: IdentityPosition,
+) -> String {
+    match identity_position {
+        IdentityPosition::LeftArgument => format!(
+            "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
+            category, constructor, identity_construction, term_construction
+        ),
+        IdentityPosition::RightArgument => format!(
+            "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
+            category, constructor, term_construction, identity_construction
+        ),
+    }
+}
 
-    // f(a, e) and a
-    let combined_construction = format!(
-        "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
-        category, constructor, leaf_construction, identity_construction
-    );
-
-    // This is a smoke test — identity might not eval to the simplified form
-    // without full normalization
-    TestCase {
-        test_name: test_name.to_string(),
-        construction_code: combined_construction,
-        lang_struct: lang_struct.to_string(),
-        expected: None,
+fn identity_arg_indexes(identity_position: IdentityPosition) -> (usize, usize) {
+    match identity_position {
+        IdentityPosition::LeftArgument => (1, 0),
+        IdentityPosition::RightArgument => (0, 1),
     }
 }
 
@@ -619,12 +633,15 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        let lhs_str = format!(\"{}\", lhs);\n");
                 out.push_str("        let rhs_str = format!(\"{}\", rhs);\n");
                 out.push_str("        if let (Ok(lp), Ok(rp)) = (lang.parse_term(&lhs_str), lang.parse_term(&rhs_str)) {\n");
-                out.push_str("            if let (Ok(lr), Ok(rr)) = (lang.run_ascent(lp.as_ref()), lang.run_ascent(rp.as_ref())) {\n");
-                out.push_str("                let lnfs: std::collections::HashSet<String> = lr.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n");
-                out.push_str("                let rnfs: std::collections::HashSet<String> = rr.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n");
+                out.push_str("            if let (Ok(lr), Ok(rr)) = (\n");
+                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, lp.as_ref(), \"generated commutativity LHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, rp.as_ref(), \"generated commutativity RHS eval\"),\n");
+                out.push_str("            ) {\n");
+                out.push_str("                let lnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lr).into_iter().collect();\n");
+                out.push_str("                let rnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rr).into_iter().collect();\n");
                 out.push_str("                prop_assert!(!lnfs.is_disjoint(&rnfs),\n");
                 out.push_str(&format!(
-                    "                    \"Commutativity ({eq}) failed: {{:?}} vs {{:?}}\", lnfs, rnfs);\n",
+                    "                    \"Commutativity ({eq}) failed: backend outputs {{:?}} vs {{:?}}\", lnfs, rnfs);\n",
                     eq = equation_name
                 ));
                 out.push_str("            }\n");
@@ -666,22 +683,111 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        let lhs_str = format!(\"{}\", lhs);\n");
                 out.push_str("        let rhs_str = format!(\"{}\", rhs);\n");
                 out.push_str("        if let (Ok(lp), Ok(rp)) = (lang.parse_term(&lhs_str), lang.parse_term(&rhs_str)) {\n");
-                out.push_str("            if let (Ok(lr), Ok(rr)) = (lang.run_ascent(lp.as_ref()), lang.run_ascent(rp.as_ref())) {\n");
-                out.push_str("                let lnfs: std::collections::HashSet<String> = lr.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n");
-                out.push_str("                let rnfs: std::collections::HashSet<String> = rr.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n");
+                out.push_str("            if let (Ok(lr), Ok(rr)) = (\n");
+                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, lp.as_ref(), \"generated associativity LHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, rp.as_ref(), \"generated associativity RHS eval\"),\n");
+                out.push_str("            ) {\n");
+                out.push_str("                let lnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lr).into_iter().collect();\n");
+                out.push_str("                let rnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rr).into_iter().collect();\n");
                 out.push_str("                prop_assert!(!lnfs.is_disjoint(&rnfs),\n");
                 out.push_str(&format!(
-                    "                    \"Associativity ({eq}) failed: {{:?}} vs {{:?}}\", lnfs, rnfs);\n",
+                    "                    \"Associativity ({eq}) failed: backend outputs {{:?}} vs {{:?}}\", lnfs, rnfs);\n",
                     eq = equation_name
                 ));
                 out.push_str("            }\n");
                 out.push_str("        }\n");
                 out.push_str("    }\n\n");
             },
-            AlgebraicProperty::Identity { .. } => {
-                // Identity proptests are harder because we need to construct the
-                // identity element generically. Skip for now — the concrete test
-                // already covers the key case.
+            AlgebraicProperty::Identity {
+                equation_name,
+                constructor,
+                identity_element,
+                identity_position,
+            } => {
+                let rule = match language
+                    .terms
+                    .iter()
+                    .find(|r| r.label.to_string() == *constructor)
+                {
+                    Some(r) => r,
+                    None => continue,
+                };
+                let category = rule.category.to_string();
+                let param_info = super::ground_term_enum::extract_param_info(rule, language);
+                if param_info.len() < 2 {
+                    continue;
+                }
+                let (term_arg_index, identity_arg_index) = identity_arg_indexes(*identity_position);
+                let term_category = param_info[term_arg_index].category.clone();
+                let identity_category = param_info[identity_arg_index].category.clone();
+                let term_cat_lower = term_category.to_lowercase();
+                let identity_construction = format!("{}::{}", identity_category, identity_element);
+                let side = match identity_position {
+                    IdentityPosition::LeftArgument => "left",
+                    IdentityPosition::RightArgument => "right",
+                };
+                let shape = match identity_position {
+                    IdentityPosition::LeftArgument => {
+                        format!("eval({}(e,a)) == eval(a)", constructor)
+                    },
+                    IdentityPosition::RightArgument => {
+                        format!("eval({}(a,e)) == eval(a)", constructor)
+                    },
+                };
+
+                out.push_str(&format!(
+                    "    /// Identity: {eq} — {shape} with {side} identity\n",
+                    eq = equation_name,
+                    shape = shape,
+                    side = side,
+                ));
+                out.push_str(&format!(
+                    "    #[test]\n    fn {lang}_identity_{ctor}_{side}_proptest(a in arb_{cat}(3)) {{\n",
+                    lang = lang_name_lower,
+                    ctor = constructor.to_lowercase(),
+                    side = side,
+                    cat = term_cat_lower
+                ));
+                out.push_str("        mettail_runtime::clear_var_cache();\n");
+                out.push_str(&format!("        let lang = {};\n", lang_struct));
+                out.push_str(&format!(
+                    "        let identity = {identity};\n",
+                    identity = identity_construction
+                ));
+                match identity_position {
+                    IdentityPosition::LeftArgument => {
+                        out.push_str(&format!(
+                            "        let lhs = {cat}::{ctor}(std::sync::Arc::new(identity), std::sync::Arc::new(a.clone()));\n",
+                            cat = category,
+                            ctor = constructor
+                        ));
+                    },
+                    IdentityPosition::RightArgument => {
+                        out.push_str(&format!(
+                            "        let lhs = {cat}::{ctor}(std::sync::Arc::new(a.clone()), std::sync::Arc::new(identity));\n",
+                            cat = category,
+                            ctor = constructor
+                        ));
+                    },
+                }
+                out.push_str("        let rhs = a;\n");
+                out.push_str("        let lhs_str = format!(\"{}\", lhs);\n");
+                out.push_str("        let rhs_str = format!(\"{}\", rhs);\n");
+                out.push_str("        if let (Ok(lp), Ok(rp)) = (lang.parse_term(&lhs_str), lang.parse_term(&rhs_str)) {\n");
+                out.push_str("            if let (Ok(lr), Ok(rr)) = (\n");
+                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, lp.as_ref(), \"generated identity LHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, rp.as_ref(), \"generated identity RHS eval\"),\n");
+                out.push_str("            ) {\n");
+                out.push_str("                let lnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lr).into_iter().collect();\n");
+                out.push_str("                let rnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rr).into_iter().collect();\n");
+                out.push_str("                prop_assert!(!lnfs.is_disjoint(&rnfs),\n");
+                out.push_str(&format!(
+                    "                    \"Identity ({eq}) failed: backend outputs {{:?}} vs {{:?}}\", lnfs, rnfs);\n",
+                    eq = equation_name
+                ));
+                out.push_str("            }\n");
+                out.push_str("        }\n");
+                out.push_str("    }\n\n");
             },
         }
     }
@@ -710,4 +816,99 @@ pub fn generate_algebraic_tests_source(test_cases: &[TestCase], proptest_blocks:
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proc_macro2::{Ident, Span};
+
+    fn ident(name: &str) -> Ident {
+        Ident::new(name, Span::call_site())
+    }
+
+    fn var(name: &str) -> Pattern {
+        Pattern::Term(PatternTerm::Var(ident(name)))
+    }
+
+    fn apply(constructor: &str, args: Vec<Pattern>) -> Pattern {
+        Pattern::Term(PatternTerm::Apply { constructor: ident(constructor), args })
+    }
+
+    fn equation(left: Pattern, right: Pattern) -> Equation {
+        Equation {
+            name: ident("IdentityLaw"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left,
+            right,
+        }
+    }
+
+    #[test]
+    fn detects_right_identity_argument() {
+        let law = equation(apply("Add", vec![var("a"), apply("Zero", Vec::new())]), var("a"));
+
+        let detected = detect_identity(&law).expect("right identity should be detected");
+        match detected {
+            AlgebraicProperty::Identity {
+                constructor,
+                identity_element,
+                identity_position,
+                ..
+            } => {
+                assert_eq!(constructor, "Add");
+                assert_eq!(identity_element, "Zero");
+                assert_eq!(identity_position, IdentityPosition::RightArgument);
+            },
+            other => panic!("expected identity property, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_left_identity_argument() {
+        let law = equation(apply("Add", vec![apply("Zero", Vec::new()), var("a")]), var("a"));
+
+        let detected = detect_identity(&law).expect("left identity should be detected");
+        match detected {
+            AlgebraicProperty::Identity {
+                constructor,
+                identity_element,
+                identity_position,
+                ..
+            } => {
+                assert_eq!(constructor, "Add");
+                assert_eq!(identity_element, "Zero");
+                assert_eq!(identity_position, IdentityPosition::LeftArgument);
+            },
+            other => panic!("expected identity property, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn identity_application_preserves_argument_side() {
+        let term = "Num::Lit(1)";
+        let identity = "Num::Zero";
+
+        assert_eq!(
+            construct_identity_application(
+                "Num",
+                "Add",
+                term,
+                identity,
+                IdentityPosition::RightArgument
+            ),
+            "Num::Add(std::sync::Arc::new(Num::Lit(1)), std::sync::Arc::new(Num::Zero))"
+        );
+        assert_eq!(
+            construct_identity_application(
+                "Num",
+                "Add",
+                term,
+                identity,
+                IdentityPosition::LeftArgument
+            ),
+            "Num::Add(std::sync::Arc::new(Num::Zero), std::sync::Arc::new(Num::Lit(1)))"
+        );
+    }
 }

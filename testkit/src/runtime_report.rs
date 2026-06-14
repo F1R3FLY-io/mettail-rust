@@ -3,7 +3,7 @@ use mettail_runtime::{
     RuntimeObservationValue, Term,
 };
 
-pub(crate) fn run_default_backend_report(
+pub fn run_default_backend_report(
     language: &dyn Language,
     term: &dyn Term,
     context: &str,
@@ -19,7 +19,7 @@ pub(crate) fn run_default_backend_report(
     })
 }
 
-pub(crate) fn expect_ascent_graph(
+pub fn expect_ascent_graph(
     report: RuntimeBackendReport,
     context: &str,
 ) -> Result<AscentResults, String> {
@@ -38,7 +38,7 @@ pub(crate) fn expect_ascent_graph(
     }
 }
 
-pub(crate) fn report_contains_expected(report: &RuntimeBackendReport, expected: &str) -> bool {
+pub fn report_contains_expected(report: &RuntimeBackendReport, expected: &str) -> bool {
     match &report.output {
         RuntimeBackendOutput::Ascent(results) => results
             .normal_forms()
@@ -57,7 +57,7 @@ pub(crate) fn report_contains_expected(report: &RuntimeBackendReport, expected: 
     }
 }
 
-pub(crate) fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<String> {
+pub fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<String> {
     match &report.output {
         RuntimeBackendOutput::Ascent(results) => results
             .normal_forms()
@@ -72,12 +72,7 @@ pub(crate) fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<Stri
             }
             for observation in observations {
                 for value in &observation.values {
-                    outputs.push(format!("{}", value));
-                    if let Some(raw) = raw_observation_text(value) {
-                        if raw != outputs.last().map(String::as_str).unwrap_or_default() {
-                            outputs.push(raw.to_string());
-                        }
-                    }
+                    push_observation_value_outputs(value, &mut outputs);
                 }
             }
             outputs
@@ -86,7 +81,27 @@ pub(crate) fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<Stri
     }
 }
 
-pub(crate) fn report_signature(report: &RuntimeBackendReport) -> Vec<String> {
+pub fn report_semantic_outputs(report: &RuntimeBackendReport) -> Vec<String> {
+    match &report.output {
+        RuntimeBackendOutput::Ascent(results) => results
+            .normal_forms()
+            .iter()
+            .map(|normal_form| normal_form.display.clone())
+            .collect(),
+        RuntimeBackendOutput::Observations(observations) => {
+            let mut outputs = Vec::new();
+            for observation in observations {
+                for value in &observation.values {
+                    push_observation_value_outputs(value, &mut outputs);
+                }
+            }
+            outputs
+        },
+        _ => Vec::new(),
+    }
+}
+
+pub fn report_signature(report: &RuntimeBackendReport) -> Vec<String> {
     let mut signature = vec![
         format!("backend={}", report.backend),
         format!("artifact={}", report.artifact),
@@ -134,6 +149,16 @@ fn observation_summary(observations: &[RuntimeChannelObservation]) -> String {
 
 fn observation_value_matches(value: &RuntimeObservationValue, expected: &str) -> bool {
     format!("{}", value) == expected || raw_observation_text(value) == Some(expected)
+}
+
+fn push_observation_value_outputs(value: &RuntimeObservationValue, outputs: &mut Vec<String>) {
+    let formatted = format!("{}", value);
+    outputs.push(formatted.clone());
+    if let Some(raw) = raw_observation_text(value) {
+        if raw != formatted {
+            outputs.push(raw.to_string());
+        }
+    }
 }
 
 fn raw_observation_text(value: &RuntimeObservationValue) -> Option<&str> {

@@ -45,14 +45,14 @@ fn eval_optsmoke_ifelse_false_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -66,14 +66,14 @@ fn eval_optsmoke_ifelse_false_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -87,14 +87,14 @@ fn eval_optsmoke_ifelse_false_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -108,14 +108,14 @@ fn eval_optsmoke_ifelse_false_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -129,14 +129,14 @@ fn eval_optsmoke_ifelse_false_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -150,19 +150,18 @@ fn eval_optsmoke_ifelse_true_5() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -177,19 +176,18 @@ fn eval_optsmoke_ifelse_true_3() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -204,19 +202,18 @@ fn eval_optsmoke_ifelse_true_2() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -231,19 +228,18 @@ fn eval_optsmoke_ifelse_true_1() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -258,19 +254,18 @@ fn eval_optsmoke_ifelse_true_0() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -285,14 +280,14 @@ fn cross_cat_optsmoke_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -306,19 +301,18 @@ fn cross_cat_optsmoke_eval_ifelse() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -333,14 +327,14 @@ fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -358,14 +352,14 @@ fn wfst_optsmoke_dispatch_ifelse_eval() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -383,14 +377,14 @@ fn wpda_optsmoke_ifelse_true_0() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -404,14 +398,14 @@ fn wpda_optsmoke_ifelse_true_1() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -425,14 +419,14 @@ fn wpda_optsmoke_ifelse_true_2() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -446,14 +440,14 @@ fn wpda_optsmoke_ifelse_true_3() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -467,14 +461,14 @@ fn wpda_optsmoke_ifelse_true_5() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -488,14 +482,14 @@ fn wpda_optsmoke_ifelse_false_0() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -509,14 +503,14 @@ fn wpda_optsmoke_ifelse_false_1() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -530,14 +524,14 @@ fn wpda_optsmoke_ifelse_false_2() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -551,14 +545,14 @@ fn wpda_optsmoke_ifelse_false_3() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -572,14 +566,14 @@ fn wpda_optsmoke_ifelse_false_5() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -599,23 +593,25 @@ fn type_pres_optsmoke_ifelse_true_0() {
         let input_str = format!("{}", input_term);
         let lang = OptSmokeLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }

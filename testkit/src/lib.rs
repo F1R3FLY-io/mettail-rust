@@ -16,9 +16,8 @@ pub mod alpha;
 pub mod analytical;
 pub mod program;
 pub mod properties;
+pub mod runtime_report;
 pub mod strategies;
-
-mod runtime_report;
 
 // Re-export commonly used items for convenience in generated test code
 pub use alpha::assert_alpha_eq;

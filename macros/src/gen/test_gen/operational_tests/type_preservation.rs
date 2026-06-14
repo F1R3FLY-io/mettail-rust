@@ -175,8 +175,8 @@ fn generate_type_preservation_for_all_eval_rules(
 /// 1. Constructs a ground term
 /// 2. Displays it
 /// 3. Parses it
-/// 4. Evaluates via run_ascent
-/// 5. Verifies each normal form can be displayed and re-parsed
+/// 4. Evaluates via the selected default runtime backend
+/// 5. Verifies each semantic backend output can be displayed and re-parsed
 fn generate_type_pres_test_case(
     test_name: &str,
     construction_code: &str,
@@ -191,16 +191,16 @@ fn generate_type_pres_test_case(
     let input_str = format!("{{}}", input_term);
     let lang = {lang_struct};
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {{}} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {{
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
+    let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), "generated type preservation eval")
+        .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
+    assert!(!outputs.is_empty(),
+        "type preservation: {{}} should produce at least one semantic backend output", input_str);
+    // Verify each semantic backend output can be displayed and re-parsed.
+    for output in &outputs {{
+        let re_parsed = lang.parse_term(output);
         assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{{}}' should be parseable in same category", nf_display);
+            "type preservation: backend output '{{}}' should be parseable in same category", output);
     }}
 }}"#,
         cat = category,

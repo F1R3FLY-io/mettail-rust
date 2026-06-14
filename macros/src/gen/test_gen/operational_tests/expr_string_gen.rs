@@ -34,25 +34,32 @@ pub fn generate_test_function(test: &TestCase) -> String {
         "    let parsed = lang.parse_term(&input_str).expect(\"parse should succeed\");\n",
     );
     out.push_str(
-        "    let results = lang.run_ascent(parsed.as_ref()).expect(\"eval should succeed\");\n",
+        "    let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated operational eval\")\n",
     );
+    out.push_str("        .expect(\"eval should succeed\");\n");
 
     if let Some(expected) = &test.expected {
         // Full assertion test
         out.push_str(
-            "    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n",
+            "    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n",
         );
         // Escape the expected string for embedding in Rust source
         let escaped_expected = escape_rust_string(expected);
-        out.push_str(&format!("    assert!(nfs.iter().any(|d| d == \"{}\"),\n", escaped_expected));
         out.push_str(&format!(
-            "        \"{{}} should evaluate to {}, got {{:?}}\", input_str, nfs);\n",
+            "    assert!(mettail_testkit::runtime_report::report_contains_expected(&report, \"{}\"),\n",
+            escaped_expected
+        ));
+        out.push_str(&format!(
+            "        \"{{}} should evaluate to {}, got {{:?}}\", input_str, outputs);\n",
             escaped_expected
         ));
     } else {
         // Smoke test
-        out.push_str("    assert!(!results.normal_forms().is_empty(),\n");
-        out.push_str("        \"{} should evaluate to at least one normal form\", input_str);\n");
+        out.push_str(
+            "    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n",
+        );
+        out.push_str("    assert!(!outputs.is_empty(),\n");
+        out.push_str("        \"{} should produce at least one backend output\", input_str);\n");
     }
 
     out.push_str("}\n\n");

@@ -254,6 +254,33 @@ simulation checks should use the owning language feature, for example
 `cargo test -p mettail-languages --no-default-features --features calculator --test simulation_integration`,
 when the test only exercises Calculator.
 
+## Generated Operational Test Boundary
+
+Generated operational tests are part of the runtime-backend replacement surface
+because they define the regression corpus future generated language crates will
+compile. Their templates must therefore exercise the selected default runtime
+backend through `RuntimeBackendReport`; they must not bake in
+`Language::run_ascent` as the only successful execution path.
+
+The intended generated-test behavior is:
+
+```text
+When a generated operational test evaluates a parsed term:
+  ask the selected default backend for a RuntimeBackendReport
+  compare expected values through report-aware helpers
+  accept Ascent normal forms and Rho/runtime observations as backend outputs
+  use semantic outputs, not channel-summary diagnostics, for parseability checks
+  keep graph-only assertions behind explicit Ascent-shaped graph checks
+```
+
+This boundary lets generated expected-output, smoke, precedence,
+associativity, type-preservation, and algebraic-property tests continue to
+work while a language is Ascent-default, and then continue to test the same
+semantic obligation when the language is wrapped as Rho-default. The templates
+also generate property-based identity-law checks for both `f(e,a)=a` and
+`f(a,e)=a`; the side of the identity element is part of the detected property,
+not a hard-coded convention.
+
 ## Diagram Tooling Policy
 
 pgmcp's local diagramming toolbox includes PlantUML, Structurizr CLI, D2,

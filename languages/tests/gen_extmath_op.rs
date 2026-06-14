@@ -37,19 +37,18 @@ fn eval_extmath_sub_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -61,19 +60,18 @@ fn eval_extmath_sub_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -85,19 +83,18 @@ fn eval_extmath_sub_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -109,19 +106,18 @@ fn eval_extmath_sub_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -133,19 +129,18 @@ fn eval_extmath_sub_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -157,19 +152,18 @@ fn eval_extmath_sub_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
         "{} should evaluate to -3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -181,19 +175,18 @@ fn eval_extmath_sub_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -205,19 +198,18 @@ fn eval_extmath_sub_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -229,19 +221,18 @@ fn eval_extmath_sub_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -253,19 +244,18 @@ fn eval_extmath_sub_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -277,19 +267,18 @@ fn eval_extmath_sub_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-4"),
         "{} should evaluate to -4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -301,19 +290,18 @@ fn eval_extmath_sub_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -325,19 +313,18 @@ fn eval_extmath_sub_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -349,19 +336,18 @@ fn eval_extmath_sub_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -373,19 +359,18 @@ fn eval_extmath_sub_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -397,19 +382,18 @@ fn eval_extmath_sub_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-5"),
         "{} should evaluate to -5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -421,19 +405,18 @@ fn eval_extmath_sub_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
         "{} should evaluate to -3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -445,19 +428,18 @@ fn eval_extmath_sub_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -469,19 +451,18 @@ fn eval_extmath_sub_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -493,19 +474,18 @@ fn eval_extmath_sub_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -517,19 +497,18 @@ fn eval_extmath_add_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "8"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "8"),
         "{} should evaluate to 8, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -541,19 +520,18 @@ fn eval_extmath_add_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -565,19 +543,18 @@ fn eval_extmath_add_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -589,19 +566,18 @@ fn eval_extmath_add_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -613,19 +589,18 @@ fn eval_extmath_add_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -637,19 +612,18 @@ fn eval_extmath_add_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "7"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "7"),
         "{} should evaluate to 7, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -661,19 +635,18 @@ fn eval_extmath_add_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -685,19 +658,18 @@ fn eval_extmath_add_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -709,19 +681,18 @@ fn eval_extmath_add_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -733,19 +704,18 @@ fn eval_extmath_add_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -757,19 +727,18 @@ fn eval_extmath_add_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -781,19 +750,18 @@ fn eval_extmath_add_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -805,19 +773,18 @@ fn eval_extmath_add_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -829,19 +796,18 @@ fn eval_extmath_add_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -853,19 +819,18 @@ fn eval_extmath_add_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -877,19 +842,18 @@ fn eval_extmath_add_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -901,19 +865,18 @@ fn eval_extmath_add_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -925,19 +888,18 @@ fn eval_extmath_add_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -949,19 +911,18 @@ fn eval_extmath_add_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -973,19 +934,18 @@ fn eval_extmath_add_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1006,19 +966,18 @@ fn nested_extmath_sub_add_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1035,19 +994,18 @@ fn nested_extmath_sub_add_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1064,19 +1022,18 @@ fn nested_extmath_sub_add_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1093,19 +1050,18 @@ fn nested_extmath_sub_add_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1122,19 +1078,18 @@ fn nested_extmath_sub_add_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1151,19 +1106,18 @@ fn nested_extmath_sub_add_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1180,19 +1134,18 @@ fn nested_extmath_add_sub_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1209,19 +1162,18 @@ fn nested_extmath_add_sub_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1238,19 +1190,18 @@ fn nested_extmath_add_sub_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1267,19 +1218,18 @@ fn nested_extmath_add_sub_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1296,19 +1246,18 @@ fn nested_extmath_add_sub_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1325,19 +1274,18 @@ fn nested_extmath_add_sub_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1353,14 +1301,14 @@ fn wfst_extmath_dispatch_add_eval() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1371,14 +1319,14 @@ fn wfst_extmath_dispatch_sub_eval() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1386,51 +1334,49 @@ fn wfst_extmath_dispatch_sub_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn prec_extmath_sub_add_tighter_than_1___2___3() {
+fn prec_extmath_sub_add_tighter_than_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Precedence test: Sub binds tighter than Add
         let input_str = "1 + 2 - 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated precedence eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "0"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
             "{} should evaluate to 0, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_extmath_paren_override_add_sub__1___2____3() {
+fn prec_extmath_paren_override_add_sub_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Parenthesization override: (Add) Sub
         let input_str = "(1 + 2) - 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated parenthesization eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "0"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
             "{} should evaluate to 0, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -1443,19 +1389,18 @@ fn assoc_extmath_add_left() {
         let input_str = "1 + 2 + 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "6"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
             "{} (left-assoc) should evaluate to 6, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -1468,19 +1413,18 @@ fn assoc_extmath_sub_left() {
         let input_str = "1 - 2 - 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "-4"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "-4"),
             "{} (left-assoc) should evaluate to -4, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -1497,14 +1441,14 @@ fn wpda_extmath_add_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1515,14 +1459,14 @@ fn wpda_extmath_add_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1533,14 +1477,14 @@ fn wpda_extmath_add_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1551,14 +1495,14 @@ fn wpda_extmath_add_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1569,14 +1513,14 @@ fn wpda_extmath_add_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1587,14 +1531,14 @@ fn wpda_extmath_add_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1605,14 +1549,14 @@ fn wpda_extmath_add_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1623,14 +1567,14 @@ fn wpda_extmath_add_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1641,14 +1585,14 @@ fn wpda_extmath_add_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1659,14 +1603,14 @@ fn wpda_extmath_add_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1677,14 +1621,14 @@ fn wpda_extmath_add_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1695,14 +1639,14 @@ fn wpda_extmath_add_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1713,14 +1657,14 @@ fn wpda_extmath_add_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1731,14 +1675,14 @@ fn wpda_extmath_add_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1749,14 +1693,14 @@ fn wpda_extmath_add_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1767,14 +1711,14 @@ fn wpda_extmath_add_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1785,14 +1729,14 @@ fn wpda_extmath_add_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1803,14 +1747,14 @@ fn wpda_extmath_add_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1821,14 +1765,14 @@ fn wpda_extmath_add_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1839,14 +1783,14 @@ fn wpda_extmath_add_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1857,14 +1801,14 @@ fn wpda_extmath_sub_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1875,14 +1819,14 @@ fn wpda_extmath_sub_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1893,14 +1837,14 @@ fn wpda_extmath_sub_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1911,14 +1855,14 @@ fn wpda_extmath_sub_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1929,14 +1873,14 @@ fn wpda_extmath_sub_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1947,14 +1891,14 @@ fn wpda_extmath_sub_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1965,14 +1909,14 @@ fn wpda_extmath_sub_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -1983,14 +1927,14 @@ fn wpda_extmath_sub_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2001,14 +1945,14 @@ fn wpda_extmath_sub_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2019,14 +1963,14 @@ fn wpda_extmath_sub_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2037,14 +1981,14 @@ fn wpda_extmath_sub_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2055,14 +1999,14 @@ fn wpda_extmath_sub_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2073,14 +2017,14 @@ fn wpda_extmath_sub_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2091,14 +2035,14 @@ fn wpda_extmath_sub_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2109,14 +2053,14 @@ fn wpda_extmath_sub_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2127,14 +2071,14 @@ fn wpda_extmath_sub_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2145,14 +2089,14 @@ fn wpda_extmath_sub_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2163,14 +2107,14 @@ fn wpda_extmath_sub_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2181,14 +2125,14 @@ fn wpda_extmath_sub_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2199,14 +2143,14 @@ fn wpda_extmath_sub_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2225,23 +2169,25 @@ fn type_pres_extmath_add_0_0() {
         let input_str = format!("{}", input_term);
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -2259,23 +2205,25 @@ fn type_pres_extmath_sub_0_0() {
         let input_str = format!("{}", input_term);
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }

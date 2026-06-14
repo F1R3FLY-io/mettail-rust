@@ -653,12 +653,18 @@ fn expr_contains_div(expr: &syn::Expr) -> bool {
 /// Sanitize a string for use as part of a Rust test function name.
 pub(crate) fn sanitize_test_name(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
+    let mut last_was_separator = false;
     for ch in s.chars() {
         if ch.is_ascii_alphanumeric() {
             out.push(ch.to_ascii_lowercase());
-        } else {
+            last_was_separator = false;
+        } else if !last_was_separator {
             out.push('_');
+            last_was_separator = true;
         }
+    }
+    while out.starts_with('_') {
+        out.remove(0);
     }
     while out.ends_with('_') {
         out.pop();
@@ -667,4 +673,16 @@ pub(crate) fn sanitize_test_name(s: &str) -> String {
         out.push_str("case");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_test_name;
+
+    #[test]
+    fn sanitize_test_name_collapses_separator_runs() {
+        assert_eq!(sanitize_test_name("1 + 2 - 3"), "1_2_3");
+        assert_eq!(sanitize_test_name("(1 + 2) - 3"), "1_2_3");
+        assert_eq!(sanitize_test_name("___"), "case");
+    }
 }

@@ -61,19 +61,18 @@ fn eval_ledtest_andpred_false_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -87,19 +86,18 @@ fn eval_ledtest_andpred_false_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -113,19 +111,18 @@ fn eval_ledtest_andpred_true_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -139,19 +136,18 @@ fn eval_ledtest_andpred_true_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -162,14 +158,14 @@ fn eval_ledtest_factnum_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -179,14 +175,14 @@ fn eval_ledtest_factnum_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -196,14 +192,14 @@ fn eval_ledtest_factnum_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -213,14 +209,14 @@ fn eval_ledtest_factnum_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -230,14 +226,14 @@ fn eval_ledtest_factnum_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -247,19 +243,18 @@ fn eval_ledtest_negnum_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-5"),
         "{} should evaluate to -5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -270,19 +265,18 @@ fn eval_ledtest_negnum_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
         "{} should evaluate to -3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -293,19 +287,18 @@ fn eval_ledtest_negnum_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -316,19 +309,18 @@ fn eval_ledtest_negnum_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -339,19 +331,18 @@ fn eval_ledtest_negnum_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -363,19 +354,18 @@ fn eval_ledtest_mulnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "15"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "15"),
         "{} should evaluate to 15, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -387,19 +377,18 @@ fn eval_ledtest_mulnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "9"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "9"),
         "{} should evaluate to 9, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -411,19 +400,18 @@ fn eval_ledtest_mulnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -435,19 +423,18 @@ fn eval_ledtest_mulnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -459,19 +446,18 @@ fn eval_ledtest_mulnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -483,19 +469,18 @@ fn eval_ledtest_mulnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "10"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "10"),
         "{} should evaluate to 10, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -507,19 +492,18 @@ fn eval_ledtest_mulnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -531,19 +515,18 @@ fn eval_ledtest_mulnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -555,19 +538,18 @@ fn eval_ledtest_mulnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -579,19 +561,18 @@ fn eval_ledtest_mulnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -603,19 +584,18 @@ fn eval_ledtest_mulnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -627,19 +607,18 @@ fn eval_ledtest_mulnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -651,19 +630,18 @@ fn eval_ledtest_mulnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -675,19 +653,18 @@ fn eval_ledtest_mulnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -699,19 +676,18 @@ fn eval_ledtest_mulnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -723,19 +699,18 @@ fn eval_ledtest_mulnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -747,19 +722,18 @@ fn eval_ledtest_mulnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -771,19 +745,18 @@ fn eval_ledtest_mulnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -795,19 +768,18 @@ fn eval_ledtest_mulnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -819,19 +791,18 @@ fn eval_ledtest_mulnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -843,19 +814,18 @@ fn eval_ledtest_addnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "8"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "8"),
         "{} should evaluate to 8, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -867,19 +837,18 @@ fn eval_ledtest_addnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -891,19 +860,18 @@ fn eval_ledtest_addnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -915,19 +883,18 @@ fn eval_ledtest_addnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -939,19 +906,18 @@ fn eval_ledtest_addnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -963,19 +929,18 @@ fn eval_ledtest_addnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "7"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "7"),
         "{} should evaluate to 7, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -987,19 +952,18 @@ fn eval_ledtest_addnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1011,19 +975,18 @@ fn eval_ledtest_addnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1035,19 +998,18 @@ fn eval_ledtest_addnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1059,19 +1021,18 @@ fn eval_ledtest_addnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1083,19 +1044,18 @@ fn eval_ledtest_addnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1107,19 +1067,18 @@ fn eval_ledtest_addnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1131,19 +1090,18 @@ fn eval_ledtest_addnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1155,19 +1113,18 @@ fn eval_ledtest_addnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1179,19 +1136,18 @@ fn eval_ledtest_addnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1203,19 +1159,18 @@ fn eval_ledtest_addnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1227,19 +1182,18 @@ fn eval_ledtest_addnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1251,19 +1205,18 @@ fn eval_ledtest_addnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1275,19 +1228,18 @@ fn eval_ledtest_addnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1299,19 +1251,18 @@ fn eval_ledtest_addnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1323,19 +1274,18 @@ fn eval_ledtest_nenum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1347,19 +1297,18 @@ fn eval_ledtest_nenum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1371,19 +1320,18 @@ fn eval_ledtest_nenum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1395,19 +1343,18 @@ fn eval_ledtest_nenum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1419,19 +1366,18 @@ fn eval_ledtest_nenum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1443,19 +1389,18 @@ fn eval_ledtest_nenum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1467,19 +1412,18 @@ fn eval_ledtest_nenum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1491,19 +1435,18 @@ fn eval_ledtest_nenum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1515,19 +1458,18 @@ fn eval_ledtest_nenum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1539,19 +1481,18 @@ fn eval_ledtest_nenum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1563,19 +1504,18 @@ fn eval_ledtest_nenum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1587,19 +1527,18 @@ fn eval_ledtest_nenum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1611,19 +1550,18 @@ fn eval_ledtest_nenum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1635,19 +1573,18 @@ fn eval_ledtest_nenum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1659,19 +1596,18 @@ fn eval_ledtest_nenum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1683,19 +1619,18 @@ fn eval_ledtest_nenum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1707,19 +1642,18 @@ fn eval_ledtest_nenum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1731,19 +1665,18 @@ fn eval_ledtest_nenum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1755,19 +1688,18 @@ fn eval_ledtest_nenum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1779,19 +1711,18 @@ fn eval_ledtest_nenum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1803,19 +1734,18 @@ fn eval_ledtest_eqnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1827,19 +1757,18 @@ fn eval_ledtest_eqnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1851,19 +1780,18 @@ fn eval_ledtest_eqnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1875,19 +1803,18 @@ fn eval_ledtest_eqnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1899,19 +1826,18 @@ fn eval_ledtest_eqnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1923,19 +1849,18 @@ fn eval_ledtest_eqnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1947,19 +1872,18 @@ fn eval_ledtest_eqnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1971,19 +1895,18 @@ fn eval_ledtest_eqnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1995,19 +1918,18 @@ fn eval_ledtest_eqnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2019,19 +1941,18 @@ fn eval_ledtest_eqnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2043,19 +1964,18 @@ fn eval_ledtest_eqnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2067,19 +1987,18 @@ fn eval_ledtest_eqnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2091,19 +2010,18 @@ fn eval_ledtest_eqnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2115,19 +2033,18 @@ fn eval_ledtest_eqnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2139,19 +2056,18 @@ fn eval_ledtest_eqnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2163,19 +2079,18 @@ fn eval_ledtest_eqnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2187,19 +2102,18 @@ fn eval_ledtest_eqnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2211,19 +2125,18 @@ fn eval_ledtest_eqnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2235,19 +2148,18 @@ fn eval_ledtest_eqnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2259,19 +2171,18 @@ fn eval_ledtest_eqnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2292,19 +2203,18 @@ fn nested_ledtest_andpred_nenum_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2321,19 +2231,18 @@ fn nested_ledtest_andpred_nenum_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2350,19 +2259,18 @@ fn nested_ledtest_andpred_nenum_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2379,19 +2287,18 @@ fn nested_ledtest_andpred_eqnum_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2408,19 +2315,18 @@ fn nested_ledtest_andpred_eqnum_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2437,19 +2343,18 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2466,19 +2371,18 @@ fn nested_ledtest_andpred_nenum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2495,19 +2399,18 @@ fn nested_ledtest_andpred_nenum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2524,19 +2427,18 @@ fn nested_ledtest_andpred_nenum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2553,19 +2455,18 @@ fn nested_ledtest_andpred_eqnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2582,19 +2483,18 @@ fn nested_ledtest_andpred_eqnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2611,19 +2511,18 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2635,14 +2534,14 @@ fn nested_ledtest_factnum_negnum_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2653,14 +2552,14 @@ fn nested_ledtest_factnum_negnum_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2671,14 +2570,14 @@ fn nested_ledtest_factnum_negnum_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2691,14 +2590,14 @@ fn nested_ledtest_factnum_mulnum_0_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2711,14 +2610,14 @@ fn nested_ledtest_factnum_mulnum_0_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2731,14 +2630,14 @@ fn nested_ledtest_factnum_mulnum_0_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2751,14 +2650,14 @@ fn nested_ledtest_factnum_addnum_0_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2771,14 +2670,14 @@ fn nested_ledtest_factnum_addnum_0_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2791,14 +2690,14 @@ fn nested_ledtest_factnum_addnum_0_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2809,14 +2708,14 @@ fn nested_ledtest_negnum_factnum_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2827,14 +2726,14 @@ fn nested_ledtest_negnum_factnum_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2845,14 +2744,14 @@ fn nested_ledtest_negnum_factnum_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -2865,19 +2764,18 @@ fn nested_ledtest_negnum_mulnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2891,19 +2789,18 @@ fn nested_ledtest_negnum_mulnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2917,19 +2814,18 @@ fn nested_ledtest_negnum_mulnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2943,19 +2839,18 @@ fn nested_ledtest_negnum_addnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2969,19 +2864,18 @@ fn nested_ledtest_negnum_addnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2995,19 +2889,18 @@ fn nested_ledtest_negnum_addnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3021,14 +2914,14 @@ fn nested_ledtest_mulnum_factnum_2_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3041,14 +2934,14 @@ fn nested_ledtest_mulnum_factnum_1_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3061,14 +2954,14 @@ fn nested_ledtest_mulnum_factnum_0_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3081,19 +2974,18 @@ fn nested_ledtest_mulnum_negnum_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3107,19 +2999,18 @@ fn nested_ledtest_mulnum_negnum_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3133,19 +3024,18 @@ fn nested_ledtest_mulnum_negnum_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3162,19 +3052,18 @@ fn nested_ledtest_mulnum_addnum_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3191,19 +3080,18 @@ fn nested_ledtest_mulnum_addnum_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3220,19 +3108,18 @@ fn nested_ledtest_mulnum_addnum_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3246,14 +3133,14 @@ fn nested_ledtest_mulnum_factnum_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3266,14 +3153,14 @@ fn nested_ledtest_mulnum_factnum_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3286,14 +3173,14 @@ fn nested_ledtest_mulnum_factnum_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3306,19 +3193,18 @@ fn nested_ledtest_mulnum_negnum_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3332,19 +3218,18 @@ fn nested_ledtest_mulnum_negnum_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3358,19 +3243,18 @@ fn nested_ledtest_mulnum_negnum_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3387,19 +3271,18 @@ fn nested_ledtest_mulnum_addnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3416,19 +3299,18 @@ fn nested_ledtest_mulnum_addnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3445,19 +3327,18 @@ fn nested_ledtest_mulnum_addnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3471,14 +3352,14 @@ fn nested_ledtest_addnum_factnum_2_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3491,14 +3372,14 @@ fn nested_ledtest_addnum_factnum_1_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3515,19 +3396,18 @@ fn edge_ledtest_andpred_bool_false_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3541,19 +3421,18 @@ fn edge_ledtest_andpred_bool_true_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3567,19 +3446,18 @@ fn edge_ledtest_andpred_bool_false_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3593,19 +3471,18 @@ fn edge_ledtest_andpred_bool_true_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3620,14 +3497,14 @@ fn cross_cat_ledtest_cast_castnum_from_num_to_expr() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3637,14 +3514,14 @@ fn cross_cat_ledtest_cast_castpred_from_pred_to_expr() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3654,14 +3531,14 @@ fn cross_cat_ledtest_cast_predtonum_from_pred_to_num() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3672,14 +3549,14 @@ fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3691,14 +3568,14 @@ fn cross_cat_ledtest_chain_castpred_exprtonum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3710,14 +3587,14 @@ fn cross_cat_ledtest_chain_predtonum_castnum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3728,19 +3605,18 @@ fn cross_cat_ledtest_eval_eqnum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3752,19 +3628,18 @@ fn cross_cat_ledtest_eval_nenum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3778,14 +3653,14 @@ fn cross_cat_ledtest_castop_addnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3798,14 +3673,14 @@ fn cross_cat_ledtest_castop_mulnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3816,14 +3691,14 @@ fn cross_cat_ledtest_castop_negnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3834,14 +3709,14 @@ fn cross_cat_ledtest_castop_factnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3854,14 +3729,14 @@ fn cross_cat_ledtest_mixed_addnum_cast_predtonum_lhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3874,14 +3749,14 @@ fn cross_cat_ledtest_mixed_addnum_cast_predtonum_rhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3894,14 +3769,14 @@ fn cross_cat_ledtest_composite_addnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3914,14 +3789,14 @@ fn cross_cat_ledtest_composite_mulnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3932,14 +3807,14 @@ fn cross_cat_ledtest_composite_negnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3950,14 +3825,14 @@ fn cross_cat_ledtest_composite_factnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3972,14 +3847,14 @@ fn wfst_ledtest_dispatch_eqnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3990,14 +3865,14 @@ fn wfst_ledtest_dispatch_nenum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4008,14 +3883,14 @@ fn wfst_ledtest_dispatch_addnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4026,14 +3901,14 @@ fn wfst_ledtest_dispatch_mulnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4043,14 +3918,14 @@ fn wfst_ledtest_dispatch_negnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4060,14 +3935,14 @@ fn wfst_ledtest_dispatch_factnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4080,14 +3955,14 @@ fn wfst_ledtest_dispatch_andpred_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4095,51 +3970,49 @@ fn wfst_ledtest_dispatch_andpred_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn prec_ledtest_mulnum_addnum_tighter_than_1___2___3() {
+fn prec_ledtest_mulnum_addnum_tighter_than_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Precedence test: MulNum binds tighter than AddNum
         let input_str = "1 + 2 * 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated precedence eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "7"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "7"),
             "{} should evaluate to 7, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_ledtest_paren_override_addnum_mulnum__1___2____3() {
+fn prec_ledtest_paren_override_addnum_mulnum_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Parenthesization override: (AddNum) MulNum
         let input_str = "(1 + 2) * 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated parenthesization eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "9"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "9"),
             "{} should evaluate to 9, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -4152,19 +4025,18 @@ fn assoc_ledtest_addnum_left() {
         let input_str = "1 + 2 + 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "6"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
             "{} (left-assoc) should evaluate to 6, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -4177,19 +4049,18 @@ fn assoc_ledtest_mulnum_left() {
         let input_str = "1 * 2 * 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "6"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
             "{} (left-assoc) should evaluate to 6, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -4206,14 +4077,14 @@ fn wpda_ledtest_addnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4224,14 +4095,14 @@ fn wpda_ledtest_addnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4242,14 +4113,14 @@ fn wpda_ledtest_addnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4260,14 +4131,14 @@ fn wpda_ledtest_addnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4278,14 +4149,14 @@ fn wpda_ledtest_addnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4296,14 +4167,14 @@ fn wpda_ledtest_eqnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4314,14 +4185,14 @@ fn wpda_ledtest_eqnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4332,14 +4203,14 @@ fn wpda_ledtest_eqnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4350,14 +4221,14 @@ fn wpda_ledtest_eqnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4368,14 +4239,14 @@ fn wpda_ledtest_eqnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4386,14 +4257,14 @@ fn wpda_ledtest_eqnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4404,14 +4275,14 @@ fn wpda_ledtest_eqnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4422,14 +4293,14 @@ fn wpda_ledtest_eqnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4440,14 +4311,14 @@ fn wpda_ledtest_eqnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4458,14 +4329,14 @@ fn wpda_ledtest_eqnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4476,14 +4347,14 @@ fn wpda_ledtest_eqnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4494,14 +4365,14 @@ fn wpda_ledtest_eqnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4512,14 +4383,14 @@ fn wpda_ledtest_eqnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4530,14 +4401,14 @@ fn wpda_ledtest_eqnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4548,14 +4419,14 @@ fn wpda_ledtest_eqnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4566,14 +4437,14 @@ fn wpda_ledtest_eqnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4584,14 +4455,14 @@ fn wpda_ledtest_eqnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4602,14 +4473,14 @@ fn wpda_ledtest_eqnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4620,14 +4491,14 @@ fn wpda_ledtest_eqnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4638,14 +4509,14 @@ fn wpda_ledtest_eqnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4656,14 +4527,14 @@ fn wpda_ledtest_nenum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4674,14 +4545,14 @@ fn wpda_ledtest_nenum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4692,14 +4563,14 @@ fn wpda_ledtest_nenum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4710,14 +4581,14 @@ fn wpda_ledtest_nenum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4728,14 +4599,14 @@ fn wpda_ledtest_nenum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4746,14 +4617,14 @@ fn wpda_ledtest_nenum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4764,14 +4635,14 @@ fn wpda_ledtest_nenum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4782,14 +4653,14 @@ fn wpda_ledtest_nenum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4800,14 +4671,14 @@ fn wpda_ledtest_nenum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4818,14 +4689,14 @@ fn wpda_ledtest_nenum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4836,14 +4707,14 @@ fn wpda_ledtest_nenum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4862,23 +4733,25 @@ fn type_pres_ledtest_eqnum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4896,23 +4769,25 @@ fn type_pres_ledtest_nenum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4930,23 +4805,25 @@ fn type_pres_ledtest_addnum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4964,23 +4841,25 @@ fn type_pres_ledtest_mulnum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4995,23 +4874,25 @@ fn type_pres_ledtest_negnum_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -5026,23 +4907,25 @@ fn type_pres_ledtest_factnum_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -5060,23 +4943,25 @@ fn type_pres_ledtest_andpred_true_true() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }

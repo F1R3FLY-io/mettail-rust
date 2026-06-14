@@ -432,8 +432,8 @@ fn generate_precedence_test(
         let input_str = \"{}\";\n    \
         let lang = {};\n    \
         let parsed = lang.parse_term(input_str).expect(\"parse should succeed\");\n    \
-        let results = lang.run_ascent(parsed.as_ref()).expect(\"eval should succeed\");\n    \
-        let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n    \
+        let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated precedence eval\")\n            .expect(\"eval should succeed\");\n    \
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n    \
         {}}}",
         high_op.label,
         low_op.label,
@@ -441,12 +441,12 @@ fn generate_precedence_test(
         lang_struct,
         if let Some(ref exp) = expected {
             format!(
-                "assert!(nfs.iter().any(|d| d == \"{}\"),\n        \
-                \"{{}} should evaluate to {}, got {{:?}}\", input_str, nfs);",
+                "assert!(mettail_testkit::runtime_report::report_contains_expected(&report, \"{}\"),\n        \
+                \"{{}} should evaluate to {}, got {{:?}}\", input_str, outputs);",
                 exp, exp
             )
         } else {
-            "assert!(!nfs.is_empty(), \"{} should produce at least one normal form\", input_str);".to_string()
+            "assert!(!outputs.is_empty(), \"{} should produce at least one backend output\", input_str);".to_string()
         },
     );
 
@@ -547,8 +547,8 @@ fn generate_paren_override_test(
         let input_str = \"{expr}\";\n    \
         let lang = {lang_struct};\n    \
         let parsed = lang.parse_term(input_str).expect(\"parse should succeed\");\n    \
-        let results = lang.run_ascent(parsed.as_ref()).expect(\"eval should succeed\");\n    \
-        let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n    \
+        let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated parenthesization eval\")\n            .expect(\"eval should succeed\");\n    \
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n    \
         {assertion}}}",
         low = low_op.label,
         high = high_op.label,
@@ -556,12 +556,12 @@ fn generate_paren_override_test(
         lang_struct = lang_struct,
         assertion = if let Some(ref exp) = expected {
             format!(
-                "assert!(nfs.iter().any(|d| d == \"{}\"),\n        \
-                \"{{}} should evaluate to {}, got {{:?}}\", input_str, nfs);",
+                "assert!(mettail_testkit::runtime_report::report_contains_expected(&report, \"{}\"),\n        \
+                \"{{}} should evaluate to {}, got {{:?}}\", input_str, outputs);",
                 exp, exp
             )
         } else {
-            "assert!(!nfs.is_empty(), \"{} should produce at least one normal form\", input_str);".to_string()
+            "assert!(!outputs.is_empty(), \"{} should produce at least one backend output\", input_str);".to_string()
         },
     );
 
@@ -657,8 +657,8 @@ fn generate_associativity_test(
         let input_str = \"{expr}\";\n    \
         let lang = {lang_struct};\n    \
         let parsed = lang.parse_term(input_str).expect(\"parse should succeed\");\n    \
-        let results = lang.run_ascent(parsed.as_ref()).expect(\"eval should succeed\");\n    \
-        let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();\n    \
+        let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated associativity eval\")\n            .expect(\"eval should succeed\");\n    \
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n    \
         {assertion}}}",
         label = op.label,
         assoc = assoc_str,
@@ -666,13 +666,13 @@ fn generate_associativity_test(
         lang_struct = lang_struct,
         assertion = if let Some(ref exp) = expected_str {
             format!(
-                "assert!(nfs.iter().any(|d| d == \"{}\"),\n        \
-                \"{{}} ({}-assoc) should evaluate to {}, got {{:?}}\", input_str, nfs);",
+                "assert!(mettail_testkit::runtime_report::report_contains_expected(&report, \"{}\"),\n        \
+                \"{{}} ({}-assoc) should evaluate to {}, got {{:?}}\", input_str, outputs);",
                 exp, assoc_str, exp
             )
         } else {
             format!(
-                "assert!(!nfs.is_empty(), \"{{}} ({}-assoc) should produce at least one normal form\", input_str);",
+                "assert!(!outputs.is_empty(), \"{{}} ({}-assoc) should produce at least one backend output\", input_str);",
                 assoc_str
             )
         },

@@ -40,19 +40,18 @@ fn eval_mixedmath_neg_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-5"),
         "{} should evaluate to -5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -63,19 +62,18 @@ fn eval_mixedmath_neg_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
         "{} should evaluate to -3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -86,19 +84,18 @@ fn eval_mixedmath_neg_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -109,19 +106,18 @@ fn eval_mixedmath_neg_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -132,19 +128,18 @@ fn eval_mixedmath_neg_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -155,19 +150,18 @@ fn eval_mixedmath_not_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -178,19 +172,18 @@ fn eval_mixedmath_not_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -204,19 +197,18 @@ fn eval_mixedmath_or_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -230,19 +222,18 @@ fn eval_mixedmath_or_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -256,19 +247,18 @@ fn eval_mixedmath_or_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -282,19 +272,18 @@ fn eval_mixedmath_or_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -308,19 +297,18 @@ fn eval_mixedmath_and_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -334,19 +322,18 @@ fn eval_mixedmath_and_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -360,19 +347,18 @@ fn eval_mixedmath_and_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -386,19 +372,18 @@ fn eval_mixedmath_and_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -410,19 +395,18 @@ fn eval_mixedmath_mulint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "15"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "15"),
         "{} should evaluate to 15, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -434,19 +418,18 @@ fn eval_mixedmath_mulint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "9"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "9"),
         "{} should evaluate to 9, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -458,19 +441,18 @@ fn eval_mixedmath_mulint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -482,19 +464,18 @@ fn eval_mixedmath_mulint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -506,19 +487,18 @@ fn eval_mixedmath_mulint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -530,19 +510,18 @@ fn eval_mixedmath_mulint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "10"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "10"),
         "{} should evaluate to 10, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -554,19 +533,18 @@ fn eval_mixedmath_mulint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -578,19 +556,18 @@ fn eval_mixedmath_mulint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -602,19 +579,18 @@ fn eval_mixedmath_mulint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -626,19 +602,18 @@ fn eval_mixedmath_mulint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -650,19 +625,18 @@ fn eval_mixedmath_mulint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -674,19 +648,18 @@ fn eval_mixedmath_mulint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -698,19 +671,18 @@ fn eval_mixedmath_mulint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -722,19 +694,18 @@ fn eval_mixedmath_mulint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -746,19 +717,18 @@ fn eval_mixedmath_mulint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -770,19 +740,18 @@ fn eval_mixedmath_mulint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -794,19 +763,18 @@ fn eval_mixedmath_mulint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -818,19 +786,18 @@ fn eval_mixedmath_mulint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -842,19 +809,18 @@ fn eval_mixedmath_mulint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -866,19 +832,18 @@ fn eval_mixedmath_mulint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -890,19 +855,18 @@ fn eval_mixedmath_subint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -914,19 +878,18 @@ fn eval_mixedmath_subint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -938,19 +901,18 @@ fn eval_mixedmath_subint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -962,19 +924,18 @@ fn eval_mixedmath_subint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -986,19 +947,18 @@ fn eval_mixedmath_subint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1010,19 +970,18 @@ fn eval_mixedmath_subint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
         "{} should evaluate to -3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1034,19 +993,18 @@ fn eval_mixedmath_subint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1058,19 +1016,18 @@ fn eval_mixedmath_subint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1082,19 +1039,18 @@ fn eval_mixedmath_subint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1106,19 +1062,18 @@ fn eval_mixedmath_subint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1130,19 +1085,18 @@ fn eval_mixedmath_subint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-4"),
         "{} should evaluate to -4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1154,19 +1108,18 @@ fn eval_mixedmath_subint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1178,19 +1131,18 @@ fn eval_mixedmath_subint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1202,19 +1154,18 @@ fn eval_mixedmath_subint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1226,19 +1177,18 @@ fn eval_mixedmath_subint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1250,19 +1200,18 @@ fn eval_mixedmath_subint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-5"),
         "{} should evaluate to -5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1274,19 +1223,18 @@ fn eval_mixedmath_subint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
         "{} should evaluate to -3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1298,19 +1246,18 @@ fn eval_mixedmath_subint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1322,19 +1269,18 @@ fn eval_mixedmath_subint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1346,19 +1292,18 @@ fn eval_mixedmath_subint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1370,19 +1315,18 @@ fn eval_mixedmath_addint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "8"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "8"),
         "{} should evaluate to 8, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1394,19 +1338,18 @@ fn eval_mixedmath_addint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1418,19 +1361,18 @@ fn eval_mixedmath_addint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1442,19 +1384,18 @@ fn eval_mixedmath_addint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1466,19 +1407,18 @@ fn eval_mixedmath_addint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1490,19 +1430,18 @@ fn eval_mixedmath_addint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "7"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "7"),
         "{} should evaluate to 7, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1514,19 +1453,18 @@ fn eval_mixedmath_addint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1538,19 +1476,18 @@ fn eval_mixedmath_addint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1562,19 +1499,18 @@ fn eval_mixedmath_addint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1586,19 +1522,18 @@ fn eval_mixedmath_addint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1610,19 +1545,18 @@ fn eval_mixedmath_addint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "6"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
         "{} should evaluate to 6, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1634,19 +1568,18 @@ fn eval_mixedmath_addint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "4"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "4"),
         "{} should evaluate to 4, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1658,19 +1591,18 @@ fn eval_mixedmath_addint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1682,19 +1614,18 @@ fn eval_mixedmath_addint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1706,19 +1637,18 @@ fn eval_mixedmath_addint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1730,19 +1660,18 @@ fn eval_mixedmath_addint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "5"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "5"),
         "{} should evaluate to 5, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1754,19 +1683,18 @@ fn eval_mixedmath_addint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "3"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "3"),
         "{} should evaluate to 3, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1778,19 +1706,18 @@ fn eval_mixedmath_addint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1802,19 +1729,18 @@ fn eval_mixedmath_addint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1826,19 +1752,18 @@ fn eval_mixedmath_addint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1856,19 +1781,18 @@ fn nested_mixedmath_neg_mulint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1882,19 +1806,18 @@ fn nested_mixedmath_neg_mulint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1908,19 +1831,18 @@ fn nested_mixedmath_neg_mulint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1934,19 +1856,18 @@ fn nested_mixedmath_neg_subint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1960,19 +1881,18 @@ fn nested_mixedmath_neg_subint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -1986,19 +1906,18 @@ fn nested_mixedmath_neg_subint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2012,19 +1931,18 @@ fn nested_mixedmath_neg_addint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2038,19 +1956,18 @@ fn nested_mixedmath_neg_addint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2064,19 +1981,18 @@ fn nested_mixedmath_neg_addint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2090,19 +2006,18 @@ fn nested_mixedmath_not_or_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2116,19 +2031,18 @@ fn nested_mixedmath_not_or_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2142,19 +2056,18 @@ fn nested_mixedmath_not_or_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2168,19 +2081,18 @@ fn nested_mixedmath_not_and_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2194,19 +2106,18 @@ fn nested_mixedmath_not_and_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2220,19 +2131,18 @@ fn nested_mixedmath_not_and_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2246,19 +2156,18 @@ fn nested_mixedmath_or_not_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2272,19 +2181,18 @@ fn nested_mixedmath_or_not_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2301,19 +2209,18 @@ fn nested_mixedmath_or_and_false_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2330,19 +2237,18 @@ fn nested_mixedmath_or_and_true_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2359,19 +2265,18 @@ fn nested_mixedmath_or_and_true_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2385,19 +2290,18 @@ fn nested_mixedmath_or_not_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2411,19 +2315,18 @@ fn nested_mixedmath_or_not_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2440,19 +2343,18 @@ fn nested_mixedmath_or_and_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2469,19 +2371,18 @@ fn nested_mixedmath_or_and_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2498,19 +2399,18 @@ fn nested_mixedmath_or_and_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2524,19 +2424,18 @@ fn nested_mixedmath_and_not_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2550,19 +2449,18 @@ fn nested_mixedmath_and_not_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2579,19 +2477,18 @@ fn nested_mixedmath_and_or_false_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2608,19 +2505,18 @@ fn nested_mixedmath_and_or_true_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2637,19 +2533,18 @@ fn nested_mixedmath_and_or_true_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2663,19 +2558,18 @@ fn nested_mixedmath_and_not_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2689,19 +2583,18 @@ fn nested_mixedmath_and_not_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2718,19 +2611,18 @@ fn nested_mixedmath_and_or_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2747,19 +2639,18 @@ fn nested_mixedmath_and_or_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2776,19 +2667,18 @@ fn nested_mixedmath_and_or_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2802,19 +2692,18 @@ fn nested_mixedmath_mulint_neg_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2828,19 +2717,18 @@ fn nested_mixedmath_mulint_neg_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2854,19 +2742,18 @@ fn nested_mixedmath_mulint_neg_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2883,19 +2770,18 @@ fn nested_mixedmath_mulint_subint_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2912,19 +2798,18 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2941,19 +2826,18 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2970,19 +2854,18 @@ fn nested_mixedmath_mulint_addint_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "2"),
         "{} should evaluate to 2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -2999,19 +2882,18 @@ fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "1"),
         "{} should evaluate to 1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3028,19 +2910,18 @@ fn nested_mixedmath_mulint_addint_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3054,19 +2935,18 @@ fn nested_mixedmath_mulint_neg_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3080,19 +2960,18 @@ fn nested_mixedmath_mulint_neg_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3106,19 +2985,18 @@ fn nested_mixedmath_mulint_neg_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3135,19 +3013,18 @@ fn nested_mixedmath_mulint_subint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-2"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-2"),
         "{} should evaluate to -2, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3164,19 +3041,18 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "-1"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "-1"),
         "{} should evaluate to -1, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3193,19 +3069,18 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "0"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
         "{} should evaluate to 0, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3223,19 +3098,18 @@ fn edge_mixedmath_and_bool_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3249,19 +3123,18 @@ fn edge_mixedmath_and_bool_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3275,19 +3148,18 @@ fn edge_mixedmath_and_bool_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3301,19 +3173,18 @@ fn edge_mixedmath_and_bool_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3327,19 +3198,18 @@ fn edge_mixedmath_or_bool_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3353,19 +3223,18 @@ fn edge_mixedmath_or_bool_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3379,19 +3248,18 @@ fn edge_mixedmath_or_bool_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3405,19 +3273,18 @@ fn edge_mixedmath_or_bool_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3428,19 +3295,18 @@ fn edge_mixedmath_not_bool_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "true"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "true"),
         "{} should evaluate to true, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3451,19 +3317,18 @@ fn edge_mixedmath_not_bool_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    let nfs: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
     assert!(
-        nfs.iter().any(|d| d == "false"),
+        mettail_testkit::runtime_report::report_contains_expected(&report, "false"),
         "{} should evaluate to false, got {:?}",
         input_str,
-        nfs
+        outputs
     );
 }
 
@@ -3478,14 +3343,14 @@ fn cross_cat_mixedmath_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3498,14 +3363,14 @@ fn cross_cat_mixedmath_castop_addint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3518,14 +3383,14 @@ fn cross_cat_mixedmath_castop_subint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3538,14 +3403,14 @@ fn cross_cat_mixedmath_castop_mulint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3556,14 +3421,14 @@ fn cross_cat_mixedmath_castop_neg_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3576,14 +3441,14 @@ fn cross_cat_mixedmath_mixed_addint_cast_booltoint_lhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3596,14 +3461,14 @@ fn cross_cat_mixedmath_mixed_addint_cast_booltoint_rhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3616,14 +3481,14 @@ fn cross_cat_mixedmath_composite_addint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3636,14 +3501,14 @@ fn cross_cat_mixedmath_composite_subint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3656,14 +3521,14 @@ fn cross_cat_mixedmath_composite_mulint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3674,14 +3539,14 @@ fn cross_cat_mixedmath_composite_neg_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3696,14 +3561,14 @@ fn wfst_mixedmath_dispatch_addint_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3714,14 +3579,14 @@ fn wfst_mixedmath_dispatch_subint_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3732,14 +3597,14 @@ fn wfst_mixedmath_dispatch_mulint_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3752,14 +3617,14 @@ fn wfst_mixedmath_dispatch_and_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3772,14 +3637,14 @@ fn wfst_mixedmath_dispatch_or_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3789,14 +3654,14 @@ fn wfst_mixedmath_dispatch_not_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -3806,14 +3671,14 @@ fn wfst_mixedmath_dispatch_neg_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3821,151 +3686,145 @@ fn wfst_mixedmath_dispatch_neg_eval() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn prec_mixedmath_mulint_subint_tighter_than_1___2___3() {
+fn prec_mixedmath_mulint_subint_tighter_than_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Precedence test: MulInt binds tighter than SubInt
         let input_str = "1 - 2 * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated precedence eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "-5"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "-5"),
             "{} should evaluate to -5, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_mixedmath_paren_override_subint_mulint__1___2____3() {
+fn prec_mixedmath_paren_override_subint_mulint_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Parenthesization override: (SubInt) MulInt
         let input_str = "(1 - 2) * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated parenthesization eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "-3"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "-3"),
             "{} should evaluate to -3, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_mixedmath_mulint_addint_tighter_than_1___2___3() {
+fn prec_mixedmath_mulint_addint_tighter_than_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Precedence test: MulInt binds tighter than AddInt
         let input_str = "1 + 2 * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated precedence eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "7"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "7"),
             "{} should evaluate to 7, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_mixedmath_paren_override_addint_mulint__1___2____3() {
+fn prec_mixedmath_paren_override_addint_mulint_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Parenthesization override: (AddInt) MulInt
         let input_str = "(1 + 2) * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated parenthesization eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "9"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "9"),
             "{} should evaluate to 9, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_mixedmath_subint_addint_tighter_than_1___2___3() {
+fn prec_mixedmath_subint_addint_tighter_than_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Precedence test: SubInt binds tighter than AddInt
         let input_str = "1 + 2 - 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated precedence eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "0"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
             "{} should evaluate to 0, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
 
 #[test]
-fn prec_mixedmath_paren_override_addint_subint__1___2____3() {
+fn prec_mixedmath_paren_override_addint_subint_1_2_3() {
     mettail_runtime::clear_var_cache();
     {
         // Parenthesization override: (AddInt) SubInt
         let input_str = "(1 + 2) - 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated parenthesization eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "0"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "0"),
             "{} should evaluate to 0, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -3978,19 +3837,18 @@ fn assoc_mixedmath_addint_left() {
         let input_str = "1 + 2 + 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "6"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
             "{} (left-assoc) should evaluate to 6, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -4003,19 +3861,18 @@ fn assoc_mixedmath_subint_left() {
         let input_str = "1 - 2 - 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "-4"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "-4"),
             "{} (left-assoc) should evaluate to -4, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -4028,19 +3885,18 @@ fn assoc_mixedmath_mulint_left() {
         let input_str = "1 * 2 * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated associativity eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
         assert!(
-            nfs.iter().any(|d| d == "6"),
+            mettail_testkit::runtime_report::report_contains_expected(&report, "6"),
             "{} (left-assoc) should evaluate to 6, got {:?}",
             input_str,
-            nfs
+            outputs
         );
     }
 }
@@ -4057,14 +3913,14 @@ fn wpda_mixedmath_addint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4075,14 +3931,14 @@ fn wpda_mixedmath_addint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4093,14 +3949,14 @@ fn wpda_mixedmath_addint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4111,14 +3967,14 @@ fn wpda_mixedmath_addint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4129,14 +3985,14 @@ fn wpda_mixedmath_addint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4147,14 +4003,14 @@ fn wpda_mixedmath_addint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4165,14 +4021,14 @@ fn wpda_mixedmath_addint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4183,14 +4039,14 @@ fn wpda_mixedmath_addint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4201,14 +4057,14 @@ fn wpda_mixedmath_addint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4219,14 +4075,14 @@ fn wpda_mixedmath_addint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4237,14 +4093,14 @@ fn wpda_mixedmath_addint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4255,14 +4111,14 @@ fn wpda_mixedmath_addint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4273,14 +4129,14 @@ fn wpda_mixedmath_addint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4291,14 +4147,14 @@ fn wpda_mixedmath_addint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4309,14 +4165,14 @@ fn wpda_mixedmath_addint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4327,14 +4183,14 @@ fn wpda_mixedmath_addint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4345,14 +4201,14 @@ fn wpda_mixedmath_addint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4363,14 +4219,14 @@ fn wpda_mixedmath_addint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4381,14 +4237,14 @@ fn wpda_mixedmath_addint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4399,14 +4255,14 @@ fn wpda_mixedmath_addint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4419,14 +4275,14 @@ fn wpda_mixedmath_and_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4439,14 +4295,14 @@ fn wpda_mixedmath_and_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4459,14 +4315,14 @@ fn wpda_mixedmath_and_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4479,14 +4335,14 @@ fn wpda_mixedmath_and_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4499,14 +4355,14 @@ fn wpda_mixedmath_or_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4519,14 +4375,14 @@ fn wpda_mixedmath_or_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4539,14 +4395,14 @@ fn wpda_mixedmath_or_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4559,14 +4415,14 @@ fn wpda_mixedmath_or_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4576,14 +4432,14 @@ fn wpda_mixedmath_not_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 #[test]
@@ -4593,14 +4449,14 @@ fn wpda_mixedmath_not_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang
-        .run_ascent(parsed.as_ref())
-        .expect("eval should succeed");
-    assert!(
-        !results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form",
-        input_str
-    );
+    let report = mettail_testkit::runtime_report::run_default_backend_report(
+        &lang,
+        parsed.as_ref(),
+        "generated operational eval",
+    )
+    .expect("eval should succeed");
+    let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);
+    assert!(!outputs.is_empty(), "{} should produce at least one backend output", input_str);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4619,23 +4475,25 @@ fn type_pres_mixedmath_addint_0_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4653,23 +4511,25 @@ fn type_pres_mixedmath_subint_0_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4687,23 +4547,25 @@ fn type_pres_mixedmath_mulint_0_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4721,23 +4583,25 @@ fn type_pres_mixedmath_and_true_true() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4755,23 +4619,25 @@ fn type_pres_mixedmath_or_true_true() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4786,23 +4652,25 @@ fn type_pres_mixedmath_not_true() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
@@ -4817,23 +4685,25 @@ fn type_pres_mixedmath_neg_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let results = lang
-            .run_ascent(parsed.as_ref())
-            .expect("eval should succeed");
-        let nfs = results.normal_forms();
+        let report = mettail_testkit::runtime_report::run_default_backend_report(
+            &lang,
+            parsed.as_ref(),
+            "generated type preservation eval",
+        )
+        .expect("eval should succeed");
+        let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
         assert!(
-            !nfs.is_empty(),
-            "type preservation: {} should produce at least one normal form",
+            !outputs.is_empty(),
+            "type preservation: {} should produce at least one semantic backend output",
             input_str
         );
-        // Verify each normal form can be displayed and re-parsed (type preservation)
-        for nf in &nfs {
-            let nf_display = &nf.display;
-            let re_parsed = lang.parse_term(nf_display);
+        // Verify each semantic backend output can be displayed and re-parsed.
+        for output in &outputs {
+            let re_parsed = lang.parse_term(output);
             assert!(
                 re_parsed.is_ok(),
-                "type preservation: normal form '{}' should be parseable in same category",
-                nf_display
+                "type preservation: backend output '{}' should be parseable in same category",
+                output
             );
         }
     }
