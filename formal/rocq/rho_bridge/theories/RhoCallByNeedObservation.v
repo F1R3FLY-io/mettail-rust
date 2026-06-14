@@ -14,6 +14,10 @@
  *   - repeated forcing is observationally idempotent;
  *   - a repeated force after a miss does not grow or rewrite the memo;
  *   - forcing preserves the memo soundness needed for the same thunk.
+ *   - the generated call-by-need artifact boundary accepts AST artifacts and
+ *     rejects source-text artifacts;
+ *   - the current cold/hot AST thunk plans have the same two-force public
+ *     observations as source evaluation.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -116,6 +120,101 @@ Section RhoCallByNeedObservation.
     - apply force_observes_source. exact Hsound.
     - apply force_observes_source.
       apply force_preserves_memo_sound_for. exact Hsound.
+  Qed.
+
+  Inductive NeedArtifactKind : Type :=
+    | NeedAst
+    | NeedSourceText.
+
+  Record NeedThunkAstPlan : Type := {
+    need_artifact_kind : NeedArtifactKind;
+    need_initial_memo : Memo
+  }.
+
+  Definition accepted_need_artifact (plan : NeedThunkAstPlan) : Prop :=
+    need_artifact_kind plan = NeedAst.
+
+  Definition cold_need_ast_plan (_e : Expr) : NeedThunkAstPlan :=
+    {| need_artifact_kind := NeedAst;
+       need_initial_memo := [] |}.
+
+  Definition hot_need_ast_plan (e : Expr) : NeedThunkAstPlan :=
+    {| need_artifact_kind := NeedAst;
+       need_initial_memo := [(expr_thunk e, expr_value e)] |}.
+
+  Definition force_plan_twice (e : Expr) (plan : NeedThunkAstPlan)
+      : list Value * Memo :=
+    match force e (need_initial_memo plan) with
+    | (v1, memo1) =>
+        match force e memo1 with
+        | (v2, memo2) => ([v1; v2], memo2)
+        end
+    end.
+
+  Theorem accepted_need_artifact_is_ast : forall plan,
+    accepted_need_artifact plan ->
+    need_artifact_kind plan = NeedAst.
+  Proof.
+    intros plan Haccepted. exact Haccepted.
+  Qed.
+
+  Theorem accepted_need_artifact_rejects_source_text : forall plan,
+    accepted_need_artifact plan ->
+    need_artifact_kind plan <> NeedSourceText.
+  Proof.
+    intros plan Haccepted Hsource.
+    rewrite Haccepted in Hsource. discriminate Hsource.
+  Qed.
+
+  Theorem cold_ast_plan_observes_source_twice : forall e,
+    fst (force_plan_twice e (cold_need_ast_plan e)) =
+    [source_eval e; source_eval e].
+  Proof.
+    intros [id value].
+    unfold force_plan_twice, cold_need_ast_plan, force, source_eval.
+    simpl. cbn [lookup].
+    rewrite Nat.eqb_refl. reflexivity.
+  Qed.
+
+  Theorem hot_ast_plan_observes_source_twice : forall e,
+    fst (force_plan_twice e (hot_need_ast_plan e)) =
+    [source_eval e; source_eval e].
+  Proof.
+    intros [id value].
+    unfold force_plan_twice, hot_need_ast_plan, force, source_eval.
+    simpl. cbn [lookup].
+    rewrite Nat.eqb_refl.
+    simpl. cbn [lookup].
+    rewrite Nat.eqb_refl. reflexivity.
+  Qed.
+
+  Theorem cold_ast_plan_memoizes_once : forall e,
+    snd (force_plan_twice e (cold_need_ast_plan e)) =
+    [(expr_thunk e, expr_value e)].
+  Proof.
+    intros [id value].
+    unfold force_plan_twice, cold_need_ast_plan, force.
+    simpl. cbn [lookup].
+    rewrite Nat.eqb_refl. reflexivity.
+  Qed.
+
+  Theorem hot_ast_plan_preserves_existing_memo : forall e,
+    snd (force_plan_twice e (hot_need_ast_plan e)) =
+    [(expr_thunk e, expr_value e)].
+  Proof.
+    intros [id value].
+    unfold force_plan_twice, hot_need_ast_plan, force.
+    simpl. cbn [lookup].
+    rewrite Nat.eqb_refl.
+    simpl. cbn [lookup].
+    rewrite Nat.eqb_refl. reflexivity.
+  Qed.
+
+  Theorem cold_and_hot_ast_plans_are_accepted : forall e,
+    accepted_need_artifact (cold_need_ast_plan e)
+    /\ accepted_need_artifact (hot_need_ast_plan e).
+  Proof.
+    intros e. split; reflexivity.
   Qed.
 
 End RhoCallByNeedObservation.

@@ -1,17 +1,19 @@
 //! M-RHO.2 call-by-need oracle.
 //!
-//! The source program models a lowered thunk as a private contract plus an
-//! explicit cold/hot state token and persistent memo cell. The first force
+//! The generated AST program models a lowered thunk as a private contract plus
+//! an explicit cold/hot state token and persistent memo cell. The first force
 //! computes and memoizes; the second force reads the memo. Public observations
 //! are read from RSpace after one runtime evaluation.
 
-use mettail_rho_runtime::run_rholang_source_sequence_for_oracle_and_read_strings;
+use mettail_rho_codegen::{build_call_by_need_thunk_ast, CallByNeedInitialState};
+use mettail_rho_runtime::run_normalized_par_for_oracle_and_read_string_channels;
 
-async fn run_need(program: &str) -> (Vec<String>, Vec<String>) {
+async fn run_need(initial_state: CallByNeedInitialState) -> (Vec<String>, Vec<String>) {
+    let program = build_call_by_need_thunk_ast(initial_state);
     let mut observed =
-        run_rholang_source_sequence_for_oracle_and_read_strings(&[program], &["OUT", "EVAL"])
+        run_normalized_par_for_oracle_and_read_string_channels(program.par(), &["OUT", "EVAL"])
             .await
-            .unwrap_or_else(|e| panic!("call-by-need program failed:\n{program}\n{e}"));
+            .unwrap_or_else(|e| panic!("call-by-need AST program failed:\n{e}"));
     let mut out = observed.remove("OUT").unwrap_or_default();
     out.sort();
     let mut evals = observed.remove("EVAL").unwrap_or_default();
@@ -21,32 +23,7 @@ async fn run_need(program: &str) -> (Vec<String>, Vec<String>) {
 
 #[tokio::test]
 async fn call_by_need_force_miss_memoizes_and_repeated_force_reuses_value() {
-    let program = r#"
-      new thunk, state, memo, ret1, ret2 in {
-        state!("cold") |
-        contract thunk(k) = {
-          for (@s <- state) {
-            match s {
-              "cold" => {
-                state!("hot") |
-                memo!!("value") |
-                @"EVAL"!("compute") |
-                k!("value")
-              }
-              "hot" => {
-                state!("hot") |
-                for (@v <<- memo) { k!(v) }
-              }
-            }
-          }
-        } |
-        thunk!(*ret1) |
-        for (@v1 <- ret1) { @"OUT"!(v1) | thunk!(*ret2) } |
-        for (@v2 <- ret2) { @"OUT"!(v2) }
-      }
-    "#;
-
-    let (out, evals) = run_need(program).await;
+    let (out, evals) = run_need(CallByNeedInitialState::Cold).await;
     assert_eq!(
         out,
         vec!["value".to_string(), "value".to_string()],
@@ -61,33 +38,7 @@ async fn call_by_need_force_miss_memoizes_and_repeated_force_reuses_value() {
 
 #[tokio::test]
 async fn call_by_need_memo_hit_observes_value_without_compute_marker() {
-    let program = r#"
-      new thunk, state, memo, ret1, ret2 in {
-        state!("hot") |
-        memo!!("value") |
-        contract thunk(k) = {
-          for (@s <- state) {
-            match s {
-              "cold" => {
-                state!("hot") |
-                memo!!("value") |
-                @"EVAL"!("compute") |
-                k!("value")
-              }
-              "hot" => {
-                state!("hot") |
-                for (@v <<- memo) { k!(v) }
-              }
-            }
-          }
-        } |
-        thunk!(*ret1) |
-        for (@v1 <- ret1) { @"OUT"!(v1) | thunk!(*ret2) } |
-        for (@v2 <- ret2) { @"OUT"!(v2) }
-      }
-    "#;
-
-    let (out, evals) = run_need(program).await;
+    let (out, evals) = run_need(CallByNeedInitialState::Hot).await;
     assert_eq!(
         out,
         vec!["value".to_string(), "value".to_string()],

@@ -632,6 +632,24 @@ pub async fn run_normalized_par_for_oracle_and_read_strings(
 }
 
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every ground string left resting on each
+/// requested quoted channel.
+pub async fn run_normalized_par_for_oracle_and_read_string_channels(
+    program: &Par,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<String>>, String> {
+    let runtime = evaluate_par(program).await?;
+    let mut result = HashMap::new();
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_as_string).await,
+        );
+    }
+    Ok(result)
+}
+
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every closed Rho ground value left resting on
 /// the quoted channel `@"<out_channel>"`.
 #[cfg(feature = "runtime-report")]

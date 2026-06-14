@@ -284,13 +284,13 @@ impl RhoDefaultBackendPlan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoDefaultBackendPlanError {
     pub lowering: Box<RhoLowering>,
-    pub decision: RhoFlipDecision,
-    pub uncovered_rejections: Vec<String>,
-    pub extraneous_dispositions: Vec<String>,
-    pub invalid_dispositions: Vec<RhoRejectedRuleDispositionDiagnostic>,
-    pub invalid_gate_evidence_refs: Vec<RhoGateEvidenceDiagnostic>,
-    pub invalid_audited_evidence_refs: Vec<RhoEvidenceRefAuditDiagnostic>,
-    pub validation_errors: Vec<RhoValidationError>,
+    pub decision: Box<RhoFlipDecision>,
+    pub uncovered_rejections: Box<[String]>,
+    pub extraneous_dispositions: Box<[String]>,
+    pub invalid_dispositions: Box<[RhoRejectedRuleDispositionDiagnostic]>,
+    pub invalid_gate_evidence_refs: Box<[RhoGateEvidenceDiagnostic]>,
+    pub invalid_audited_evidence_refs: Box<[RhoEvidenceRefAuditDiagnostic]>,
+    pub validation_errors: Box<[RhoValidationError]>,
 }
 
 fn gate_evidence_diagnostics(
@@ -527,13 +527,13 @@ fn plan_rho_default_backend_impl(
     } else {
         Err(RhoDefaultBackendPlanError {
             lowering: Box::new(lowering),
-            decision,
-            uncovered_rejections,
-            extraneous_dispositions,
-            invalid_dispositions,
-            invalid_gate_evidence_refs,
-            invalid_audited_evidence_refs,
-            validation_errors,
+            decision: Box::new(decision),
+            uncovered_rejections: uncovered_rejections.into_boxed_slice(),
+            extraneous_dispositions: extraneous_dispositions.into_boxed_slice(),
+            invalid_dispositions: invalid_dispositions.into_boxed_slice(),
+            invalid_gate_evidence_refs: invalid_gate_evidence_refs.into_boxed_slice(),
+            invalid_audited_evidence_refs: invalid_audited_evidence_refs.into_boxed_slice(),
+            validation_errors: validation_errors.into_boxed_slice(),
         })
     }
 }
@@ -542,6 +542,18 @@ fn plan_rho_default_backend_impl(
 mod tests {
     use super::*;
     use crate::flip::RhoFlipBlocker;
+
+    fn boxed<T>(values: Vec<T>) -> Box<[T]> {
+        values.into_boxed_slice()
+    }
+
+    fn boxed_strings(values: &[&str]) -> Box<[String]> {
+        values
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
 
     const ALL_LOWERED_FRAGMENT: &str = r#"
         name: CalcAllLowered,
@@ -662,13 +674,13 @@ mod tests {
         assert!(err.decision.can_flip_to_rho());
         assert_eq!(
             err.invalid_audited_evidence_refs,
-            vec![RhoEvidenceRefAuditDiagnostic::MissingLocalPath {
+            boxed(vec![RhoEvidenceRefAuditDiagnostic::MissingLocalPath {
                 evidence_ref: "formal/rocq/rho_bridge/theories/NoSuchProof.v".to_string(),
                 resolved_path: repo_root()
                     .join("formal/rocq/rho_bridge/theories/NoSuchProof.v")
                     .display()
                     .to_string(),
-            }]
+            }])
         );
     }
 
@@ -689,7 +701,7 @@ mod tests {
 
         assert_eq!(
             err.invalid_audited_evidence_refs,
-            vec![
+            boxed(vec![
                 RhoEvidenceRefAuditDiagnostic::DisallowedLogicalRef {
                     evidence_ref: "native-handler:PowInt".to_string(),
                     prefix: "native-handler".to_string(),
@@ -698,7 +710,7 @@ mod tests {
                     evidence_ref: "native-handler:AddBigInt".to_string(),
                     prefix: "native-handler".to_string(),
                 },
-            ]
+            ])
         );
 
         let allowed_policy = RhoEvidenceRefAuditPolicy::new(repo_root())
@@ -722,9 +734,12 @@ mod tests {
         )
         .expect_err("uncovered rejected rules must block Rho default");
 
-        assert_eq!(err.uncovered_rejections, vec!["PowInt", "AddBigInt"]);
-        assert_eq!(err.extraneous_dispositions, Vec::<String>::new());
-        assert_eq!(err.invalid_dispositions, Vec::new());
+        assert_eq!(err.uncovered_rejections, boxed_strings(&["PowInt", "AddBigInt"]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&[]));
+        assert_eq!(
+            err.invalid_dispositions,
+            boxed(Vec::<RhoRejectedRuleDispositionDiagnostic>::new())
+        );
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
@@ -767,9 +782,12 @@ mod tests {
         )
         .expect_err("coverage evidence must exactly match rejected rules");
 
-        assert_eq!(err.uncovered_rejections, Vec::<String>::new());
-        assert_eq!(err.extraneous_dispositions, vec!["MissingRule"]);
-        assert_eq!(err.invalid_dispositions, Vec::new());
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&["MissingRule"]));
+        assert_eq!(
+            err.invalid_dispositions,
+            boxed(Vec::<RhoRejectedRuleDispositionDiagnostic>::new())
+        );
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
@@ -788,15 +806,15 @@ mod tests {
         )
         .expect_err("blank evidence refs must block the default-backend gate");
 
-        assert_eq!(err.uncovered_rejections, Vec::<String>::new());
-        assert_eq!(err.extraneous_dispositions, Vec::<String>::new());
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&[]));
         assert_eq!(
             err.invalid_dispositions,
-            vec![RhoRejectedRuleDispositionDiagnostic::MissingEvidenceRef {
+            boxed(vec![RhoRejectedRuleDispositionDiagnostic::MissingEvidenceRef {
                 rule: "AddBigInt".to_string()
-            }]
+            }])
         );
-        assert_eq!(err.invalid_gate_evidence_refs, Vec::new());
+        assert_eq!(err.invalid_gate_evidence_refs, boxed(Vec::<RhoGateEvidenceDiagnostic>::new()));
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
@@ -812,15 +830,15 @@ mod tests {
         )
         .expect_err("duplicate disposition claims must block the default-backend gate");
 
-        assert_eq!(err.uncovered_rejections, Vec::<String>::new());
-        assert_eq!(err.extraneous_dispositions, Vec::<String>::new());
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&[]));
         assert_eq!(
             err.invalid_dispositions,
-            vec![RhoRejectedRuleDispositionDiagnostic::DuplicateRuleDisposition {
+            boxed(vec![RhoRejectedRuleDispositionDiagnostic::DuplicateRuleDisposition {
                 rule: "AddBigInt".to_string()
-            }]
+            }])
         );
-        assert_eq!(err.invalid_gate_evidence_refs, Vec::new());
+        assert_eq!(err.invalid_gate_evidence_refs, boxed(Vec::<RhoGateEvidenceDiagnostic>::new()));
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
@@ -844,8 +862,11 @@ mod tests {
         )
         .expect_err("missing proof and oracle gates must block Rho default");
 
-        assert_eq!(err.uncovered_rejections, Vec::<String>::new());
-        assert_eq!(err.invalid_dispositions, Vec::new());
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(
+            err.invalid_dispositions,
+            boxed(Vec::<RhoRejectedRuleDispositionDiagnostic>::new())
+        );
         assert_eq!(
             err.decision.blockers,
             vec![
@@ -854,7 +875,7 @@ mod tests {
                 RhoFlipBlocker::SchedulerFairness
             ]
         );
-        assert_eq!(err.invalid_gate_evidence_refs, Vec::new());
+        assert_eq!(err.invalid_gate_evidence_refs, boxed(Vec::<RhoGateEvidenceDiagnostic>::new()));
     }
 
     #[test]
@@ -877,9 +898,9 @@ mod tests {
 
         assert_eq!(
             err.invalid_gate_evidence_refs,
-            vec![RhoGateEvidenceDiagnostic::MissingEvidenceRefs {
+            boxed(vec![RhoGateEvidenceDiagnostic::MissingEvidenceRefs {
                 gate: RhoDefaultBackendEvidenceGate::Proofs,
-            }]
+            }])
         );
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Proofs]);
     }
@@ -904,9 +925,9 @@ mod tests {
 
         assert_eq!(
             err.invalid_gate_evidence_refs,
-            vec![RhoGateEvidenceDiagnostic::BlankEvidenceRef {
+            boxed(vec![RhoGateEvidenceDiagnostic::BlankEvidenceRef {
                 gate: RhoDefaultBackendEvidenceGate::OracleParity,
-            }]
+            }])
         );
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::OracleParity]);
     }

@@ -29,9 +29,11 @@
 //! `plan_rho_default_backend` then ties that lowering to proof, oracle, coverage,
 //! artifact-validation, scheduler-fairness, and deadlock evidence before
 //! returning the concrete backend plan. Generic call-by-need admission is bounded
-//! by explicit lookahead and heap budgets. The totality-or-explicit-rejection
-//! proof is `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the
-//! flip-gate proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
+//! by explicit lookahead and heap budgets, and the current memoized-thunk slice
+//! builds normalized `rhoapi::Par` directly for runtime-oracle execution. The
+//! totality-or-explicit-rejection proof is
+//! `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the flip-gate
+//! proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
 
 #![forbid(unsafe_code)]
 
@@ -67,8 +69,8 @@ pub use deadlock::{
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use lower::{lower_language_def, RhoArtifactKind, RhoAstProgram, RhoLowering, RhoProgram};
 pub use need::{
-    admit_call_by_need_force, CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker,
-    CallByNeedForce,
+    admit_call_by_need_force, build_call_by_need_thunk_ast, CallByNeedAdmission, CallByNeedBudget,
+    CallByNeedBudgetBlocker, CallByNeedForce, CallByNeedInitialState, CallByNeedThunkAst,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,
