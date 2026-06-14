@@ -807,7 +807,6 @@ pub fn project_semilinear<const D: usize>(automaton: &ParikhAutomaton<D>) -> Sem
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_prattail::automata::semiring::Semiring;
 
     type P2 = ParikhWeight<2>;
 

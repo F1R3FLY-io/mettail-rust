@@ -17,20 +17,5 @@ rand_distr = "0.4"
 proptest = "1"
 
 [dev-dependencies]
-mettail-languages = { path = "../languages" }
 quote = { workspace = true }
 syn = { workspace = true }
-
-# Required by `language!` macro expansion in example binaries.
-# The generated code references these crates directly.
-mettail-macros = { path = "../macros" }
-moniker = { workspace = true }
-indexmap = { workspace = true }
-ascent = { workspace = true }
-ascent-byods-rels = { workspace = true }
-hashbrown = { version = "0.14", features = ["raw", "rayon"] }
-rustc-hash = "2.0"
-
-[[example]]
-name = "demo_supply_chain"
-path = "examples/demo_supply_chain.rs"

@@ -212,6 +212,48 @@ feature. Normal CLI builds keep that feature enabled. Focused state tests may
 disable default features so report-state behavior can be checked without
 compiling every generated language.
 
+## Simulation Runner Boundary
+
+The simulation runner is also part of the runtime-backend replacement surface.
+It executes a language's selected default runtime backend during
+`SimulationRunner::run_to_normal_form`, so it must consume
+`RuntimeBackendReport` rather than forcing every backend into `AscentResults`.
+
+The intended simulation behavior is:
+
+```text
+When SimulationRunner executes a term:
+  parse with the retained WPDA language frontend
+  ask the selected default backend for a RuntimeBackendReport
+  if the report is Ascent-shaped:
+    keep the existing rewrite-graph BFS normal-form trace
+    preserve rule-coverage collection over Ascent rewrite edges
+  if the report is observation-shaped:
+    record one terminal runtime step with backend and artifact identity
+    summarize observed channels and values as TraceOutcome::RuntimeObservations
+    write the observation outcome through the JSONL trace format
+    do not fabricate an Ascent rewrite graph or normal-form claim
+  if the report has a future output shape:
+    fail closed with an unsupported report-shape simulation failure
+```
+
+Observation-shaped runtime outputs are terminal simulation outcomes. They are
+not normal-form graph evidence, and they intentionally bypass the Ascent-only
+normal-form BFS. This preserves the old simulation semantics for Ascent-default
+languages while allowing Rho-default languages to be simulated by their actual
+runtime observations.
+
+`mettail-simulation` remains substrate-neutral: its focused unit tests use a
+small mock language that returns a Rho-shaped observation report. Generated
+language integration tests and examples live under `mettail-languages`, which
+already owns the generated-language dependency graph. That separation keeps the
+simulation crate testable under the RSS cap without compiling every generated
+language, while still preserving generated-language integration coverage in the
+crate that owns those generated artifacts. Focused generated-language
+simulation checks should use the owning language feature, for example
+`cargo test -p mettail-languages --no-default-features --features calculator --test simulation_integration`,
+when the test only exercises Calculator.
+
 ## Diagram Tooling Policy
 
 pgmcp's local diagramming toolbox includes PlantUML, Structurizr CLI, D2,

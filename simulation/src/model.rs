@@ -1243,8 +1243,6 @@ mod tests {
     // types, and handled-types lists in the same order. This verifies
     // the Sim-C ingestion path preserves the data faithfully.
 
-    use proptest::prelude::*;
-
     proptest! {
         /// The length of `model.theories` is equal to the length of the
         /// metadata slice passed in, and every entry's `name` round-trips.

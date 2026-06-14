@@ -20,7 +20,7 @@ use crate::results::{CampaignResults, RuleCoverage, SimulationFailure};
 use crate::step::SimOperation;
 use crate::trace::{ExecutionTrace, TraceEntry, TraceOutcome};
 
-use mettail_runtime::Language;
+use mettail_runtime::{Language, RuntimeBackendOutput};
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
 use std::io::{BufRead, Write};
@@ -305,7 +305,7 @@ impl<'a> SimulationRunner<'a> {
         // Step 2: Run the selected backend (rewrite to saturation).
         mettail_runtime::clear_var_cache();
         let backend = self.language.default_runtime_backend();
-        let results = match self.language.run_default_backend(term.as_ref()) {
+        let report = match self.language.run_default_backend_report(term.as_ref()) {
             Ok(r) => r,
             Err(e) => {
                 let trace = ExecutionTrace {
@@ -322,6 +322,113 @@ impl<'a> SimulationRunner<'a> {
                     input: input.to_string(),
                     trace,
                     error: format!("{} backend error: {}", backend, e),
+                });
+            },
+        };
+        let results = match report.output {
+            RuntimeBackendOutput::Ascent(results) => results,
+            RuntimeBackendOutput::Observations(observations) => {
+                let summary = observations
+                    .iter()
+                    .map(|observation| {
+                        let values = observation
+                            .values
+                            .iter()
+                            .map(|value| format!("{}", value))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{}=[{}]", observation.channel, values)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let observed_values = observations
+                    .iter()
+                    .map(|observation| observation.observed_count())
+                    .sum::<usize>();
+                let operation = format!("runtime:{}:{}", report.backend, report.artifact);
+                let metrics = TermMetrics::from_display(&summary);
+                if let Some(ref mut tracker) = morphology_tracker {
+                    tracker.record(metrics.clone());
+                }
+                steps.push(TraceEntry {
+                    step_index,
+                    term_display: summary.clone(),
+                    operation,
+                    metrics: Some(metrics),
+                });
+
+                let outcome = TraceOutcome::RuntimeObservations {
+                    backend: report.backend.to_string(),
+                    artifact: report.artifact.to_string(),
+                    channels: observations.len(),
+                    values: observed_values,
+                    summary,
+                };
+                let morphology = morphology_tracker.as_ref().map(|t| t.summary());
+
+                if self
+                    .config
+                    .invariants
+                    .iter()
+                    .any(|invariant| invariant.name() == "NormalFormReachable")
+                {
+                    let message = format!(
+                        "Normal form not reached: {} backend returned runtime observations, not an Ascent-shaped rewrite graph",
+                        report.backend
+                    );
+                    let trace = ExecutionTrace {
+                        seed: seed_str.clone(),
+                        language: language_name,
+                        steps,
+                        outcome: TraceOutcome::InvariantViolation {
+                            step: step_index,
+                            invariant: "NormalFormReachable".to_string(),
+                            message: message.clone(),
+                        },
+                        morphology,
+                    };
+                    return Err(SimulationFailure {
+                        seed: seed_str,
+                        input: input.to_string(),
+                        trace,
+                        error: message,
+                    });
+                }
+
+                let trace = ExecutionTrace {
+                    seed: seed_str,
+                    language: language_name,
+                    steps,
+                    outcome,
+                    morphology,
+                };
+
+                if let TraceOutputFormat::Jsonl { ref path } = self.config.trace_output {
+                    if let Err(e) = crate::trace::write_trace_jsonl(&trace, path) {
+                        eprintln!("Warning: failed to write JSONL trace: {}", e);
+                    }
+                }
+
+                return Ok(trace);
+            },
+            _ => {
+                let trace = ExecutionTrace {
+                    seed: seed_str.clone(),
+                    language: language_name.clone(),
+                    steps,
+                    outcome: TraceOutcome::Error {
+                        message: format!(
+                            "{} backend returned unsupported report shape",
+                            report.backend
+                        ),
+                    },
+                    morphology: morphology_tracker.as_ref().map(|t| t.summary()),
+                };
+                return Err(SimulationFailure {
+                    seed: seed_str,
+                    input: input.to_string(),
+                    trace,
+                    error: format!("{} backend returned unsupported report shape", report.backend),
                 });
             },
         };
@@ -984,6 +1091,174 @@ impl<'a> SimulationRunner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_runtime::{
+        AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackend,
+        RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
+        RuntimeObservationValue, Term, TermType, VarTypeInfo,
+    };
+    use std::any::Any;
+
+    #[derive(Debug, Clone)]
+    struct RuntimeObservationTerm(String);
+
+    impl std::fmt::Display for RuntimeObservationTerm {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl Term for RuntimeObservationTerm {
+        fn clone_box(&self) -> Box<dyn Term> {
+            Box::new(self.clone())
+        }
+
+        fn term_id(&self) -> u64 {
+            17
+        }
+
+        fn term_eq(&self, other: &dyn Term) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<RuntimeObservationTerm>()
+                .is_some_and(|other| self.0 == other.0)
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    struct RuntimeObservationMetadata;
+
+    static RUNTIME_OBSERVATION_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
+        backend: RuntimeBackend::RhoMachine,
+        is_default: true,
+        evidence_refs: &["simulation-test:runtime-observations"],
+    }];
+
+    impl LanguageMetadata for RuntimeObservationMetadata {
+        fn name(&self) -> &'static str {
+            "RuntimeObservationMock"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            RUNTIME_OBSERVATION_BACKENDS
+        }
+    }
+
+    static RUNTIME_OBSERVATION_METADATA: RuntimeObservationMetadata = RuntimeObservationMetadata;
+
+    struct RuntimeObservationLanguage;
+
+    impl Language for RuntimeObservationLanguage {
+        fn name(&self) -> &'static str {
+            "RuntimeObservationMock"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &RUNTIME_OBSERVATION_METADATA
+        }
+
+        fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(RuntimeObservationTerm(input.to_string())))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            Ok(AscentResults::empty())
+        }
+
+        fn run_backend_report(
+            &self,
+            backend: RuntimeBackend,
+            _term: &dyn Term,
+        ) -> Result<RuntimeBackendReport, String> {
+            match backend {
+                RuntimeBackend::RhoMachine => Ok(RuntimeBackendReport::observations(
+                    RuntimeBackend::RhoMachine,
+                    RuntimeBackendArtifact::RhoNormalizedAst,
+                    vec![RuntimeChannelObservation::new(
+                        "OUT",
+                        vec![RuntimeObservationValue::Int(5)],
+                    )],
+                    vec!["simulation-test:runtime-observations".to_string()],
+                )),
+                RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
+                other => Err(format!("{other} is not installed")),
+            }
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
 
     #[test]
     fn test_simulation_config_default() {
@@ -1014,6 +1289,59 @@ mod tests {
         assert!(hex_to_seed(&"zz".repeat(32)).is_none());
         // Wrong length (63 chars).
         assert!(hex_to_seed(&"a".repeat(63)).is_none());
+    }
+
+    #[test]
+    fn runtime_observation_backend_returns_observation_trace() {
+        let language = RuntimeObservationLanguage;
+        let runner = SimulationRunner::new(&language, SimulationConfig::default());
+
+        let trace = runner
+            .run_to_normal_form("rho-call")
+            .expect("runtime observation report should produce a trace");
+
+        assert_eq!(trace.steps.len(), 2);
+        assert_eq!(trace.steps[1].operation, "runtime:RhoMachine:RhoNormalizedAst");
+        assert_eq!(trace.steps[1].term_display, "OUT=[5]");
+        match trace.outcome {
+            TraceOutcome::RuntimeObservations {
+                backend,
+                artifact,
+                channels,
+                values,
+                summary,
+            } => {
+                assert_eq!(backend, "RhoMachine");
+                assert_eq!(artifact, "RhoNormalizedAst");
+                assert_eq!(channels, 1);
+                assert_eq!(values, 1);
+                assert_eq!(summary, "OUT=[5]");
+            },
+            other => panic!("expected RuntimeObservations, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_observation_does_not_satisfy_normal_form_reachable() {
+        let language = RuntimeObservationLanguage;
+        let config = SimulationConfig {
+            invariants: vec![Box::new(crate::invariant::NormalFormReachable { max_steps: 1 })],
+            ..SimulationConfig::default()
+        };
+        let runner = SimulationRunner::new(&language, config);
+
+        let failure = runner
+            .run_to_normal_form("rho-call")
+            .expect_err("runtime observations are not normal-form graph evidence");
+
+        assert!(failure.error.contains("runtime observations"));
+        match failure.trace.outcome {
+            TraceOutcome::InvariantViolation { invariant, message, .. } => {
+                assert_eq!(invariant, "NormalFormReachable");
+                assert!(message.contains("not an Ascent-shaped rewrite graph"));
+            },
+            other => panic!("expected NormalFormReachable violation, got {other:?}"),
+        }
     }
 
     #[test]

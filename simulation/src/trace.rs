@@ -51,6 +51,15 @@ pub struct TraceEntry {
 pub enum TraceOutcome {
     /// The term reached a normal form.
     NormalForm { term: String, steps: usize },
+    /// The selected runtime backend produced substrate observations rather
+    /// than an Ascent-shaped rewrite graph.
+    RuntimeObservations {
+        backend: String,
+        artifact: String,
+        channels: usize,
+        values: usize,
+        summary: String,
+    },
     /// The simulation hit its step limit without reaching a normal form.
     StepLimitReached { final_term: String },
     /// An invariant was violated during execution.
@@ -109,6 +118,23 @@ fn outcome_to_json_fields(outcome: &TraceOutcome) -> String {
                 "\"kind\":\"NormalForm\",\"term\":\"{}\",\"steps\":{}",
                 json_escape(term),
                 steps,
+            )
+        },
+        TraceOutcome::RuntimeObservations {
+            backend,
+            artifact,
+            channels,
+            values,
+            summary,
+        } => {
+            format!(
+                "\"kind\":\"RuntimeObservations\",\"backend\":\"{}\",\"artifact\":\"{}\",\
+                 \"channels\":{},\"values\":{},\"summary\":\"{}\"",
+                json_escape(backend),
+                json_escape(artifact),
+                channels,
+                values,
+                json_escape(summary),
             )
         },
         TraceOutcome::StepLimitReached { final_term } => {
@@ -428,6 +454,25 @@ fn parse_outcome_from_line(line: &str) -> Result<TraceOutcome, String> {
                 .ok_or_else(|| "Missing 'steps' in NormalForm outcome".to_string())?;
             Ok(TraceOutcome::NormalForm { term, steps })
         },
+        "RuntimeObservations" => {
+            let backend = extract_json_string(line, "backend")
+                .ok_or_else(|| "Missing 'backend' in RuntimeObservations outcome".to_string())?;
+            let artifact = extract_json_string(line, "artifact")
+                .ok_or_else(|| "Missing 'artifact' in RuntimeObservations outcome".to_string())?;
+            let channels = extract_json_usize(line, "channels")
+                .ok_or_else(|| "Missing 'channels' in RuntimeObservations outcome".to_string())?;
+            let values = extract_json_usize(line, "values")
+                .ok_or_else(|| "Missing 'values' in RuntimeObservations outcome".to_string())?;
+            let summary = extract_json_string(line, "summary")
+                .ok_or_else(|| "Missing 'summary' in RuntimeObservations outcome".to_string())?;
+            Ok(TraceOutcome::RuntimeObservations {
+                backend,
+                artifact,
+                channels,
+                values,
+                summary,
+            })
+        },
         "StepLimitReached" => {
             let final_term = extract_json_string(line, "final_term")
                 .ok_or_else(|| "Missing 'final_term' in StepLimitReached outcome".to_string())?;
@@ -625,6 +670,15 @@ mod tests {
         let nf = TraceOutcome::NormalForm { term: "42".to_string(), steps: 5 };
         assert!(matches!(nf, TraceOutcome::NormalForm { .. }));
 
+        let ro = TraceOutcome::RuntimeObservations {
+            backend: "RhoMachine".to_string(),
+            artifact: "RhoNormalizedAst".to_string(),
+            channels: 1,
+            values: 2,
+            summary: "OUT=[1, 2]".to_string(),
+        };
+        assert!(matches!(ro, TraceOutcome::RuntimeObservations { .. }));
+
         let sl = TraceOutcome::StepLimitReached { final_term: "stuck".to_string() };
         assert!(matches!(sl, TraceOutcome::StepLimitReached { .. }));
 
@@ -709,6 +763,54 @@ mod tests {
         assert!(recovered.morphology.is_some());
 
         // Clean up.
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_runtime_observations_serialization_roundtrip() {
+        let trace = ExecutionTrace {
+            seed: "test-seed".to_string(),
+            language: "RhoDispatch".to_string(),
+            steps: vec![TraceEntry {
+                step_index: 0,
+                term_display: "OUT=[5]".to_string(),
+                operation: "runtime:RhoMachine:RhoNormalizedAst".to_string(),
+                metrics: None,
+            }],
+            outcome: TraceOutcome::RuntimeObservations {
+                backend: "RhoMachine".to_string(),
+                artifact: "RhoNormalizedAst".to_string(),
+                channels: 1,
+                values: 1,
+                summary: "OUT=[5]".to_string(),
+            },
+            morphology: None,
+        };
+
+        let dir = std::env::temp_dir().join("mettail_trace_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("runtime_observations.jsonl");
+
+        write_trace_jsonl(&trace, &path).expect("write should succeed");
+        let recovered = read_trace_jsonl(&path).expect("read should succeed");
+
+        match recovered.outcome {
+            TraceOutcome::RuntimeObservations {
+                backend,
+                artifact,
+                channels,
+                values,
+                summary,
+            } => {
+                assert_eq!(backend, "RhoMachine");
+                assert_eq!(artifact, "RhoNormalizedAst");
+                assert_eq!(channels, 1);
+                assert_eq!(values, 1);
+                assert_eq!(summary, "OUT=[5]");
+            },
+            other => panic!("Expected RuntimeObservations, got: {:?}", other),
+        }
+
         let _ = std::fs::remove_file(&path);
     }
 
