@@ -1191,7 +1191,7 @@ impl Repl {
 
         let initial_id = term.term_id();
 
-        match &report.output {
+        match report.output() {
             RuntimeBackendOutput::Ascent(results) => {
                 println!();
                 println!("Computed:");
@@ -1309,8 +1309,8 @@ impl Repl {
 
                 println!();
                 println!("Computed:");
-                println!("  - backend: {}", report.backend);
-                println!("  - artifact: {}", report.artifact);
+                println!("  - backend: {}", report.backend());
+                println!("  - artifact: {}", report.artifact());
                 println!("  - {} observation channel(s)", observations.len());
                 for observation in observations {
                     let rendered_values = observation
@@ -1350,8 +1350,8 @@ impl Repl {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
-                    report.backend.hash(&mut hasher);
-                    report.artifact.hash(&mut hasher);
+                    report.backend().hash(&mut hasher);
+                    report.artifact().hash(&mut hasher);
                     display.hash(&mut hasher);
                     hasher.finish()
                 };
@@ -1375,8 +1375,8 @@ impl Repl {
 
                 println!();
                 println!("Computed:");
-                println!("  - backend: {}", report.backend);
-                println!("  - artifact: {}", report.artifact);
+                println!("  - backend: {}", report.backend());
+                println!("  - artifact: {}", report.artifact());
                 println!("  - completeness: {}", dovetail_report.completeness);
                 println!("  - {} root(s)", dovetail_report.roots.len());
                 println!("  - {} term record(s)", dovetail_report.terms.len());
@@ -1388,8 +1388,8 @@ impl Repl {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
-                    report.backend.hash(&mut hasher);
-                    report.artifact.hash(&mut hasher);
+                    report.backend().hash(&mut hasher);
+                    report.artifact().hash(&mut hasher);
                     display.hash(&mut hasher);
                     hasher.finish()
                 };
@@ -1420,8 +1420,8 @@ impl Repl {
         if let Some(report) = self.state.backend_report() {
             anyhow::bail!(
                 "Current {} backend report contains {}; this command requires an Ascent-shaped rewrite graph. Use 'exec' for runtime observations or run an explicit Ascent/reference step.",
-                report.backend,
-                report.output.kind_name()
+                report.backend(),
+                report.output().kind_name()
             );
         }
 

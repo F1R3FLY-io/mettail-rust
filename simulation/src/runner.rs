@@ -342,7 +342,9 @@ impl<'a> SimulationRunner<'a> {
                 });
             },
         };
-        let results = match report.output {
+        let backend = report.backend();
+        let artifact = report.artifact();
+        let results = match report.into_output() {
             RuntimeBackendOutput::Ascent(results) => results,
             RuntimeBackendOutput::Observations(observations) => {
                 let summary = observations
@@ -362,7 +364,7 @@ impl<'a> SimulationRunner<'a> {
                     .iter()
                     .map(|observation| observation.observed_count())
                     .sum::<usize>();
-                let operation = format!("runtime:{}:{}", report.backend, report.artifact);
+                let operation = format!("runtime:{}:{}", backend, artifact);
                 let metrics = TermMetrics::from_display(&summary);
                 if let Some(ref mut tracker) = morphology_tracker {
                     tracker.record(metrics.clone());
@@ -375,8 +377,8 @@ impl<'a> SimulationRunner<'a> {
                 });
 
                 let outcome = TraceOutcome::RuntimeObservations {
-                    backend: report.backend.to_string(),
-                    artifact: report.artifact.to_string(),
+                    backend: backend.to_string(),
+                    artifact: artifact.to_string(),
                     channels: observations.len(),
                     values: observed_values,
                     summary,
@@ -391,7 +393,7 @@ impl<'a> SimulationRunner<'a> {
                 {
                     let message = format!(
                         "Normal form not reached: {} backend returned runtime observations, not an Ascent-shaped rewrite graph",
-                        report.backend
+                        backend
                     );
                     let trace = ExecutionTrace {
                         seed: seed_str.clone(),
@@ -430,7 +432,7 @@ impl<'a> SimulationRunner<'a> {
             },
             RuntimeBackendOutput::Dovetail(dovetail_report) => {
                 let summary = dovetail_report_summary(&dovetail_report);
-                let operation = format!("runtime:{}:{}", report.backend, report.artifact);
+                let operation = format!("runtime:{}:{}", backend, artifact);
                 let metrics = TermMetrics::from_display(&summary);
                 if let Some(ref mut tracker) = morphology_tracker {
                     tracker.record(metrics.clone());
@@ -443,8 +445,8 @@ impl<'a> SimulationRunner<'a> {
                 });
 
                 let outcome = TraceOutcome::RuntimeReport {
-                    backend: report.backend.to_string(),
-                    artifact: report.artifact.to_string(),
+                    backend: backend.to_string(),
+                    artifact: artifact.to_string(),
                     summary,
                 };
                 let morphology = morphology_tracker.as_ref().map(|t| t.summary());
@@ -457,7 +459,7 @@ impl<'a> SimulationRunner<'a> {
                 {
                     let message = format!(
                         "Normal form not reached: {} backend returned a Dovetail report, not an Ascent-shaped rewrite graph",
-                        report.backend
+                        backend
                     );
                     let trace = ExecutionTrace {
                         seed: seed_str.clone(),
@@ -500,10 +502,7 @@ impl<'a> SimulationRunner<'a> {
                     language: language_name.clone(),
                     steps,
                     outcome: TraceOutcome::Error {
-                        message: format!(
-                            "{} backend returned unsupported report shape",
-                            report.backend
-                        ),
+                        message: format!("{} backend returned unsupported report shape", backend),
                     },
                     morphology: morphology_tracker.as_ref().map(|t| t.summary()),
                 };
@@ -511,7 +510,7 @@ impl<'a> SimulationRunner<'a> {
                     seed: seed_str,
                     input: input.to_string(),
                     trace,
-                    error: format!("{} backend returned unsupported report shape", report.backend),
+                    error: format!("{} backend returned unsupported report shape", backend),
                 });
             },
         };

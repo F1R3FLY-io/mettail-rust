@@ -554,10 +554,10 @@ impl RuntimeBackendOutput {
 /// Runtime-neutral report returned by a selected backend.
 #[derive(Debug, Clone)]
 pub struct RuntimeBackendReport {
-    pub backend: RuntimeBackend,
-    pub artifact: RuntimeBackendArtifact,
-    pub output: RuntimeBackendOutput,
-    pub evidence_refs: Vec<String>,
+    backend: RuntimeBackend,
+    artifact: RuntimeBackendArtifact,
+    output: RuntimeBackendOutput,
+    evidence_refs: Vec<String>,
 }
 
 impl RuntimeBackendReport {
@@ -607,6 +607,26 @@ impl RuntimeBackendReport {
             output: RuntimeBackendOutput::Dovetail(report),
             evidence_refs,
         })
+    }
+
+    pub fn backend(&self) -> RuntimeBackend {
+        self.backend
+    }
+
+    pub fn artifact(&self) -> RuntimeBackendArtifact {
+        self.artifact
+    }
+
+    pub fn output(&self) -> &RuntimeBackendOutput {
+        &self.output
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        &self.evidence_refs
+    }
+
+    pub fn into_output(self) -> RuntimeBackendOutput {
+        self.output
     }
 
     pub fn as_ascent_results(&self) -> Option<&AscentResults> {
@@ -1007,11 +1027,11 @@ pub trait Language: Send + Sync {
         term: &dyn Term,
     ) -> Result<AscentResults, String> {
         let report = self.run_backend_report(backend, term)?;
-        let output_kind = report.output.kind_name();
+        let output_kind = report.output().kind_name();
         report.into_ascent_results().map_err(|report| {
             format!(
                 "{} backend for language {} returned {}; use run_backend_report for this backend",
-                report.backend,
+                report.backend(),
                 self.name(),
                 output_kind
             )
@@ -1077,11 +1097,11 @@ pub trait Language: Send + Sync {
         facts: &SeedFacts,
     ) -> Result<AscentResults, String> {
         let report = self.run_backend_report_with_facts(backend, term, facts)?;
-        let output_kind = report.output.kind_name();
+        let output_kind = report.output().kind_name();
         report.into_ascent_results().map_err(|report| {
             format!(
                 "{} backend with seeded facts for language {} returned {}; use run_backend_report_with_facts for this backend",
-                report.backend,
+                report.backend(),
                 self.name(),
                 output_kind
             )
@@ -2205,8 +2225,8 @@ mod tests {
         )
         .expect("checked constructor accepts structurally valid Dovetail reports");
 
-        assert_eq!(backend_report.backend, RuntimeBackend::Dovetail);
-        assert_eq!(backend_report.artifact, RuntimeBackendArtifact::DovetailRunReport);
+        assert_eq!(backend_report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(backend_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
     }
 
     #[test]
@@ -2265,8 +2285,8 @@ mod tests {
         )
         .expect("Rho normalized AST may produce observation-shaped runtime output");
 
-        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
-        assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
         assert!(report.observations_for_channel("OUT").is_some());
     }
 
@@ -2339,9 +2359,9 @@ mod tests {
         let report = language
             .run_default_backend_report(&term)
             .expect("metadata-selected Rho backend must dispatch");
-        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
-        assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
-        assert_eq!(report.evidence_refs, vec!["runtime-test:rho-dispatch"]);
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+        assert_eq!(report.evidence_refs(), &["runtime-test:rho-dispatch"]);
 
         let out = report
             .observations_for_channel("OUT")

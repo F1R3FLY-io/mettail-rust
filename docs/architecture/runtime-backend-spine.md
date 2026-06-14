@@ -71,6 +71,10 @@ The negative rule is:
 `DovetailRunReport ≠ rhoapi::Par ≠ RhoObservationReport ≠ RuntimeBackendReport`
 
 Each object sits at a different phase boundary and carries different evidence.
+The runtime envelope enforces that distinction at the Rust API boundary:
+`RuntimeBackendReport` fields are private, and non-Ascent reports must be built
+through checked constructors that validate backend, artifact, output shape, and
+projected Dovetail table consistency.
 
 ## End-To-End Trace
 

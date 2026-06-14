@@ -533,9 +533,9 @@ mod tests {
         let report = language
             .run_default_backend_report(term.as_ref())
             .expect("complete Dovetail report should run");
-        assert_eq!(report.backend, RuntimeBackend::Dovetail);
-        assert_eq!(report.artifact, RuntimeBackendArtifact::DovetailRunReport);
-        let RuntimeBackendOutput::Dovetail(dovetail_report) = report.output else {
+        assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+        let RuntimeBackendOutput::Dovetail(dovetail_report) = report.into_output() else {
             panic!("expected Dovetail report output");
         };
         assert!(dovetail_report.is_complete());
@@ -603,7 +603,7 @@ mod tests {
         let report = language
             .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
             .expect("explicit Ascent should delegate");
-        assert_eq!(report.backend, RuntimeBackend::Ascent);
+        assert_eq!(report.backend(), RuntimeBackend::Ascent);
         assert!(report.as_ascent_results().is_some());
     }
 
@@ -618,6 +618,6 @@ mod tests {
         let report = language
             .run_default_backend_report_with_facts(term.as_ref(), &HashMap::new())
             .expect("empty fact set matches default Dovetail execution");
-        assert_eq!(report.backend, RuntimeBackend::Dovetail);
+        assert_eq!(report.backend(), RuntimeBackend::Dovetail);
     }
 }

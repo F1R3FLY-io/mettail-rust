@@ -177,7 +177,8 @@ impl<'a> ProgramTestSuite<'a> {
                     "program termination check",
                 )?;
 
-                match report.output {
+                let backend = report.backend();
+                match report.into_output() {
                     mettail_runtime::RuntimeBackendOutput::Ascent(results) => {
                         let normal_forms = results.normal_forms();
                         if normal_forms.is_empty() && results.all_terms.len() > *max_steps {
@@ -192,7 +193,7 @@ impl<'a> ProgramTestSuite<'a> {
                         if !dovetail_report.is_complete() {
                             return Err(format!(
                                 "Program termination check requires a complete Dovetail report; {} returned {}",
-                                report.backend,
+                                backend,
                                 dovetail_report.completeness
                             ));
                         }
@@ -206,7 +207,7 @@ impl<'a> ProgramTestSuite<'a> {
                         return Err(format!(
                             "Program termination check does not support {} output from {}",
                             other.kind_name(),
-                            report.backend
+                            backend
                         ));
                     },
                 }

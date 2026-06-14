@@ -364,11 +364,11 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     let report = language
         .run_default_backend_report(term.as_ref())
         .expect("Rho default backend must return a runtime report");
-    assert_eq!(report.backend, RuntimeBackend::RhoMachine);
-    assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
     assert!(
         report
-            .evidence_refs
+            .evidence_refs()
             .iter()
             .any(|evidence| evidence == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
         "Rho backend report must carry flip-gate evidence refs"
@@ -382,8 +382,8 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     let ascent_report = language
         .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
         .expect("explicit Ascent backend must still delegate to the wrapped language");
-    assert_eq!(ascent_report.backend, RuntimeBackend::Ascent);
-    assert_eq!(ascent_report.artifact, RuntimeBackendArtifact::AscentFixpoint);
+    assert_eq!(ascent_report.backend(), RuntimeBackend::Ascent);
+    assert_eq!(ascent_report.artifact(), RuntimeBackendArtifact::AscentFixpoint);
     assert!(ascent_report.as_ascent_results().is_some());
 
     let compat_err = language
@@ -411,7 +411,7 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     let bool_report = language
         .run_default_backend_report(bool_term.as_ref())
         .expect("Rho default backend must report Bool observations");
-    assert_eq!(bool_report.backend, RuntimeBackend::RhoMachine);
+    assert_eq!(bool_report.backend(), RuntimeBackend::RhoMachine);
     let bool_out = bool_report
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT Bool observations");
@@ -456,7 +456,7 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     let str_report = language
         .run_default_backend_report(str_term.as_ref())
         .expect("Rho default backend must report Str observations");
-    assert_eq!(str_report.backend, RuntimeBackend::RhoMachine);
+    assert_eq!(str_report.backend(), RuntimeBackend::RhoMachine);
     let str_out = str_report
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT Str observations");

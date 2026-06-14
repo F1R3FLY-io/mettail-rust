@@ -23,23 +23,24 @@ pub fn expect_ascent_graph(
     report: RuntimeBackendReport,
     context: &str,
 ) -> Result<AscentResults, String> {
-    match report.output {
+    let backend = report.backend();
+    match report.into_output() {
         RuntimeBackendOutput::Ascent(results) => Ok(results),
         RuntimeBackendOutput::Observations(_) => Err(format!(
             "{} requires an Ascent-shaped rewrite graph; {} returned runtime observations",
-            context, report.backend
+            context, backend
         )),
         other => Err(format!(
             "{} requires an Ascent-shaped rewrite graph; {} returned {}",
             context,
-            report.backend,
+            backend,
             other.kind_name()
         )),
     }
 }
 
 pub fn report_contains_expected(report: &RuntimeBackendReport, expected: &str) -> bool {
-    match &report.output {
+    match report.output() {
         RuntimeBackendOutput::Ascent(results) => results
             .normal_forms()
             .iter()
@@ -65,7 +66,7 @@ pub fn report_contains_expected(report: &RuntimeBackendReport, expected: &str) -
 }
 
 pub fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<String> {
-    match &report.output {
+    match report.output() {
         RuntimeBackendOutput::Ascent(results) => results
             .normal_forms()
             .iter()
@@ -101,7 +102,7 @@ pub fn report_observed_outputs(report: &RuntimeBackendReport) -> Vec<String> {
 }
 
 pub fn report_semantic_outputs(report: &RuntimeBackendReport) -> Vec<String> {
-    match &report.output {
+    match report.output() {
         RuntimeBackendOutput::Ascent(results) => results
             .normal_forms()
             .iter()
@@ -128,12 +129,12 @@ pub fn report_semantic_outputs(report: &RuntimeBackendReport) -> Vec<String> {
 
 pub fn report_signature(report: &RuntimeBackendReport) -> Vec<String> {
     let mut signature = vec![
-        format!("backend={}", report.backend),
-        format!("artifact={}", report.artifact),
-        format!("output={}", report.output.kind_name()),
+        format!("backend={}", report.backend()),
+        format!("artifact={}", report.artifact()),
+        format!("output={}", report.output().kind_name()),
     ];
 
-    match &report.output {
+    match report.output() {
         RuntimeBackendOutput::Ascent(results) => {
             let mut normal_forms: Vec<String> = results
                 .normal_forms()

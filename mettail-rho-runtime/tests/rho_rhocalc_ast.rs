@@ -148,11 +148,11 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         .run_default_backend_report(term.as_ref())
         .expect("Rho-backed RhoCalc language must return an observation report");
 
-    assert_eq!(report.backend, RuntimeBackend::RhoMachine);
-    assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
     assert!(
         report
-            .evidence_refs
+            .evidence_refs()
             .iter()
             .any(|reference| reference == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
         "Rho runtime report must retain flip-gate evidence"

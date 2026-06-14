@@ -77,7 +77,7 @@ pub fn assert_evals_to(lang: &dyn Language, input: &str, expected: &str) -> Resu
         "No backend output matches expected:\n  input:    '{}'\n  expected: '{}'\n  backend:  {}\n  got:      {:?}",
         input,
         expected,
-        report.backend,
+        report.backend(),
         observed
     ))
 }

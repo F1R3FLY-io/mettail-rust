@@ -779,10 +779,10 @@ mod tests {
                 ])
                 .expect("normalized AST observations must convert to runtime backend reports");
 
-        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
-        assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
         assert_eq!(
-            report.evidence_refs,
+            report.evidence_refs(),
             vec![
                 "formal/rocq/rho_bridge/theories/RhoObservationReportBoundary.v",
                 "formal/rocq/rho_bridge/theories/RhoRuntimeBackendReportBridge.v",

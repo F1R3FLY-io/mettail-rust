@@ -277,7 +277,7 @@ mod tests {
         let report = state
             .backend_report()
             .expect("runtime backend report must be cached");
-        assert_eq!(report.backend, RuntimeBackend::RhoMachine);
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
         assert!(state.ascent_results().is_none());
         assert_eq!(state.current_graph_id(), Some(5));
     }

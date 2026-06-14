@@ -124,6 +124,12 @@ For Rho-native execution, the backend-specific arrow is:
 
 `DovetailRunReport → rhoapi::Par → RhoRuntime → RuntimeBackendReport { backend = RhoMachine, output = Observations(...) }`
 
+The `RuntimeBackendReport { ... }` notation above is logical field notation,
+not public construction syntax. In Rust, non-Ascent runtime reports enter the
+generic envelope through checked constructors, and the report fields are
+private so downstream crates cannot bypass shape validation with a struct
+literal.
+
 Both paths start from the same checked report. They differ in what happens
 after the report boundary: the direct Dovetail backend exposes the report, while
 the Rho backend executes an AST artifact derived from a complete report.
