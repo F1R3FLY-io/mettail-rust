@@ -4,10 +4,10 @@
 
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::{
-    Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int,
+    Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
 use mettail_rho_codegen::{
-    plan_rho_default_backend_with_evidence_audit, RhoAstSend, RhoCoverageEvidence,
+    plan_rho_default_backend_with_evidence_audit, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
     RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
@@ -27,6 +27,7 @@ const CALC_RUN_FRAGMENT: &str = r#"
         DivInt . a:Int, b:Int |- a "/" b : Int ;
         ModInt . a:Int, b:Int |- a "%" b : Int ;
         EqInt . a:Int, b:Int |- a "==" b : Bool ;
+        Concat . a:Str, b:Str |- a "++" b : Str ;
     }
 "#;
 
@@ -62,8 +63,8 @@ fn calculator_backend() -> PlannedRhoBackend {
             .expect("calculator Int scalar ops must pass the Rho-default gate");
     assert_eq!(
         plan.lowering.lowered,
-        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "EqInt"],
-        "all binary Int scalar ops and Bool predicates in this fragment must lower"
+        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "EqInt", "Concat"],
+        "all binary Int, Bool, and Str scalar ops in this fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
@@ -94,6 +95,27 @@ fn binary_bool_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvoc
         .par()
         .clone();
     Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+}
+
+fn string_literal(term: &Str) -> Result<String, String> {
+    match term {
+        Str::StringLit(value) => Ok(value.clone()),
+        other => Err(format!("Rho calculator bridge needs ground string literals, got {other:?}")),
+    }
+}
+
+fn binary_string_call(op: &str, left: &Str, right: &Str) -> Result<RhoBackendInvocation, String> {
+    let left = string_literal(left)?;
+    let right = string_literal(right)?;
+    let call = RhoAstSend::contract_call(
+        op,
+        vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)],
+        "OUT",
+    )
+    .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
+    .par()
+    .clone();
+    Ok(RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel: "OUT".to_string() })
 }
 
 fn calculator_int(term: &dyn Term) -> Result<&Int, String> {
@@ -134,6 +156,25 @@ fn calculator_bool_inner(inner: &CalculatorTermInner) -> Option<&Bool> {
     }
 }
 
+fn calculator_str(term: &dyn Term) -> Result<&Str, String> {
+    let term = term
+        .as_any()
+        .downcast_ref::<CalculatorTerm>()
+        .ok_or_else(|| format!("expected CalculatorTerm, got {term:?}"))?;
+    calculator_str_inner(&term.0)
+        .ok_or_else(|| format!("expected a Str calculator alternative, got {:?}", term.0))
+}
+
+fn calculator_str_inner(inner: &CalculatorTermInner) -> Option<&Str> {
+    match inner {
+        CalculatorTermInner::Str(str_term) => Some(str_term),
+        CalculatorTermInner::Ambiguous(alternatives) => {
+            alternatives.iter().find_map(calculator_str_inner)
+        },
+        _ => None,
+    }
+}
+
 fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
     if let Ok(int) = calculator_int(term) {
         return match int {
@@ -146,8 +187,15 @@ fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String
         };
     }
 
-    match calculator_bool(term)? {
-        Bool::EqInt(left, right) => binary_bool_call("EqInt", left.as_ref(), right.as_ref()),
+    if let Ok(bool_term) = calculator_bool(term) {
+        return match bool_term {
+            Bool::EqInt(left, right) => binary_bool_call("EqInt", left.as_ref(), right.as_ref()),
+            other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
+        };
+    }
+
+    match calculator_str(term)? {
+        Str::Concat(left, right) => binary_string_call("Concat", left.as_ref(), right.as_ref()),
         other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
     }
 }
@@ -239,4 +287,16 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT Bool observations");
     assert_eq!(bool_out.values, vec![RuntimeObservationValue::Bool(true)]);
+
+    let str_term = language
+        .parse_term(r#""rho" ++ "net""#)
+        .expect("calculator Str parse");
+    let str_report = language
+        .run_default_backend_report(str_term.as_ref())
+        .expect("Rho default backend must report Str observations");
+    assert_eq!(str_report.backend, RuntimeBackend::RhoMachine);
+    let str_out = str_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT Str observations");
+    assert_eq!(str_out.values, vec![RuntimeObservationValue::Text("rhonet".to_string())]);
 }

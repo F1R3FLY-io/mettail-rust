@@ -1,13 +1,14 @@
 //! M-RHO.0.5 / M-RHO.0.4: run the lowered calculator scalar-op contracts on a
 //! REAL in-memory f1r3node-rust `RhoRuntime` and assert the computed results.
 //!
-//! For each Int operator the Rho-default planner validates the lowered Rholang
-//! AST contract artifact, the runtime injects that validated artifact directly,
-//! sends a concrete AST call process, and reads the result back from a fixed
-//! output channel. The asserted values ARE the calculator's defined arithmetic semantics
-//! (`AddInt = a + b`, …) — i.e. exactly what the Ascent backend computes — so
-//! this is the per-op differential oracle (rho-backend ≡ Ascent) executed
-//! end-to-end without routing generated code through source text.
+//! For each native scalar operator covered here, the Rho-default planner
+//! validates the lowered Rholang AST contract artifact, the runtime injects
+//! that validated artifact directly, sends a concrete AST call process, and
+//! reads the result back from a fixed output channel. The asserted values are
+//! the calculator's defined Int, Bool, and Str scalar semantics — i.e. exactly
+//! what the Ascent backend computes — so this is the per-op differential oracle
+//! (rho-backend ≡ Ascent) executed end-to-end without routing generated code
+//! through source text.
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{
@@ -38,6 +39,7 @@ const CALC_RUN_FRAGMENT: &str = r#"
         And . a:Bool, b:Bool |- a "and" b : Bool ;
         Or . a:Bool, b:Bool |- a "or" b : Bool ;
         Not . a:Bool |- "not" a : Bool ;
+        Concat . a:Str, b:Str |- a "++" b : Str ;
     }
 "#;
 
@@ -72,9 +74,9 @@ fn calculator_backend() -> PlannedRhoBackend {
         plan.lowering.lowered,
         vec![
             "AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "Neg", "EqInt", "LtInt", "And", "Or",
-            "Not",
+            "Not", "Concat",
         ],
-        "all Int and Bool native scalar ops in the fragment must lower"
+        "all Int, Bool, and Str native scalar ops in the fragment must lower"
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
@@ -110,6 +112,18 @@ fn unary_bool_call(op: &str, a: bool) -> Par {
         .expect("unary Bool calculator call must build")
         .par()
         .clone()
+}
+
+/// `@"OP"!(a, b, @"OUT")` where the operands are strings.
+fn binary_string_call(op: &str, a: &str, b: &str) -> Par {
+    RhoAstSend::contract_call(
+        op,
+        vec![RhoAstLiteral::String(a.to_string()), RhoAstLiteral::String(b.to_string())],
+        "OUT",
+    )
+    .expect("binary Str calculator call must build")
+    .par()
+    .clone()
 }
 
 #[tokio::test]
@@ -212,4 +226,29 @@ async fn lowered_calculator_bool_ops_compute_correctly_on_rho_runtime() {
     assert_eq!(report.values, vec![false], "Not(true) on RhoRuntime");
     assert_eq!(report.membership_fingerprint(), BTreeSet::from([false]));
     assert_eq!(report.multiplicity_fingerprint(), BTreeMap::from([(false, 1_usize)]));
+}
+
+#[tokio::test]
+async fn lowered_calculator_string_ops_compute_correctly_on_rho_runtime() {
+    let backend = calculator_backend();
+
+    let cases: &[(&str, &str, &str)] =
+        &[("hello", " world", "hello world"), ("", "tail", "tail"), ("head", "", "head")];
+    for &(left, right, expected) in cases {
+        let call = binary_string_call("Concat", left, right);
+        let report = backend
+            .run_with_call_and_observe_strings(&call, "OUT")
+            .await
+            .unwrap_or_else(|e| panic!("Concat({left:?},{right:?}) failed to run: {e}"));
+        assert_eq!(report.boundary, RhoExecutionBoundary::PlannedDefaultBackend);
+        assert_eq!(report.artifact_kind, RhoArtifactKind::NormalizedAst);
+        assert_eq!(report.channel, "OUT");
+        assert_eq!(report.values, vec![expected.to_string()]);
+        assert_eq!(report.observed_count(), 1);
+        assert_eq!(report.membership_fingerprint(), BTreeSet::from([expected.to_string()]));
+        assert_eq!(
+            report.multiplicity_fingerprint(),
+            BTreeMap::from([(expected.to_string(), 1_usize)])
+        );
+    }
 }

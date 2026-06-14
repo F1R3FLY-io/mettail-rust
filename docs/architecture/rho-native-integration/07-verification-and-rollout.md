@@ -89,8 +89,14 @@ The current planned Rho backend observes lowered native `Int`, `Bool`, and
 `Str` payloads as `RuntimeObservationValue::Int`, `RuntimeObservationValue::Bool`,
 and `RuntimeObservationValue::Text`; `RhoRuntimeBackendReportBridge.v` names the
 tag-preservation contract, and `mettail-rho-runtime/tests/run_calculator.rs`
-executes both integer-valued and boolean-valued lowered calculator contracts on
-the real in-memory RhoRuntime.
+executes integer-valued, boolean-valued, and string-valued lowered calculator
+contracts on the real in-memory RhoRuntime.
+The string-valued check is deliberately end-to-end at the wrapper boundary:
+the Calculator snippet `"rho" ++ "net"` is parsed by the retained MeTTaIL/WPDA
+frontend, mapped to a typed `Str::Concat` term, converted by the Rho wrapper's
+invocation mapper into a normalized `rhoapi::Par` contract call, executed by
+RhoRuntime, and returned as a `RuntimeObservationValue::Text("rhonet")`
+observation in the generic runtime report.
 Generated languages do not need to depend on `mettail-rho-runtime` to become
 Rho-default. `RhoRuntimeBackedLanguage<L, F>` lives in the Rho runtime crate and
 wraps an existing generated `Language`: `L` still owns parsing, environments,
