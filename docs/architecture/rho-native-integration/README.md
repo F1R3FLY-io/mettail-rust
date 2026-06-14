@@ -8,10 +8,10 @@ For Dovetail's standalone rewrite-engine architecture, see
 [../dovetail/README.md](../dovetail/README.md).
 
 Scope note: this integration is a replacement path for the CESK runtime backend.
-It is not a replacement for the active WPDA parser/recognizer, and it does not
-delete the Ascent reference/oracle path used for differential evidence. Ascent
-is legacy for production rewrite execution; its retained role here is oracle
-evidence during rollout.
+It is not a replacement for the active WPDA parser/recognizer. Ascent is legacy
+for production rewrite execution and may be used only as temporary oracle
+evidence during rollout; campaign completion removes Ascent/CESK runtime paths
+from the live production tree.
 
 The theoretical background is the Rho calculus
 ([RHO-2005](references.md#rho-2005)), mobile-process calculi
@@ -143,7 +143,7 @@ The quickest way to stay oriented is to separate the static and dynamic tracks:
 | dynamic snippet execution | `source snippet → WPDA parser → typed AST → selected runtime backend` | parsing remains upstream; runtime backends consume typed terms and generated metadata |
 | direct Dovetail runtime | `typed AST + metadata → SatReport → DovetailRunReport → RuntimeBackendOutput::Dovetail` | the runtime result is report-shaped rewrite evidence |
 | Rho-native runtime | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → observations → RuntimeBackendReport` | the runtime result is observation-shaped evidence after host Rho execution |
-| generic call-by-need runtime | `typed computation → CallByNeedThunkSpec → audited CallByNeedThunkPlan → rhoapi::Par → observations` | generated-language computations are parameterized into an AST-first Rho thunk and proof/oracle/budget refs are audited before runtime execution, not lowered through text |
+| generic call-by-need runtime | `typed computation → CallByNeedThunkSpec → CallByNeedThunkPlan → rhoapi::Par → observations` | generated-language computations are parameterized into an AST-first Rho thunk with explicit budget admission and AST validation, not lowered through text |
 
 This separation is deliberately repetitive across the suite. It prevents three
 common misreadings:

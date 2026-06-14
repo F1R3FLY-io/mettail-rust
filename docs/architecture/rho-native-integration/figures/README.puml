@@ -44,7 +44,7 @@ rectangle "F1r3node / Rholang\nruntime substrate" as F #FCE7F3 {
 rectangle "Verification + rollout\nevidence" as V #EDE9FE {
   component "Formal proof suite" as Formal #DDD6FE
   component "Differential reports" as Diff #DDD6FE
-  component "Flip gate\nevidence refs" as Gate #DDD6FE
+  component "Flip gate\nchecked gates" as Gate #DDD6FE
 }
 
 Parser --> AST : parsed terms

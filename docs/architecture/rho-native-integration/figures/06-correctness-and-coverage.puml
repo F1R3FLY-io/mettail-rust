@@ -23,7 +23,7 @@ rectangle "Parallel permutation\nindependence" as PI #FBCFE8
 rectangle "Observation\ncorrectness" as OC #EDE9FE
 rectangle "Rejected-rule\ncoverage contract" as RJ #FFEDD5
 rectangle "Host Rho-machine\nreuse boundary" as HR #F3E8FF
-rectangle "Flip gate\nevidence refs" as FG #DDD6FE
+rectangle "Flip gate\nchecked gates" as FG #DDD6FE
 rectangle "Backend semantic\npreservation" as SP #FCE7F3
 
 Inventory --> EK

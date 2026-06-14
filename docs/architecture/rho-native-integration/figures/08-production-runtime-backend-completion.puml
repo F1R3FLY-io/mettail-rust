@@ -50,9 +50,9 @@ Artifact --> RhoRuntime : direct AST injection
 Dovetail --> AscentOracle : oracle comparison input
 AscentOracle --> Diff : reference observations
 RhoRuntime --> Diff : RSpace observations
-Formal --> Gate : proof evidence refs
-Diff --> Gate : oracle parity refs
-Stress --> Gate : scheduler and RSS refs
+Formal --> Gate : checked theorem status
+Diff --> Gate : oracle parity evidence
+Stress --> Gate : scheduler and RSS evidence
 Gate --> Metadata : advertise Rho default
 
 legend right

@@ -12,14 +12,14 @@ All terms used here are defined in
 ## Scope
 
 The scope of this suite is the architecture and design documentation for the
-Rho-native integration. Mechanized proof artifacts remain in their existing
+Rho-native integration. Mechanized formal targets remain in their existing
 formal directories and are referenced from the documentation. The documentation
 therefore makes two kinds of claims:
 
 | Claim kind | Meaning | Evidence location |
 |---|---|---|
 | architecture claim | The design states a required invariant or component contract. | This documentation suite. |
-| mechanized claim | A completed proof artifact is named as existing evidence. | `formal/rocq/`, `dovetail/formal/rocq/`, and the cited coverage matrix. |
+| mechanized claim | A named checked theorem, model, or verification target exists as evidence. | `formal/rocq/`, `dovetail/formal/rocq/`, and the cited coverage matrix. |
 
 The distinction prevents prose from silently upgrading a design obligation into
 a completed mechanized result.

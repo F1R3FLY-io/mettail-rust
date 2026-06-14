@@ -31,9 +31,10 @@ Readiness is discovered by RSpace communication.
 
 This move is deliberately downstream of parsing. The active WPDA
 parser/recognizer still produces the typed terms consumed by Dovetail, and
-Ascent is legacy for production rewrite execution. Its retained role is the
-reference/oracle path used by differential gates while Dovetail/Rho becomes the
-production rewrite path.
+Ascent is legacy for production rewrite execution. Its role during rollout is
+temporary differential reference/oracle evidence while Dovetail/Rho becomes the
+production rewrite path; campaign completion removes that runtime path from the
+live production tree.
 
 This follows the tuple-space idea that communication can be mediated through a
 shared space ([LINDA-1985](references.md#linda-1985)), the process-calculus view
@@ -120,10 +121,10 @@ adds or preserves a specific contract.
 | 2. code generation | validated `LanguageDef` | typed AST constructors and `LanguageMetadata` | downstream code can derive categories and rules from generated inventory, not hard-coded lists |
 | 3. snippet parse | source snippet | typed AST term | the active WPDA parser produced a source-language value |
 | 4. Dovetail execution | typed AST term plus metadata | `SatReport` and `DovetailRunReport` | rewrite consequences are exact-keyed, ordered, and explicitly complete or bounded |
-| 5a. direct Dovetail runtime | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | the runtime exposes Dovetail evidence without fabricating an Ascent graph |
+| 5a. direct Dovetail runtime | complete Dovetail report | `RuntimeBackendOutput::Dovetail` | the runtime exposes a checked Dovetail report without fabricating an Ascent graph |
 | 5b. Rho planning | complete Dovetail report | `RhoNet plan` | covered rewrites become dataflow contracts and uncovered rewrites are explicit rejections |
-| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and audited `CallByNeedThunkPlan` | thunk payload is a closed `RhoAstLiteral`, channels are generated-language parameters, and budget admission, AST validation, and evidence-reference audit are explicit |
-| 6. AST generation | RhoNet plan or audited `CallByNeedThunkPlan` | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
+| 5c. call-by-need planning | generated-language computation | `CallByNeedThunkSpec` and `CallByNeedThunkPlan` | thunk payload is a closed `RhoAstLiteral`, channels are generated-language parameters, and budget admission plus AST validation are explicit |
+| 6. AST generation | RhoNet plan or `CallByNeedThunkPlan` | normalized `rhoapi::Par` | executable output is host Rholang AST, not source text to reparse |
 | 7. Rho execution | `rhoapi::Par` | RSpace observations | F1r3node's RhoRuntime and RSpace own COMM, joins, scheduling, replay, and checkpointing |
 | 8. runtime return | backend-specific output | `RuntimeBackendReport` | the caller receives an envelope whose shape matches the selected backend |
 
@@ -341,11 +342,11 @@ For predicated types, the corresponding gate is:
 
 `∀g ∈ Guards(LanguageDef). covered_guard(g) ∨ rejected_guard(g)`
 
-where `covered_guard(g)` means one compatible disposition exists with an
-audited evidence reference. EBA evidence covers decidable predicate domains,
-SFT evidence covers symbolic transformations and pre-image pruning, WFST or
+where `covered_guard(g)` means one compatible, checkable disposition exists.
+EBA coverage covers decidable predicate domains,
+SFT coverage covers symbolic transformations and pre-image pruning, WFST or
 other weighted-analysis evidence may inform selectivity or ordering but cannot
-delete candidates, and Rho-native join evidence covers atomic scheduling plus
+delete candidates, and Rho-native join coverage covers atomic scheduling plus
 no-consumption behavior.
 
 The existing M-RHO.0 lowering proof establishes this shape for the scalar
@@ -378,7 +379,7 @@ MeTTaIL-owned reducer, tuple space, matcher, or replay engine.
 |---|---|---|
 | Local Dovetail | Dovetail saturates and extracts inside MeTTaIL. | Formal reference, tests, non-Rho deployments. |
 | Rho differential | Both Dovetail/Ascent and Rho run; result sets are compared. | M-RHO rollout safety. |
-| Rho default | Rho is the selected runtime backend for a language in place of the CESK runtime backend. | M-RHO.4 after proof, oracle, coverage, artifact-validation, scheduler-fairness, and deadlock gates. |
+| Rho default | Rho is the selected runtime backend for a language in place of the CESK runtime backend. | M-RHO.4 after checkable coverage, artifact-validation, and deadlock gates pass; formal proof/oracle results are tracked as verification evidence, not runtime fields. |
 
 ## Pedagogical Example: Communication
 

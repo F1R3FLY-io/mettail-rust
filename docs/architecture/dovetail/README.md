@@ -262,8 +262,8 @@ correctness, Rho lowering correctness, and RhoRuntime execution evidence.
 |---|---|
 | `language!` specification macro | Upstream source of language truth; Dovetail consumes its generated semantic inventory rather than replacing it. |
 | WPDA parser | Upstream producer of typed terms; not replaced by Dovetail. |
-| Ascent | Legacy production rewrite backend and reference/oracle path during rollout. |
-| CESK runtime backend | Runtime backend path being replaced by Dovetail plus Rho-native execution. |
+| Ascent | Legacy production rewrite backend used only as temporary reference/oracle evidence during rollout; removed from the live production runtime tree at campaign completion. |
+| CESK runtime backend | Runtime backend path being replaced by Dovetail plus Rho-native execution and removed from live production code at campaign completion. |
 | `mettail-dovetail-runtime` | One-way adapter that installs Dovetail as a selected runtime backend and projects complete checked reports into `RuntimeBackendOutput::Dovetail`. |
 | Rho backend | Downstream consumer that lowers covered Dovetail rewrite networks to `rhoapi::Par`. |
 | F1r3node/RSpace | Runtime substrate for Rho execution; Dovetail does not depend on it. |

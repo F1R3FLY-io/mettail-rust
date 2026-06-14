@@ -6,8 +6,8 @@
 //! deterministic finite tree automaton (DFTA), with N-best / set-valued exact
 //! lazy best-first extraction. The active WPDA parser/recognizer remains
 //! upstream of this crate. Ascent is legacy for production rewrite execution
-//! and remains available only as a reference/oracle path for differential
-//! evidence.
+//! and is transition-only; git history is the archive after the Dovetail/Rho
+//! runtime path replaces it.
 //!
 //! Design of record:
 //! `docs/design/dovetail-engine/dovetail-core-implementation-plan.md`.

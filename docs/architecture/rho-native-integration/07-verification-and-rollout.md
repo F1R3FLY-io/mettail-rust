@@ -5,8 +5,9 @@ Last updated: 2026-06-14
 This document turns the architecture into an implementation evidence ledger and
 gate policy. It distinguishes mechanized bridge contracts from per-language
 CESK runtime-backend flip gates: a contract can be proved here, while a language
-becomes Rho-default only after its proof, oracle, coverage, artifact-validation,
-and deadlock gates pass.
+becomes Rho-default only after checkable coverage, artifact-validation, and
+deadlock gates pass. Proof and oracle evidence is attributed in this document
+and in implementation comments; it is not carried as runtime data.
 
 All symbols used here are defined in
 [Concepts and Glossary](01-concepts-and-glossary.md).
@@ -26,28 +27,28 @@ The current proof and coverage sources are
 | host Rho-machine reuse | `HostRhoMachineReuse.v` | proved accepted backend plans include host Rholang/RSpace and exclude custom reducer, tuple-space, matcher, and replay components |
 | OSLF/funding adapter | `MettaOslfLawsConformance.v`, `MettaGsltPresentation.v` | proved modeled funding laws |
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
-| auditable rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or evidence-less dispositions block the default-backend gate; advisory rejected-rule classifications preserve rule identity and still require evidence before becoming dispositions |
+| rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or blank-rule dispositions block the default-backend gate; advisory rejected-rule classifications preserve rule identity and still require explicit disposition before becoming accepted coverage |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text; structured dynamic payloads preserve list, map, and bag literals across the AST boundary |
 | type-sensitive scalar operator lowering | `RhoScalarOperatorTyping.v`, `mettail-rho-codegen::lower` | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, and ill-typed or mixed scalar operators are rejected |
 | rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::{lower_rhocalc_proc,lower_rhocalc_term}`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
-| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, evidence references, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
+| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
-| call-by-need observation, planned AST artifact, typed payloads, budget, and evidence audit | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, accepted planned need execution wraps an accepted artifact, admits both force steps, carries audited evidence references, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, typed need reports preserve runtime payload tags separately from textual eval markers, and bounded force admission respects lookahead and heap budgets |
+| call-by-need observation, planned AST artifact, typed payloads, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, accepted planned need execution wraps an accepted artifact and admits both force steps, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, typed need reports preserve runtime payload tags separately from textual eval markers, and bounded force admission respects lookahead and heap budgets |
 | Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
 | Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
-| predicated-type guard coverage | `RhoBackendFlipGate.v`, `mettail-rho-codegen::collect_guard_obligations`, `mettail-rho-codegen::RhoGuardCoverageEvidence` | proved and tested that Rho-default selection requires exact coverage of every guard obligation induced by `LanguageDef`: behavioral predicates, structural patterns, theory registrations, and Rho-native channel/join declarations; uncovered, extraneous, duplicate, evidence-less, or incompatible guard dispositions block the default backend |
+| predicated-type guard coverage | `RhoBackendFlipGate.v`, `mettail-rho-codegen::collect_guard_obligations`, `mettail-rho-codegen::RhoGuardCoverageEvidence` | proved and tested that Rho-default selection requires exact coverage of every guard obligation induced by `LanguageDef`: behavioral predicates, structural patterns, theory registrations, and Rho-native channel/join declarations; uncovered, extraneous, duplicate, blank-obligation, or incompatible guard dispositions block the default backend |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | escrow/refund settlement | `RhoEscrowSettlement.v`, `mettail-rho-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
 | per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
-| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, exact coverage of guard/predicated-type obligations, artifact validation, scheduler-fairness, evidence-reference validity, and deadlock gates |
+| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires checkable exact coverage of rejected rules, exact coverage of guard/predicated-type obligations, artifact validation, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
-| runtime backend dispatch and wrappers | `RuntimeBackendDispatch.v`, `DovetailLanguageBackendWrapper.v`, `RhoLanguageBackendWrapper.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage`, `mettail_rho_runtime::RhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Dovetail defaults require normalized evidence references that pass the selected audit policy, return Dovetail-report-shaped runtime output, and are rejected by the legacy Ascent-shaped compatibility wrapper; the Dovetail wrapper selects `Dovetail` as the default, delegates non-Dovetail backend support to the inner generated language, requires a complete and structurally well-formed checked report, rejects `BoundedByCycleCut`, rejects malformed projected report tables, and rejects Ascent-shaped seeded facts on the Dovetail path; installed Rho defaults return observation-shaped reports backed by Rho runtime artifacts and are rejected by the legacy Ascent-shaped compatibility wrapper; checked `RuntimeBackendReport::try_dovetail` and `try_observations` constructors are the only public non-Ascent report constructors, and `RuntimeBackendReport` fields are private, so malformed report-shaped and observation-shaped outputs cannot enter through an unchecked runtime API or external struct literal; the runtime report bridge preserves observation value tags for native scalar payloads and structured list/map/bag payloads; the Rho wrapper selects `RhoMachine` as the default, delegates non-Rho backend support to the inner generated language, requires a planned backend whose `LanguageDef` identity matches the wrapped language plus a total typed invocation for Rho reports, and rejects Ascent-shaped seeded facts on the Rho path |
+| runtime backend dispatch and wrappers | `RuntimeBackendDispatch.v`, `DovetailLanguageBackendWrapper.v`, `RhoLanguageBackendWrapper.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage`, `mettail_rho_runtime::RhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Dovetail defaults return Dovetail-report-shaped runtime output and are rejected by the legacy Ascent-shaped compatibility wrapper; the Dovetail wrapper selects `Dovetail` as the default, delegates non-Dovetail backend support to the inner generated language, requires a complete and structurally well-formed checked report, rejects `BoundedByCycleCut`, rejects malformed projected report tables, and rejects Ascent-shaped seeded facts on the Dovetail path; installed Rho defaults return observation-shaped reports backed by Rho runtime artifacts and are rejected by the legacy Ascent-shaped compatibility wrapper; checked `RuntimeBackendReport::try_dovetail` and `try_observations` constructors are the only public non-Ascent report constructors, and `RuntimeBackendReport` fields are private, so malformed report-shaped and observation-shaped outputs cannot enter through an unchecked runtime API or external struct literal; the runtime report bridge preserves observation value tags for native scalar payloads and structured list/map/bag payloads; the Rho wrapper selects `RhoMachine` as the default, delegates non-Rho backend support to the inner generated language, requires a planned backend whose `LanguageDef` identity matches the wrapped language plus a total typed invocation for Rho reports, and rejects Ascent-shaped seeded facts on the Rho path |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
 | COMM schedule family and guarded joins | `RhoCommScheduleFamily.v`, `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | proves every finite independent-redex Rho reserve/fire schedule erases to the same visible observations as the direct Dovetail fire schedule, full permutation schedules enable completion, missing-redex prefixes reject completion, and permutation schedules preserve the fired-redex set; the generated process-calculus suite independently checks no deadlock, all 24 visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, weak-fair scheduler completion, and guarded-join non-consumption: a failed guard releases data, a valid join can commit afterward, and the rejected bad datum remains observable |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
@@ -105,7 +106,7 @@ convert through `try_into_runtime_backend_report`, which fails closed for future
 unknown artifact kinds and then through `RuntimeBackendReport::try_observations`,
 which rejects observation-shaped output unless it names `RhoMachine` and a Rho
 runtime artifact. The generic report carries the selected backend, artifact
-kind, evidence references, and channel observations so callers can select
+kind, and channel observations so callers can select
 `RhoMachine` without depending on Ascent-shaped fact materialization.
 The current planned Rho backend observes lowered native scalar and collection
 payloads through `RuntimeObservationValue`: `Int`, `Bool`, and `Str` become
@@ -151,20 +152,16 @@ the default. Once installed, the wrapper advertises `RhoMachine` as the default
 runtime backend through the concrete `Language::runtime_backend_capabilities()`
 view, not by mutating the generated `LanguageMetadata::runtime_backends()`
 table. Static metadata therefore remains a statement about the generated crate;
-the runtime capability view is a statement about the particular wrapped value,
-including the flip-gated Rho plan evidence attached to it. This keeps the
+the runtime capability view is a statement about the particular wrapped value
+and its installed checked Rho plan. This keeps the
 dependency direction one-way and keeps Rho execution AST-first: generated calls
 are `rhoapi::Par` values, with any Rholang-looking text remaining only a reader
 annotation.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
 lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,
-and makes `RuntimeBackend::Dovetail` the concrete default only when the wrapper
-is installed with stable, normalized evidence references accepted by a caller
-supplied audit policy. The strict policy accepts repository-relative artifacts
-that exist under the workspace and rejects absolute paths, parent-directory
-escapes, missing local files, and logical namespaces unless the installer has
-explicitly allowed that namespace.
+and makes `RuntimeBackend::Dovetail` the concrete default for that wrapped
+value. The report returned by the wrapper is still checked before use.
 The installed wrapper projects `dovetail::report::DovetailRunReport` into
 `RuntimeDovetailRunReport` and returns `RuntimeBackendOutput::Dovetail`. It
 rejects incomplete `BoundedByCycleCut` reports for production default execution,
@@ -319,25 +316,15 @@ Rust/runtime gate:
 - `mettail_rho_codegen::plan_call_by_need_thunk` and
   `mettail_rho_codegen::plan_call_by_need_thunk_with_spec` are model-planning
   entry points: they admit the two-force sequence under the configured
-  lookahead/heap budget, validate the call-by-need AST artifact, and require
-  proof/runtime-oracle/budget evidence references before returning a
-  non-audited `CallByNeedThunkPlan`.
-- `mettail_rho_codegen::plan_call_by_need_thunk_with_evidence_audit` and
-  `mettail_rho_codegen::plan_call_by_need_thunk_with_spec_and_evidence_audit`
-  are the production generated-language entry points. They preserve the same
-  budget, artifact, and evidence-presence gates and additionally reject missing
-  repository-local evidence artifacts, absolute or parent-traversing local
-  paths, and logical evidence identifiers whose prefix was not explicitly
-  allowed by the caller.
+  lookahead/heap budget and validate the call-by-need AST artifact before
+  returning a `CallByNeedThunkPlan`.
 - `mettail_rho_runtime::PlannedCallByNeedThunk` consumes `CallByNeedThunkPlan`
-  for runtime execution only when `CallByNeedThunkPlan::is_evidence_audited()`
-  is true, so M-RHO.2 tests do not inject a bare `ValidatedRhoProgram` or an
-  unaudited need plan as the generated need path.
+  for runtime execution, so M-RHO.2 tests do not inject a bare
+  `ValidatedRhoProgram` as the generated need path.
 - `mettail_rho_runtime::RhoBackendInvocation::RunCallByNeedThunk` lets a
   generated-language invocation mapper return a planned CBN thunk through the
   same `RhoRuntimeBackedLanguage` and `RuntimeBackendReport` surface as the
-  static RhoNet path. The report carries the thunk plan's evidence references
-  and two spec-named observation channels.
+  static RhoNet path. The report carries two spec-named observation channels.
 
 - `rho_call_by_need::call_by_need_force_miss_memoizes_and_repeated_force_reuses_value`
   validates a generated cold thunk AST, injects the validated artifact, forces
@@ -516,15 +503,15 @@ match.
 Verified statement:
 
 Make Rho the default runtime backend for a language, in place of the CESK
-runtime backend, only after proof, oracle, coverage, artifact-validation,
-scheduler-fairness, evidence-reference audit, and deadlock gates pass.
+runtime backend, only after checkable coverage, artifact-validation, and
+deadlock gates pass.
 
 Flip condition for language `L`:
 
-`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ SchedulerFairness(L) ∧ EvidenceRefsValid(L) ∧ NoNewDeadlocks(L)`
+`Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`
 
-`RhoBackendFlipGate.v` proves the Boolean flip gate is exactly this conjunction
-and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the
+`RhoBackendFlipGate.v` proves the Boolean flip gate is exactly this checkable
+conjunction and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the
 shape proof for the current scalar-contract `Par` fragment, `RhoArtifactBoundary.v`
 proves source-text artifacts are not accepted generated-backend artifacts, and
 the Rust validator is the executable gate for generated artifacts.
@@ -532,7 +519,7 @@ the Rust validator is the executable gate for generated artifacts.
 coverage wrapper at the rule-identity level: `AllRulesLowered` is valid only
 when the rejected set is empty; `CoveredRejectedRules` is valid only when typed
 dispositions name exactly the rejected rule set; and omitted, stale, duplicate,
-blank-rule, or blank-evidence dispositions block the default-backend gate.
+or blank-rule dispositions block the default-backend gate.
 `mettail_rho_codegen::classify_rejected_rules` is an advisory convenience layer
 over the same boundary. It derives suggested disposition kinds from the parsed
 `LanguageDef`: HOL `fold`/`step` or Rust-code rules suggest native handlers,
@@ -540,48 +527,31 @@ constructor labels referenced by equations/rewrites and structured syntax
 suggest Rho AST contracts, and unsupported scalar-operator shapes suggest
 external contracts. The classifier does not satisfy coverage by itself.
 `RhoRejectedCoverage.v` models this explicitly: a classification with no
-suggested kind yields no disposition, and a classification converted with blank
-evidence remains an invalid disposition. Production flips therefore still pass
-only through `CoveredRejectedRules` with stable evidence references.
+suggested kind yields no disposition, and a classification with a blank rule id
+remains an invalid disposition. Production flips therefore still pass only
+through exact `CoveredRejectedRules` coverage.
 `RhoBackendFlipGate.v` also models the coverage counters consumed by the flip
 gate, including the `invalid_dispositions` counter. Its
 `deadlock_diagnostic_blocks_flip` theorem models the codegen analyzer output:
 any non-empty channel-deadlock diagnostic list makes `NoNewDeadlocks(L)` false.
-The same theory also models Rust-side evidence-reference hygiene with
-`default_backend_gate_with_refs`: if a positive proof, oracle, coverage-audit,
-or scheduler-fairness gate has zero stable evidence references, or if any gate
-evidence reference is blank or invalid under the selected audit policy, the
-default-backend gate is false.
-The `missing_scheduler_fairness_blocks_flip` theorem proves that a language
-cannot flip while the scheduler-fairness obligation is open. The
 `clean_deadlock_report_reduces_to_other_gates` theorem proves that an empty
-deadlock report leaves the proof, oracle, coverage, artifact-validation, and
-scheduler-fairness gates as the remaining flip obligations.
+deadlock report leaves coverage and artifact-validation as the remaining
+checkable flip obligations.
 The `no_blockers_iff_can_flip` and `any_blocker_blocks_flip` theorems model the
 Rust blocker-list API: a language can flip exactly when no blocker remains.
-The `default_backend_gate_iff_all_evidence` theorem models
-`plan_rho_default_backend`: proof, oracle, scheduler fairness, coverage audit,
-no uncovered rejected rules, no extraneous disposition claims, no invalid
-dispositions, and no deadlock diagnostics are jointly necessary and sufficient.
-The Rust planner strengthens that Boolean model by requiring non-empty,
-nonblank evidence-reference lists for every positive externally supplied gate.
-Production callers use `plan_rho_default_backend_with_evidence_audit`, which
-also rejects missing repository-local evidence artifacts, absolute or
-parent-traversing local paths, and logical evidence identifiers whose prefix was
-not explicitly allowed by the caller. The non-audited planner remains available
-for pure model construction and focused unit tests.
-Accepted `RhoDefaultBackendPlan` values expose the resulting sorted
-`evidence_refs` vector so generated language metadata can populate
-`BackendCapabilityDef::evidence_refs` without inventing claims after the fact.
+The `default_backend_gate_iff_all_requirements` theorem models
+`plan_rho_default_backend`: artifact validation, coverage audit, no uncovered
+rejected rules, no extraneous disposition claims, no invalid dispositions, and
+no deadlock diagnostics are jointly necessary and sufficient. Formal proofs and
+oracle comparisons remain attributed verification artifacts, not runtime gate
+fields.
 
 Rust flip-gate evidence:
 
 - `mettail_rho_codegen::plan_rho_default_backend`
-- `mettail_rho_codegen::plan_rho_default_backend_with_evidence_audit`
-- `mettail_rho_codegen::RhoEvidenceRefAuditPolicy`
-- `mettail_rho_codegen::RhoEvidenceRefAuditDiagnostic`
 - `mettail_rho_codegen::RhoDefaultBackendPlan`
 - `mettail_rho_codegen::RhoDefaultBackendPlanError`
+- `mettail_rho_codegen::RhoDefaultBackendRequirements`
 - `mettail_runtime::RuntimeBackendReport`
 - `mettail_runtime::RuntimeBackendArtifact`
 - `mettail_runtime::RuntimeChannelObservation`
@@ -593,10 +563,6 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::RhoProgram`
 - `mettail_rho_codegen::validate_rho_program`
 - `mettail_rho_codegen::RhoValidationError`
-- `mettail_rho_codegen::RhoDefaultBackendEvidence`
-- `mettail_rho_codegen::RhoDefaultBackendEvidenceGate`
-- `mettail_rho_codegen::RhoGateEvidenceDiagnostic`
-- `mettail_rho_codegen::RhoDefaultBackendPlan::evidence_refs`
 - `mettail_rho_codegen::RhoCoverageEvidence`
 - `mettail_rho_codegen::classify_rejected_rules`
 - `mettail_rho_codegen::RhoRejectedRuleClassification`
@@ -608,7 +574,6 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::RhoFlipDecision::can_flip_to_rho`
 - `mettail_rho_codegen::RhoFlipBlocker`
 - `mettail_rho_codegen::RhoFlipBlocker::ArtifactValidation`
-- `mettail_rho_codegen::RhoFlipBlocker::SchedulerFairness`
 - `mettail_rho_codegen::analyze_channel_deadlocks`
 - `mettail_rho_codegen::ChannelDeadlockReport`
 - `mettail_rho_codegen::ChannelDeadlockReport::no_new_deadlocks`
@@ -637,20 +602,12 @@ Rust flip-gate evidence:
 - `default_backend_plan_blocks_uncovered_rejections`
 - `default_backend_plan_accepts_exact_covered_rejections`
 - `default_backend_plan_rejects_stale_disposition_claims`
-- `default_backend_plan_rejects_inauditable_dispositions`
 - `default_backend_plan_rejects_duplicate_dispositions`
-- `default_backend_plan_reports_all_non_coverage_gate_failures`
-- `default_backend_plan_rejects_passed_gate_without_evidence_refs`
-- `default_backend_plan_rejects_blank_gate_evidence_refs`
-- `audited_default_backend_plan_succeeds_for_existing_local_evidence_refs`
-- `audited_default_backend_plan_rejects_missing_local_evidence_refs`
-- `audited_default_backend_plan_requires_allowed_logical_evidence_prefixes`
 
-The CESK runtime backend remains selectable until this gate passes for a
-language. After a language flip, Rho becomes that language's default runtime
-backend; the active WPDA parser/recognizer remains upstream, and Ascent remains
-available only as the legacy reference/oracle path for differential evidence
-and is not deleted by the flip itself.
+The CESK runtime backend is transition-only. After a language flip, Rho becomes
+that language's default runtime backend; the active WPDA parser/recognizer
+remains upstream. At campaign completion, Ascent/CESK runtime paths are deleted
+from the live production tree rather than retained as dormant legacy code.
 
 ## Formal Verification Commands
 
@@ -766,7 +723,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete; `CyclicEnumerationImpossibility.v` explains why productive cyclic spaces cannot be finitely exhausted |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; `RhoRuntimeBackedLanguage` can wrap a generated language as Rho-default only when the plan's `LanguageDef` identity matches the wrapped language, and it does so without adding a reverse dependency from generated crates to the Rho runtime; static generated backend metadata remains crate-local, while `Language::runtime_backend_capabilities()` exposes the concrete wrapper-installed Rho default and its evidence references; the generic `Language` path returns `RuntimeBackendReport` for selected backends, and the Rho boundary returns `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; `RhoRuntimeBackedLanguage` can wrap a generated language as Rho-default only when the plan's `LanguageDef` identity matches the wrapped language, and it does so without adding a reverse dependency from generated crates to the Rho runtime; static generated backend metadata remains crate-local, while `Language::runtime_backend_capabilities()` exposes the concrete wrapper-installed Rho default; the generic `Language` path returns `RuntimeBackendReport` for selected backends, and the Rho boundary returns `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 

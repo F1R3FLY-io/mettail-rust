@@ -22,9 +22,9 @@ reports. The boundary is:
 
 The Dovetail suite may name the direct Dovetail runtime adapter and the
 Rho-native consumer, but Dovetail itself remains substrate-neutral. The active
-WPDA parser stays upstream, Ascent stays available as a reference/oracle path,
-and the CESK runtime backend is the runtime path being replaced by the
-Dovetail/Rho production direction.
+WPDA parser stays upstream. Ascent/CESK may be used as temporary
+reference/oracle machinery during rollout, but campaign completion removes
+those runtime paths from the live production tree; git history is the archive.
 
 The documentation makes four kinds of claims:
 
@@ -32,7 +32,7 @@ The documentation makes four kinds of claims:
 |---|---|---|
 | architecture claim | The document states an intended component boundary or dataflow. | This documentation suite. |
 | mathematical prose claim | The document states an invariant, formula, or proof sketch in human-readable form. | The cited architecture chapter and its references. |
-| mechanized claim | A proof artifact is named as existing evidence. | `dovetail/formal/rocq/`, `dovetail/formal/why3/`, `dovetail/formal/creusot/`, and project-level `formal/` gates. |
+| mechanized claim | A named checked theorem, model, or verification target exists as evidence. | `dovetail/formal/rocq/`, `dovetail/formal/why3/`, `dovetail/formal/creusot/`, and project-level `formal/` gates. |
 | executable claim | A Rust test or validator exercises the behavior. | `dovetail/tests/`, `mettail-dovetail-runtime`, and the cited validation scripts. |
 
 This distinction keeps prose from silently upgrading a design obligation into a

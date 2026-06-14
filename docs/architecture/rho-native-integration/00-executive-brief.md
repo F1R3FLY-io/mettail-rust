@@ -37,8 +37,9 @@ and never:
 
 This design replaces only the CESK runtime backend path after a language passes
 its flip gate. The active WPDA parser/recognizer remains the parser front end,
-and the Ascent production rewrite backend is legacy. Ascent remains available
-only as a reference/oracle path for differential evidence.
+and the Ascent production rewrite backend is legacy. Ascent/CESK are temporary
+reference/oracle transition machinery only; campaign completion removes them
+from the live production runtime tree.
 
 ## Why This Design
 
@@ -85,14 +86,11 @@ The proof is decomposed into:
 
 A language may use Rho as its default runtime only when:
 
-`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ SchedulerFairness(L) ∧ NoNewDeadlocks(L)`
+`Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`
 
 That means:
 
-- proof targets for the selected fragment pass;
-- Rho observations match the Dovetail or Ascent oracle under the documented
-  quotient;
-- every rewrite requirement is covered, rejected with evidence, or delegated to
+- every rewrite requirement is covered, exactly rejected, or delegated to
   an explicit contract;
 - the generated `rhoapi::Par` artifact passes the normalized-AST validator;
 - the RSpace/Rho scheduler fairness obligation for the covered fragment is
@@ -104,7 +102,7 @@ That means:
 | Question | Answer |
 |---|---|
 | Does this create a custom Rho machine in MeTTaIL? | No. It reuses F1r3node's Rholang interpreter and RSpace. |
-| Does the Rho path replace the CESK runtime backend immediately? | No. A language flips only after proof, oracle, coverage, artifact-validation, scheduler-fairness, and deadlock gates pass; WPDA parsing remains active, and Ascent remains available only as a reference/oracle path. |
+| Does the Rho path replace the CESK runtime backend immediately? | Not immediately. During the transition, languages flip only after checkable coverage, artifact-validation, and deadlock gates pass, with proof/oracle results tracked as verification evidence. At campaign completion, Dovetail/Rho replaces the live Ascent/CESK runtime path; git history is the archive. WPDA parsing remains active. |
 | Does RSpace scheduling change semantics? | It must not. Scheduler order is quotiented away; semantic alternatives are represented as data. |
 | Can snippets modeled by MeTTaIL run on F1r3node? | Yes, after MeTTaIL/WPDA parsing and after the language's Rho lowering fragment satisfies its gates. |
 | Where is the detailed design? | Start with [End-to-End Architecture](02-end-to-end-architecture.md), [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md), and [Correctness and Coverage](06-correctness-and-coverage.md). |

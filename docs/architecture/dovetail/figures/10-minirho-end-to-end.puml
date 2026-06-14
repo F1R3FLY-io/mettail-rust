@@ -54,7 +54,7 @@ DirectAdapter --> DirectOutput : preserve report shape
 Report --> Lowerer : RuntimeBackend::RhoMachine\nrequire Complete
 Lowerer --> Par : emit AST, not text
 Par --> Runtime : inject executable artifact
-Runtime --> RuntimeReport : observations plus evidence refs
+Runtime --> RuntimeReport : typed observations
 
 Metadata ..> Parser : category and constructor authority
 Metadata ..> Lowerer : inventory-derived channels and tags

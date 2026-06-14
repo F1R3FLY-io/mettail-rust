@@ -31,13 +31,14 @@ observable rewrite semantics when replacing the CESK runtime backend. The claim
 is not:
 
 - a replacement for the active WPDA parser/recognizer;
-- removal of the retained Ascent reference/oracle path before Dovetail/Rho has
-  fully subsumed the required behavior;
+- removal of the temporary Ascent reference/oracle path before Dovetail/Rho has
+  fully subsumed the required behavior; completion removes it from the live
+  production runtime tree;
 - full abstraction for all Rholang contexts;
 - strong bisimulation across thunk/force boundaries, because the proved
   call-by-need contract is weak observation equivalence;
-- a per-language production flip before that language's proof, runtime oracle,
-  coverage, artifact-validation, scheduler-fairness, and deadlock gates pass;
+- a per-language production flip before that language's checkable coverage,
+  artifact-validation, and deadlock gates pass;
 - correctness of arbitrary user-written Rholang mixed into generated code.
 
 ## Definitions
@@ -319,7 +320,8 @@ finite-state transducers cover value transformations and pre-image/post-image
 reasoning such as string normalization, sequence decomposition, and multi-input
 guard pruning. Rho-native joins cover atomic scheduling and no-consumption
 behavior. Native handlers and external contracts cover host-specific domains
-only when their evidence references are accepted by the audit.
+only when their dispositions are exact and compatible with the induced
+obligation.
 
 Mechanized support:
 `RhoBackendFlipGate.v` extends `CoverageState` with
@@ -405,12 +407,11 @@ level:
 `CoveredRejectedRules(D)` is acceptable only when the rule ids carried by
 `D` are the same set as the lowering rejection set `R`. Each disposition also
 carries a kind, such as native handler, external contract, or non-scalar Rho AST
-contract, and a non-empty evidence reference. Duplicate disposition claims are
-invalid.
+contract. Duplicate disposition claims are invalid.
 
-`ValidDispositionCoverage(R, D) ⇔ (∀r. r ∈ R ⇔ r ∈ ruleIds(D)) ∧ Auditable(D)`
+`ValidDispositionCoverage(R, D) ⇔ (∀r. r ∈ R ⇔ r ∈ ruleIds(D)) ∧ WellFormed(D)`
 
-`Auditable(D) ⇔ noBlankRuleId(D) ∧ noBlankEvidenceRef(D) ∧ noDuplicateRuleId(D)`
+`WellFormed(D) ⇔ noBlankRuleId(D) ∧ noDuplicateRuleId(D)`
 
 Mechanized support:
 [RHO-BRIDGE-FORMAL](references.md#rho-bridge-formal) includes
@@ -492,7 +493,7 @@ stated backend-correctness theorem.
 | full abstraction | arbitrary Rholang contexts can observe or interfere beyond the generated boundary unless restricted |
 | finite complete enumeration of productive cyclic k-best spaces | `CyclicEnumerationImpossibility.v` proves a productive self-cycle has more derivations than any finite list can exhaust; Dovetail reports bounded cycle cuts explicitly |
 | host Rholang compiler correctness | the backend relies on the host compiler and verifies the bridge contract |
-| unconditional production flip for every language | the proved flip gate requires that language's proof, oracle, coverage, artifact-validation, scheduler-fairness, and deadlock evidence |
+| unconditional production flip for every language | the proved flip gate requires that language's exact coverage, artifact-validation, and deadlock evidence |
 
 ## Proof Dependency Diagram
 

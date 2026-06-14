@@ -49,11 +49,11 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | Surface | Current evidence | Production completion condition |
 |---|---|---|
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
-| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper with audited evidence references, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend without fabricating Ascent-shaped graphs, advertising evidence-free defaults, accepting missing or unaudited evidence refs, accepting malformed report tables, or accepting incomplete cycle-bounded reports as exhaustive |
+| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend without fabricating Ascent-shaped graphs, accepting malformed report tables, or accepting incomplete cycle-bounded reports as exhaustive |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
 | `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, `RhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime or allowing observation-shaped output under non-Rho backend/artifact identities |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
-| Ascent path | oracle and regression baseline | available only as a differential reference for languages whose Dovetail/Rho gate is still under evaluation |
+| Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
 | CESK runtime path | legacy runtime backend | unavailable as the selected production backend once the Rho gate is satisfied for a language |
 | WPDA parser | active parser/recognizer | retained; runtime-backend work must not weaken parser guarantees |
 
@@ -96,12 +96,10 @@ Generic call-by-need artifacts use the same AST discipline. The generated
 language supplies a `CallByNeedThunkSpec` containing initial cold/hot state,
 result payload as a closed `RhoAstLiteral`, evaluation marker, output channel,
 and evaluation-trace channel.
-`plan_call_by_need_thunk_with_spec_and_evidence_audit` then admits the
-two-force sequence under lookahead/heap budgets, validates the normalized
-`rhoapi::Par` artifact with the call-by-need profile, verifies that the
-proof/oracle/budget evidence references name existing repository artifacts or
-explicitly allowed logical namespaces, and returns an audited
-`CallByNeedThunkPlan`. Runtime execution uses `PlannedCallByNeedThunk`, which
+`plan_call_by_need_thunk_with_spec` then admits the two-force sequence under
+lookahead/heap budgets, validates the normalized `rhoapi::Par` artifact with
+the call-by-need profile, and returns a `CallByNeedThunkPlan`. Runtime
+execution uses `PlannedCallByNeedThunk`, which
 rejects non-audited need plans and reads the spec-named channels rather than the
 sample fixture channel names.
 Generated-language wrappers can return that plan through
@@ -185,8 +183,8 @@ from the parsed `LanguageDef`: native evaluation metadata suggests a native
 handler, equation/rewrite references and structured syntax suggest a Rho AST
 contract, and unsupported scalar-operator shapes suggest an external contract.
 This helper is for planning and review. It does not satisfy the production
-coverage gate until each suggestion is paired with a stable evidence reference
-and supplied as `RhoCoverageEvidence::CoveredRejectedRules`.
+coverage gate until each suggestion is supplied as exact
+`RhoCoverageEvidence::CoveredRejectedRules` coverage.
 
 ## Predicated-Type And Guard Coverage
 
@@ -217,11 +215,11 @@ than the current Rho flip gate admits directly:
 
 | Classifier disposition | Rho production meaning |
 |---|---|
-| `ExactDecidable` | may map to an accepted Dovetail-core, EBA, SFT, Rho-native join, native-handler, or external-contract disposition when the evidence reference names the exact mechanism |
+| `ExactDecidable` | may map to an accepted Dovetail-core, EBA, SFT, Rho-native join, native-handler, or external-contract disposition when the disposition names the exact mechanism |
 | `BoundedDecidable` | may support bounded reports or diagnostics, but is not enough for an unqualified Rho production default unless the bound is part of the selected runtime contract |
 | `RejectSafeApprox` | may reject enabled behavior conservatively; it is usable only where false negatives are an accepted approximation and must not be presented as complete Rho coverage |
-| `TrustedNativeGuard` | maps to native-handler coverage only when the assertion site and audit evidence are stable |
-| `ProofObject` | maps to the mechanism proved by the proof artifact; the proof object itself is not a rewrite rule |
+| `TrustedNativeGuard` | maps to native-handler coverage only when the assertion site and implementation contract are stable |
+| `MachineCheckedModel` | maps to the mechanism justified by a named checked theorem or model; the model itself is not a rewrite rule |
 | `RuntimeObservation` | maps to Rho-native join or observation coverage when the named channel/join contract is the evidence |
 | `Unknown` | production-default Rho lowering is refused |
 
@@ -293,11 +291,7 @@ Steps:
        - NativeHandler or ExternalContract only when the evidence is outside
          the generated RhoNet contract.
 
-  4. Add a stable evidence reference for the disposition. Prefer repository
-     local proof, test, or design artifacts; use logical evidence namespaces
-     only when the audited planner explicitly allows them.
-
-  5. Rebuild the Rho default backend plan. Treat any uncovered, extraneous, or
+  4. Rebuild the Rho default backend plan. Treat any uncovered, extraneous, or
      invalid guard disposition as a production blocker.
 ```
 
@@ -312,30 +306,31 @@ Steps:
 | guarded join correctness | failed guards release data and valid joins can commit afterward |
 | extraction completeness honesty | complete reports and cycle-bounded reports are distinguishable at the API and proof boundary |
 | runtime report shape honesty | Dovetail outputs are Dovetail-report-shaped, Rho outputs are observation-shaped and backed by Rho runtime artifacts, Ascent outputs remain Ascent-shaped, and public non-Ascent runtime reports enter only through checked constructors |
-| oracle agreement | Rho observations match Ascent oracle observations for the language corpus selected for rollout |
+| oracle agreement | during transition, Rho observations match reference/oracle observations for the language corpus selected for rollout; completion removes the old runtime backend from the live production path |
 | memory bound | capped tests and stress workloads stay within the agreed RSS envelope |
-| backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, evidence-reference audit, and deadlock gates all pass, and every positive external gate carries nonblank stable evidence references that are either existing repository-local artifacts or explicitly allowed logical evidence namespaces |
+| backend selection | default runtime backend fails closed unless checkable coverage, artifact-validation, and deadlock gates pass; formal proof/oracle results are tracked as verification evidence and documentation, not runtime gate fields |
 
 ## Generated-Language Runtime Wrapper
 
 Generated language crates remain substrate-neutral. They expose `Language`,
 metadata, parsing, environments, type inference, direct evaluation helpers, and
 the explicit Ascent oracle. The Rho runtime crate supplies
-`RhoRuntimeBackedLanguage<L, F>` when a language has passed the Rho flip gate
-through the strict audited planner:
+`RhoRuntimeBackedLanguage<L, F>` when a language has passed the Rho flip gate:
 
 ```text
 Given a generated language L, a planned Rho backend B, and an invocation mapper F:
-  build a RhoDefaultBackendPlan with plan_rho_default_backend_with_evidence_audit
-  reject missing local proof/test artifacts and unapproved logical evidence namespaces
+  build a RhoDefaultBackendPlan with plan_rho_default_backend
+  require exact rejected-rule and guard coverage
+  require normalized rhoapi::Par artifact validation
+  require no generated channel-deadlock diagnostics
   require B.plan.language_name = L.name before wrapper installation
-  keep L as the owner of parsing, environments, type inference, and Ascent oracle execution
+  keep L as the owner of parsing, environments, and type inference
   expose RhoMachine as the default runtime backend through Language methods
   delegate explicit non-Rho backend requests back to L
   map each typed term to a RhoBackendInvocation through F
   execute B with the invocation as normalized rhoapi::Par
   if F returns a planned call-by-need thunk, execute that thunk plan through the same report boundary
-  return RuntimeBackendReport with RhoMachine, RhoNormalizedAst, observations, and evidence refs
+  return RuntimeBackendReport with RhoMachine, RhoNormalizedAst, and observations
   reject Ascent-shaped seeded facts on the Rho path unless the fact set is empty
 ```
 
@@ -344,12 +339,10 @@ a Cargo cycle with `mettail-rho-runtime` while still allowing a verified
 language instance to become Rho-default. The wrapper does not parse generated
 Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
 future bytecode variants can use the same report boundary.
-The runtime integration tests share a strict evidence-audit policy helper, so
-stale proof, scheduler, or oracle evidence paths fail before a
-`PlannedRhoBackend` is constructed. `RhoDefaultBackendPlan` also records whether
-that strict audit ran, and `PlannedRhoBackend::from_plan` rejects unaudited
-plans. A non-audited plan can still support codegen model tests, but it cannot
-become the executable generated-backend boundary.
+The runtime integration tests construct `RhoDefaultBackendPlan` values through
+the same checkable gates as production: exact coverage, artifact validation, and
+deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
+and does not accept raw source text as the generated-backend boundary.
 
 The wrapper has two capability surfaces, and the distinction is operationally
 important:
@@ -357,7 +350,7 @@ important:
 | Surface | Owner | Mutability | Meaning |
 |---|---|---|---|
 | static metadata, `LanguageMetadata::runtime_backends()` | generated language crate | compile-time constant | backends that the generated crate can execute without an external runtime wrapper |
-| runtime view, `Language::runtime_backend_capabilities()` | concrete `Language` value | value-level overlay | backends executable by this particular value, including wrapper-installed defaults and plan-specific evidence references |
+| runtime view, `Language::runtime_backend_capabilities()` | concrete `Language` value | value-level overlay | backends executable by this particular value, including wrapper-installed defaults |
 
 For a generated language such as Calculator, static metadata still advertises
 the generated Ascent oracle as the default. After the language is wrapped with a
@@ -566,9 +559,7 @@ order:
 12. Enable the language's Dovetail/Rho backend selection only through the
    flip-gated planner.
 
-Completion means the strict backend selection gate succeeds from current
-evidence, not merely that a lowered artifact exists. The non-audited planner is
-appropriate for unit tests and pure model construction; production flips must
-use `plan_rho_default_backend_with_evidence_audit` so typoed proof, oracle,
-coverage, scheduler, or handler references cannot silently authorize a runtime
-default.
+Completion means the backend selection gate succeeds from current checkable
+coverage, artifact-validation, and deadlock evidence, not merely that a lowered
+artifact exists. Formal proof/oracle results remain required campaign evidence,
+but they do not authorize a runtime default through source-level proof tokens.

@@ -36,13 +36,13 @@ else (no)
   :Publish evidence report\nwithout default flip; <<#FEE2E2>>
   stop
 endif
-:Emit `BackendCapabilityDef`\nwith evidence refs; <<#DDD6FE>>
+:Emit checked runtime capability; <<#DDD6FE>>
 :Retire production Ascent/CESK\nruntime path for that language; <<#BBF7D0>>
 stop
 
 legend right
 |= Area |= Meaning |
-|<#DBEAFE> M-RHO.0 | bridge, scalar oracle, evidence refs |
+|<#DBEAFE> M-RHO.0 | bridge and scalar oracle |
 |<#DCFCE7> M-RHO.1 | Rho-native COMM semantics |
 |<#FEF3C7> M-RHO.2 | generic call-by-need encoding |
 |<#FDE68A> M-RHO.3 | joins, guards, replay hardening |

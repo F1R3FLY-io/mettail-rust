@@ -40,8 +40,8 @@ The intended disposition vocabulary is:
 | `ExactDecidable` | the predicate has complete static or runtime-decidable evidence, such as a structural matcher, EBA/SFT proof, or exact model-checker result |
 | `BoundedDecidable` | the predicate is sound and complete only under the recorded bound; Dovetail may report boundedness but must not advertise exhaustive coverage beyond that bound |
 | `RejectSafeApprox` | the predicate may conservatively reject matches; Dovetail may use it only in positions where false negatives do not fabricate successful rewrites |
-| `TrustedNativeGuard` | a native assertion site owns the contract; Dovetail records the evidence reference and treats missing or mismatched references as a flip-gate failure |
-| `ProofObject` | an explicit proof artifact discharges the guard obligation |
+| `TrustedNativeGuard` | a native assertion site owns the contract; Dovetail records the checked disposition in the report and treats missing or incompatible dispositions as coverage failures |
+| `MachineCheckedModel` | a machine-checked formal model discharges the guard obligation; the proof is attributed in documentation/comments, not carried as runtime data |
 | `RuntimeObservation` | the Rho runtime supplies the behavioral evidence through a named observation or join contract |
 | `Unknown` | production-default lowering is refused; Dovetail can still surface the uncovered obligation in a report |
 

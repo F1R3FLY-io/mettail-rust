@@ -124,8 +124,8 @@ The gate then checks an evidence value:
 
 `NoGuardObligations` accepts only when `O(L) = ∅`. Otherwise every obligation
 must have exactly one compatible `RhoGuardDisposition`, every disposition must
-refer to an existing obligation, and every disposition must carry a nonblank
-evidence reference. Extra, duplicate, evidence-less, or incompatible
+refer to an existing obligation, and every disposition must name a compatible
+coverage mechanism. Extra, duplicate, blank-obligation, or incompatible
 dispositions block Rho-default selection.
 
 The accepted compatibility matrix is:
@@ -170,11 +170,11 @@ Steps:
        - no obligation in O(L) may be missing from D;
        - no disposition in D may name an obligation outside O(L);
        - no obligation may appear twice in D;
-       - every disposition must carry a stable evidence reference;
        - every disposition kind must be compatible with the obligation kind.
 
-  4. Combine the guard result with the existing proof, oracle,
-     rejected-rule coverage, artifact, scheduler-fairness, and deadlock gates.
+  4. Combine the guard result with rejected-rule coverage, artifact-validation,
+     and deadlock gates. Formal proof and oracle results are verification
+     evidence for the campaign, not runtime gate fields.
 
   5. Emit a plan only when every gate passes; otherwise emit all blockers.
 ```
@@ -360,8 +360,7 @@ Steps:
 
   7. Validate the AST with the CallByNeedThunk profile.
 
-  8. Return an audited CallByNeedThunkPlan only if admission, validation,
-     evidence-presence, and evidence-reference audit gates all pass.
+  8. Return a CallByNeedThunkPlan only if admission and validation pass.
 ```
 
 At runtime the value channel is decoded with the same closed-ground-value reader

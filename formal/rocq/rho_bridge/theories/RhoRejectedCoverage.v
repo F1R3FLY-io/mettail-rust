@@ -7,15 +7,15 @@
  *   - `CoveredRejectedRules(dispositions)` is valid only when its disposition
  *     rule ids name exactly the rejected rules: no rejected rule is omitted
  *     and no stale disposition names a rule that did not reject.
- *   - Each disposition must be auditable: the rule id and evidence reference
- *     are present, and no rule has duplicate dispositions.
+ *   - Each disposition must be well formed: the rule id is present, and no
+ *     rule has duplicate dispositions.
  *   - `plan_rho_default_backend` turns those diagnostics into
  *     `uncovered_rejections`, `extraneous_dispositions`, and
  *     `invalid_dispositions` coverage counters before calling the flip gate.
  *
- * This file proves the rule-identity/set-level contract and the auditable
+ * This file proves the rule-identity/set-level contract and the well-formed
  * disposition contract underneath those counters. Counts alone are not the
- * specification: exact membership and valid evidence are.
+ * specification: exact membership and valid dispositions are.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -31,7 +31,6 @@ Import ListNotations.
 Section RhoRejectedCoverage.
 
   Definition RuleId : Type := nat.
-  Definition EvidenceId : Type := nat.
 
   Inductive DispositionKind : Type :=
     | NativeHandler
@@ -40,8 +39,7 @@ Section RhoRejectedCoverage.
 
   Record RejectedRuleDisposition : Type := {
     disposition_rule_id : RuleId;
-    disposition_kind : DispositionKind;
-    disposition_evidence_id : EvidenceId
+    disposition_kind : DispositionKind
   }.
 
   Record RejectedRuleClassification : Type := {
@@ -51,13 +49,12 @@ Section RhoRejectedCoverage.
 
   Definition classification_to_disposition
       (classification : RejectedRuleClassification)
-      (evidence : EvidenceId) : option RejectedRuleDisposition :=
+      : option RejectedRuleDisposition :=
     match classification_kind classification with
     | Some kind =>
         Some {|
           disposition_rule_id := classification_rule_id classification;
-          disposition_kind := kind;
-          disposition_evidence_id := evidence
+          disposition_kind := kind
         |}
     | None => None
     end.
@@ -67,45 +64,39 @@ Section RhoRejectedCoverage.
   Definition valid_rule_id (rule : RuleId) : bool :=
     negb (Nat.eqb rule 0).
 
-  Definition valid_evidence_id (evidence : EvidenceId) : bool :=
-    negb (Nat.eqb evidence 0).
-
   Definition disposition_valid (disposition : RejectedRuleDisposition) : bool :=
-    valid_rule_id (disposition_rule_id disposition)
-    && valid_evidence_id (disposition_evidence_id disposition).
+    valid_rule_id (disposition_rule_id disposition).
 
   Theorem classification_without_kind_yields_no_disposition :
-    forall rule evidence,
+    forall rule,
     classification_to_disposition
-      {| classification_rule_id := rule; classification_kind := None |}
-      evidence = None.
+      {| classification_rule_id := rule; classification_kind := None |} = None.
   Proof.
-    intros rule evidence. reflexivity.
+    intros rule. reflexivity.
   Qed.
 
-  Theorem classification_to_disposition_preserves_rule_and_evidence :
-    forall classification evidence disposition,
-    classification_to_disposition classification evidence = Some disposition ->
-    disposition_rule_id disposition = classification_rule_id classification
-    /\ disposition_evidence_id disposition = evidence.
-  Proof.
-    intros classification evidence disposition Hconvert.
-    unfold classification_to_disposition in Hconvert.
-    destruct (classification_kind classification) as [kind |] eqn:Hkind;
-      inversion Hconvert; subst; split; reflexivity.
-  Qed.
-
-  Theorem classification_with_blank_evidence_yields_invalid_disposition :
+  Theorem classification_to_disposition_preserves_rule :
     forall classification disposition,
-    classification_to_disposition classification 0 = Some disposition ->
-    disposition_valid disposition = false.
+    classification_to_disposition classification = Some disposition ->
+    disposition_rule_id disposition = classification_rule_id classification.
   Proof.
     intros classification disposition Hconvert.
     unfold classification_to_disposition in Hconvert.
     destruct (classification_kind classification) as [kind |] eqn:Hkind;
-      inversion Hconvert; subst.
-    unfold disposition_valid, valid_evidence_id. simpl.
-    rewrite andb_false_r. reflexivity.
+      inversion Hconvert; subst; reflexivity.
+  Qed.
+
+  Theorem classification_with_blank_rule_yields_invalid_disposition :
+    forall kind disposition,
+    classification_to_disposition
+      {| classification_rule_id := 0; classification_kind := Some kind |} =
+      Some disposition ->
+    disposition_valid disposition = false.
+  Proof.
+    intros kind disposition Hconvert.
+    unfold classification_to_disposition in Hconvert.
+    inversion Hconvert; subst.
+    unfold disposition_valid, valid_rule_id. simpl. reflexivity.
   Qed.
 
   Definition rule_member (rule : RuleId) (rules : list RuleId) : bool :=
@@ -488,7 +479,7 @@ Section RhoRejectedCoverage.
     apply stale_rule_appears_in_extraneous; assumption.
   Qed.
 
-  Theorem inauditable_disposition_blocks_default_backend :
+  Theorem invalid_disposition_blocks_default_backend_from_coverage :
     forall proofs oracle artifact fairness audit rejected dispositions disposition diagnostics,
     In disposition dispositions ->
     disposition_valid disposition = false ->
