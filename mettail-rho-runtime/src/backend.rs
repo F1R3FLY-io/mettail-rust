@@ -680,8 +680,52 @@ pub struct RhoRuntimeBackedLanguage<L, F> {
 pub struct DovetailRhoRuntimeBackedLanguage<L, D, F> {
     inner: L,
     backend: PlannedRhoBackend,
-    dovetail: D,
-    invocation: F,
+    dovetail: DovetailCompilerStage<D>,
+    invocation: RhoInvocationCompilerStage<F>,
+}
+
+/// Language-specific Dovetail compiler stage derived from a generated
+/// `LanguageDef`.
+#[cfg(feature = "runtime-report")]
+pub struct DovetailCompilerStage<D> {
+    definition_fingerprint: String,
+    compiler: D,
+}
+
+/// Language-specific Rho invocation compiler stage derived from a generated
+/// `LanguageDef`.
+#[cfg(feature = "runtime-report")]
+pub struct RhoInvocationCompilerStage<F> {
+    definition_fingerprint: String,
+    compiler: F,
+}
+
+#[cfg(feature = "runtime-report")]
+impl<D> DovetailCompilerStage<D> {
+    pub fn new(definition_fingerprint: impl Into<String>, compiler: D) -> Self {
+        Self {
+            definition_fingerprint: definition_fingerprint.into(),
+            compiler,
+        }
+    }
+
+    pub fn definition_fingerprint(&self) -> &str {
+        &self.definition_fingerprint
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<F> RhoInvocationCompilerStage<F> {
+    pub fn new(definition_fingerprint: impl Into<String>, compiler: F) -> Self {
+        Self {
+            definition_fingerprint: definition_fingerprint.into(),
+            compiler,
+        }
+    }
+
+    pub fn definition_fingerprint(&self) -> &str {
+        &self.definition_fingerprint
+    }
 }
 
 /// Failure installing a flip-gated Rho backend plan on a generated language.
@@ -694,6 +738,31 @@ pub enum RhoRuntimeBackedLanguageError {
         language_name: String,
         plan_language_name: String,
     },
+    /// The generated language metadata did not expose the macro-derived
+    /// definition fingerprint required for production Dovetail/Rho
+    /// installation.
+    MissingLanguageDefinitionFingerprint { language_name: String },
+    /// The Rho plan was derived from a different generated definition than the
+    /// wrapped language.
+    LanguagePlanDefinitionMismatch {
+        language_name: String,
+        language_definition_fingerprint: String,
+        plan_definition_fingerprint: String,
+    },
+    /// The Dovetail compiler stage was derived from a different generated
+    /// definition than the wrapped language.
+    DovetailCompilerDefinitionMismatch {
+        language_name: String,
+        language_definition_fingerprint: String,
+        compiler_definition_fingerprint: String,
+    },
+    /// The Rho invocation compiler stage was derived from a different generated
+    /// definition than the wrapped language.
+    InvocationCompilerDefinitionMismatch {
+        language_name: String,
+        language_definition_fingerprint: String,
+        compiler_definition_fingerprint: String,
+    },
 }
 
 #[cfg(feature = "runtime-report")]
@@ -703,6 +772,34 @@ impl fmt::Display for RhoRuntimeBackedLanguageError {
             Self::LanguagePlanMismatch { language_name, plan_language_name } => write!(
                 f,
                 "RhoMachine backend plan for language {plan_language_name} cannot be installed on generated language {language_name}"
+            ),
+            Self::MissingLanguageDefinitionFingerprint { language_name } => write!(
+                f,
+                "Dovetail+Rho production backend for language {language_name} requires generated LanguageDef fingerprint metadata"
+            ),
+            Self::LanguagePlanDefinitionMismatch {
+                language_name,
+                language_definition_fingerprint,
+                plan_definition_fingerprint,
+            } => write!(
+                f,
+                "RhoMachine backend plan fingerprint {plan_definition_fingerprint} cannot be installed on generated language {language_name} fingerprint {language_definition_fingerprint}"
+            ),
+            Self::DovetailCompilerDefinitionMismatch {
+                language_name,
+                language_definition_fingerprint,
+                compiler_definition_fingerprint,
+            } => write!(
+                f,
+                "Dovetail compiler fingerprint {compiler_definition_fingerprint} cannot be installed on generated language {language_name} fingerprint {language_definition_fingerprint}"
+            ),
+            Self::InvocationCompilerDefinitionMismatch {
+                language_name,
+                language_definition_fingerprint,
+                compiler_definition_fingerprint,
+            } => write!(
+                f,
+                "Rho invocation compiler fingerprint {compiler_definition_fingerprint} cannot be installed on generated language {language_name} fingerprint {language_definition_fingerprint}"
             ),
         }
     }
@@ -761,8 +858,8 @@ where
     pub fn new(
         inner: L,
         backend: PlannedRhoBackend,
-        dovetail: D,
-        invocation: F,
+        dovetail: DovetailCompilerStage<D>,
+        invocation: RhoInvocationCompilerStage<F>,
     ) -> Result<Self, RhoRuntimeBackedLanguageError> {
         let language_name = inner.name();
         let plan_language_name = backend.plan().language_name();
@@ -770,6 +867,34 @@ where
             return Err(RhoRuntimeBackedLanguageError::LanguagePlanMismatch {
                 language_name: language_name.to_string(),
                 plan_language_name: plan_language_name.to_string(),
+            });
+        }
+        let language_definition_fingerprint = inner
+            .metadata()
+            .definition_fingerprint()
+            .ok_or_else(|| RhoRuntimeBackedLanguageError::MissingLanguageDefinitionFingerprint {
+                language_name: language_name.to_string(),
+            })?;
+        let plan_definition_fingerprint = backend.plan().definition_fingerprint();
+        if language_definition_fingerprint != plan_definition_fingerprint {
+            return Err(RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.to_string(),
+                plan_definition_fingerprint: plan_definition_fingerprint.to_string(),
+            });
+        }
+        if language_definition_fingerprint != dovetail.definition_fingerprint() {
+            return Err(RhoRuntimeBackedLanguageError::DovetailCompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.to_string(),
+                compiler_definition_fingerprint: dovetail.definition_fingerprint().to_string(),
+            });
+        }
+        if language_definition_fingerprint != invocation.definition_fingerprint() {
+            return Err(RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.to_string(),
+                compiler_definition_fingerprint: invocation.definition_fingerprint().to_string(),
             });
         }
 
@@ -1083,8 +1208,8 @@ where
         match backend {
             RuntimeBackend::RhoMachine => {
                 let dovetail_report =
-                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail)?;
-                let invocation = (self.invocation)(term, &dovetail_report).map_err(|err| {
+                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
+                let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
                     format!(
                         "RhoMachine backend for language {} could not build an AST invocation from the checked Dovetail report: {err}",
                         self.name()
@@ -1094,7 +1219,7 @@ where
             },
             RuntimeBackend::Dovetail => {
                 let dovetail_report =
-                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail)?;
+                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
                 RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
                     format!(
                         "Dovetail stage for language {} produced malformed report: {err}",

@@ -740,6 +740,12 @@ impl RhoDefaultBackendPlan {
         self.lowering.language_name()
     }
 
+    /// Stable compiler-facing identity of the `LanguageDef` whose lowering
+    /// passed the default-backend gate.
+    pub fn definition_fingerprint(&self) -> &str {
+        self.lowering.definition_fingerprint()
+    }
+
     /// Executable Rho backend artifact selected and validated by the flip gate.
     pub fn program(&self) -> &ValidatedRhoProgram {
         &self.validated_program

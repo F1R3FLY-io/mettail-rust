@@ -21,6 +21,15 @@ pub trait LanguageMetadata: 'static + Send + Sync {
     /// The language name (e.g., "RhoCalc")
     fn name(&self) -> &'static str;
 
+    /// Stable compiler-facing fingerprint of the macro-expanded `LanguageDef`.
+    ///
+    /// This is implementation identity data used to reject backend plans derived
+    /// from a different generated definition. It is not intended for user
+    /// display.
+    fn definition_fingerprint(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Type definitions (first is primary)
     fn types(&self) -> &'static [TypeDef];
 

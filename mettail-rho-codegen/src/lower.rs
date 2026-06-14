@@ -20,6 +20,7 @@
 //! well-formed normalized-AST lowering plus the totality/no-loss guarantee.
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
+use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
 use models::create_bit_vector;
@@ -138,6 +139,7 @@ pub enum RhoAstValidationProfile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoLowering {
     pub language_name: String,
+    pub definition_fingerprint: String,
     pub(crate) program: RhoProgram,
     pub lowered: Vec<String>,
     pub rejected: Vec<String>,
@@ -148,6 +150,12 @@ impl RhoLowering {
     /// Name of the `LanguageDef` that produced this lowering.
     pub fn language_name(&self) -> &str {
         &self.language_name
+    }
+
+    /// Stable compiler-facing identity of the `LanguageDef` that produced this
+    /// lowering.
+    pub fn definition_fingerprint(&self) -> &str {
+        &self.definition_fingerprint
     }
 
     /// Lowered backend artifact. This is exposed for inspection and validation;
@@ -491,6 +499,7 @@ pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
     let deadlock_report = analyze_channel_deadlocks(&network);
     RhoLowering {
         language_name: def.name.to_string(),
+        definition_fingerprint: language_definition_fingerprint(def),
         program: RhoProgram::Ast(RhoAstProgram::new(program, text_annotation)),
         lowered,
         rejected,

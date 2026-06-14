@@ -325,7 +325,11 @@ and an invocation mapper F:
   require exact rejected-rule and guard coverage
   require normalized rhoapi::Par artifact validation
   require no generated channel-deadlock diagnostics
-  require B.plan.language_name = L.name before wrapper installation
+  compute L.definition_fingerprint directly from the macro-expanded LanguageDef
+  require B.plan.definition_fingerprint = L.definition_fingerprint
+  wrap D as DovetailCompilerStage(L.definition_fingerprint, D)
+  wrap F as RhoInvocationCompilerStage(L.definition_fingerprint, F)
+  require D and F stage fingerprints to match L.definition_fingerprint
   keep L as the owner of parsing, environments, and type inference
   expose RhoMachine as the default runtime backend through Language methods
   expose Dovetail as a non-default checked intermediate report
@@ -347,6 +351,14 @@ language instance to become Dovetail-checked and Rho-executed by construction.
 The wrapper does not parse generated Rholang text; invocation mappers construct
 `rhoapi::Par` values directly from the typed term and checked Dovetail report,
 and future bytecode variants can use the same report boundary.
+The identity check is definition-derived, not name-derived: the macro emits a
+stable compiler-facing fingerprint from the expanded `LanguageDef`, and Rho
+plans carry the fingerprint of the `LanguageDef` they lowered. This prevents a
+partial scalar fragment from being installed as the production runtime for a
+larger generated language merely because the names match. Such fragments remain
+useful as oracle tests, but production installation requires full-definition
+identity across generated metadata, Dovetail compilation, and Rho invocation
+compilation.
 The runtime integration tests construct `RhoDefaultBackendPlan` values through
 the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly

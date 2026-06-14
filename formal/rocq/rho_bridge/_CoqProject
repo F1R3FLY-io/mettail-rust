@@ -43,4 +43,5 @@ theories/RhoRuntimeBackendReportBridge.v
 theories/DovetailLanguageBackendWrapper.v
 theories/RhoLanguageBackendWrapper.v
 theories/DovetailRhoLanguageBackendWrapper.v
+theories/GeneratedLanguageInstallation.v
 theories/OracleQuotientEquivalence.v

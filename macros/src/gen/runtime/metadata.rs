@@ -30,6 +30,8 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
     let name_lit = LitStr::new(&name_str, name.span());
+    let fingerprint = mettail_ast::identity::language_definition_fingerprint(language);
+    let fingerprint_lit = LitStr::new(&fingerprint, name.span());
     let metadata_name = format_ident!("{}Metadata", name);
 
     // Generate type definitions
@@ -69,6 +71,10 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
 
         impl mettail_runtime::LanguageMetadata for #metadata_name {
             fn name(&self) -> &'static str { #name_lit }
+
+            fn definition_fingerprint(&self) -> Option<&'static str> {
+                Some(#fingerprint_lit)
+            }
 
             fn types(&self) -> &'static [mettail_runtime::TypeDef] {
                 #type_defs

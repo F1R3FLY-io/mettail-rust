@@ -12,6 +12,7 @@
 pub mod compose;
 pub mod fragment;
 pub mod grammar;
+pub mod identity;
 pub mod language;
 pub mod merge;
 pub mod pattern;

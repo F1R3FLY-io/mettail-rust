@@ -40,8 +40,9 @@ pub mod rhocalc_ast;
 pub mod run;
 #[cfg(feature = "runtime-report")]
 pub use backend::{
-    DovetailRhoRuntimeBackedLanguage, IntoRuntimeObservationValue, RhoBackendInvocation,
-    RhoRuntimeBackedLanguage, RhoRuntimeBackedLanguageError, RuntimeReportConversionError,
+    DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage, IntoRuntimeObservationValue,
+    RhoBackendInvocation, RhoInvocationCompilerStage, RhoRuntimeBackedLanguage,
+    RhoRuntimeBackedLanguageError, RuntimeReportConversionError,
 };
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
