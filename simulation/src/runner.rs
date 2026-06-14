@@ -321,7 +321,28 @@ impl<'a> SimulationRunner<'a> {
 
         // Step 2: Run the selected backend (rewrite to saturation).
         mettail_runtime::clear_var_cache();
-        let backend = self.language.default_runtime_backend();
+        let backend = match self.language.selected_default_runtime_backend() {
+            Some(backend) => backend,
+            None => {
+                let message = format!(
+                    "language {} does not advertise a default runtime backend",
+                    self.language.name()
+                );
+                let trace = ExecutionTrace {
+                    seed: seed_str.clone(),
+                    language: language_name.clone(),
+                    steps,
+                    outcome: TraceOutcome::Error { message: message.clone() },
+                    morphology: morphology_tracker.as_ref().map(|t| t.summary()),
+                };
+                return Err(SimulationFailure {
+                    seed: seed_str,
+                    input: input.to_string(),
+                    trace,
+                    error: message,
+                });
+            },
+        };
         let report = match self.language.run_default_backend_report(term.as_ref()) {
             Ok(r) => r,
             Err(e) => {
@@ -1281,9 +1302,41 @@ mod tests {
 
     static DOVETAIL_REPORT_METADATA: DovetailReportMetadata = DovetailReportMetadata;
 
+    struct NoDefaultMetadata;
+
+    impl LanguageMetadata for NoDefaultMetadata {
+        fn name(&self) -> &'static str {
+            "NoDefaultMock"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            &[]
+        }
+    }
+
+    static NO_DEFAULT_METADATA: NoDefaultMetadata = NoDefaultMetadata;
+
     struct RuntimeObservationLanguage;
 
     struct DovetailReportLanguage;
+
+    struct NoDefaultLanguage;
 
     fn complete_dovetail_runtime_report() -> RuntimeDovetailRunReport {
         RuntimeDovetailRunReport {
@@ -1485,6 +1538,80 @@ mod tests {
         }
     }
 
+    impl Language for NoDefaultLanguage {
+        fn name(&self) -> &'static str {
+            "NoDefaultMock"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &NO_DEFAULT_METADATA
+        }
+
+        fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(RuntimeObservationTerm(input.to_string())))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            panic!("simulation must not fabricate an Ascent backend")
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
     #[test]
     fn test_simulation_config_default() {
         let config = SimulationConfig::default();
@@ -1566,6 +1693,31 @@ mod tests {
                 assert!(message.contains("not an Ascent-shaped rewrite graph"));
             },
             other => panic!("expected NormalFormReachable violation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn simulation_runner_does_not_fabricate_ascent_default() {
+        let language = NoDefaultLanguage;
+        let runner = SimulationRunner::new(&language, SimulationConfig::default());
+
+        let failure = runner
+            .run_to_normal_form("parse-only")
+            .expect_err("simulation must fail before execution without a selected default backend");
+
+        assert!(
+            failure
+                .error
+                .contains("does not advertise a default runtime backend"),
+            "{}",
+            failure.error
+        );
+        assert_eq!(failure.trace.steps.len(), 1);
+        match failure.trace.outcome {
+            TraceOutcome::Error { message } => {
+                assert!(message.contains("does not advertise a default runtime backend"));
+            },
+            other => panic!("expected no-default runtime error, got {other:?}"),
         }
     }
 

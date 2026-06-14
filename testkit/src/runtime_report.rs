@@ -9,14 +9,13 @@ pub fn run_default_backend_report(
     context: &str,
 ) -> Result<RuntimeBackendReport, String> {
     mettail_runtime::clear_var_cache();
-    language.run_default_backend_report(term).map_err(|error| {
-        format!(
-            "{} failed on {} backend: {}",
-            context,
-            language.default_runtime_backend(),
-            error
-        )
-    })
+    let backend = language
+        .selected_default_runtime_backend()
+        .map(|backend| backend.to_string())
+        .unwrap_or_else(|| "no selected default runtime backend".to_string());
+    language
+        .run_default_backend_report(term)
+        .map_err(|error| format!("{} failed on {} backend: {}", context, backend, error))
 }
 
 pub fn expect_ascent_graph(

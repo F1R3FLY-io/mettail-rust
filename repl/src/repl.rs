@@ -1354,7 +1354,12 @@ impl Repl {
         let term = language.normalize_term(term.as_ref());
 
         // Execute using the language's selected backend.
-        let backend = language.default_runtime_backend();
+        let backend = language.selected_default_runtime_backend().ok_or_else(|| {
+            anyhow::anyhow!(
+                "language {} does not advertise a default runtime backend",
+                language.name()
+            )
+        })?;
         if step_mode && backend != RuntimeBackend::Ascent {
             anyhow::bail!(
                 "step mode requires an Ascent-shaped rewrite graph; the selected default backend is {}. Use 'exec' for runtime observations or select an explicit Ascent/reference step path.",
