@@ -116,6 +116,27 @@ The runtime integration tests share a strict evidence-audit policy helper, so
 stale proof, scheduler, or oracle evidence paths fail before a
 `PlannedRhoBackend` is constructed.
 
+The wrapper has two capability surfaces, and the distinction is operationally
+important:
+
+| Surface | Owner | Mutability | Meaning |
+|---|---|---|---|
+| static metadata, `LanguageMetadata::runtime_backends()` | generated language crate | compile-time constant | backends that the generated crate can execute without an external runtime wrapper |
+| runtime view, `Language::runtime_backend_capabilities()` | concrete `Language` value | value-level overlay | backends executable by this particular value, including wrapper-installed defaults and plan-specific evidence references |
+
+For a generated language such as Calculator, static metadata still advertises
+the generated Ascent oracle as the default. After the language is wrapped with a
+flip-gated `PlannedRhoBackend`, the runtime view starts with
+`RuntimeBackendCapability { backend: RhoMachine, is_default: true, … }` and
+then appends the inherited generated capabilities with their `is_default` flags
+cleared. This is the reason `language.metadata().runtime_backends()` can remain
+Ascent-only while `language.default_runtime_backend()` and
+`language.run_default_backend_report(…)` select the Rho machine for that
+wrapped value. The Rocq model
+`formal/rocq/rho_bridge/theories/RhoLanguageBackendWrapper.v` proves that the
+runtime capability list supports exactly the backends reported by the wrapper
+and that inherited non-Rho capabilities cannot remain default after wrapping.
+
 For the RhoCalc process path, the reusable mapper is
 `mettail_rho_runtime::rhocalc_observe_strings_invocation` or
 `mettail_rho_runtime::rhocalc_observe_ints_invocation`, and the convenience

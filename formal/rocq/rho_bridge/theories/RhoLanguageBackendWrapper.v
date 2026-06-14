@@ -14,7 +14,9 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
-From Stdlib Require Import Bool.
+From Stdlib Require Import Bool List.
+
+Import ListNotations.
 
 Section RhoLanguageBackendWrapper.
 
@@ -30,6 +32,12 @@ Section RhoLanguageBackendWrapper.
   Inductive SeedFactsState : Type :=
   | NoSeedFacts
   | SeedFactsPresent.
+
+  Record RuntimeBackendCapability : Type := {
+    capability_backend : Backend;
+    capability_is_default : bool;
+    capability_has_evidence : bool
+  }.
 
   Record InnerLanguage : Type := {
     inner_supports_ascent : bool;
@@ -50,8 +58,45 @@ Section RhoLanguageBackendWrapper.
     | RhoMachine => false
     end.
 
+  Definition backend_eqb (left right : Backend) : bool :=
+    match left, right with
+    | Ascent, Ascent => true
+    | Dovetail, Dovetail => true
+    | RhoMachine, RhoMachine => true
+    | _, _ => false
+    end.
+
+  Definition demoted_inner_capabilities
+      (inner : InnerLanguage) : list RuntimeBackendCapability :=
+    (if inner_supports_ascent inner
+     then [{| capability_backend := Ascent;
+              capability_is_default := false;
+              capability_has_evidence := true |}]
+     else []) ++
+    (if inner_supports_dovetail inner
+     then [{| capability_backend := Dovetail;
+              capability_is_default := false;
+              capability_has_evidence := true |}]
+     else []).
+
   Definition wrapper_default_backend (_wrapper : RhoWrapper) : Backend :=
     RhoMachine.
+
+  Definition wrapper_runtime_capabilities
+      (wrapper : RhoWrapper) : list RuntimeBackendCapability :=
+    (if planned_rho_backend wrapper
+     then [{| capability_backend := RhoMachine;
+              capability_is_default := true;
+              capability_has_evidence := true |}]
+     else []) ++
+    demoted_inner_capabilities (wrapped_inner wrapper).
+
+  Definition capabilities_support
+      (capabilities : list RuntimeBackendCapability) (backend : Backend) : bool :=
+    existsb
+      (fun capability =>
+         backend_eqb (capability_backend capability) backend)
+      capabilities.
 
   Definition wrapper_supports
       (wrapper : RhoWrapper) (backend : Backend) : bool :=
@@ -91,6 +136,55 @@ Section RhoLanguageBackendWrapper.
   Theorem wrapper_supports_rho_iff_planned : forall wrapper,
     wrapper_supports wrapper RhoMachine = planned_rho_backend wrapper.
   Proof. intros wrapper. reflexivity. Qed.
+
+  Theorem wrapper_capabilities_support_matches_wrapper_supports :
+    forall wrapper backend,
+      capabilities_support
+        (wrapper_runtime_capabilities wrapper) backend =
+      wrapper_supports wrapper backend.
+  Proof.
+    intros [[supports_ascent supports_dovetail] planned invocation] backend.
+    destruct backend;
+      destruct planned;
+      destruct supports_ascent;
+      destruct supports_dovetail;
+      reflexivity.
+  Qed.
+
+  Theorem planned_wrapper_capabilities_start_with_rho_default :
+    forall inner invocation,
+      exists tail,
+        wrapper_runtime_capabilities
+          {| wrapped_inner := inner;
+             planned_rho_backend := true;
+             invocation_total := invocation |} =
+        {| capability_backend := RhoMachine;
+           capability_is_default := true;
+           capability_has_evidence := true |} :: tail.
+  Proof.
+    intros inner invocation.
+    exists (demoted_inner_capabilities inner).
+    reflexivity.
+  Qed.
+
+  Definition no_non_rho_default
+      (capability : RuntimeBackendCapability) : bool :=
+    match capability_backend capability with
+    | RhoMachine => true
+    | _ => negb (capability_is_default capability)
+    end.
+
+  Theorem wrapper_capabilities_have_no_inherited_default : forall wrapper,
+    Forall
+      (fun capability => no_non_rho_default capability = true)
+      (wrapper_runtime_capabilities wrapper).
+  Proof.
+    intros [[supports_ascent supports_dovetail] planned invocation].
+    destruct planned;
+      destruct supports_ascent;
+      destruct supports_dovetail;
+      repeat constructor.
+  Qed.
 
   Theorem wrapper_delegates_ascent_support : forall wrapper,
     wrapper_supports wrapper Ascent =

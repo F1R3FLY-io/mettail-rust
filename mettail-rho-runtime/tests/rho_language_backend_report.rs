@@ -126,6 +126,24 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
+    let static_capabilities = language.metadata().runtime_backends();
+    assert_eq!(static_capabilities.len(), 1);
+    assert_eq!(static_capabilities[0].backend, RuntimeBackend::Ascent);
+    assert!(static_capabilities[0].is_default);
+
+    let capabilities = language.runtime_backend_capabilities();
+    assert_eq!(capabilities.len(), 2);
+    assert_eq!(capabilities[0].backend, RuntimeBackend::RhoMachine);
+    assert!(capabilities[0].is_default);
+    assert!(
+        capabilities[0]
+            .evidence_refs
+            .iter()
+            .any(|evidence| evidence == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
+        "Rho runtime capability must carry flip-gate evidence refs"
+    );
+    assert_eq!(capabilities[1].backend, RuntimeBackend::Ascent);
+    assert!(!capabilities[1].is_default);
 
     let report = language
         .run_default_backend_report(term.as_ref())

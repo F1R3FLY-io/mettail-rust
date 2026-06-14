@@ -16,9 +16,9 @@ use std::thread;
 use mettail_rho_codegen::{RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram};
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
-    AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport,
-    RuntimeChannelObservation, RuntimeObservationValue, SeedFacts, Term, TermType, VarTypeInfo,
-    WeightedRewriteSeed, WeightedSeedId,
+    AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendCapability,
+    RuntimeBackendReport, RuntimeChannelObservation, RuntimeObservationValue, SeedFacts, Term,
+    TermType, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
 };
 use models::rhoapi::Par;
 
@@ -447,6 +447,26 @@ where
 
     fn default_runtime_backend(&self) -> RuntimeBackend {
         RuntimeBackend::RhoMachine
+    }
+
+    fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
+        let inner_capabilities = self.inner.runtime_backend_capabilities();
+        let mut capabilities = Vec::with_capacity(inner_capabilities.len().saturating_add(1));
+        capabilities.push(RuntimeBackendCapability {
+            backend: RuntimeBackend::RhoMachine,
+            is_default: true,
+            evidence_refs: self.backend.evidence_refs().to_vec(),
+        });
+        capabilities.extend(
+            inner_capabilities
+                .into_iter()
+                .filter(|capability| capability.backend != RuntimeBackend::RhoMachine)
+                .map(|mut capability| {
+                    capability.is_default = false;
+                    capability
+                }),
+        );
+        capabilities
     }
 
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {

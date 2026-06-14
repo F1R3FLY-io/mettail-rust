@@ -53,6 +53,32 @@ impl fmt::Display for RuntimeBackend {
     }
 }
 
+/// Executable runtime backend capability for a concrete `Language` value.
+///
+/// Static generated metadata uses [`crate::BackendCapabilityDef`]. This owned
+/// form is the runtime view: wrappers can add flip-gated backends and attach
+/// plan-specific evidence without mutating generated static metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeBackendCapability {
+    pub backend: RuntimeBackend,
+    pub is_default: bool,
+    pub evidence_refs: Vec<String>,
+}
+
+impl RuntimeBackendCapability {
+    pub fn from_static(capability: &crate::BackendCapabilityDef) -> Self {
+        Self {
+            backend: capability.backend,
+            is_default: capability.is_default,
+            evidence_refs: capability
+                .evidence_refs
+                .iter()
+                .map(|reference| (*reference).to_string())
+                .collect(),
+        }
+    }
+}
+
 /// Executable artifact boundary used by a runtime backend report.
 ///
 /// This is deliberately substrate-neutral. `RhoNormalizedAst` corresponds to a
@@ -524,23 +550,36 @@ pub trait Language: Send + Sync {
     /// Backend used by user-facing evaluation when no backend is requested
     /// explicitly.
     ///
-    /// Metadata must advertise only executable backends. When multiple metadata
-    /// entries are marked default, the first declaration wins, preserving the
-    /// language author's generated order.
+    /// The runtime capability view must advertise only executable backends.
+    /// When multiple entries are marked default, the first declaration wins,
+    /// preserving the language author's generated order unless a wrapper
+    /// deliberately installs a new default.
     fn default_runtime_backend(&self) -> RuntimeBackend {
-        self.metadata()
-            .runtime_backends()
+        self.runtime_backend_capabilities()
             .iter()
             .find(|capability| capability.is_default)
             .map(|capability| capability.backend)
             .unwrap_or(RuntimeBackend::Ascent)
     }
 
+    /// Runtime backends executable for this concrete language value.
+    ///
+    /// The default derives from static generated metadata. Runtime wrappers may
+    /// override this to expose plan-specific evidence, for example a
+    /// flip-gated Rho backend installed around an otherwise substrate-neutral
+    /// generated language.
+    fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
+        self.metadata()
+            .runtime_backends()
+            .iter()
+            .map(RuntimeBackendCapability::from_static)
+            .collect()
+    }
+
     /// Whether this language currently exposes the selected backend through the
     /// generic runtime trait.
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
-        self.metadata()
-            .runtime_backends()
+        self.runtime_backend_capabilities()
             .iter()
             .any(|capability| capability.backend == backend)
     }

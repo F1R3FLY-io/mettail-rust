@@ -33,13 +33,15 @@ pub trait LanguageMetadata: 'static + Send + Sync {
     /// Rewrite rule definitions
     fn rewrites(&self) -> &'static [RewriteDef];
 
-    /// Runtime backends that this language advertises through the generic
-    /// `Language` trait.
+    /// Runtime backends that the generated language advertises statically.
     ///
     /// A backend capability is executable evidence, not a planning note. A
     /// language should list a backend here only when its `Language`
     /// implementation can route that backend without silently falling back to a
-    /// different backend.
+    /// different backend. Runtime wrappers that install a backend for a
+    /// concrete value should expose that through
+    /// [`crate::Language::runtime_backend_capabilities`] instead of mutating
+    /// this static table.
     fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
         DEFAULT_ASCENT_BACKEND_CAPABILITIES
     }

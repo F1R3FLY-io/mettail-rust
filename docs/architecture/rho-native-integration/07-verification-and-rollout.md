@@ -91,10 +91,14 @@ wraps an existing generated `Language`: `L` still owns parsing, environments,
 type inference, CEK decomposition, and explicit Ascent oracle execution, while
 `F` maps a typed generated term into a dynamic `rhoapi::Par` call or direct
 observation request. The wrapper advertises `RhoMachine` as the default
-runtime backend through the `Language` methods, not by mutating the generated
-language metadata. This keeps the dependency direction one-way and keeps Rho
-execution AST-first: generated calls are `rhoapi::Par` values, with any
-Rholang-looking text remaining only a reader annotation.
+runtime backend through the concrete `Language::runtime_backend_capabilities()`
+view, not by mutating the generated `LanguageMetadata::runtime_backends()`
+table. Static metadata therefore remains a statement about the generated crate;
+the runtime capability view is a statement about the particular wrapped value,
+including the flip-gated Rho plan evidence attached to it. This keeps the
+dependency direction one-way and keeps Rho execution AST-first: generated calls
+are `rhoapi::Par` values, with any Rholang-looking text remaining only a reader
+annotation.
 Per-language production flips still require the runtime gates listed below.
 
 ## Rollout Phases
@@ -592,7 +596,7 @@ proofs; it does not replace them.
 | ambiguity | no semantic alternatives represented by scheduler `select` |
 | boundedness | no bounded cyclic extraction reported as complete; `CyclicEnumerationImpossibility.v` explains why productive cyclic spaces cannot be finitely exhausted |
 | dependency | no reverse dependency from F1r3node to MeTTaIL |
-| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; `RhoRuntimeBackedLanguage` can wrap a generated language as Rho-default without adding a reverse dependency from generated crates to the Rho runtime; the generic `Language` path returns `RuntimeBackendReport` for selected backends, and the Rho boundary returns `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
+| runtime path | generated bridge execution uses `PlannedRhoBackend` built from a flip-gated `RhoDefaultBackendPlan`; the plan carries a normalized `rhoapi::Par` artifact injected directly through opaque `ValidatedRhoProgram`; `RhoRuntimeBackedLanguage` can wrap a generated language as Rho-default without adding a reverse dependency from generated crates to the Rho runtime; static generated backend metadata remains crate-local, while `Language::runtime_backend_capabilities()` exposes the concrete wrapper-installed Rho default and its evidence references; the generic `Language` path returns `RuntimeBackendReport` for selected backends, and the Rho boundary returns `RhoObservationReport<T>` rather than `AscentResults`; source-text evaluation is limited to hand-authored regression oracles |
 | source boundary | duplicate receive-channel joins are positive through direct RSpace consume and negative only at the historical source parser boundary |
 | docs | coverage matrix and this suite updated together |
 
