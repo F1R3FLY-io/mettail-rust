@@ -31,7 +31,8 @@
 //! returning the concrete backend plan. Generic call-by-need admission is bounded
 //! by explicit lookahead and heap budgets, and the current memoized-thunk slice
 //! builds a normalized `rhoapi::Par` `RhoProgram` with a call-by-need validation
-//! profile before runtime execution. The
+//! profile, then wraps it in `CallByNeedThunkPlan` after budget admission,
+//! validation, and evidence-reference checks before runtime execution. The
 //! totality-or-explicit-rejection proof is
 //! `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`; the flip-gate
 //! proof is `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
@@ -74,8 +75,10 @@ pub use lower::{
 };
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_program,
-    CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce,
-    CallByNeedInitialState, CallByNeedThunkAst,
+    plan_call_by_need_thunk, CallByNeedAdmission, CallByNeedBudget, CallByNeedBudgetBlocker,
+    CallByNeedForce, CallByNeedForceAdmissionRecord, CallByNeedInitialState,
+    CallByNeedPlanEvidence, CallByNeedPlanEvidenceDiagnostic, CallByNeedPlanEvidenceGate,
+    CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

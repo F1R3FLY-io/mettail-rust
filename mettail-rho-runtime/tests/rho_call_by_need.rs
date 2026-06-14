@@ -6,17 +6,39 @@
 //! are read from RSpace after one runtime evaluation.
 
 use mettail_rho_codegen::{
-    build_call_by_need_thunk_program, CallByNeedInitialState, ValidatedRhoProgram,
+    plan_call_by_need_thunk, CallByNeedBudget, CallByNeedInitialState, CallByNeedPlanEvidence,
 };
-use mettail_rho_runtime::run_validated_program_and_read_string_channels;
+use mettail_rho_runtime::PlannedCallByNeedThunk;
+
+fn evidence() -> CallByNeedPlanEvidence {
+    CallByNeedPlanEvidence {
+        proof_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoCallByNeedObservation.v".to_string()
+        ],
+        runtime_oracle_evidence_refs: vec![
+            "mettail-rho-runtime/tests/rho_call_by_need.rs".to_string()
+        ],
+        budget_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoCallByNeedBudget.v".to_string()
+        ],
+    }
+}
+
+fn budget_for(initial_state: CallByNeedInitialState) -> CallByNeedBudget {
+    match initial_state {
+        CallByNeedInitialState::Cold => CallByNeedBudget::new(2, 1),
+        CallByNeedInitialState::Hot => CallByNeedBudget::new(2, 0),
+    }
+}
 
 async fn run_need(initial_state: CallByNeedInitialState) -> (Vec<String>, Vec<String>) {
-    let program = build_call_by_need_thunk_program(initial_state);
-    let validated = ValidatedRhoProgram::try_from(program)
-        .expect("call-by-need thunk program must pass generated artifact validation");
-    let mut observed = run_validated_program_and_read_string_channels(&validated, &["OUT", "EVAL"])
+    let plan = plan_call_by_need_thunk(initial_state, budget_for(initial_state), evidence())
+        .expect("call-by-need thunk plan must pass budget, evidence, and artifact gates");
+    let backend = PlannedCallByNeedThunk::from_plan(plan);
+    let mut observed = backend
+        .run_and_read_string_channels(&["OUT", "EVAL"])
         .await
-        .unwrap_or_else(|e| panic!("validated call-by-need AST program failed:\n{e}"));
+        .unwrap_or_else(|e| panic!("planned call-by-need AST program failed:\n{e}"));
     let mut out = observed.remove("OUT").unwrap_or_default();
     out.sort();
     let mut evals = observed.remove("EVAL").unwrap_or_default();

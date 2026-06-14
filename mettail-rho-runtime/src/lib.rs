@@ -24,7 +24,8 @@
 //! Integrated bridge runtime. It injects generated normalized `rhoapi::Par`
 //! programs directly through `RhoRuntime::inj`, exposes `PlannedRhoBackend` as
 //! the flip-gated generated execution boundary, keeps raw `ValidatedRhoProgram`
-//! helpers for oracle/debug code, keeps source-text evaluation only for
+//! helpers for oracle/debug code, exposes `PlannedCallByNeedThunk` as the
+//! M-RHO.2 need-specific planned execution boundary, keeps source-text evaluation only for
 //! hand-authored host oracle tests, reads public resting data for oracle checks,
 //! runs lowered calculator contracts against the Ascent baseline, and hosts the
 //! M-RHO.1 transport-pure COMM oracle. Ascent remains the per-language flip
@@ -42,7 +43,9 @@ pub use backend::{
     IntoRuntimeObservationValue, RhoBackendInvocation, RhoRuntimeBackedLanguage,
     RuntimeReportConversionError,
 };
-pub use backend::{PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport};
+pub use backend::{
+    PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
+};
 pub use mettail_rho_codegen::RHOCALC_BAG_ABI_TAG;
 #[cfg(feature = "oracle-rhocalc")]
 pub use rhocalc_ast::{

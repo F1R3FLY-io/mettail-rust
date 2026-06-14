@@ -36,7 +36,7 @@ The current proof and coverage sources are
 | resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, evidence references, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
-| call-by-need observation, validated AST artifact, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, and bounded force admission respects lookahead and heap budgets |
+| call-by-need observation, planned AST artifact, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, accepted planned need execution wraps an accepted artifact, admits both force steps, carries evidence references, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, and bounded force admission respects lookahead and heap budgets |
 | Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
 | Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
@@ -266,6 +266,14 @@ Rust/runtime gate:
   `RhoProgram` carrying `RhoAstValidationProfile::CallByNeedThunk`, and
   `ValidatedRhoProgram::try_from` rejects the same thunk if it is mislabeled as
   a scalar-contract artifact.
+- `mettail_rho_codegen::plan_call_by_need_thunk` is the need-specific planned
+  execution boundary: it admits the two-force sequence under the configured
+  lookahead/heap budget, validates the call-by-need AST artifact, and requires
+  proof/runtime-oracle/budget evidence references before returning a
+  `CallByNeedThunkPlan`.
+- `mettail_rho_runtime::PlannedCallByNeedThunk` consumes `CallByNeedThunkPlan`
+  for runtime execution, so M-RHO.2 tests do not inject a bare
+  `ValidatedRhoProgram` as the generated need path.
 
 - `rho_call_by_need::call_by_need_force_miss_memoizes_and_repeated_force_reuses_value`
   validates a generated cold thunk AST, injects the validated artifact, forces

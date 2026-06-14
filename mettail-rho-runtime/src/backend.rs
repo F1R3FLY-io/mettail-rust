@@ -13,7 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "runtime-report")]
 use std::thread;
 
-use mettail_rho_codegen::{RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram};
+use mettail_rho_codegen::{
+    CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram,
+};
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendCapability,
@@ -25,9 +27,9 @@ use models::rhoapi::Par;
 
 use crate::run::{
     run_validated_program, run_validated_program_and_read_bools,
-    run_validated_program_and_read_ints, run_validated_program_and_read_strings,
-    run_validated_program_with_call, run_validated_program_with_call_and_read_bools,
-    run_validated_program_with_call_and_read_ints,
+    run_validated_program_and_read_ints, run_validated_program_and_read_string_channels,
+    run_validated_program_and_read_strings, run_validated_program_with_call,
+    run_validated_program_with_call_and_read_bools, run_validated_program_with_call_and_read_ints,
     run_validated_program_with_call_and_read_strings,
 };
 #[cfg(feature = "runtime-report")]
@@ -401,6 +403,63 @@ impl PlannedRhoBackend {
         let values = self
             .run_with_call_and_read_runtime_values(call, out_channel)
             .await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+}
+
+/// Executable M-RHO.2 call-by-need thunk selected by the need planner.
+///
+/// This wrapper exists so call-by-need runtime tests and future generated need
+/// paths consume [`CallByNeedThunkPlan`] rather than a raw
+/// [`ValidatedRhoProgram`]. The raw validation helpers remain available for
+/// oracle/debug code, but this is the production-shaped need boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlannedCallByNeedThunk {
+    plan: CallByNeedThunkPlan,
+}
+
+impl PlannedCallByNeedThunk {
+    /// Accept a need plan that has passed budget admission, artifact
+    /// validation, and evidence-reference checks.
+    pub fn from_plan(plan: CallByNeedThunkPlan) -> Self {
+        Self { plan }
+    }
+
+    pub fn plan(&self) -> &CallByNeedThunkPlan {
+        &self.plan
+    }
+
+    pub fn program(&self) -> &ValidatedRhoProgram {
+        self.plan.program()
+    }
+
+    pub fn artifact_kind(&self) -> RhoArtifactKind {
+        self.program().artifact_kind()
+    }
+
+    pub fn evidence_refs(&self) -> &[String] {
+        self.plan.evidence_refs()
+    }
+
+    /// Run the planned thunk artifact and read ground strings from each quoted
+    /// output channel.
+    pub async fn run_and_read_string_channels(
+        &self,
+        out_channels: &[&str],
+    ) -> Result<BTreeMap<String, Vec<String>>, String> {
+        let observed =
+            run_validated_program_and_read_string_channels(self.program(), out_channels).await?;
+        Ok(observed.into_iter().collect())
+    }
+
+    /// Run the planned thunk artifact and return a typed observation report for
+    /// one quoted output channel.
+    pub async fn run_and_observe_strings(
+        &self,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<String>, String> {
+        let mut channels = self.run_and_read_string_channels(&[out_channel]).await?;
+        let values = channels.remove(out_channel).unwrap_or_default();
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
 }

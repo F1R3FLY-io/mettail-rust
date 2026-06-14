@@ -17,6 +17,8 @@
  *   - the generated call-by-need artifact boundary accepts AST artifacts with
  *     the call-by-need validation profile and rejects source-text artifacts or
  *     scalar-contract profile confusion;
+ *   - accepted planned need execution wraps an accepted AST artifact, admits
+ *     both force steps, and carries evidence references;
  *   - the current cold/hot AST thunk plans have the same two-force public
  *     observations as source evaluation.
  *
@@ -151,6 +153,32 @@ Section RhoCallByNeedObservation.
        need_validation_profile := NeedCallByNeedThunk;
        need_initial_memo := [(expr_thunk e, expr_value e)] |}.
 
+  Inductive NeedForceAdmission : Type :=
+    | NeedForceAdmitted
+    | NeedForceBlocked.
+
+  Record NeedThunkExecutionPlan : Type := {
+    need_thunk_artifact_plan : NeedThunkAstPlan;
+    need_force_admissions : list NeedForceAdmission;
+    need_evidence_ref_count : nat
+  }.
+
+  Definition accepted_need_execution_plan
+      (plan : NeedThunkExecutionPlan) : Prop :=
+    accepted_need_artifact (need_thunk_artifact_plan plan)
+    /\ need_force_admissions plan = [NeedForceAdmitted; NeedForceAdmitted]
+    /\ 0 < need_evidence_ref_count plan.
+
+  Definition cold_need_execution_plan (e : Expr) : NeedThunkExecutionPlan :=
+    {| need_thunk_artifact_plan := cold_need_ast_plan e;
+       need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
+       need_evidence_ref_count := 3 |}.
+
+  Definition hot_need_execution_plan (e : Expr) : NeedThunkExecutionPlan :=
+    {| need_thunk_artifact_plan := hot_need_ast_plan e;
+       need_force_admissions := [NeedForceAdmitted; NeedForceAdmitted];
+       need_evidence_ref_count := 3 |}.
+
   Definition force_plan_twice (e : Expr) (plan : NeedThunkAstPlan)
       : list Value * Memo :=
     match force e (need_initial_memo plan) with
@@ -190,6 +218,31 @@ Section RhoCallByNeedObservation.
     intros plan Haccepted Hscalar.
     destruct Haccepted as [_ Hprofile].
     rewrite Hprofile in Hscalar. discriminate Hscalar.
+  Qed.
+
+  Theorem accepted_need_execution_plan_has_accepted_artifact : forall plan,
+    accepted_need_execution_plan plan ->
+    accepted_need_artifact (need_thunk_artifact_plan plan).
+  Proof.
+    intros plan Haccepted. destruct Haccepted as [Hartifact _]. exact Hartifact.
+  Qed.
+
+  Theorem accepted_need_execution_plan_admits_two_forces : forall plan,
+    accepted_need_execution_plan plan ->
+    need_force_admissions plan = [NeedForceAdmitted; NeedForceAdmitted].
+  Proof.
+    intros plan Haccepted.
+    destruct Haccepted as [_ [Hadmissions _]].
+    exact Hadmissions.
+  Qed.
+
+  Theorem accepted_need_execution_plan_has_evidence_refs : forall plan,
+    accepted_need_execution_plan plan ->
+    0 < need_evidence_ref_count plan.
+  Proof.
+    intros plan Haccepted.
+    destruct Haccepted as [_ [_ Hevidence]].
+    exact Hevidence.
   Qed.
 
   Theorem cold_ast_plan_observes_source_twice : forall e,
@@ -241,6 +294,29 @@ Section RhoCallByNeedObservation.
     /\ accepted_need_artifact (hot_need_ast_plan e).
   Proof.
     intros e. split; split; reflexivity.
+  Qed.
+
+  Theorem cold_and_hot_execution_plans_are_accepted : forall e,
+    accepted_need_execution_plan (cold_need_execution_plan e)
+    /\ accepted_need_execution_plan (hot_need_execution_plan e).
+  Proof.
+    intros e. split; repeat split; try reflexivity; apply Nat.lt_0_succ.
+  Qed.
+
+  Theorem cold_execution_plan_observes_source_twice : forall e,
+    fst (force_plan_twice e
+      (need_thunk_artifact_plan (cold_need_execution_plan e))) =
+    [source_eval e; source_eval e].
+  Proof.
+    intros e. apply cold_ast_plan_observes_source_twice.
+  Qed.
+
+  Theorem hot_execution_plan_observes_source_twice : forall e,
+    fst (force_plan_twice e
+      (need_thunk_artifact_plan (hot_need_execution_plan e))) =
+    [source_eval e; source_eval e].
+  Proof.
+    intros e. apply hot_ast_plan_observes_source_twice.
   Qed.
 
 End RhoCallByNeedObservation.
