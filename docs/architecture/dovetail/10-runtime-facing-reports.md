@@ -961,10 +961,24 @@ The runtime adapter proof
 [`DovetailLanguageBackendWrapper.v`](../../../formal/rocq/rho_bridge/theories/DovetailLanguageBackendWrapper.v)
 models the direct runtime backend wrapper. It proves that a wrapper-installed
 Dovetail default is report-shaped, not Ascent-compatible, delegates non-Dovetail
-backend support to the inner generated language, requires an available complete
-and well-formed report, rejects `BoundedByCycleCut`, rejects malformed
-projected report shape, and rejects Ascent-shaped seeded facts on the Dovetail
-path.
+backend support to the inner generated language, requires audited evidence
+references for the report producer, requires an available complete and
+well-formed report, rejects `BoundedByCycleCut`, rejects malformed projected
+report shape, and rejects Ascent-shaped seeded facts on the Dovetail path.
+
+The Rust adapter enforces the evidence side of that contract before the default
+backend is installed. A strict `DovetailEvidenceRefAuditPolicy` treats an
+evidence reference as one of two forms:
+
+| Evidence-ref form | Accepted when... | Rejected when... |
+|---|---|---|
+| repository-relative path | the path has no parent-directory component, is not absolute, and resolves to an existing artifact under the repository root | the path is absolute, uses `..`, or names a missing artifact |
+| logical namespace, such as `dovetail-contract:calculator-core` | the installer explicitly allowed the prefix before `:` | the prefix is empty or not in the selected allow-list |
+
+This is intentionally stricter than "nonblank string." Evidence refs are part
+of the proof boundary: a production Dovetail default must point at reviewable
+local proof/report artifacts or at a deliberately configured logical contract
+namespace. Free-form labels are diagnostics, not evidence.
 
 ## Consumer Obligations
 

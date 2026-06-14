@@ -9,7 +9,9 @@
 #![forbid(unsafe_code)]
 
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
 use dovetail::extract::ExtractionCompleteness;
 use dovetail::report::DovetailRunReport;
@@ -82,6 +84,64 @@ pub struct DovetailRuntimeBackedLanguage<L, F> {
     runner: F,
 }
 
+/// Evidence-reference audit policy for installing a production Dovetail
+/// runtime default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DovetailEvidenceRefAuditPolicy {
+    repo_root: PathBuf,
+    allowed_logical_prefixes: BTreeSet<String>,
+}
+
+impl DovetailEvidenceRefAuditPolicy {
+    /// Require repository-local evidence references to resolve below
+    /// `repo_root`. Logical namespaces are rejected unless explicitly allowed
+    /// with [`Self::with_allowed_logical_prefix`].
+    pub fn strict(repo_root: impl Into<PathBuf>) -> Self {
+        Self {
+            repo_root: repo_root.into(),
+            allowed_logical_prefixes: BTreeSet::new(),
+        }
+    }
+
+    /// Allow a non-path logical evidence namespace such as `proof:` or
+    /// `dovetail-contract:`.
+    pub fn with_allowed_logical_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.allowed_logical_prefixes.insert(prefix.into());
+        self
+    }
+
+    pub fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    pub fn allowed_logical_prefixes(&self) -> &BTreeSet<String> {
+        &self.allowed_logical_prefixes
+    }
+}
+
+/// Evidence-reference audit failures that block installing a Dovetail runtime
+/// default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DovetailEvidenceRefAuditDiagnostic {
+    AbsoluteLocalPath {
+        evidence_ref: String,
+    },
+    ParentComponent {
+        evidence_ref: String,
+    },
+    MissingLocalPath {
+        evidence_ref: String,
+        resolved_path: String,
+    },
+    DisallowedLogicalRef {
+        evidence_ref: String,
+        prefix: String,
+    },
+    MissingLogicalPrefix {
+        evidence_ref: String,
+    },
+}
+
 /// Failure installing a Dovetail runtime-backed default on a generated language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DovetailRuntimeBackedLanguageError {
@@ -91,6 +151,9 @@ pub enum DovetailRuntimeBackedLanguageError {
     /// Evidence references must be stable nonblank identifiers. Accepted
     /// references are stored without surrounding whitespace.
     BlankEvidenceRef { index: usize },
+    /// Evidence references must be repository-local artifacts or explicitly
+    /// allowed logical namespaces.
+    InvalidEvidenceRefs(Box<[DovetailEvidenceRefAuditDiagnostic]>),
 }
 
 impl fmt::Display for DovetailRuntimeBackedLanguageError {
@@ -102,11 +165,69 @@ impl fmt::Display for DovetailRuntimeBackedLanguageError {
             Self::BlankEvidenceRef { index } => {
                 write!(f, "Dovetail backend evidence reference at index {index} is blank")
             },
+            Self::InvalidEvidenceRefs(diagnostics) => {
+                write!(f, "Dovetail backend evidence reference audit failed: {diagnostics:?}")
+            },
         }
     }
 }
 
 impl std::error::Error for DovetailRuntimeBackedLanguageError {}
+
+fn evidence_ref_logical_prefix(evidence_ref: &str) -> Option<&str> {
+    let colon = evidence_ref.find(':')?;
+    let slash = evidence_ref.find(['/', '\\']).unwrap_or(usize::MAX);
+    (colon < slash).then_some(&evidence_ref[..colon])
+}
+
+fn audit_one_evidence_ref(
+    policy: &DovetailEvidenceRefAuditPolicy,
+    evidence_ref: &str,
+) -> Vec<DovetailEvidenceRefAuditDiagnostic> {
+    let trimmed = evidence_ref.trim();
+    let mut diagnostics = Vec::new();
+
+    if let Some(prefix) = evidence_ref_logical_prefix(trimmed) {
+        if prefix.is_empty() {
+            diagnostics.push(DovetailEvidenceRefAuditDiagnostic::MissingLogicalPrefix {
+                evidence_ref: trimmed.to_string(),
+            });
+        } else if !policy.allowed_logical_prefixes.contains(prefix) {
+            diagnostics.push(DovetailEvidenceRefAuditDiagnostic::DisallowedLogicalRef {
+                evidence_ref: trimmed.to_string(),
+                prefix: prefix.to_string(),
+            });
+        }
+        return diagnostics;
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        diagnostics.push(DovetailEvidenceRefAuditDiagnostic::AbsoluteLocalPath {
+            evidence_ref: trimmed.to_string(),
+        });
+        return diagnostics;
+    }
+    if path
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        diagnostics.push(DovetailEvidenceRefAuditDiagnostic::ParentComponent {
+            evidence_ref: trimmed.to_string(),
+        });
+        return diagnostics;
+    }
+
+    let resolved = policy.repo_root.join(path);
+    if !resolved.exists() {
+        diagnostics.push(DovetailEvidenceRefAuditDiagnostic::MissingLocalPath {
+            evidence_ref: trimmed.to_string(),
+            resolved_path: resolved.display().to_string(),
+        });
+    }
+
+    diagnostics
+}
 
 impl<L, F> DovetailRuntimeBackedLanguage<L, F>
 where
@@ -115,6 +236,7 @@ where
     pub fn new(
         inner: L,
         evidence_refs: Vec<String>,
+        audit_policy: &DovetailEvidenceRefAuditPolicy,
         runner: F,
     ) -> Result<Self, DovetailRuntimeBackedLanguageError> {
         if evidence_refs.is_empty() {
@@ -128,6 +250,16 @@ where
                 return Err(DovetailRuntimeBackedLanguageError::BlankEvidenceRef { index });
             }
             normalized_evidence_refs.push(trimmed.to_string());
+        }
+
+        let invalid_evidence_refs = normalized_evidence_refs
+            .iter()
+            .flat_map(|evidence_ref| audit_one_evidence_ref(audit_policy, evidence_ref))
+            .collect::<Vec<_>>();
+        if !invalid_evidence_refs.is_empty() {
+            return Err(DovetailRuntimeBackedLanguageError::InvalidEvidenceRefs(
+                invalid_evidence_refs.into_boxed_slice(),
+            ));
         }
 
         Ok(Self {
@@ -347,6 +479,7 @@ where
 mod tests {
     use std::collections::HashMap;
     use std::fmt;
+    use std::path::{Path, PathBuf};
 
     use dovetail::egraph::{EGraph, ENode};
     use dovetail::extract::Extractor;
@@ -425,6 +558,17 @@ mod tests {
     }
 
     static METADATA: DummyMetadata = DummyMetadata;
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crate lives under the workspace root")
+            .to_path_buf()
+    }
+
+    fn strict_policy() -> DovetailEvidenceRefAuditPolicy {
+        DovetailEvidenceRefAuditPolicy::strict(repo_root())
+    }
 
     struct DummyLanguage;
 
@@ -554,9 +698,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_installs_complete_report_backend() {
+        let policy = strict_policy();
         let language = DovetailRuntimeBackedLanguage::new(
             DummyLanguage,
             vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
+            &policy,
             |_term| Ok(complete_runtime_report()),
         )
         .expect("nonblank Dovetail evidence refs should install the wrapper");
@@ -601,9 +747,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_rejects_bounded_reports_and_ascent_facts() {
+        let policy = strict_policy();
         let language = DovetailRuntimeBackedLanguage::new(
             DummyLanguage,
             vec!["dovetail/formal/rocq/theories/Extraction/CycleCutBoundary.v".to_string()],
+            &policy,
             |_term| Ok(bounded_runtime_report()),
         )
         .expect("nonblank Dovetail evidence refs should install the wrapper");
@@ -627,9 +775,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_rejects_malformed_complete_reports() {
+        let policy = strict_policy();
         let language = DovetailRuntimeBackedLanguage::new(
             DummyLanguage,
             vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
+            &policy,
             |_term| Ok(malformed_complete_runtime_report()),
         )
         .expect("nonblank Dovetail evidence refs should install the wrapper");
@@ -644,9 +794,11 @@ mod tests {
 
     #[test]
     fn explicit_ascent_still_delegates_to_inner_language() {
+        let policy = strict_policy();
         let language = DovetailRuntimeBackedLanguage::new(
             DummyLanguage,
-            vec!["dovetail evidence".to_string()],
+            vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
+            &policy,
             |_term| Ok(complete_runtime_report()),
         )
         .expect("nonblank Dovetail evidence refs should install the wrapper");
@@ -660,9 +812,11 @@ mod tests {
 
     #[test]
     fn wrapper_passes_empty_fact_set_to_default_dovetail_report() {
+        let policy = strict_policy();
         let language = DovetailRuntimeBackedLanguage::new(
             DummyLanguage,
-            vec!["dovetail evidence".to_string()],
+            vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
+            &policy,
             |_term| Ok(complete_runtime_report()),
         )
         .expect("nonblank Dovetail evidence refs should install the wrapper");
@@ -675,9 +829,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_rejects_missing_or_blank_evidence_refs() {
-        let missing = DovetailRuntimeBackedLanguage::new(DummyLanguage, Vec::new(), |_term| {
-            Ok(complete_runtime_report())
-        });
+        let policy = strict_policy();
+        let missing =
+            DovetailRuntimeBackedLanguage::new(DummyLanguage, Vec::new(), &policy, |_term| {
+                Ok(complete_runtime_report())
+            });
         assert!(missing.is_err(), "Dovetail default installation must require evidence refs");
         assert_eq!(missing.err(), Some(DovetailRuntimeBackedLanguageError::MissingEvidenceRefs));
 
@@ -687,6 +843,7 @@ mod tests {
                 "dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string(),
                 "  ".to_string(),
             ],
+            &policy,
             |_term| Ok(complete_runtime_report()),
         );
         assert!(blank.is_err(), "blank Dovetail evidence refs must fail installation");
@@ -698,6 +855,7 @@ mod tests {
         let normalized = DovetailRuntimeBackedLanguage::new(
             DummyLanguage,
             vec!["  dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v  ".to_string()],
+            &policy,
             |_term| Ok(complete_runtime_report()),
         )
         .expect("nonblank Dovetail evidence refs should install the wrapper");
@@ -710,5 +868,115 @@ mod tests {
             normalized_refs,
             vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v"]
         );
+    }
+
+    #[test]
+    fn dovetail_wrapper_rejects_missing_evidence_artifact() {
+        let policy = strict_policy();
+        let missing = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["dovetail/formal/rocq/theories/Missing.v".to_string()],
+            &policy,
+            |_term| Ok(complete_runtime_report()),
+        );
+
+        match missing {
+            Err(DovetailRuntimeBackedLanguageError::InvalidEvidenceRefs(diagnostics)) => {
+                assert_eq!(diagnostics.len(), 1);
+                match &diagnostics[0] {
+                    DovetailEvidenceRefAuditDiagnostic::MissingLocalPath {
+                        evidence_ref,
+                        resolved_path,
+                    } => {
+                        assert_eq!(evidence_ref, "dovetail/formal/rocq/theories/Missing.v");
+                        assert!(resolved_path
+                            .ends_with("mettail-rust/dovetail/formal/rocq/theories/Missing.v"));
+                    },
+                    other => panic!("unexpected diagnostic: {other:?}"),
+                }
+            },
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("missing local evidence artifact must fail installation"),
+        }
+    }
+
+    #[test]
+    fn dovetail_wrapper_rejects_parent_or_absolute_evidence_paths() {
+        let policy = strict_policy();
+        let parent = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["../formal/escape.v".to_string()],
+            &policy,
+            |_term| Ok(complete_runtime_report()),
+        );
+        match parent {
+            Err(DovetailRuntimeBackedLanguageError::InvalidEvidenceRefs(diagnostics)) => {
+                assert_eq!(diagnostics.len(), 1);
+                assert!(matches!(
+                    &diagnostics[0],
+                    DovetailEvidenceRefAuditDiagnostic::ParentComponent { evidence_ref }
+                    if evidence_ref == "../formal/escape.v"
+                ));
+            },
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("parent path evidence refs must fail installation"),
+        }
+
+        let absolute = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["/tmp/runtime-report.v".to_string()],
+            &policy,
+            |_term| Ok(complete_runtime_report()),
+        );
+        match absolute {
+            Err(DovetailRuntimeBackedLanguageError::InvalidEvidenceRefs(diagnostics)) => {
+                assert_eq!(diagnostics.len(), 1);
+                assert!(matches!(
+                    &diagnostics[0],
+                    DovetailEvidenceRefAuditDiagnostic::AbsoluteLocalPath { evidence_ref }
+                    if evidence_ref == "/tmp/runtime-report.v"
+                ));
+            },
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("absolute path evidence refs must fail installation"),
+        }
+    }
+
+    #[test]
+    fn dovetail_wrapper_allows_explicit_logical_evidence_namespaces() {
+        let strict = strict_policy();
+        let rejected = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["dovetail-contract:calculator-core".to_string()],
+            &strict,
+            |_term| Ok(complete_runtime_report()),
+        );
+        match rejected {
+            Err(DovetailRuntimeBackedLanguageError::InvalidEvidenceRefs(diagnostics)) => {
+                assert_eq!(diagnostics.len(), 1);
+                assert!(matches!(
+                    &diagnostics[0],
+                    DovetailEvidenceRefAuditDiagnostic::DisallowedLogicalRef {
+                        evidence_ref,
+                        prefix,
+                    } if evidence_ref == "dovetail-contract:calculator-core"
+                        && prefix == "dovetail-contract"
+                ));
+            },
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("logical evidence refs must be explicitly allowed"),
+        }
+
+        let allowed = DovetailEvidenceRefAuditPolicy::strict(repo_root())
+            .with_allowed_logical_prefix("dovetail-contract");
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["dovetail-contract:calculator-core".to_string()],
+            &allowed,
+            |_term| Ok(complete_runtime_report()),
+        )
+        .expect("explicitly allowed logical evidence namespace should install");
+
+        assert_eq!(language.evidence_refs(), &["dovetail-contract:calculator-core".to_string()]);
     }
 }
