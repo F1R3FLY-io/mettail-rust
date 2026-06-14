@@ -1,19 +1,22 @@
 //! M-RHO.2 call-by-need oracle.
 //!
-//! The generated AST program models a lowered thunk as a private contract plus
+//! The generated, validated AST program models a lowered thunk as a private contract plus
 //! an explicit cold/hot state token and persistent memo cell. The first force
 //! computes and memoizes; the second force reads the memo. Public observations
 //! are read from RSpace after one runtime evaluation.
 
-use mettail_rho_codegen::{build_call_by_need_thunk_ast, CallByNeedInitialState};
-use mettail_rho_runtime::run_normalized_par_for_oracle_and_read_string_channels;
+use mettail_rho_codegen::{
+    build_call_by_need_thunk_program, CallByNeedInitialState, ValidatedRhoProgram,
+};
+use mettail_rho_runtime::run_validated_program_and_read_string_channels;
 
 async fn run_need(initial_state: CallByNeedInitialState) -> (Vec<String>, Vec<String>) {
-    let program = build_call_by_need_thunk_ast(initial_state);
-    let mut observed =
-        run_normalized_par_for_oracle_and_read_string_channels(program.par(), &["OUT", "EVAL"])
-            .await
-            .unwrap_or_else(|e| panic!("call-by-need AST program failed:\n{e}"));
+    let program = build_call_by_need_thunk_program(initial_state);
+    let validated = ValidatedRhoProgram::try_from(program)
+        .expect("call-by-need thunk program must pass generated artifact validation");
+    let mut observed = run_validated_program_and_read_string_channels(&validated, &["OUT", "EVAL"])
+        .await
+        .unwrap_or_else(|e| panic!("validated call-by-need AST program failed:\n{e}"));
     let mut out = observed.remove("OUT").unwrap_or_default();
     out.sort();
     let mut evals = observed.remove("EVAL").unwrap_or_default();

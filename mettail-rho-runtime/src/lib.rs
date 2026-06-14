@@ -76,7 +76,8 @@ pub use run::{
     run_rholang_source_sequence_for_oracle_and_read_ints,
     run_rholang_source_sequence_for_oracle_and_read_strings, run_validated_program,
     run_validated_program_and_read_bools, run_validated_program_and_read_ints,
-    run_validated_program_and_read_strings, run_validated_program_with_call,
-    run_validated_program_with_call_and_read_bools, run_validated_program_with_call_and_read_ints,
+    run_validated_program_and_read_string_channels, run_validated_program_and_read_strings,
+    run_validated_program_with_call, run_validated_program_with_call_and_read_bools,
+    run_validated_program_with_call_and_read_ints,
     run_validated_program_with_call_and_read_strings,
 };

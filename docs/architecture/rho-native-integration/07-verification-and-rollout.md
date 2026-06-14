@@ -36,7 +36,7 @@ The current proof and coverage sources are
 | resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, evidence references, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
-| call-by-need observation, AST artifact, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, and bounded force admission respects lookahead and heap budgets |
+| call-by-need observation, validated AST artifact, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, and bounded force admission respects lookahead and heap budgets |
 | Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
 | Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
@@ -239,8 +239,9 @@ observes the same value as source evaluation, that a force miss memoizes the
 source value, that repeated force is observationally idempotent, and that a
 repeated force after a miss preserves the memo. It also models the generated
 artifact boundary: accepted call-by-need plans are AST artifacts, not Rholang
-source text, and the current cold/hot thunk plans both observe the source value
-twice while preserving the expected memo state.
+source text, and they must carry the call-by-need validation profile rather
+than the scalar-contract profile. The current cold/hot thunk plans both observe
+the source value twice while preserving the expected memo state.
 
 `RhoCallByNeedBudget.v` proves the bounded admission contract for
 `Lookahead[n] + HeapBudget`: zero lookahead blocks a force before observation,
@@ -261,13 +262,18 @@ Rust/runtime gate:
 - `mettail_rho_codegen::build_call_by_need_thunk_ast` constructs the current
   memoized-thunk execution slice as normalized `rhoapi::Par`; its
   `text_annotation` is reader/debug metadata and is not parsed for execution.
+- `mettail_rho_codegen::build_call_by_need_thunk_program` wraps that AST in a
+  `RhoProgram` carrying `RhoAstValidationProfile::CallByNeedThunk`, and
+  `ValidatedRhoProgram::try_from` rejects the same thunk if it is mislabeled as
+  a scalar-contract artifact.
 
 - `rho_call_by_need::call_by_need_force_miss_memoizes_and_repeated_force_reuses_value`
-  injects a generated cold thunk AST, forces it twice in one RhoRuntime run, and
-  observes one compute marker plus two public values.
+  validates a generated cold thunk AST, injects the validated artifact, forces
+  it twice in one RhoRuntime run, and observes one compute marker plus two
+  public values.
 - `rho_call_by_need::call_by_need_memo_hit_observes_value_without_compute_marker`
-  injects a generated hot thunk AST, forces it twice in one RhoRuntime run, and
-  observes no compute marker.
+  validates a generated hot thunk AST, injects the validated artifact, forces it
+  twice in one RhoRuntime run, and observes no compute marker.
 
 Strong bisimulation is not the contract across force boundaries because the
 target has internal communication steps that the source observation hides.

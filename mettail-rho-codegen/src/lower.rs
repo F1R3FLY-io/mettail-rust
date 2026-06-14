@@ -86,11 +86,20 @@ impl RhoProgram {
 pub struct RhoAstProgram {
     pub(crate) par: Par,
     pub(crate) text_annotation: String,
+    pub(crate) validation_profile: RhoAstValidationProfile,
 }
 
 impl RhoAstProgram {
     pub(crate) fn new(par: Par, text_annotation: String) -> Self {
-        Self { par, text_annotation }
+        Self::new_with_profile(par, text_annotation, RhoAstValidationProfile::ScalarContracts)
+    }
+
+    pub(crate) fn new_with_profile(
+        par: Par,
+        text_annotation: String,
+        validation_profile: RhoAstValidationProfile,
+    ) -> Self {
+        Self { par, text_annotation, validation_profile }
     }
 
     pub fn par(&self) -> &Par {
@@ -101,6 +110,25 @@ impl RhoAstProgram {
     pub fn text_annotation(&self) -> &str {
         &self.text_annotation
     }
+
+    pub fn validation_profile(&self) -> RhoAstValidationProfile {
+        self.validation_profile
+    }
+}
+
+/// Shape validator selected for a normalized `rhoapi::Par` artifact.
+///
+/// Both profiles produce the same executable artifact kind
+/// [`RhoArtifactKind::NormalizedAst`]. The profile names the generated shape
+/// contract that must be checked before the AST can become a
+/// `ValidatedRhoProgram`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhoAstValidationProfile {
+    /// Persistent scalar operator contracts emitted by `lower_language_def`.
+    ScalarContracts,
+    /// Memoized call-by-need thunk network emitted by M-RHO.2 need lowering.
+    CallByNeedThunk,
 }
 
 /// The result of lowering a `LanguageDef` to Rholang: the executable normalized

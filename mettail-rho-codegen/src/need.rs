@@ -13,6 +13,8 @@ use models::rust::utils::{
     new_receive_par, new_send_par, union,
 };
 
+use crate::lower::{RhoAstProgram, RhoAstValidationProfile, RhoProgram};
+
 /// Remaining admission budget for generic call-by-need forcing.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +133,29 @@ impl CallByNeedThunkAst {
     pub fn text_annotation(&self) -> &str {
         &self.text_annotation
     }
+
+    /// Convert this AST-first thunk artifact into the generic Rho program
+    /// boundary. The resulting `RhoProgram` still carries
+    /// `RhoArtifactKind::NormalizedAst`; the validation profile records that it
+    /// must satisfy the call-by-need thunk shape rather than the scalar-contract
+    /// shape.
+    pub fn into_program(self) -> RhoProgram {
+        RhoProgram::Ast(RhoAstProgram::new_with_profile(
+            self.par,
+            self.text_annotation,
+            RhoAstValidationProfile::CallByNeedThunk,
+        ))
+    }
+}
+
+/// Build the AST-first call-by-need thunk as a validation-gated Rho program.
+///
+/// This is the generated-backend boundary for the current M-RHO.2 thunk slice.
+/// Tests and runtime helpers should validate this `RhoProgram` before
+/// injection instead of executing the raw `Par` returned by
+/// [`CallByNeedThunkAst::par`].
+pub fn build_call_by_need_thunk_program(initial_state: CallByNeedInitialState) -> RhoProgram {
+    build_call_by_need_thunk_ast(initial_state).into_program()
 }
 
 /// Build the AST-first call-by-need thunk used by the generic CBN/need runtime

@@ -524,6 +524,28 @@ pub async fn run_validated_program_and_read_strings(
     run_validated_program_and_read_ground(program, out_channel, par_as_string).await
 }
 
+/// Build an in-memory `RhoRuntime`, inject a validated generated artifact to
+/// quiescence, and return every ground string left resting on each requested
+/// quoted channel.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`; tests for generated artifact families use
+/// this when one artifact intentionally exposes several observation channels.
+pub async fn run_validated_program_and_read_string_channels(
+    program: &ValidatedRhoProgram,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<String>>, String> {
+    let runtime = evaluate_validated_program(program).await?;
+    let mut result = HashMap::new();
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_as_string).await,
+        );
+    }
+    Ok(result)
+}
+
 /// Build an in-memory `RhoRuntime`, inject a validated generated artifact
 /// composed with a dynamic call process, and return every ground string left
 /// resting on the quoted channel `@"<out_channel>"`.

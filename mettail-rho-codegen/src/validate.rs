@@ -9,7 +9,7 @@ use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{Par, Receive, ReceiveBind};
 
-use crate::lower::{RhoArtifactKind, RhoAstProgram, RhoProgram};
+use crate::lower::{RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoProgram};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoValidationError {
@@ -32,12 +32,20 @@ pub enum RhoValidationError {
     ContractResultShape { index: usize },
     ContractResultMetadataMismatch { index: usize },
     ContractOperandMetadataMismatch { index: usize },
+    CallByNeedTopLevelShape,
+    CallByNeedNewShape,
+    CallByNeedBodyShape,
+    CallByNeedInitialStateSeed,
+    CallByNeedMemoSeed,
+    CallByNeedThunkContractShape,
+    CallByNeedObserverShape,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidatedRhoAstProgram {
     par: Par,
     text_annotation: String,
+    validation_profile: RhoAstValidationProfile,
 }
 
 impl ValidatedRhoAstProgram {
@@ -45,6 +53,7 @@ impl ValidatedRhoAstProgram {
         Self {
             par: program.par,
             text_annotation: program.text_annotation,
+            validation_profile: program.validation_profile,
         }
     }
 
@@ -55,6 +64,10 @@ impl ValidatedRhoAstProgram {
     /// Reader/debug annotation. This text is not parsed as the execution path.
     pub fn text_annotation(&self) -> &str {
         &self.text_annotation
+    }
+
+    pub fn validation_profile(&self) -> RhoAstValidationProfile {
+        self.validation_profile
     }
 }
 
@@ -109,7 +122,12 @@ impl TryFrom<RhoProgram> for ValidatedRhoProgram {
 
 pub fn validate_rho_program(program: &RhoProgram) -> Result<(), Vec<RhoValidationError>> {
     match program {
-        RhoProgram::Ast(ast) => validate_contract_program(ast.par()),
+        RhoProgram::Ast(ast) => match ast.validation_profile() {
+            RhoAstValidationProfile::ScalarContracts => validate_contract_program(ast.par()),
+            RhoAstValidationProfile::CallByNeedThunk => {
+                validate_call_by_need_thunk_program(ast.par())
+            },
+        },
     }
 }
 
@@ -132,6 +150,105 @@ fn validate_contract_program(par: &Par) -> Result<(), Vec<RhoValidationError>> {
 
     for (index, receive) in par.receives.iter().enumerate() {
         validate_receive(index, receive, &mut errors);
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+fn validate_call_by_need_thunk_program(par: &Par) -> Result<(), Vec<RhoValidationError>> {
+    let mut errors = Vec::new();
+    if par.news.len() != 1
+        || !par.sends.is_empty()
+        || !par.receives.is_empty()
+        || !par.exprs.is_empty()
+        || !par.matches.is_empty()
+        || !par.bundles.is_empty()
+        || !par.unforgeables.is_empty()
+        || !par.connectives.is_empty()
+        || !par.conditionals.is_empty()
+        || !metadata_eq(par, &[], false)
+    {
+        errors.push(RhoValidationError::CallByNeedTopLevelShape);
+    }
+
+    let Some(new_scope) = par.news.first() else {
+        return Err(errors);
+    };
+    if new_scope.bind_count != 5
+        || new_scope.p.is_none()
+        || !new_scope.uri.is_empty()
+        || !new_scope.injections.is_empty()
+        || !new_scope.locally_free.is_empty()
+    {
+        errors.push(RhoValidationError::CallByNeedNewShape);
+    }
+
+    let Some(body) = new_scope.p.as_ref() else {
+        return Err(errors);
+    };
+    if !body.news.is_empty()
+        || !body.exprs.is_empty()
+        || !body.matches.is_empty()
+        || !body.bundles.is_empty()
+        || !body.unforgeables.is_empty()
+        || !body.connectives.is_empty()
+        || !body.conditionals.is_empty()
+        || body.receives.len() != 3
+        || !matches!(body.sends.len(), 2 | 3)
+    {
+        errors.push(RhoValidationError::CallByNeedBodyShape);
+    }
+
+    let initial_state = body
+        .sends
+        .first()
+        .and_then(|send| validate_bound_string_send(send, 3, false));
+    match initial_state {
+        Some("cold") if body.sends.len() == 2 => {},
+        Some("hot") if body.sends.len() == 3 => {
+            if body
+                .sends
+                .get(1)
+                .and_then(|send| validate_bound_string_send(send, 2, true))
+                != Some("value")
+            {
+                errors.push(RhoValidationError::CallByNeedMemoSeed);
+            }
+        },
+        _ => errors.push(RhoValidationError::CallByNeedInitialStateSeed),
+    }
+
+    let thunk_send_index = body.sends.len().saturating_sub(1);
+    if body
+        .sends
+        .get(thunk_send_index)
+        .and_then(|send| validate_bound_name_send(send, 4, 1, false))
+        .is_none()
+    {
+        errors.push(RhoValidationError::CallByNeedBodyShape);
+    }
+
+    if !body
+        .receives
+        .iter()
+        .any(|receive| validate_simple_receive_source(receive, 4, true, false))
+    {
+        errors.push(RhoValidationError::CallByNeedThunkContractShape);
+    }
+    if !body
+        .receives
+        .iter()
+        .any(|receive| validate_simple_receive_source(receive, 1, false, false))
+        || !body
+            .receives
+            .iter()
+            .any(|receive| validate_simple_receive_source(receive, 0, false, false))
+    {
+        errors.push(RhoValidationError::CallByNeedObserverShape);
     }
 
     if errors.is_empty() {
@@ -220,6 +337,57 @@ fn validate_receive(index: usize, receive: &Receive, errors: &mut Vec<RhoValidat
         return;
     };
     validate_result_expr(index, formal_count, result, errors);
+}
+
+fn validate_simple_receive_source(
+    receive: &Receive,
+    source_index: i32,
+    persistent: bool,
+    peek: bool,
+) -> bool {
+    if receive.persistent != persistent
+        || receive.peek != peek
+        || receive.condition.is_some()
+        || receive.bind_count != 1
+        || receive.body.is_none()
+        || receive.binds.len() != 1
+    {
+        return false;
+    }
+    let bind = &receive.binds[0];
+    bind.patterns.len() == 1
+        && bind.free_count == 1
+        && bind.remainder.is_none()
+        && free_var_index(&bind.patterns[0]) == Some(0)
+        && bound_var_index(bind.source.as_ref()) == Some(source_index)
+}
+
+fn validate_bound_string_send(
+    send: &models::rhoapi::Send,
+    channel_index: i32,
+    persistent: bool,
+) -> Option<&str> {
+    if send.persistent != persistent || send.data.len() != 1 {
+        return None;
+    }
+    if bound_var_index(send.chan.as_ref()) != Some(channel_index) {
+        return None;
+    }
+    ground_string(&send.data[0])
+}
+
+fn validate_bound_name_send(
+    send: &models::rhoapi::Send,
+    channel_index: i32,
+    data_index: i32,
+    persistent: bool,
+) -> Option<()> {
+    if send.persistent != persistent || send.data.len() != 1 {
+        return None;
+    }
+    (bound_var_index(send.chan.as_ref()) == Some(channel_index)
+        && bound_var_index(send.data.first()) == Some(data_index))
+    .then_some(())
 }
 
 fn validate_bind_shape(
@@ -515,6 +683,9 @@ fn bound_var_index(par: Option<&Par>) -> Option<i32> {
 mod tests {
     use super::*;
     use crate::lower::lower_language_def;
+    use crate::need::{
+        build_call_by_need_thunk_ast, build_call_by_need_thunk_program, CallByNeedInitialState,
+    };
     use mettail_ast::language::LanguageDef;
 
     const FRAGMENT: &str = r#"
@@ -541,6 +712,8 @@ mod tests {
             .expect("generated scalar contract validates");
 
         assert_eq!(validated.artifact_kind(), RhoArtifactKind::NormalizedAst);
+        let ValidatedRhoArtifact::Ast(ast) = &validated.inner;
+        assert_eq!(ast.validation_profile(), RhoAstValidationProfile::ScalarContracts);
         assert_eq!(
             validated
                 .ast_par()
@@ -552,6 +725,58 @@ mod tests {
         assert!(
             validated.text_annotation().contains("contract @\"AddInt\""),
             "validated artifact keeps reader annotation without using source text for execution"
+        );
+    }
+
+    #[test]
+    fn validates_call_by_need_thunk_programs() {
+        for initial_state in [CallByNeedInitialState::Cold, CallByNeedInitialState::Hot] {
+            let program = build_call_by_need_thunk_program(initial_state);
+            validate_rho_program(&program).expect("call-by-need thunk validates");
+
+            let validated = ValidatedRhoProgram::try_from(program)
+                .expect("call-by-need thunk converts to validated artifact");
+            let ValidatedRhoArtifact::Ast(ast) = &validated.inner;
+            assert_eq!(validated.artifact_kind(), RhoArtifactKind::NormalizedAst);
+            assert_eq!(ast.validation_profile(), RhoAstValidationProfile::CallByNeedThunk);
+            assert!(
+                validated
+                    .text_annotation()
+                    .contains("call-by-need thunk AST"),
+                "validated CBN artifact must retain reader annotation without source parsing"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_call_by_need_thunk_does_not_pass_scalar_contract_profile() {
+        let raw = build_call_by_need_thunk_ast(CallByNeedInitialState::Cold);
+        let scalar_profile_program = RhoProgram::Ast(RhoAstProgram::new(
+            raw.par().clone(),
+            raw.text_annotation().to_string(),
+        ));
+
+        let errors = validate_rho_program(&scalar_profile_program)
+            .expect_err("CBN network is not a scalar contract artifact");
+        assert!(
+            errors.contains(&RhoValidationError::TopLevelHasNonContractProcess),
+            "scalar contract validation must reject top-level CBN new/sends shape: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_mutated_call_by_need_hot_memo_seed() {
+        let RhoProgram::Ast(mut ast) =
+            build_call_by_need_thunk_program(CallByNeedInitialState::Hot);
+        let body = ast.par.news[0].p.as_mut().expect("CBN new body exists");
+        body.sends.remove(1);
+
+        let errors = validate_rho_program(&RhoProgram::Ast(ast))
+            .expect_err("hot CBN thunk without memo seed is invalid");
+        assert!(
+            errors.contains(&RhoValidationError::CallByNeedInitialStateSeed)
+                || errors.contains(&RhoValidationError::CallByNeedMemoSeed),
+            "hot CBN validation must catch missing memo seed: {errors:?}"
         );
     }
 

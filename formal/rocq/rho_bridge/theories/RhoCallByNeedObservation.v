@@ -14,8 +14,9 @@
  *   - repeated forcing is observationally idempotent;
  *   - a repeated force after a miss does not grow or rewrite the memo;
  *   - forcing preserves the memo soundness needed for the same thunk.
- *   - the generated call-by-need artifact boundary accepts AST artifacts and
- *     rejects source-text artifacts;
+ *   - the generated call-by-need artifact boundary accepts AST artifacts with
+ *     the call-by-need validation profile and rejects source-text artifacts or
+ *     scalar-contract profile confusion;
  *   - the current cold/hot AST thunk plans have the same two-force public
  *     observations as source evaluation.
  *
@@ -126,20 +127,28 @@ Section RhoCallByNeedObservation.
     | NeedAst
     | NeedSourceText.
 
+  Inductive NeedValidationProfile : Type :=
+    | NeedScalarContracts
+    | NeedCallByNeedThunk.
+
   Record NeedThunkAstPlan : Type := {
     need_artifact_kind : NeedArtifactKind;
+    need_validation_profile : NeedValidationProfile;
     need_initial_memo : Memo
   }.
 
   Definition accepted_need_artifact (plan : NeedThunkAstPlan) : Prop :=
-    need_artifact_kind plan = NeedAst.
+    need_artifact_kind plan = NeedAst
+    /\ need_validation_profile plan = NeedCallByNeedThunk.
 
   Definition cold_need_ast_plan (_e : Expr) : NeedThunkAstPlan :=
     {| need_artifact_kind := NeedAst;
+       need_validation_profile := NeedCallByNeedThunk;
        need_initial_memo := [] |}.
 
   Definition hot_need_ast_plan (e : Expr) : NeedThunkAstPlan :=
     {| need_artifact_kind := NeedAst;
+       need_validation_profile := NeedCallByNeedThunk;
        need_initial_memo := [(expr_thunk e, expr_value e)] |}.
 
   Definition force_plan_twice (e : Expr) (plan : NeedThunkAstPlan)
@@ -155,7 +164,14 @@ Section RhoCallByNeedObservation.
     accepted_need_artifact plan ->
     need_artifact_kind plan = NeedAst.
   Proof.
-    intros plan Haccepted. exact Haccepted.
+    intros plan Haccepted. destruct Haccepted as [Hkind _]. exact Hkind.
+  Qed.
+
+  Theorem accepted_need_artifact_has_thunk_validation_profile : forall plan,
+    accepted_need_artifact plan ->
+    need_validation_profile plan = NeedCallByNeedThunk.
+  Proof.
+    intros plan Haccepted. destruct Haccepted as [_ Hprofile]. exact Hprofile.
   Qed.
 
   Theorem accepted_need_artifact_rejects_source_text : forall plan,
@@ -163,7 +179,17 @@ Section RhoCallByNeedObservation.
     need_artifact_kind plan <> NeedSourceText.
   Proof.
     intros plan Haccepted Hsource.
-    rewrite Haccepted in Hsource. discriminate Hsource.
+    destruct Haccepted as [Hkind _].
+    rewrite Hkind in Hsource. discriminate Hsource.
+  Qed.
+
+  Theorem accepted_need_artifact_rejects_scalar_contract_profile : forall plan,
+    accepted_need_artifact plan ->
+    need_validation_profile plan <> NeedScalarContracts.
+  Proof.
+    intros plan Haccepted Hscalar.
+    destruct Haccepted as [_ Hprofile].
+    rewrite Hprofile in Hscalar. discriminate Hscalar.
   Qed.
 
   Theorem cold_ast_plan_observes_source_twice : forall e,
@@ -214,7 +240,7 @@ Section RhoCallByNeedObservation.
     accepted_need_artifact (cold_need_ast_plan e)
     /\ accepted_need_artifact (hot_need_ast_plan e).
   Proof.
-    intros e. split; reflexivity.
+    intros e. split; split; reflexivity.
   Qed.
 
 End RhoCallByNeedObservation.
