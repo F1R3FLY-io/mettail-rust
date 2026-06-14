@@ -82,12 +82,59 @@ pub struct DovetailRuntimeBackedLanguage<L, F> {
     runner: F,
 }
 
+/// Failure installing a Dovetail runtime-backed default on a generated language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DovetailRuntimeBackedLanguageError {
+    /// A production Dovetail default must carry the evidence references that
+    /// justify installing it.
+    MissingEvidenceRefs,
+    /// Evidence references must be stable nonblank identifiers. Accepted
+    /// references are stored without surrounding whitespace.
+    BlankEvidenceRef { index: usize },
+}
+
+impl fmt::Display for DovetailRuntimeBackedLanguageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingEvidenceRefs => {
+                write!(f, "Dovetail backend installation requires evidence references")
+            },
+            Self::BlankEvidenceRef { index } => {
+                write!(f, "Dovetail backend evidence reference at index {index} is blank")
+            },
+        }
+    }
+}
+
+impl std::error::Error for DovetailRuntimeBackedLanguageError {}
+
 impl<L, F> DovetailRuntimeBackedLanguage<L, F>
 where
     F: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
 {
-    pub fn new(inner: L, evidence_refs: Vec<String>, runner: F) -> Self {
-        Self { inner, evidence_refs, runner }
+    pub fn new(
+        inner: L,
+        evidence_refs: Vec<String>,
+        runner: F,
+    ) -> Result<Self, DovetailRuntimeBackedLanguageError> {
+        if evidence_refs.is_empty() {
+            return Err(DovetailRuntimeBackedLanguageError::MissingEvidenceRefs);
+        }
+
+        let mut normalized_evidence_refs = Vec::with_capacity(evidence_refs.len());
+        for (index, evidence_ref) in evidence_refs.into_iter().enumerate() {
+            let trimmed = evidence_ref.trim();
+            if trimmed.is_empty() {
+                return Err(DovetailRuntimeBackedLanguageError::BlankEvidenceRef { index });
+            }
+            normalized_evidence_refs.push(trimmed.to_string());
+        }
+
+        Ok(Self {
+            inner,
+            evidence_refs: normalized_evidence_refs,
+            runner,
+        })
     }
 
     pub fn inner(&self) -> &L {
@@ -511,7 +558,8 @@ mod tests {
             DummyLanguage,
             vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
             |_term| Ok(complete_runtime_report()),
-        );
+        )
+        .expect("nonblank Dovetail evidence refs should install the wrapper");
         let term = language.parse_term("pair(x,y)").expect("parse");
 
         assert_eq!(language.default_runtime_backend(), RuntimeBackend::Dovetail);
@@ -557,7 +605,8 @@ mod tests {
             DummyLanguage,
             vec!["dovetail/formal/rocq/theories/Extraction/CycleCutBoundary.v".to_string()],
             |_term| Ok(bounded_runtime_report()),
-        );
+        )
+        .expect("nonblank Dovetail evidence refs should install the wrapper");
         let term = language.parse_term("cycle").expect("parse");
 
         let err = language
@@ -582,7 +631,8 @@ mod tests {
             DummyLanguage,
             vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
             |_term| Ok(malformed_complete_runtime_report()),
-        );
+        )
+        .expect("nonblank Dovetail evidence refs should install the wrapper");
         let term = language.parse_term("bad-report").expect("parse");
 
         let err = language
@@ -598,7 +648,8 @@ mod tests {
             DummyLanguage,
             vec!["dovetail evidence".to_string()],
             |_term| Ok(complete_runtime_report()),
-        );
+        )
+        .expect("nonblank Dovetail evidence refs should install the wrapper");
         let term = language.parse_term("x").expect("parse");
         let report = language
             .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
@@ -613,11 +664,51 @@ mod tests {
             DummyLanguage,
             vec!["dovetail evidence".to_string()],
             |_term| Ok(complete_runtime_report()),
-        );
+        )
+        .expect("nonblank Dovetail evidence refs should install the wrapper");
         let term = language.parse_term("x").expect("parse");
         let report = language
             .run_default_backend_report_with_facts(term.as_ref(), &HashMap::new())
             .expect("empty fact set matches default Dovetail execution");
         assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+    }
+
+    #[test]
+    fn dovetail_wrapper_rejects_missing_or_blank_evidence_refs() {
+        let missing = DovetailRuntimeBackedLanguage::new(DummyLanguage, Vec::new(), |_term| {
+            Ok(complete_runtime_report())
+        });
+        assert!(missing.is_err(), "Dovetail default installation must require evidence refs");
+        assert_eq!(missing.err(), Some(DovetailRuntimeBackedLanguageError::MissingEvidenceRefs));
+
+        let blank = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec![
+                "dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string(),
+                "  ".to_string(),
+            ],
+            |_term| Ok(complete_runtime_report()),
+        );
+        assert!(blank.is_err(), "blank Dovetail evidence refs must fail installation");
+        assert_eq!(
+            blank.err(),
+            Some(DovetailRuntimeBackedLanguageError::BlankEvidenceRef { index: 1 })
+        );
+
+        let normalized = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["  dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v  ".to_string()],
+            |_term| Ok(complete_runtime_report()),
+        )
+        .expect("nonblank Dovetail evidence refs should install the wrapper");
+        let normalized_refs = normalized
+            .evidence_refs()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            normalized_refs,
+            vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v"]
+        );
     }
 }
