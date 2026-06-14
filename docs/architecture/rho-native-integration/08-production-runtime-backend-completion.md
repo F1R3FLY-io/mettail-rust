@@ -154,17 +154,20 @@ string.
 | extraction completeness honesty | complete reports and cycle-bounded reports are distinguishable at the API and proof boundary |
 | oracle agreement | Rho observations match Ascent oracle observations for the language corpus selected for rollout |
 | memory bound | capped tests and stress workloads stay within the agreed RSS envelope |
-| backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, and deadlock gates all pass, and every positive external gate carries nonblank stable evidence references for generated metadata |
+| backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, evidence-reference audit, and deadlock gates all pass, and every positive external gate carries nonblank stable evidence references that are either existing repository-local artifacts or explicitly allowed logical evidence namespaces |
 
 ## Generated-Language Runtime Wrapper
 
 Generated language crates remain substrate-neutral. They expose `Language`,
 metadata, parsing, environments, type inference, direct evaluation helpers, and
 the explicit Ascent oracle. The Rho runtime crate supplies
-`RhoRuntimeBackedLanguage<L, F>` when a language has passed the Rho flip gate:
+`RhoRuntimeBackedLanguage<L, F>` when a language has passed the Rho flip gate
+through the strict audited planner:
 
 ```text
 Given a generated language L, a planned Rho backend B, and an invocation mapper F:
+  build a RhoDefaultBackendPlan with plan_rho_default_backend_with_evidence_audit
+  reject missing local proof/test artifacts and unapproved logical evidence namespaces
   keep L as the owner of parsing, environments, type inference, and Ascent oracle execution
   expose RhoMachine as the default runtime backend through Language methods
   delegate explicit non-Rho backend requests back to L
@@ -330,5 +333,9 @@ order:
 8. Enable the language's Dovetail/Rho backend selection only through the
    flip-gated planner.
 
-Completion means the backend selection gate succeeds from current evidence,
-not merely that a lowered artifact exists.
+Completion means the strict backend selection gate succeeds from current
+evidence, not merely that a lowered artifact exists. The non-audited planner is
+appropriate for unit tests and pure model construction; production flips must
+use `plan_rho_default_backend_with_evidence_audit` so typoed proof, oracle,
+coverage, scheduler, or handler references cannot silently authorize a runtime
+default.

@@ -33,7 +33,7 @@ handoff object between "the rewrite engine has finished a checked phase" and
 
 Use this quick test when reading or changing the code:
 
-| If the value answers... | It is probably... |
+| If the value answers... | It is this artifact |
 |---|---|
 | "How did saturation stop?" | `SatReport` |
 | "What did extraction emit, and was that emission complete?" | `Extraction<T>` |

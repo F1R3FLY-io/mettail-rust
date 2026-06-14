@@ -54,7 +54,7 @@ fn passing_dynamic_evidence() -> RhoDefaultBackendEvidence {
         ],
         scheduler_fairness_passed: true,
         scheduler_fairness_evidence_refs: vec![
-            "formal/tla/rho_machine/RhoMachineFairness.tla".to_string()
+            "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
         ],
         coverage: RhoCoverageEvidence::AllRulesLowered,
     }

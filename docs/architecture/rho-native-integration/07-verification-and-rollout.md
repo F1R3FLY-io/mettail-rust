@@ -43,7 +43,7 @@ The current proof and coverage sources are
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
 | escrow/refund settlement | `RhoEscrowSettlement.v`, `mettail-rho-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
 | per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
-| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, and deadlock gates |
+| backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, evidence-reference validity, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
 | runtime backend dispatch and wrapper | `RuntimeBackendDispatch.v`, `RhoLanguageBackendWrapper.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_rho_runtime::RhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Rho defaults return observation-shaped reports and are rejected by the legacy Ascent-shaped compatibility wrapper; the Rho wrapper selects `RhoMachine` as the default, delegates non-Rho backend support to the inner generated language, requires a planned backend plus total typed invocation for Rho reports, and rejects Ascent-shaped seeded facts on the Rho path |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
@@ -412,11 +412,11 @@ Verified statement:
 
 Make Rho the default runtime backend for a language, in place of the CESK
 runtime backend, only after proof, oracle, coverage, artifact-validation,
-scheduler-fairness, and deadlock gates pass.
+scheduler-fairness, evidence-reference audit, and deadlock gates pass.
 
 Flip condition for language `L`:
 
-`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ SchedulerFairness(L) ∧ NoNewDeadlocks(L)`
+`Proofs(L) ∧ OracleParity(L) ∧ Coverage(L) ∧ ArtifactValidation(L) ∧ SchedulerFairness(L) ∧ EvidenceRefsValid(L) ∧ NoNewDeadlocks(L)`
 
 `RhoBackendFlipGate.v` proves the Boolean flip gate is exactly this conjunction
 and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the
@@ -435,7 +435,8 @@ any non-empty channel-deadlock diagnostic list makes `NoNewDeadlocks(L)` false.
 The same theory also models Rust-side evidence-reference hygiene with
 `default_backend_gate_with_refs`: if a positive proof, oracle, coverage-audit,
 or scheduler-fairness gate has zero stable evidence references, or if any gate
-evidence reference is blank, the default-backend gate is false.
+evidence reference is blank or invalid under the selected audit policy, the
+default-backend gate is false.
 The `missing_scheduler_fairness_blocks_flip` theorem proves that a language
 cannot flip while the scheduler-fairness obligation is open. The
 `clean_deadlock_report_reduces_to_other_gates` theorem proves that an empty
@@ -449,6 +450,11 @@ no uncovered rejected rules, no extraneous disposition claims, no invalid
 dispositions, and no deadlock diagnostics are jointly necessary and sufficient.
 The Rust planner strengthens that Boolean model by requiring non-empty,
 nonblank evidence-reference lists for every positive externally supplied gate.
+Production callers use `plan_rho_default_backend_with_evidence_audit`, which
+also rejects missing repository-local evidence artifacts, absolute or
+parent-traversing local paths, and logical evidence identifiers whose prefix was
+not explicitly allowed by the caller. The non-audited planner remains available
+for pure model construction and focused unit tests.
 Accepted `RhoDefaultBackendPlan` values expose the resulting sorted
 `evidence_refs` vector so generated language metadata can populate
 `BackendCapabilityDef::evidence_refs` without inventing claims after the fact.
@@ -456,6 +462,9 @@ Accepted `RhoDefaultBackendPlan` values expose the resulting sorted
 Rust flip-gate evidence:
 
 - `mettail_rho_codegen::plan_rho_default_backend`
+- `mettail_rho_codegen::plan_rho_default_backend_with_evidence_audit`
+- `mettail_rho_codegen::RhoEvidenceRefAuditPolicy`
+- `mettail_rho_codegen::RhoEvidenceRefAuditDiagnostic`
 - `mettail_rho_codegen::RhoDefaultBackendPlan`
 - `mettail_rho_codegen::RhoDefaultBackendPlanError`
 - `mettail_runtime::RuntimeBackendReport`
@@ -513,6 +522,11 @@ Rust flip-gate evidence:
 - `default_backend_plan_rejects_inauditable_dispositions`
 - `default_backend_plan_rejects_duplicate_dispositions`
 - `default_backend_plan_reports_all_non_coverage_gate_failures`
+- `default_backend_plan_rejects_passed_gate_without_evidence_refs`
+- `default_backend_plan_rejects_blank_gate_evidence_refs`
+- `audited_default_backend_plan_succeeds_for_existing_local_evidence_refs`
+- `audited_default_backend_plan_rejects_missing_local_evidence_refs`
+- `audited_default_backend_plan_requires_allowed_logical_evidence_prefixes`
 
 The CESK runtime backend remains selectable until this gate passes for a
 language. After a language flip, Rho becomes that language's default runtime

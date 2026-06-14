@@ -7,6 +7,7 @@
 //! blockers.
 
 use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
 
 use mettail_ast::language::LanguageDef;
 use models::rhoapi::Par;
@@ -183,6 +184,69 @@ pub enum RhoGateEvidenceDiagnostic {
     BlankEvidenceRef { gate: RhoDefaultBackendEvidenceGate },
 }
 
+/// Evidence-reference audit policy for production Rho-default planning.
+///
+/// The ordinary flip gate checks that positive external gates carry stable,
+/// nonblank evidence references. This policy strengthens that boundary for
+/// production callers: repository-relative references must resolve to existing
+/// local artifacts, and logical evidence identifiers must use an explicitly
+/// allowed prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoEvidenceRefAuditPolicy {
+    repo_root: PathBuf,
+    allowed_logical_prefixes: BTreeSet<String>,
+}
+
+impl RhoEvidenceRefAuditPolicy {
+    /// Build a strict local-artifact audit rooted at the repository. Logical
+    /// evidence identifiers are rejected unless their prefix is explicitly
+    /// allowed with [`Self::with_allowed_logical_prefix`].
+    pub fn new(repo_root: impl Into<PathBuf>) -> Self {
+        Self {
+            repo_root: repo_root.into(),
+            allowed_logical_prefixes: BTreeSet::new(),
+        }
+    }
+
+    /// Permit a non-file evidence namespace such as
+    /// `mettail-rho-codegen:artifact-validation` or `native-handler:Rule`.
+    pub fn with_allowed_logical_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.allowed_logical_prefixes.insert(prefix.into());
+        self
+    }
+
+    pub fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    pub fn allowed_logical_prefixes(&self) -> &BTreeSet<String> {
+        &self.allowed_logical_prefixes
+    }
+}
+
+/// Evidence-reference audit diagnostics surfaced by the strict production
+/// planner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoEvidenceRefAuditDiagnostic {
+    AbsoluteLocalPath {
+        evidence_ref: String,
+    },
+    ParentComponent {
+        evidence_ref: String,
+    },
+    MissingLocalPath {
+        evidence_ref: String,
+        resolved_path: String,
+    },
+    DisallowedLogicalRef {
+        evidence_ref: String,
+        prefix: String,
+    },
+    MissingLogicalPrefix {
+        evidence_ref: String,
+    },
+}
+
 /// Concrete plan for a language that passed the Rho-default flip gate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoDefaultBackendPlan {
@@ -225,6 +289,7 @@ pub struct RhoDefaultBackendPlanError {
     pub extraneous_dispositions: Vec<String>,
     pub invalid_dispositions: Vec<RhoRejectedRuleDispositionDiagnostic>,
     pub invalid_gate_evidence_refs: Vec<RhoGateEvidenceDiagnostic>,
+    pub invalid_audited_evidence_refs: Vec<RhoEvidenceRefAuditDiagnostic>,
     pub validation_errors: Vec<RhoValidationError>,
 }
 
@@ -258,6 +323,86 @@ fn push_refs(out: &mut BTreeSet<String>, refs: &[String]) {
     }
 }
 
+fn evidence_ref_logical_prefix(evidence_ref: &str) -> Option<&str> {
+    let colon = evidence_ref.find(':')?;
+    let slash = evidence_ref.find(['/', '\\']).unwrap_or(usize::MAX);
+    (colon < slash).then_some(&evidence_ref[..colon])
+}
+
+fn audit_one_evidence_ref(
+    policy: &RhoEvidenceRefAuditPolicy,
+    evidence_ref: &str,
+) -> Vec<RhoEvidenceRefAuditDiagnostic> {
+    let trimmed = evidence_ref.trim();
+    let mut diagnostics = Vec::new();
+
+    if let Some(prefix) = evidence_ref_logical_prefix(trimmed) {
+        if prefix.is_empty() {
+            diagnostics.push(RhoEvidenceRefAuditDiagnostic::MissingLogicalPrefix {
+                evidence_ref: trimmed.to_string(),
+            });
+        } else if !policy.allowed_logical_prefixes.contains(prefix) {
+            diagnostics.push(RhoEvidenceRefAuditDiagnostic::DisallowedLogicalRef {
+                evidence_ref: trimmed.to_string(),
+                prefix: prefix.to_string(),
+            });
+        }
+        return diagnostics;
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        diagnostics.push(RhoEvidenceRefAuditDiagnostic::AbsoluteLocalPath {
+            evidence_ref: trimmed.to_string(),
+        });
+        return diagnostics;
+    }
+    if path
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        diagnostics.push(RhoEvidenceRefAuditDiagnostic::ParentComponent {
+            evidence_ref: trimmed.to_string(),
+        });
+        return diagnostics;
+    }
+
+    let resolved = policy.repo_root.join(path);
+    if !resolved.exists() {
+        diagnostics.push(RhoEvidenceRefAuditDiagnostic::MissingLocalPath {
+            evidence_ref: trimmed.to_string(),
+            resolved_path: resolved.display().to_string(),
+        });
+    }
+
+    diagnostics
+}
+
+fn audit_evidence_refs(
+    evidence: &RhoDefaultBackendEvidence,
+    policy: Option<&RhoEvidenceRefAuditPolicy>,
+) -> Vec<RhoEvidenceRefAuditDiagnostic> {
+    let Some(policy) = policy else {
+        return Vec::new();
+    };
+
+    evidence
+        .proof_evidence_refs
+        .iter()
+        .chain(evidence.oracle_parity_evidence_refs.iter())
+        .chain(evidence.coverage_audit_evidence_refs.iter())
+        .chain(evidence.scheduler_fairness_evidence_refs.iter())
+        .chain(
+            evidence
+                .coverage
+                .covered_dispositions()
+                .iter()
+                .map(|disposition| &disposition.evidence_ref),
+        )
+        .flat_map(|evidence_ref| audit_one_evidence_ref(policy, evidence_ref))
+        .collect()
+}
+
 fn accepted_evidence_refs(
     evidence: &RhoDefaultBackendEvidence,
     validated_program: &ValidatedRhoProgram,
@@ -287,12 +432,36 @@ pub fn plan_rho_default_backend(
     def: &LanguageDef,
     evidence: RhoDefaultBackendEvidence,
 ) -> Result<RhoDefaultBackendPlan, RhoDefaultBackendPlanError> {
+    plan_rho_default_backend_impl(def, evidence, None)
+}
+
+/// Lower `def` and build the Rho-default backend plan with strict evidence
+/// reference auditing.
+///
+/// Use this entry point for production runtime flips. It preserves the same
+/// proof/oracle/coverage/artifact/fairness/deadlock gate as
+/// [`plan_rho_default_backend`], then additionally rejects missing local
+/// evidence artifacts and unapproved logical evidence namespaces.
+pub fn plan_rho_default_backend_with_evidence_audit(
+    def: &LanguageDef,
+    evidence: RhoDefaultBackendEvidence,
+    audit_policy: &RhoEvidenceRefAuditPolicy,
+) -> Result<RhoDefaultBackendPlan, RhoDefaultBackendPlanError> {
+    plan_rho_default_backend_impl(def, evidence, Some(audit_policy))
+}
+
+fn plan_rho_default_backend_impl(
+    def: &LanguageDef,
+    evidence: RhoDefaultBackendEvidence,
+    audit_policy: Option<&RhoEvidenceRefAuditPolicy>,
+) -> Result<RhoDefaultBackendPlan, RhoDefaultBackendPlanError> {
     let lowering = lower_language_def(def);
     let validated_program = ValidatedRhoProgram::try_from(lowering.program.clone());
     let validation_errors = validated_program.clone().err().unwrap_or_default();
     let uncovered_rejections = evidence.coverage.uncovered_rejections(&lowering);
     let extraneous_dispositions = evidence.coverage.extraneous_dispositions(&lowering);
     let invalid_dispositions = evidence.coverage.invalid_dispositions();
+    let invalid_audited_evidence_refs = audit_evidence_refs(&evidence, audit_policy);
     let proof_evidence_diagnostics = gate_evidence_diagnostics(
         RhoDefaultBackendEvidenceGate::Proofs,
         evidence.proofs_passed,
@@ -343,7 +512,7 @@ pub fn plan_rho_default_backend(
         &lowering.deadlock_report,
     );
 
-    if decision.can_flip_to_rho() {
+    if decision.can_flip_to_rho() && invalid_audited_evidence_refs.is_empty() {
         let validated_program =
             validated_program.expect("flip decision requires successful artifact validation");
         let rejected_rule_dispositions = evidence.coverage.accepted_dispositions();
@@ -363,6 +532,7 @@ pub fn plan_rho_default_backend(
             extraneous_dispositions,
             invalid_dispositions,
             invalid_gate_evidence_refs,
+            invalid_audited_evidence_refs,
             validation_errors,
         })
     }
@@ -413,7 +583,7 @@ mod tests {
             ],
             scheduler_fairness_passed: true,
             scheduler_fairness_evidence_refs: vec![
-                "formal/tla/rho_machine/RhoMachineFairness.tla".to_string()
+                "formal/tla/rho_machine/RhoNetScheduler.tla".to_string()
             ],
             coverage,
         }
@@ -425,6 +595,13 @@ mod tests {
             RhoRejectedRuleDispositionKind::NativeHandler,
             format!("native-handler:{rule}"),
         )
+    }
+
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crate lives under workspace root")
+            .to_path_buf()
     }
 
     #[test]
@@ -445,12 +622,96 @@ mod tests {
             &[
                 "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string(),
                 "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string(),
-                "formal/tla/rho_machine/RhoMachineFairness.tla".to_string(),
+                "formal/tla/rho_machine/RhoNetScheduler.tla".to_string(),
                 "mettail-rho-codegen:artifact-validation:NormalizedAst".to_string(),
                 "mettail-rho-codegen:channel-deadlock-analysis:no-new-deadlocks".to_string(),
                 "mettail-rho-runtime/tests/rho_vs_ascent.rs".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn audited_default_backend_plan_succeeds_for_existing_local_evidence_refs() {
+        let policy = RhoEvidenceRefAuditPolicy::new(repo_root());
+        let plan = plan_rho_default_backend_with_evidence_audit(
+            &parse(ALL_LOWERED_FRAGMENT),
+            passing_evidence(RhoCoverageEvidence::AllRulesLowered),
+            &policy,
+        )
+        .expect("existing repository-local evidence refs should pass strict audit");
+
+        assert_eq!(plan.lowering.lowered, vec!["AddInt", "SubInt", "Neg"]);
+        assert_eq!(plan.rejected_rule_dispositions, Vec::new());
+    }
+
+    #[test]
+    fn audited_default_backend_plan_rejects_missing_local_evidence_refs() {
+        let policy = RhoEvidenceRefAuditPolicy::new(repo_root());
+        let mut evidence = passing_evidence(RhoCoverageEvidence::AllRulesLowered);
+        evidence
+            .proof_evidence_refs
+            .push("formal/rocq/rho_bridge/theories/NoSuchProof.v".to_string());
+
+        let err = plan_rho_default_backend_with_evidence_audit(
+            &parse(ALL_LOWERED_FRAGMENT),
+            evidence,
+            &policy,
+        )
+        .expect_err("missing repository-local evidence artifacts must block production planning");
+
+        assert!(err.decision.can_flip_to_rho());
+        assert_eq!(
+            err.invalid_audited_evidence_refs,
+            vec![RhoEvidenceRefAuditDiagnostic::MissingLocalPath {
+                evidence_ref: "formal/rocq/rho_bridge/theories/NoSuchProof.v".to_string(),
+                resolved_path: repo_root()
+                    .join("formal/rocq/rho_bridge/theories/NoSuchProof.v")
+                    .display()
+                    .to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn audited_default_backend_plan_requires_allowed_logical_evidence_prefixes() {
+        let evidence = passing_evidence(RhoCoverageEvidence::CoveredRejectedRules(vec![
+            native_disposition("PowInt"),
+            native_disposition("AddBigInt"),
+        ]));
+        let strict_policy = RhoEvidenceRefAuditPolicy::new(repo_root());
+
+        let err = plan_rho_default_backend_with_evidence_audit(
+            &parse(PARTIAL_FRAGMENT),
+            evidence.clone(),
+            &strict_policy,
+        )
+        .expect_err("unapproved logical evidence namespaces must block production planning");
+
+        assert_eq!(
+            err.invalid_audited_evidence_refs,
+            vec![
+                RhoEvidenceRefAuditDiagnostic::DisallowedLogicalRef {
+                    evidence_ref: "native-handler:PowInt".to_string(),
+                    prefix: "native-handler".to_string(),
+                },
+                RhoEvidenceRefAuditDiagnostic::DisallowedLogicalRef {
+                    evidence_ref: "native-handler:AddBigInt".to_string(),
+                    prefix: "native-handler".to_string(),
+                },
+            ]
+        );
+
+        let allowed_policy = RhoEvidenceRefAuditPolicy::new(repo_root())
+            .with_allowed_logical_prefix("native-handler");
+        let plan = plan_rho_default_backend_with_evidence_audit(
+            &parse(PARTIAL_FRAGMENT),
+            evidence,
+            &allowed_policy,
+        )
+        .expect("explicitly allowed logical evidence namespace should pass strict audit");
+
+        assert_eq!(plan.lowering.lowered, vec!["AddInt"]);
+        assert_eq!(plan.lowering.rejected, vec!["PowInt", "AddBigInt"]);
     }
 
     #[test]
