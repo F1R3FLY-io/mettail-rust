@@ -501,6 +501,24 @@ The example below uses Rholang-looking text for readability, but the runtime
 handoff is not text. Dovetail reports exact-keyed source-language derivations;
 the Rho backend constructs host Rholang AST values from complete reports.
 
+Read the example as one chain of typed artifacts, with reader annotations kept
+separate from execution values:
+
+| Documentation notation | Actual artifact | Boundary meaning |
+|---|---|---|
+| `language! { name: MiniRhoFor, ... }` | macro input parsed and validated as `LanguageDef` | static language definition |
+| `LanguageMetadata` | generated inventory of categories, constructors, rewrites, guards, and backend capabilities | source of truth for adapters |
+| `Proc::PPar(...)` | generated Rust AST term returned by the retained parser | runtime input to the selected backend |
+| `k_*` labels | abbreviations for exact `ContentKey` byte identities | semantic identity in Dovetail |
+| `DovetailRunReport { ... }` | exact-keyed checked extraction report | rewrite evidence before runtime execution |
+| `b!(z)` | Rholang-looking reader annotation | not an execution artifact |
+| `rhoapi::Par(send b z)` | normalized host Rholang AST value | executable artifact for RhoRuntime |
+| `RuntimeBackendReport` | generic runtime envelope after selected backend execution | caller-facing result shape |
+
+This table is the reason the example can be readable without weakening the
+AST-first design. The prose may show Rholang-like text, but the generated Rho
+lane constructs `rhoapi::Par` directly.
+
 ![MiniRhoFor language spec to Rho AST runtime handoff](figures/10-minirho-end-to-end.svg)
 
 PlantUML source:

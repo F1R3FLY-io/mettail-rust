@@ -117,6 +117,27 @@ This table is also the vocabulary discipline for the documentation. A
 the post-execution fact seen in RSpace. A generic `RuntimeBackendReport` is only
 the outer language-level envelope returned to callers.
 
+## Running Example Ownership
+
+The canonical end-to-end example is MiniRhoFor in
+[Dovetail Runtime-Facing Reports](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example).
+This suite reuses that example instead of introducing a second surface
+language. The example is checked by
+[`macros/src/doc_examples.rs`](../../../macros/src/doc_examples.rs), which means
+the displayed `language!` body parses and validates as a `LanguageDef`.
+
+Use the example to answer three questions in order:
+
+| Question | Canonical artifact chain | Primary document |
+|---|---|---|
+| What did the language author define? | `language! spec → LanguageDef → LanguageMetadata` | [End-to-End Architecture](02-end-to-end-architecture.md#high-level-dispatch-trace) |
+| What did Dovetail prove and report? | `typed AST → SatReport → DovetailRunReport` | [Dovetail Runtime-Facing Reports](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example) |
+| What did the Rho backend execute? | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime observations` | [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md) |
+
+Rholang-looking snippets in those pages are reader annotations. Generated
+runtime values are normalized AST artifacts, and the executable form is
+`rhoapi::Par`.
+
 ## Document Map
 
 | Document | Question answered |

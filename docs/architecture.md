@@ -94,8 +94,9 @@ for differential evidence during rollout.
 
 Together, the two suites explain how MeTTaIL source snippets are parsed into
 typed terms, how Dovetail supplies substrate-neutral rewrite semantics, how the
-Rho backend lowers rewrite networks into Rholang/RSpace dataflow, and how
-F1r3node's Rho machine schedules enabled rewrites in parallel.
+Rho backend lowers rewrite networks into normalized Rholang AST and RSpace
+dataflow, and how F1r3node's Rho machine schedules enabled rewrites in
+parallel.
 
 ---
 

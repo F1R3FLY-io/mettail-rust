@@ -49,7 +49,7 @@ and Rho machine integration:
 - **`architecture/rho-native-integration/01-concepts-and-glossary.md`** - Symbols, acronyms, and key terms
 - **`architecture/rho-native-integration/02-end-to-end-architecture.md`** - Source snippet to RhoRuntime lifecycle
 - **`architecture/rho-native-integration/03-dovetail-rewrite-semantics.md`** - Dovetail facts, rewrite rules, saturation, extraction, and coverage
-- **`architecture/rho-native-integration/04-rho-native-dataflow-lowering.md`** - Compiling rewrite semantics into RhoNet and Rholang/RSpace
+- **`architecture/rho-native-integration/04-rho-native-dataflow-lowering.md`** - Compiling rewrite semantics into RhoNet, normalized Rholang AST, and RSpace dataflow
 - **`architecture/rho-native-integration/05-rspace-parallel-scheduling.md`** - How RSpace schedules enabled rewrites in parallel
 - **`architecture/rho-native-integration/06-correctness-and-coverage.md`** - Mathematical prose proofs and non-claims
 - **`architecture/rho-native-integration/07-verification-and-rollout.md`** - M-RHO verification and rollout gates

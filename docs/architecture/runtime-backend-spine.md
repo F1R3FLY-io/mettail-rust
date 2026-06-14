@@ -33,6 +33,43 @@ path answers "what happens to this particular snippet?" Keeping those questions
 separate is the simplest way to avoid conflating the macro, the rewrite engine,
 and the runtime backend.
 
+## Canonical Comprehension Path
+
+Use the MiniRhoFor fixture as the running example across the documentation. It
+is intentionally small, but it exercises the whole reader-facing chain:
+
+`language! spec → LanguageDef → LanguageMetadata → Dovetail rules`
+
+and then, for one snippet:
+
+`source text → typed AST → DovetailRunReport → rhoapi::Par → RuntimeBackendReport`
+
+The detailed example lives in one canonical place:
+[Dovetail Runtime-Facing Reports](dovetail/10-runtime-facing-reports.md#minirhofor-report-example).
+The Rho integration pages link back to that example rather than defining a
+competing surface language. The syntax guard for the `language!` fixture is
+[`macros/src/doc_examples.rs`](../../macros/src/doc_examples.rs), so the
+example is checked as a real `LanguageDef` shape even though MiniRhoFor is only
+a documentation fixture.
+
+Read the example with this distinction in mind:
+
+| Reader sees | Real artifact | Owner |
+|---|---|---|
+| `language! { name: MiniRhoFor, ... }` | macro input parsed into `LanguageDef` | MeTTaIL macro layer |
+| `Proc::PPar(...)` | generated typed source-language AST | generated language crate |
+| `k_par_out_b_z` | abbreviation for exact `ContentKey` bytes | Dovetail |
+| `DovetailRunReport { ... }` | checked extraction/report artifact | Dovetail |
+| `b!(z)` | reader annotation for the executable artifact | documentation only |
+| `rhoapi::Par(send b z)` | normalized host Rholang AST value | Rho backend |
+| observed value on a channel | runtime observation after host execution | F1r3node/RSpace plus MeTTaIL runtime envelope |
+
+The cohesion rule is that every later artifact must be derived from the
+previous checked artifact without changing its meaning. Category lists,
+constructors, and rule inventories come from generated metadata; Dovetail
+reports exact rewrite evidence; the Rho backend emits AST, not source text;
+F1r3node executes that AST and produces observations.
+
 There are two production runtime lanes after the Dovetail report:
 
 | Lane | Artifact chain | Purpose |

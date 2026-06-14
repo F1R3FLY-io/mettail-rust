@@ -11,6 +11,15 @@ closure, explicit boundedness reports, and runtime-facing extraction reports.
 The Rho-native backend consumes Dovetail semantics, but Dovetail is useful and
 reviewable on its own. This suite documents Dovetail itself.
 
+The cohesive reading rule is:
+
+`language! inventory enters Dovetail; Dovetail reports checked rewrite evidence; downstream runtimes consume reports.`
+
+Dovetail pages therefore stop at `SatReport`, `Extraction<T>`, and
+`DovetailRunReport` unless they are explicitly explaining a consumer. The Rho
+backend pages pick up after a complete report and describe `rhoapi::Par`,
+RSpace observations, and `RuntimeBackendReport`.
+
 ## Reading Paths
 
 For principals:
