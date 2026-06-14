@@ -6,12 +6,18 @@
 
 use std::sync::Arc;
 
+use mettail_ast::language::LanguageDef;
 use mettail_languages::rhocalc::{Bag, Int, List, Map, Proc, Str};
-use mettail_rho_runtime::{
-    lower_rhocalc_proc, run_normalized_par_for_oracle,
-    run_normalized_par_for_oracle_and_read_strings, RHOCALC_BAG_ABI_TAG,
+use mettail_rho_codegen::{
+    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
-use mettail_runtime::clear_var_cache;
+use mettail_rho_runtime::{
+    lower_rhocalc_proc, rho_runtime_backed_rhocalc_strings, run_normalized_par_for_oracle,
+    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RHOCALC_BAG_ABI_TAG,
+};
+use mettail_runtime::{
+    clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
+};
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::EList;
 use models::rhoapi::Par;
@@ -23,6 +29,51 @@ fn parse_lower(source: &str) -> Par {
         .unwrap_or_else(|err| panic!("rhocalc WPDA parse failed for {source:?}: {err:?}"));
     lower_rhocalc_proc(&proc)
         .unwrap_or_else(|err| panic!("rhocalc AST lowering failed for {source:?}: {err:?}"))
+}
+
+const RHOCALC_DYNAMIC_PLAN_FRAGMENT: &str = r#"
+    name: RhoCalcDynamicRuntime,
+    types { Proc }
+    terms {}
+"#;
+
+fn passing_dynamic_evidence() -> RhoDefaultBackendEvidence {
+    RhoDefaultBackendEvidence {
+        proofs_passed: true,
+        proof_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v".to_string(),
+            "formal/rocq/rho_bridge/theories/RhoLanguageBackendWrapper.v".to_string(),
+        ],
+        oracle_parity_passed: true,
+        oracle_parity_evidence_refs: vec![
+            "mettail-rho-runtime/tests/rho_rhocalc_ast.rs".to_string()
+        ],
+        coverage_audit_passed: true,
+        coverage_audit_evidence_refs: vec![
+            "formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v".to_string()
+        ],
+        scheduler_fairness_passed: true,
+        scheduler_fairness_evidence_refs: vec![
+            "formal/tla/rho_machine/RhoMachineFairness.tla".to_string()
+        ],
+        coverage: RhoCoverageEvidence::AllRulesLowered,
+    }
+}
+
+fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
+    let def = syn::parse_str::<LanguageDef>(RHOCALC_DYNAMIC_PLAN_FRAGMENT)
+        .expect("dynamic rhocalc runtime fragment must parse");
+    let plan = plan_rho_default_backend(&def, passing_dynamic_evidence())
+        .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
+    assert!(
+        plan.lowering.lowered.is_empty(),
+        "dynamic RhoCalc plan should not need static scalar contracts"
+    );
+    assert!(
+        plan.lowering.rejected.is_empty(),
+        "dynamic RhoCalc plan should not hide rejected static rules"
+    );
+    PlannedRhoBackend::from_plan(plan)
 }
 
 async fn read_strings(source: &str) -> Vec<String> {
@@ -39,6 +90,45 @@ async fn single_channel_comm_executes_payload_process() {
     let source = r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#;
 
     assert_eq!(read_strings(source).await, vec!["p".to_string()]);
+}
+
+#[test]
+fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
+    let language = rho_runtime_backed_rhocalc_strings(rhocalc_dynamic_backend(), "OUT");
+    let term = language
+        .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
+        .expect("rhocalc source must parse through the generated language");
+
+    assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+    assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("Rho-backed RhoCalc language must return an observation report");
+
+    assert_eq!(report.backend, RuntimeBackend::RhoMachine);
+    assert_eq!(report.artifact, RuntimeBackendArtifact::RhoNormalizedAst);
+    assert!(
+        report
+            .evidence_refs
+            .iter()
+            .any(|reference| reference == "formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v"),
+        "Rho runtime report must retain flip-gate evidence"
+    );
+
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("Rho-backed RhoCalc report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Text("p".to_string())]);
+
+    let compat_err = language
+        .run_default_backend(term.as_ref())
+        .expect_err("Ascent-shaped compatibility API must reject Rho observations");
+    assert!(
+        compat_err
+            .contains("RhoMachine backend for language RhoCalc returned runtime observations"),
+        "{compat_err}"
+    );
 }
 
 #[tokio::test]

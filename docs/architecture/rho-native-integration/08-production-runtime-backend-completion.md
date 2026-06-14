@@ -180,6 +180,17 @@ language instance to become Rho-default. The wrapper does not parse generated
 Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
 future bytecode variants can use the same report boundary.
 
+For the RhoCalc process path, the reusable mapper is
+`mettail_rho_runtime::rhocalc_observe_strings_invocation` or
+`mettail_rho_runtime::rhocalc_observe_ints_invocation`, and the convenience
+wrappers are `rho_runtime_backed_rhocalc_strings` and
+`rho_runtime_backed_rhocalc_ints`. They accept the generated
+`RhoCalcLanguage` term returned by the retained MeTTaIL/WPDA parser, downcast it
+to a typed `Proc` alternative, lower that process directly to `rhoapi::Par`, and
+execute it as a dynamic call against a flip-gated `PlannedRhoBackend`. The
+Rholang text shown in examples remains reader annotation; the runtime value is
+the AST.
+
 ## User-Facing REPL Boundary
 
 The REPL is part of the runtime-backend replacement surface because `exec`

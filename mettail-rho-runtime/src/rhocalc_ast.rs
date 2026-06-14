@@ -7,8 +7,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use mettail_languages::rhocalc::{Bag, List, Map, Name, Proc};
-use mettail_runtime::{Binder, FreeVar, OrdVar, Var};
+use mettail_languages::rhocalc::{
+    Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
+};
+use mettail_runtime::{Binder, FreeVar, OrdVar, Term, Var};
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
@@ -33,6 +35,64 @@ pub enum RhocalcAstLowerError {
     InputArityMismatch { names: usize, binders: usize },
 }
 
+/// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
+/// process and observes strings from `out_channel`.
+pub fn rhocalc_observe_strings_invocation(
+    term: &dyn Term,
+    out_channel: impl Into<String>,
+) -> Result<crate::backend::RhoBackendInvocation, String> {
+    let call = lower_rhocalc_proc(rhocalc_proc_from_term(term)?)
+        .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
+    Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveStrings {
+        call,
+        out_channel: out_channel.into(),
+    })
+}
+
+/// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
+/// process and observes integers from `out_channel`.
+pub fn rhocalc_observe_ints_invocation(
+    term: &dyn Term,
+    out_channel: impl Into<String>,
+) -> Result<crate::backend::RhoBackendInvocation, String> {
+    let call = lower_rhocalc_proc(rhocalc_proc_from_term(term)?)
+        .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
+    Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveInts {
+        call,
+        out_channel: out_channel.into(),
+    })
+}
+
+/// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
+/// observes strings on `out_channel`.
+pub fn rho_runtime_backed_rhocalc_strings(
+    backend: crate::backend::PlannedRhoBackend,
+    out_channel: impl Into<String>,
+) -> crate::backend::RhoRuntimeBackedLanguage<
+    RhoCalcLanguage,
+    impl Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync,
+> {
+    let out_channel = out_channel.into();
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
+        rhocalc_observe_strings_invocation(term, out_channel.clone())
+    })
+}
+
+/// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
+/// observes integers on `out_channel`.
+pub fn rho_runtime_backed_rhocalc_ints(
+    backend: crate::backend::PlannedRhoBackend,
+    out_channel: impl Into<String>,
+) -> crate::backend::RhoRuntimeBackedLanguage<
+    RhoCalcLanguage,
+    impl Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync,
+> {
+    let out_channel = out_channel.into();
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
+        rhocalc_observe_ints_invocation(term, out_channel.clone())
+    })
+}
+
 /// Lower a rhocalc process into normalized Rholang `Par`.
 pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
     lower_proc(proc, &BoundEnv::new())
@@ -42,6 +102,25 @@ pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
 /// for channels.
 pub fn lower_rhocalc_name(name: &Name) -> Result<Par, RhocalcAstLowerError> {
     lower_name(name, &BoundEnv::new())
+}
+
+fn rhocalc_proc_from_term(term: &dyn Term) -> Result<&Proc, String> {
+    let typed = term
+        .as_any()
+        .downcast_ref::<RhoCalcTerm>()
+        .ok_or_else(|| format!("expected RhoCalcTerm, got {term:?}"))?;
+    rhocalc_proc_from_inner(&typed.0)
+        .ok_or_else(|| format!("expected a Proc rhocalc alternative, got {:?}", typed.0))
+}
+
+fn rhocalc_proc_from_inner(inner: &RhoCalcTermInner) -> Option<&Proc> {
+    match inner {
+        RhoCalcTermInner::Proc(proc) => Some(proc),
+        RhoCalcTermInner::Ambiguous(alternatives) => {
+            alternatives.iter().find_map(rhocalc_proc_from_inner)
+        },
+        _ => None,
+    }
 }
 
 fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {

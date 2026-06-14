@@ -1,0 +1,65 @@
+@startuml
+title MiniRhoFor Language Spec to Rho AST Runtime Handoff
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.4
+skinparam defaultFontColor #111827
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "Static Language Path" as StaticPath #DBEAFE {
+  rectangle "language! specification\ncategories, syntax, rewrites" as Spec #BFDBFE
+  rectangle "LanguageDef\nmacro-time model" as LangDef #BFDBFE
+  rectangle "LanguageMetadata\ngenerated inventory" as Metadata #BFDBFE
+  rectangle "Dovetail rules\nexact rewrite requirements" as Rules #BFDBFE
+}
+
+rectangle "Runtime Snippet Path" as RuntimePath #DCFCE7 {
+  rectangle "source snippet\n{ for (x <- a) { x!(z) } | a!(b) }" as Source #BBF7D0
+  rectangle "retained MeTTaIL parser\nWPDA typed frontend" as Parser #BBF7D0
+  rectangle "typed AST\nProc::PPar(...)" as TypedAst #BBF7D0
+  rectangle "Dovetail saturation\nand checked extraction" as Dovetail #BBF7D0
+  rectangle "DovetailRunReport\nexact keys, edges, completeness" as Report #FEF3C7
+}
+
+rectangle "Rho Runtime Path" as RhoPath #FCE7F3 {
+  rectangle "Rho backend lowerer\ncomplete reports only" as Lowerer #FBCFE8
+  rectangle "rhoapi::Par\nnormalized AST artifact" as Par #FDE68A
+  rectangle "F1r3node RhoRuntime\nRSpace COMM scheduling" as Runtime #FBCFE8
+  rectangle "RuntimeBackendReport\nobserved values and evidence" as RuntimeReport #EDE9FE
+}
+
+Spec --> LangDef : parse macro input
+LangDef --> Metadata : generate typed inventory
+Metadata --> Rules : derive rule table
+Rules --> Dovetail : semantic requirements
+
+Source --> Parser : parse source text
+Parser --> TypedAst : emit typed term
+TypedAst --> Dovetail : seed exact root
+Dovetail --> Report : freeze checked derivation forest
+
+Report --> Lowerer : require Complete
+Lowerer --> Par : emit AST, not text
+Par --> Runtime : inject executable artifact
+Runtime --> RuntimeReport : observations plus evidence refs
+
+Metadata ..> Parser : category and constructor authority
+Metadata ..> Lowerer : inventory-derived channels and tags
+
+note bottom of Report #FFFBEB
+  The report is a typed handoff artifact:
+  it is not a prose log, not Rholang text,
+  and not proof that the runtime already executed.
+end note
+
+note right of Par #FFFBEB
+  Rholang text in docs is reader annotation.
+  The generated value is AST so the same boundary
+  can feed an interpreter or bytecode emitter.
+end note
+@enduml

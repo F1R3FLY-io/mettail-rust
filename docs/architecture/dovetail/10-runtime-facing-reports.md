@@ -436,6 +436,23 @@ and:
 `Language::metadata()`. Dovetail should consume those generated inventories; it
 should not duplicate category lists by hand.
 
+![MiniRhoFor language spec to Rho AST runtime handoff](figures/10-minirho-end-to-end.svg)
+
+PlantUML source:
+[figures/10-minirho-end-to-end.puml](figures/10-minirho-end-to-end.puml).
+
+A cohesive way to read the example is to keep one invariant in view:
+
+`source snippet behavior = Dovetail report roots = Rho AST observable sends`
+
+The equality above is observational, not syntactic. The source snippet is
+parsed by the retained MeTTaIL frontend, Dovetail proves and reports the
+rewrite consequences using exact keys, and the Rho backend lowers only complete
+reports to an executable `rhoapi::Par` AST. The for-comprehension is therefore
+not special runtime syntax bolted onto Dovetail; it is a language-level
+constructor whose communication behavior is declared by `language!`, checked by
+Dovetail, and executed by RSpace once the backend has emitted Rho-native AST.
+
 ```rust
 language! {
     name: MiniRhoFor,
