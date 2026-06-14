@@ -185,7 +185,14 @@ where
                         self.name()
                     )
                 })?;
-                Ok(RuntimeBackendReport::dovetail(report, self.evidence_refs.clone()))
+                RuntimeBackendReport::try_dovetail(report, self.evidence_refs.clone()).map_err(
+                    |err| {
+                        format!(
+                            "Dovetail backend for language {} produced malformed report: {err}",
+                            self.name()
+                        )
+                    },
+                )
             },
             other => self.inner.run_backend_report(other, term),
         }
@@ -475,6 +482,12 @@ mod tests {
         }
     }
 
+    fn malformed_complete_runtime_report() -> RuntimeDovetailRunReport {
+        let mut report = complete_runtime_report();
+        report.root_ordinals[0] = 99;
+        report
+    }
+
     #[test]
     fn projection_preserves_report_identity_and_completeness() {
         let projected = complete_runtime_report();
@@ -482,6 +495,9 @@ mod tests {
         assert_eq!(projected.completeness, RuntimeDovetailCompleteness::Complete);
         assert_eq!(projected.root_count(), 1);
         assert_eq!(projected.root_ordinals, vec![0]);
+        projected
+            .validate_shape()
+            .expect("projected Dovetail report is structurally valid");
         assert_eq!(projected.terms.len(), 3);
         assert_eq!(projected.terms[0].op_display, "pair");
         assert!(projected.terms[0].is_root);
@@ -558,6 +574,22 @@ mod tests {
             seeded_err.contains("does not accept Ascent-shaped seeded facts"),
             "{seeded_err}"
         );
+    }
+
+    #[test]
+    fn dovetail_wrapper_rejects_malformed_complete_reports() {
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            vec!["dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v".to_string()],
+            |_term| Ok(malformed_complete_runtime_report()),
+        );
+        let term = language.parse_term("bad-report").expect("parse");
+
+        let err = language
+            .run_default_backend_report(term.as_ref())
+            .expect_err("malformed complete reports must fail closed");
+        assert!(err.contains("produced malformed report"), "{err}");
+        assert!(err.contains("term ordinal 99"), "{err}");
     }
 
     #[test]

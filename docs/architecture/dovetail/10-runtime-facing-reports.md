@@ -795,8 +795,9 @@ The runtime adapter proof
 models the direct runtime backend wrapper. It proves that a wrapper-installed
 Dovetail default is report-shaped, not Ascent-compatible, delegates non-Dovetail
 backend support to the inner generated language, requires an available complete
-report, rejects `BoundedByCycleCut`, and rejects Ascent-shaped seeded facts on
-the Dovetail path.
+and well-formed report, rejects `BoundedByCycleCut`, rejects malformed
+projected report shape, and rejects Ascent-shaped seeded facts on the Dovetail
+path.
 
 ## Consumer Obligations
 
@@ -807,7 +808,23 @@ Every report consumer must obey these rules:
 3. Preserve derivation-edge child indexes and repeated child uses.
 4. Treat `Complete` as the only exhaustive status.
 5. Treat `BoundedByCycleCut` as useful bounded evidence, not as exhaustive success.
-6. Keep runtime observations separate from Dovetail reports; observations are produced after a runtime consumes a report.
+6. Validate projected `RuntimeDovetailRunReport` shape before placing it in a generic runtime envelope.
+7. Keep runtime observations separate from Dovetail reports; observations are produced after a runtime consumes a report.
+
+Runtime shape validation means:
+
+`roots.length = root_ordinals.length`
+
+`∀i. terms[i].ordinal = i`
+
+`∀k. k ∈ roots ⇒ k ∈ keys(terms)`
+
+`∀e. e.parent_key ∈ keys(terms) ∧ e.child_key ∈ keys(terms)`
+
+and every term marked `is_root` must correspond to a reported root key. This is
+a runtime projection invariant, not a new Dovetail semantics rule: it prevents
+a malformed adapter table from weakening the exact-keyed report that Dovetail
+already produced.
 
 These rules keep Dovetail substrate-neutral. The Rho backend can lower a report
 to normalized `rhoapi::Par`; an Ascent oracle can compare exact keys; a local

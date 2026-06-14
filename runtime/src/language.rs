@@ -290,6 +290,103 @@ pub struct RuntimeDovetailDerivationEdge {
     pub child_index: usize,
 }
 
+/// Structural validation failure for a runtime-projected Dovetail report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RuntimeDovetailReportError {
+    RootOrdinalCountMismatch {
+        roots: usize,
+        root_ordinals: usize,
+    },
+    RootOrdinalOutOfBounds {
+        root_index: usize,
+        ordinal: usize,
+        terms: usize,
+    },
+    RootKeyMismatch {
+        root_index: usize,
+        ordinal: usize,
+    },
+    RootTermNotMarked {
+        root_index: usize,
+        ordinal: usize,
+    },
+    TermOrdinalMismatch {
+        index: usize,
+        ordinal: usize,
+    },
+    DuplicateTermKey {
+        ordinal: usize,
+    },
+    EdgeOrdinalMismatch {
+        index: usize,
+        ordinal: usize,
+    },
+    EdgeParentMissing {
+        edge_ordinal: usize,
+    },
+    EdgeChildMissing {
+        edge_ordinal: usize,
+    },
+    RootFlagWithoutRootKey {
+        ordinal: usize,
+    },
+}
+
+impl fmt::Display for RuntimeDovetailReportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeDovetailReportError::RootOrdinalCountMismatch { roots, root_ordinals } => {
+                write!(
+                    f,
+                    "root count {roots} does not match root ordinal count {root_ordinals}"
+                )
+            },
+            RuntimeDovetailReportError::RootOrdinalOutOfBounds {
+                root_index,
+                ordinal,
+                terms,
+            } => write!(
+                f,
+                "root {root_index} points to term ordinal {ordinal}, but report has {terms} terms"
+            ),
+            RuntimeDovetailReportError::RootKeyMismatch { root_index, ordinal } => write!(
+                f,
+                "root {root_index} key does not match term ordinal {ordinal}"
+            ),
+            RuntimeDovetailReportError::RootTermNotMarked { root_index, ordinal } => write!(
+                f,
+                "root {root_index} points to term ordinal {ordinal}, but that term is not marked as a root"
+            ),
+            RuntimeDovetailReportError::TermOrdinalMismatch { index, ordinal } => write!(
+                f,
+                "term at table index {index} records ordinal {ordinal}"
+            ),
+            RuntimeDovetailReportError::DuplicateTermKey { ordinal } => {
+                write!(f, "term ordinal {ordinal} duplicates an earlier exact key")
+            },
+            RuntimeDovetailReportError::EdgeOrdinalMismatch { index, ordinal } => write!(
+                f,
+                "derivation edge at table index {index} records ordinal {ordinal}"
+            ),
+            RuntimeDovetailReportError::EdgeParentMissing { edge_ordinal } => write!(
+                f,
+                "derivation edge ordinal {edge_ordinal} references a missing parent term key"
+            ),
+            RuntimeDovetailReportError::EdgeChildMissing { edge_ordinal } => write!(
+                f,
+                "derivation edge ordinal {edge_ordinal} references a missing child term key"
+            ),
+            RuntimeDovetailReportError::RootFlagWithoutRootKey { ordinal } => write!(
+                f,
+                "term ordinal {ordinal} is marked as a root but is absent from the report roots"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RuntimeDovetailReportError {}
+
 /// Runtime-neutral projection of `dovetail::report::DovetailRunReport`.
 ///
 /// The generic runtime crate cannot depend on Dovetail without reversing the
@@ -316,6 +413,80 @@ impl RuntimeDovetailRunReport {
         } else {
             Err(self.completeness)
         }
+    }
+
+    pub fn validate_shape(&self) -> Result<(), RuntimeDovetailReportError> {
+        if self.roots.len() != self.root_ordinals.len() {
+            return Err(RuntimeDovetailReportError::RootOrdinalCountMismatch {
+                roots: self.roots.len(),
+                root_ordinals: self.root_ordinals.len(),
+            });
+        }
+
+        let mut term_keys = HashSet::with_capacity(self.terms.len());
+        for (index, term) in self.terms.iter().enumerate() {
+            if term.ordinal != index {
+                return Err(RuntimeDovetailReportError::TermOrdinalMismatch {
+                    index,
+                    ordinal: term.ordinal,
+                });
+            }
+            if !term_keys.insert(term.key.clone()) {
+                return Err(RuntimeDovetailReportError::DuplicateTermKey { ordinal: term.ordinal });
+            }
+        }
+
+        let mut root_keys = HashSet::with_capacity(self.roots.len());
+        for (root_index, (root_key, ordinal)) in self
+            .roots
+            .iter()
+            .zip(self.root_ordinals.iter().copied())
+            .enumerate()
+        {
+            let term = self.terms.get(ordinal).ok_or(
+                RuntimeDovetailReportError::RootOrdinalOutOfBounds {
+                    root_index,
+                    ordinal,
+                    terms: self.terms.len(),
+                },
+            )?;
+            if term.key != *root_key {
+                return Err(RuntimeDovetailReportError::RootKeyMismatch { root_index, ordinal });
+            }
+            if !term.is_root {
+                return Err(RuntimeDovetailReportError::RootTermNotMarked { root_index, ordinal });
+            }
+            root_keys.insert(root_key.clone());
+        }
+
+        for term in &self.terms {
+            if term.is_root && !root_keys.contains(&term.key) {
+                return Err(RuntimeDovetailReportError::RootFlagWithoutRootKey {
+                    ordinal: term.ordinal,
+                });
+            }
+        }
+
+        for (index, edge) in self.derivation_edges.iter().enumerate() {
+            if edge.ordinal != index {
+                return Err(RuntimeDovetailReportError::EdgeOrdinalMismatch {
+                    index,
+                    ordinal: edge.ordinal,
+                });
+            }
+            if !term_keys.contains(&edge.parent_key) {
+                return Err(RuntimeDovetailReportError::EdgeParentMissing {
+                    edge_ordinal: edge.ordinal,
+                });
+            }
+            if !term_keys.contains(&edge.child_key) {
+                return Err(RuntimeDovetailReportError::EdgeChildMissing {
+                    edge_ordinal: edge.ordinal,
+                });
+            }
+        }
+
+        Ok(())
     }
 
     pub fn term_by_key(&self, key: &[u8]) -> Option<&RuntimeDovetailTermRecord> {
@@ -382,13 +553,22 @@ impl RuntimeBackendReport {
         }
     }
 
-    pub fn dovetail(report: RuntimeDovetailRunReport, evidence_refs: Vec<String>) -> Self {
-        Self {
+    pub fn try_dovetail(
+        report: RuntimeDovetailRunReport,
+        evidence_refs: Vec<String>,
+    ) -> Result<Self, RuntimeDovetailReportError> {
+        report.validate_shape()?;
+        Ok(Self {
             backend: RuntimeBackend::Dovetail,
             artifact: RuntimeBackendArtifact::DovetailRunReport,
             output: RuntimeBackendOutput::Dovetail(report),
             evidence_refs,
-        }
+        })
+    }
+
+    pub fn dovetail(report: RuntimeDovetailRunReport, evidence_refs: Vec<String>) -> Self {
+        Self::try_dovetail(report, evidence_refs)
+            .expect("malformed Dovetail runtime report must not enter RuntimeBackendReport")
     }
 
     pub fn as_ascent_results(&self) -> Option<&AscentResults> {
@@ -1939,6 +2119,101 @@ mod tests {
             equivalences: Vec::new(),
             custom_relations: std::collections::HashMap::new(),
         }
+    }
+
+    fn sample_dovetail_runtime_report() -> RuntimeDovetailRunReport {
+        RuntimeDovetailRunReport {
+            roots: vec![b"root".to_vec()],
+            root_ordinals: vec![0],
+            terms: vec![
+                RuntimeDovetailTermRecord {
+                    ordinal: 0,
+                    class_id: 0,
+                    key: b"root".to_vec(),
+                    op_display: "Pair".to_string(),
+                    weight_display: "1".to_string(),
+                    is_root: true,
+                },
+                RuntimeDovetailTermRecord {
+                    ordinal: 1,
+                    class_id: 1,
+                    key: b"child".to_vec(),
+                    op_display: "Leaf".to_string(),
+                    weight_display: "0".to_string(),
+                    is_root: false,
+                },
+            ],
+            derivation_edges: vec![RuntimeDovetailDerivationEdge {
+                ordinal: 0,
+                parent_key: b"root".to_vec(),
+                child_key: b"child".to_vec(),
+                child_index: 0,
+            }],
+            completeness: RuntimeDovetailCompleteness::Complete,
+        }
+    }
+
+    #[test]
+    fn dovetail_report_shape_validation_accepts_consistent_report() {
+        let report = sample_dovetail_runtime_report();
+
+        report
+            .validate_shape()
+            .expect("sample report is structurally valid");
+        let backend_report = RuntimeBackendReport::try_dovetail(
+            report,
+            vec!["runtime-test:dovetail-shape".to_string()],
+        )
+        .expect("checked constructor accepts structurally valid Dovetail reports");
+
+        assert_eq!(backend_report.backend, RuntimeBackend::Dovetail);
+        assert_eq!(backend_report.artifact, RuntimeBackendArtifact::DovetailRunReport);
+    }
+
+    #[test]
+    fn dovetail_report_shape_validation_rejects_bad_root_ordinal() {
+        let mut report = sample_dovetail_runtime_report();
+        report.root_ordinals[0] = 99;
+
+        let err = report
+            .validate_shape()
+            .expect_err("root ordinals must resolve into the term table");
+        assert!(matches!(
+            err,
+            RuntimeDovetailReportError::RootOrdinalOutOfBounds {
+                root_index: 0,
+                ordinal: 99,
+                terms: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn dovetail_report_shape_validation_rejects_dangling_edges() {
+        let mut report = sample_dovetail_runtime_report();
+        report.derivation_edges[0].child_key = b"missing".to_vec();
+
+        let err = RuntimeBackendReport::try_dovetail(report, Vec::new())
+            .expect_err("checked constructor rejects dangling derivation edges");
+        assert!(matches!(err, RuntimeDovetailReportError::EdgeChildMissing { edge_ordinal: 0 }));
+    }
+
+    #[test]
+    fn dovetail_report_shape_validation_rejects_duplicate_term_keys() {
+        let mut report = sample_dovetail_runtime_report();
+        report.terms.push(RuntimeDovetailTermRecord {
+            ordinal: 2,
+            class_id: 2,
+            key: b"child".to_vec(),
+            op_display: "DuplicateLeaf".to_string(),
+            weight_display: "0".to_string(),
+            is_root: false,
+        });
+
+        let err = report
+            .validate_shape()
+            .expect_err("term records must be unique by exact key");
+        assert!(matches!(err, RuntimeDovetailReportError::DuplicateTermKey { ordinal: 2 }));
     }
 
     #[test]
