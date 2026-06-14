@@ -19,7 +19,7 @@ default = []
 # Enables conversion from typed Rho observation reports into
 # mettail_runtime::RuntimeBackendReport, the generic Language backend report
 # surface used by generated backends.
-runtime-report = ["dep:mettail-runtime"]
+runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
 # Pulls in the generated MeTTaIL language suite for the two-backend
 # Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine
 # tests do not compile every generated language.
@@ -39,6 +39,7 @@ crypto = { workspace = true }
 tokio = { workspace = true }
 mettail-languages = { path = "../languages", optional = true, default-features = false }
 mettail-runtime = { path = "../runtime", optional = true }
+mettail-prattail = { path = "../prattail", optional = true }
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
@@ -50,6 +51,11 @@ syn = { workspace = true }
 [[test]]
 name = "rho_vs_ascent"
 path = "tests/rho_vs_ascent.rs"
+required-features = ["oracle-ascent"]
+
+[[test]]
+name = "rho_language_backend_report"
+path = "tests/rho_language_backend_report.rs"
 required-features = ["oracle-ascent"]
 
 [[test]]

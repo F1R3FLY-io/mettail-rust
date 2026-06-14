@@ -7,13 +7,18 @@
 //! proof, oracle, coverage, scheduler-fairness, validation, and deadlock gates
 //! pass.
 
+#[cfg(feature = "runtime-report")]
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "runtime-report")]
+use std::thread;
 
 use mettail_rho_codegen::{RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram};
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
-    RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
-    RuntimeObservationValue,
+    AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport,
+    RuntimeChannelObservation, RuntimeObservationValue, SeedFacts, Term, TermType, VarTypeInfo,
+    WeightedRewriteSeed, WeightedSeedId,
 };
 use models::rhoapi::Par;
 
@@ -293,6 +298,285 @@ impl PlannedRhoBackend {
             .run_with_call_and_read_strings(call, out_channel)
             .await?;
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+}
+
+/// Dynamic operation that a Rho-backed generated language wants to execute for
+/// one typed input term.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone)]
+pub enum RhoBackendInvocation {
+    /// Run the planned backend and observe integer values on the channel.
+    RunAndObserveInts { out_channel: String },
+    /// Run the planned backend and observe string values on the channel.
+    RunAndObserveStrings { out_channel: String },
+    /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
+    /// integer values on the channel.
+    RunWithCallAndObserveInts { call: Par, out_channel: String },
+    /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
+    /// string values on the channel.
+    RunWithCallAndObserveStrings { call: Par, out_channel: String },
+}
+
+#[cfg(feature = "runtime-report")]
+impl RhoBackendInvocation {
+    async fn execute(self, backend: &PlannedRhoBackend) -> Result<RuntimeBackendReport, String> {
+        let evidence_refs = backend.evidence_refs().to_vec();
+        match self {
+            RhoBackendInvocation::RunAndObserveInts { out_channel } => backend
+                .run_and_observe_ints(&out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| {
+                    format!("failed to convert Rho integer observation report: {err:?}")
+                }),
+            RhoBackendInvocation::RunAndObserveStrings { out_channel } => backend
+                .run_and_observe_strings(&out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
+            RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel } => backend
+                .run_with_call_and_observe_ints(&call, &out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| {
+                    format!("failed to convert Rho integer observation report: {err:?}")
+                }),
+            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel } => backend
+                .run_with_call_and_observe_strings(&call, &out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+fn run_rho_invocation_blocking(
+    backend: PlannedRhoBackend,
+    invocation: RhoBackendInvocation,
+) -> Result<RuntimeBackendReport, String> {
+    let worker = thread::Builder::new()
+        .name("mettail-rho-backend-report".to_string())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| format!("failed to create Rho backend runtime: {err}"))?;
+            runtime.block_on(invocation.execute(&backend))
+        })
+        .map_err(|err| format!("failed to spawn Rho backend runtime worker: {err}"))?;
+
+    worker
+        .join()
+        .map_err(|_| "Rho backend runtime worker panicked".to_string())?
+}
+
+/// Runtime adapter that makes a generated language select a flip-gated
+/// [`PlannedRhoBackend`] through the generic [`Language`] report API.
+///
+/// The wrapped language remains the source of parsing, environments, type
+/// inference, and the Ascent oracle. The adapter changes only the runtime
+/// backend selection surface: `RhoMachine` becomes the default, explicit Ascent
+/// requests still delegate to the wrapped language, and the legacy
+/// `AscentResults` compatibility methods reject Rho observation reports.
+#[cfg(feature = "runtime-report")]
+pub struct RhoRuntimeBackedLanguage<L, F> {
+    inner: L,
+    backend: PlannedRhoBackend,
+    invocation: F,
+}
+
+#[cfg(feature = "runtime-report")]
+impl<L, F> RhoRuntimeBackedLanguage<L, F>
+where
+    F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
+{
+    pub fn new(inner: L, backend: PlannedRhoBackend, invocation: F) -> Self {
+        Self { inner, backend, invocation }
+    }
+
+    pub fn inner(&self) -> &L {
+        &self.inner
+    }
+
+    pub fn backend(&self) -> &PlannedRhoBackend {
+        &self.backend
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<L, F> Language for RhoRuntimeBackedLanguage<L, F>
+where
+    L: Language,
+    F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
+{
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn metadata(&self) -> &'static dyn mettail_runtime::LanguageMetadata {
+        self.inner.metadata()
+    }
+
+    fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        self.inner.parse_term(input)
+    }
+
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        self.inner.parse_term_for_env(input)
+    }
+
+    fn parse_term_with_weighted_seed_ids(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
+        self.inner.parse_term_with_weighted_seed_ids(input)
+    }
+
+    fn parse_term_with_weighted_rewrite_seeds(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedRewriteSeed>), String> {
+        self.inner.parse_term_with_weighted_rewrite_seeds(input)
+    }
+
+    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
+        self.inner.run_ascent(term)
+    }
+
+    fn default_runtime_backend(&self) -> RuntimeBackend {
+        RuntimeBackend::RhoMachine
+    }
+
+    fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
+        backend == RuntimeBackend::RhoMachine || self.inner.supports_runtime_backend(backend)
+    }
+
+    fn run_backend_report(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::RhoMachine => {
+                let invocation = (self.invocation)(term).map_err(|err| {
+                    format!(
+                        "RhoMachine backend for language {} could not build an AST invocation: {err}",
+                        self.name()
+                    )
+                })?;
+                run_rho_invocation_blocking(self.backend.clone(), invocation)
+            },
+            other => self.inner.run_backend_report(other, term),
+        }
+    }
+
+    fn run_ascent_with_facts(
+        &self,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<AscentResults, String> {
+        self.inner.run_ascent_with_facts(term, facts)
+    }
+
+    fn run_backend_report_with_facts(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::RhoMachine if facts.is_empty() => {
+                self.run_backend_report(backend, term)
+            },
+            RuntimeBackend::RhoMachine => Err(format!(
+                "RhoMachine backend for language {} does not accept Ascent-shaped seeded facts",
+                self.name()
+            )),
+            other => self.inner.run_backend_report_with_facts(other, term, facts),
+        }
+    }
+
+    fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
+        self.inner.try_direct_eval(term)
+    }
+
+    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+        self.inner.normalize_term(term)
+    }
+
+    fn format_term(&self, term: &dyn Term) -> String {
+        self.inner.format_term(term)
+    }
+
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        self.inner.create_env()
+    }
+
+    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
+        self.inner.add_to_env(env, name, term)
+    }
+
+    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
+        self.inner.remove_from_env(env, name)
+    }
+
+    fn clear_env(&self, env: &mut dyn Any) {
+        self.inner.clear_env(env)
+    }
+
+    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
+        self.inner.substitute_env(term, env)
+    }
+
+    fn substitute_env_preserve_structure(
+        &self,
+        term: &dyn Term,
+        env: &dyn Any,
+    ) -> Result<Box<dyn Term>, String> {
+        self.inner.substitute_env_preserve_structure(term, env)
+    }
+
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+        self.inner.list_env(env)
+    }
+
+    fn set_env_comment(
+        &self,
+        env: &mut dyn Any,
+        name: &str,
+        comment: String,
+    ) -> Result<(), String> {
+        self.inner.set_env_comment(env, name, comment)
+    }
+
+    fn is_env_empty(&self, env: &dyn Any) -> bool {
+        self.inner.is_env_empty(env)
+    }
+
+    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
+        self.inner.get_env_term(env, name)
+    }
+
+    fn infer_term_type(&self, term: &dyn Term) -> TermType {
+        self.inner.infer_term_type(term)
+    }
+
+    fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
+        self.inner.infer_var_types(term)
+    }
+
+    fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
+        self.inner.infer_var_type(term, var_name)
+    }
+
+    fn decompose_into_cek(
+        &self,
+        term: &dyn Term,
+        evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
+    ) -> bool {
+        self.inner.decompose_into_cek(term, evaluator)
     }
 }
 

@@ -112,7 +112,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 |---|---|---|
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
-| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering | every runtime execution surface consumes validated `Par` plans and reports typed observations |
+| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, `RhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent path | oracle and regression baseline | available only as a differential reference for languages whose Dovetail/Rho gate is still under evaluation |
 | CESK runtime path | legacy runtime backend | unavailable as the selected production backend once the Rho gate is satisfied for a language |
@@ -155,6 +155,30 @@ string.
 | oracle agreement | Rho observations match Ascent oracle observations for the language corpus selected for rollout |
 | memory bound | capped tests and stress workloads stay within the agreed RSS envelope |
 | backend selection | default runtime backend fails closed unless proof, oracle, coverage, artifact, scheduler, and deadlock gates all pass, and every positive external gate carries nonblank stable evidence references for generated metadata |
+
+## Generated-Language Runtime Wrapper
+
+Generated language crates remain substrate-neutral. They expose `Language`,
+metadata, parsing, environments, type inference, direct evaluation helpers, and
+the explicit Ascent oracle. The Rho runtime crate supplies
+`RhoRuntimeBackedLanguage<L, F>` when a language has passed the Rho flip gate:
+
+```text
+Given a generated language L, a planned Rho backend B, and an invocation mapper F:
+  keep L as the owner of parsing, environments, type inference, and Ascent oracle execution
+  expose RhoMachine as the default runtime backend through Language methods
+  delegate explicit non-Rho backend requests back to L
+  map each typed term to a RhoBackendInvocation through F
+  execute B with the invocation as normalized rhoapi::Par
+  return RuntimeBackendReport with RhoMachine, RhoNormalizedAst, observations, and evidence refs
+  reject Ascent-shaped seeded facts on the Rho path unless the fact set is empty
+```
+
+The wrapper is intentionally outside the generated language crate. This avoids
+a Cargo cycle with `mettail-rho-runtime` while still allowing a verified
+language instance to become Rho-default. The wrapper does not parse generated
+Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
+future bytecode variants can use the same report boundary.
 
 ## Diagram Tooling Policy
 

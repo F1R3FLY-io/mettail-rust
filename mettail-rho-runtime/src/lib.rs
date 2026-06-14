@@ -38,7 +38,10 @@ pub mod backend;
 pub mod rhocalc_ast;
 pub mod run;
 #[cfg(feature = "runtime-report")]
-pub use backend::{IntoRuntimeObservationValue, RuntimeReportConversionError};
+pub use backend::{
+    IntoRuntimeObservationValue, RhoBackendInvocation, RhoRuntimeBackedLanguage,
+    RuntimeReportConversionError,
+};
 pub use backend::{PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport};
 #[cfg(feature = "oracle-rhocalc")]
 pub use rhocalc_ast::{

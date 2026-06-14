@@ -39,4 +39,5 @@ theories/RhoBackendFlipGate.v
 theories/RhoPlannedExecutionBoundary.v
 theories/RhoObservationReportBoundary.v
 theories/RhoRuntimeBackendReportBridge.v
+theories/RhoLanguageBackendWrapper.v
 theories/OracleQuotientEquivalence.v
