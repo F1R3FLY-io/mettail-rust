@@ -188,6 +188,15 @@ impl<'a> ProgramTestSuite<'a> {
                             ));
                         }
                     },
+                    mettail_runtime::RuntimeBackendOutput::Dovetail(dovetail_report) => {
+                        if !dovetail_report.is_complete() {
+                            return Err(format!(
+                                "Program termination check requires a complete Dovetail report; {} returned {}",
+                                report.backend,
+                                dovetail_report.completeness
+                            ));
+                        }
+                    },
                     mettail_runtime::RuntimeBackendOutput::Observations(_) => {
                         // Observation-shaped backend reports are terminal runtime
                         // outcomes; they are not rewrite graphs, but they do prove
@@ -457,4 +466,223 @@ fn extract_channel_names(source: &str) -> Vec<String> {
     let mut result: Vec<String> = channels.into_iter().collect();
     result.sort(); // Deterministic order
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::Any;
+
+    use mettail_runtime::{
+        AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackend,
+        RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailRunReport,
+        RuntimeDovetailTermRecord, TermType, VarTypeInfo,
+    };
+
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct ProgramTerm(String);
+
+    impl std::fmt::Display for ProgramTerm {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "{}", self.0)
+        }
+    }
+
+    impl Term for ProgramTerm {
+        fn clone_box(&self) -> Box<dyn Term> {
+            Box::new(self.clone())
+        }
+
+        fn term_id(&self) -> u64 {
+            11
+        }
+
+        fn term_eq(&self, other: &dyn Term) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<ProgramTerm>()
+                .is_some_and(|other| self.0 == other.0)
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    struct DovetailProgramMetadata;
+
+    static DOVETAIL_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
+        backend: RuntimeBackend::Dovetail,
+        is_default: true,
+        evidence_refs: &["testkit:complete-dovetail-program-report"],
+    }];
+
+    impl LanguageMetadata for DovetailProgramMetadata {
+        fn name(&self) -> &'static str {
+            "DovetailProgram"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            DOVETAIL_BACKENDS
+        }
+    }
+
+    static DOVETAIL_METADATA: DovetailProgramMetadata = DovetailProgramMetadata;
+
+    struct DovetailProgramLanguage {
+        completeness: RuntimeDovetailCompleteness,
+    }
+
+    impl DovetailProgramLanguage {
+        fn new(completeness: RuntimeDovetailCompleteness) -> Self {
+            Self { completeness }
+        }
+
+        fn report(&self) -> RuntimeDovetailRunReport {
+            RuntimeDovetailRunReport {
+                roots: vec![b"done".to_vec()],
+                root_ordinals: vec![0],
+                terms: vec![RuntimeDovetailTermRecord {
+                    ordinal: 0,
+                    class_id: 0,
+                    key: b"done".to_vec(),
+                    op_display: "done".to_string(),
+                    weight_display: "0".to_string(),
+                    is_root: true,
+                }],
+                derivation_edges: Vec::new(),
+                completeness: self.completeness,
+            }
+        }
+    }
+
+    impl Language for DovetailProgramLanguage {
+        fn name(&self) -> &'static str {
+            "DovetailProgram"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &DOVETAIL_METADATA
+        }
+
+        fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(ProgramTerm(input.to_string())))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            Ok(AscentResults::empty())
+        }
+
+        fn run_backend_report(
+            &self,
+            backend: RuntimeBackend,
+            term: &dyn Term,
+        ) -> Result<RuntimeBackendReport, String> {
+            match backend {
+                RuntimeBackend::Dovetail => {
+                    Ok(RuntimeBackendReport::dovetail(self.report(), Vec::new()))
+                },
+                RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
+                other => Err(format!("{} backend is not installed", other)),
+            }
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
+    #[test]
+    fn termination_check_accepts_complete_dovetail_report() {
+        let language = DovetailProgramLanguage::new(RuntimeDovetailCompleteness::Complete);
+        ProgramTestSuite::new(&language)
+            .source("done")
+            .expect_terminates(0)
+            .run()
+            .expect("complete Dovetail report is terminal runtime evidence");
+    }
+
+    #[test]
+    fn termination_check_rejects_bounded_dovetail_report() {
+        let language = DovetailProgramLanguage::new(RuntimeDovetailCompleteness::BoundedByCycleCut);
+        let err = ProgramTestSuite::new(&language)
+            .source("cycle")
+            .expect_terminates(0)
+            .run()
+            .expect_err("bounded Dovetail report must not prove termination");
+        assert!(
+            err.contains("requires a complete Dovetail report")
+                && err.contains("BoundedByCycleCut"),
+            "{err}"
+        );
+    }
 }
