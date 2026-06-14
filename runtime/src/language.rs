@@ -943,11 +943,21 @@ pub trait Language: Send + Sync {
     /// When multiple entries are marked default, the first declaration wins,
     /// preserving the language author's generated order unless a wrapper
     /// deliberately installs a new default.
-    fn default_runtime_backend(&self) -> RuntimeBackend {
+    fn selected_default_runtime_backend(&self) -> Option<RuntimeBackend> {
         self.runtime_backend_capabilities()
             .iter()
             .find(|capability| capability.is_default)
             .map(|capability| capability.backend)
+    }
+
+    /// Legacy display/query view of the default backend.
+    ///
+    /// Runtime execution uses [`Language::selected_default_runtime_backend`]
+    /// and fails closed when no default was explicitly advertised. This method
+    /// keeps older metadata-only callers source-compatible while avoiding an
+    /// accidental Ascent execution fallback in `run_default_*`.
+    fn default_runtime_backend(&self) -> RuntimeBackend {
+        self.selected_default_runtime_backend()
             .unwrap_or(RuntimeBackend::Ascent)
     }
 
@@ -995,7 +1005,10 @@ pub trait Language: Send + Sync {
     /// Run the language's selected default backend and return a runtime-neutral
     /// report.
     fn run_default_backend_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
-        self.run_backend_report(self.default_runtime_backend(), term)
+        let backend = self.selected_default_runtime_backend().ok_or_else(|| {
+            format!("language {} does not advertise a default runtime backend", self.name())
+        })?;
+        self.run_backend_report(backend, term)
     }
 
     /// Run the selected backend on a term and return results.
@@ -1024,7 +1037,10 @@ pub trait Language: Send + Sync {
 
     /// Run the language's selected default backend.
     fn run_default_backend(&self, term: &dyn Term) -> Result<AscentResults, String> {
-        self.run_with_backend(self.default_runtime_backend(), term)
+        let backend = self.selected_default_runtime_backend().ok_or_else(|| {
+            format!("language {} does not advertise a default runtime backend", self.name())
+        })?;
+        self.run_with_backend(backend, term)
     }
 
     /// Run Ascent on a term with pre-seeded relation facts.
@@ -1071,9 +1087,9 @@ pub trait Language: Send + Sync {
 
     /// Run the selected backend with pre-seeded relation facts.
     ///
-    /// Relation facts are currently an Ascent-shaped compatibility surface; a
-    /// future Dovetail/Rho implementation must override this method rather than
-    /// inheriting an accidental fallback.
+    /// Relation facts are currently an Ascent-shaped compatibility surface.
+    /// Dovetail/Rho wrappers override this method and reject seeded facts
+    /// unless the selected backend explicitly supports them.
     fn run_with_backend_with_facts(
         &self,
         backend: RuntimeBackend,
@@ -1099,7 +1115,10 @@ pub trait Language: Send + Sync {
         term: &dyn Term,
         facts: &SeedFacts,
     ) -> Result<AscentResults, String> {
-        self.run_with_backend_with_facts(self.default_runtime_backend(), term, facts)
+        let backend = self.selected_default_runtime_backend().ok_or_else(|| {
+            format!("language {} does not advertise a default runtime backend", self.name())
+        })?;
+        self.run_with_backend_with_facts(backend, term, facts)
     }
 
     /// Run the language's selected default backend with pre-seeded relation
@@ -1109,7 +1128,10 @@ pub trait Language: Send + Sync {
         term: &dyn Term,
         facts: &SeedFacts,
     ) -> Result<RuntimeBackendReport, String> {
-        self.run_backend_report_with_facts(self.default_runtime_backend(), term, facts)
+        let backend = self.selected_default_runtime_backend().ok_or_else(|| {
+            format!("language {} does not advertise a default runtime backend", self.name())
+        })?;
+        self.run_backend_report_with_facts(backend, term, facts)
     }
 
     /// If the term is fully evaluable (no free variables), evaluate it and return the result term.
@@ -1979,6 +2001,112 @@ mod tests {
         }
     }
 
+    struct NoDefaultMetadata;
+
+    impl LanguageMetadata for NoDefaultMetadata {
+        fn name(&self) -> &'static str {
+            "NoDefault"
+        }
+
+        fn types(&self) -> &'static [crate::metadata::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [crate::metadata::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [crate::metadata::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [crate::metadata::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            &[]
+        }
+    }
+
+    static NO_DEFAULT_METADATA: NoDefaultMetadata = NoDefaultMetadata;
+
+    struct NoDefaultLanguage;
+
+    impl Language for NoDefaultLanguage {
+        fn name(&self) -> &'static str {
+            "NoDefault"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &NO_DEFAULT_METADATA
+        }
+
+        fn parse_term(&self, _input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(DispatchTerm))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            Ok(AscentResults::empty())
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
     struct RhoDispatchMetadata;
 
     static RHO_DISPATCH_BACKENDS: &[BackendCapabilityDef] = &[
@@ -2308,6 +2436,7 @@ mod tests {
         let term = DispatchTerm;
 
         assert_eq!(language.metadata().runtime_backends(), DISPATCH_BACKENDS);
+        assert_eq!(language.selected_default_runtime_backend(), Some(RuntimeBackend::Ascent));
         assert_eq!(language.default_runtime_backend(), RuntimeBackend::Ascent);
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
@@ -2321,11 +2450,51 @@ mod tests {
     }
 
     #[test]
+    fn runtime_backend_dispatch_does_not_fabricate_ascent_default() {
+        let language = NoDefaultLanguage;
+        let term = DispatchTerm;
+
+        assert!(language.runtime_backend_capabilities().is_empty());
+        assert_eq!(language.selected_default_runtime_backend(), None);
+        assert_eq!(
+            language.default_runtime_backend(),
+            RuntimeBackend::Ascent,
+            "legacy query remains source-compatible, but execution must use selected_default_runtime_backend"
+        );
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+        let report_err = language
+            .run_default_backend_report(&term)
+            .expect_err("default report execution must fail closed without a selected backend");
+        assert!(
+            report_err.contains("does not advertise a default runtime backend"),
+            "{report_err}"
+        );
+
+        let compat_err = language
+            .run_default_backend(&term)
+            .expect_err("default Ascent compatibility execution must not fabricate Ascent");
+        assert!(
+            compat_err.contains("does not advertise a default runtime backend"),
+            "{compat_err}"
+        );
+
+        let seeded_err = language
+            .run_default_backend_report_with_facts(&term, &SeedFacts::new())
+            .expect_err("seeded default report execution must fail closed without a default");
+        assert!(
+            seeded_err.contains("does not advertise a default runtime backend"),
+            "{seeded_err}"
+        );
+    }
+
+    #[test]
     fn runtime_backend_dispatch_uses_metadata_default_when_backend_is_installed() {
         let language = RhoDispatchLanguage;
         let term = DispatchTerm;
 
         assert_eq!(language.metadata().runtime_backends(), RHO_DISPATCH_BACKENDS);
+        assert_eq!(language.selected_default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
         assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
         assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));

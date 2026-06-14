@@ -31,6 +31,7 @@ Section RuntimeBackendDispatch.
     ascent_installed : bool;
     dovetail_installed : bool;
     rho_machine_installed : bool;
+    default_selected : bool;
     default_backend : Backend;
     default_output_shape : OutputShape
   }.
@@ -46,7 +47,7 @@ Section RuntimeBackendDispatch.
     backend_installed state backend.
 
   Definition can_run_default_backend (state : BackendState) : bool :=
-    can_run_with_backend state (default_backend state).
+    default_selected state && can_run_with_backend state (default_backend state).
 
   Definition output_shape_matches_backend
       (backend : Backend) (shape : OutputShape) : bool :=
@@ -74,6 +75,7 @@ Section RuntimeBackendDispatch.
       ascent_installed := true;
       dovetail_installed := false;
       rho_machine_installed := false;
+      default_selected := true;
       default_backend := Ascent;
       default_output_shape := AscentResultsShape
     |}.
@@ -107,10 +109,14 @@ Section RuntimeBackendDispatch.
   Qed.
 
   Theorem default_backend_requires_installation : forall state,
+    default_selected state = true ->
     can_run_default_backend state = true <->
     backend_installed state (default_backend state) = true.
   Proof.
-    intros state. unfold can_run_default_backend, can_run_with_backend.
+    intros state Hselected.
+    unfold can_run_default_backend, can_run_with_backend.
+    rewrite Hselected.
+    simpl.
     split; intro H; exact H.
   Qed.
 
@@ -120,7 +126,33 @@ Section RuntimeBackendDispatch.
   Proof.
     intros state Habsent.
     unfold can_run_default_backend, can_run_with_backend.
-    exact Habsent.
+    rewrite Habsent.
+    destruct (default_selected state); reflexivity.
+  Qed.
+
+  Theorem unselected_default_blocks : forall state,
+    default_selected state = false ->
+    can_run_default_backend state = false.
+  Proof.
+    intros state Hunselected.
+    unfold can_run_default_backend.
+    rewrite Hunselected.
+    reflexivity.
+  Qed.
+
+  Theorem unselected_default_report_blocks : forall state,
+    default_selected state = false ->
+    can_run_default_backend_report state = false /\
+    can_run_default_ascent_compat state = false.
+  Proof.
+    intros state Hunselected.
+    split.
+    - unfold can_run_default_backend_report.
+      rewrite (unselected_default_blocks state Hunselected).
+      reflexivity.
+    - unfold can_run_default_ascent_compat, can_run_default_backend_report.
+      rewrite (unselected_default_blocks state Hunselected).
+      reflexivity.
   Qed.
 
   Theorem dovetail_default_without_installation_blocks : forall ascent rho,
@@ -128,6 +160,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := ascent;
          dovetail_installed := false;
          rho_machine_installed := rho;
+         default_selected := true;
          default_backend := Dovetail;
          default_output_shape := DovetailReportShape |} = false.
   Proof. reflexivity. Qed.
@@ -137,6 +170,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := true;
          dovetail_installed := true;
          rho_machine_installed := false;
+         default_selected := true;
          default_backend := Dovetail;
          default_output_shape := DovetailReportShape |} = true.
   Proof. reflexivity. Qed.
@@ -146,6 +180,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := true;
          dovetail_installed := true;
          rho_machine_installed := false;
+         default_selected := true;
          default_backend := Dovetail;
          default_output_shape := DovetailReportShape |} = false.
   Proof. reflexivity. Qed.
@@ -155,6 +190,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := ascent;
          dovetail_installed := true;
          rho_machine_installed := rho;
+         default_selected := true;
          default_backend := Dovetail;
          default_output_shape := AscentResultsShape |} = false.
   Proof. reflexivity. Qed.
@@ -164,6 +200,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := ascent;
          dovetail_installed := true;
          rho_machine_installed := rho;
+         default_selected := true;
          default_backend := Dovetail;
          default_output_shape := ObservationReportShape |} = false.
   Proof. reflexivity. Qed.
@@ -173,6 +210,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := ascent;
          dovetail_installed := dovetail;
          rho_machine_installed := false;
+         default_selected := true;
          default_backend := RhoMachine;
          default_output_shape := ObservationReportShape |} = false.
   Proof. reflexivity. Qed.
@@ -182,6 +220,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := true;
          dovetail_installed := false;
          rho_machine_installed := true;
+         default_selected := true;
          default_backend := RhoMachine;
          default_output_shape := ObservationReportShape |} = true.
   Proof. reflexivity. Qed.
@@ -191,6 +230,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := true;
          dovetail_installed := false;
          rho_machine_installed := true;
+         default_selected := true;
          default_backend := RhoMachine;
          default_output_shape := ObservationReportShape |} = false.
   Proof. reflexivity. Qed.
@@ -200,6 +240,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := ascent;
          dovetail_installed := dovetail;
          rho_machine_installed := true;
+         default_selected := true;
          default_backend := RhoMachine;
          default_output_shape := AscentResultsShape |} = false.
   Proof. reflexivity. Qed.
@@ -209,6 +250,7 @@ Section RuntimeBackendDispatch.
       {| ascent_installed := ascent;
          dovetail_installed := dovetail;
          rho_machine_installed := true;
+         default_selected := true;
          default_backend := RhoMachine;
          default_output_shape := DovetailReportShape |} = false.
   Proof. reflexivity. Qed.
