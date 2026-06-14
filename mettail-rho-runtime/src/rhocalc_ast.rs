@@ -21,7 +21,6 @@ use models::rust::utils::{
 
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
-pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 
 type BoundEnv = HashMap<FreeVar<String>, usize>;
 
@@ -63,6 +62,20 @@ pub fn rhocalc_observe_ints_invocation(
     })
 }
 
+/// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
+/// process and observes closed Rho ground values from `out_channel`.
+pub fn rhocalc_observe_values_invocation(
+    term: &dyn Term,
+    out_channel: impl Into<String>,
+) -> Result<crate::backend::RhoBackendInvocation, String> {
+    let call = lower_rhocalc_proc(rhocalc_proc_from_term(term)?)
+        .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
+    Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveRuntimeValues {
+        call,
+        out_channel: out_channel.into(),
+    })
+}
+
 /// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
 /// observes strings on `out_channel`.
 pub fn rho_runtime_backed_rhocalc_strings(
@@ -90,6 +103,21 @@ pub fn rho_runtime_backed_rhocalc_ints(
     let out_channel = out_channel.into();
     crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
         rhocalc_observe_ints_invocation(term, out_channel.clone())
+    })
+}
+
+/// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
+/// observes closed Rho ground values on `out_channel`.
+pub fn rho_runtime_backed_rhocalc_values(
+    backend: crate::backend::PlannedRhoBackend,
+    out_channel: impl Into<String>,
+) -> crate::backend::RhoRuntimeBackedLanguage<
+    RhoCalcLanguage,
+    impl Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync,
+> {
+    let out_channel = out_channel.into();
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, move |term| {
+        rhocalc_observe_values_invocation(term, out_channel.clone())
     })
 }
 
@@ -288,7 +316,7 @@ fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 pairs_locally_free,
                 false,
             );
-            let tag = GPrivateBuilder::new_par_from_string(RHOCALC_BAG_ABI_TAG.to_string());
+            let tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
             let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
 
             Ok(new_elist_par(

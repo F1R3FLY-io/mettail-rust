@@ -33,6 +33,14 @@
 
 #![forbid(unsafe_code)]
 
+/// Stable Rho AST ABI tag for rhocalc bag payloads.
+///
+/// Bags lower as a tagged Rholang list `[tag, entries]` because host Rholang
+/// has list, set, map, and tuple expression bodies but no native multiset
+/// body. Runtime observation readers use the same tag to recover an explicit
+/// counted bag value.
+pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
+
 pub mod backend;
 #[cfg(feature = "oracle-rhocalc")]
 pub mod rhocalc_ast;
@@ -46,8 +54,15 @@ pub use backend::{PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport}
 #[cfg(feature = "oracle-rhocalc")]
 pub use rhocalc_ast::{
     lower_rhocalc_name, lower_rhocalc_proc, rho_runtime_backed_rhocalc_ints,
-    rho_runtime_backed_rhocalc_strings, rhocalc_observe_ints_invocation,
-    rhocalc_observe_strings_invocation, RhocalcAstLowerError, RHOCALC_BAG_ABI_TAG,
+    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
+    rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
+    rhocalc_observe_values_invocation, RhocalcAstLowerError,
+};
+#[cfg(feature = "runtime-report")]
+pub use run::{
+    par_as_runtime_observation_value, run_normalized_par_for_oracle_and_read_runtime_values,
+    run_validated_program_and_read_runtime_values,
+    run_validated_program_with_call_and_read_runtime_values,
 };
 #[allow(deprecated)]
 pub use run::{

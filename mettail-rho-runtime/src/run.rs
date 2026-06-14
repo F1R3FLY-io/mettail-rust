@@ -11,8 +11,14 @@ use std::sync::Arc;
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_rho_codegen::ValidatedRhoProgram;
+#[cfg(feature = "runtime-report")]
+use mettail_runtime::RuntimeObservationValue;
 use models::rhoapi::expr::ExprInstance;
+#[cfg(feature = "runtime-report")]
+use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
+#[cfg(feature = "runtime-report")]
+use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::new_freevar_par;
 
 use rho_pure_eval::Env;
@@ -63,6 +69,163 @@ fn par_as_bool(par: &Par) -> Option<bool> {
         [e] => match &e.expr_instance {
             Some(ExprInstance::GBool(b)) => Some(*b),
             _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+fn par_has_only_ground_value_fields(par: &Par) -> bool {
+    par.sends.is_empty()
+        && par.receives.is_empty()
+        && par.news.is_empty()
+        && par.matches.is_empty()
+        && par.bundles.is_empty()
+        && par.connectives.is_empty()
+        && par.conditionals.is_empty()
+        && par.locally_free.is_empty()
+        && !par.connective_used
+}
+
+#[cfg(feature = "runtime-report")]
+fn single_expr_instance(par: &Par) -> Option<&ExprInstance> {
+    if !par_has_only_ground_value_fields(par) || !par.unforgeables.is_empty() {
+        return None;
+    }
+
+    let [expr] = par.exprs.as_slice() else {
+        return None;
+    };
+    expr.expr_instance.as_ref()
+}
+
+#[cfg(feature = "runtime-report")]
+fn par_as_unforgeable_observation(par: &Par) -> Option<RuntimeObservationValue> {
+    if !par_has_only_ground_value_fields(par) || !par.exprs.is_empty() {
+        return None;
+    }
+
+    let [unforgeable] = par.unforgeables.as_slice() else {
+        return None;
+    };
+
+    match unforgeable.unf_instance.as_ref()? {
+        UnfInstance::GPrivateBody(value) => {
+            Some(RuntimeObservationValue::PrivateName(value.id.clone()))
+        },
+        UnfInstance::GDeployIdBody(value) => {
+            Some(RuntimeObservationValue::DeployId(value.sig.clone()))
+        },
+        UnfInstance::GDeployerIdBody(value) => {
+            Some(RuntimeObservationValue::DeployerId(value.public_key.clone()))
+        },
+        UnfInstance::GSysAuthTokenBody(_) => Some(RuntimeObservationValue::SysAuthToken),
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+fn decode_runtime_values(pars: &[Par]) -> Option<Vec<RuntimeObservationValue>> {
+    pars.iter().map(par_as_runtime_observation_value).collect()
+}
+
+#[cfg(feature = "runtime-report")]
+fn decode_runtime_map(
+    pairs: &[models::rhoapi::KeyValuePair],
+) -> Option<Vec<(RuntimeObservationValue, RuntimeObservationValue)>> {
+    let mut out = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        let key = par_as_runtime_observation_value(pair.key.as_ref()?)?;
+        let value = par_as_runtime_observation_value(pair.value.as_ref()?)?;
+        out.push((key, value));
+    }
+    out.sort();
+    Some(out)
+}
+
+#[cfg(feature = "runtime-report")]
+fn list_body(par: &Par) -> Option<&models::rhoapi::EList> {
+    match single_expr_instance(par)? {
+        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
+            Some(list)
+        },
+        _ => None,
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+fn decode_rhocalc_bag(
+    list: &models::rhoapi::EList,
+) -> Option<Vec<(RuntimeObservationValue, usize)>> {
+    let [tag, entries] = list.ps.as_slice() else {
+        return None;
+    };
+    let expected_tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
+    if tag != &expected_tag {
+        return None;
+    }
+
+    let entries = list_body(entries)?;
+    let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
+    for entry in &entries.ps {
+        let entry = list_body(entry)?;
+        let [value, count] = entry.ps.as_slice() else {
+            return None;
+        };
+        let value = par_as_runtime_observation_value(value)?;
+        let count = match par_as_runtime_observation_value(count)? {
+            RuntimeObservationValue::Int(count) if count >= 0 => usize::try_from(count).ok()?,
+            _ => return None,
+        };
+        let slot = counts.entry(value).or_insert(0);
+        *slot = slot.checked_add(count)?;
+    }
+    Some(counts.into_iter().collect())
+}
+
+/// Pull one closed Rho ground value out of a `Par`.
+///
+/// This deliberately rejects arbitrary process bodies. Runtime observations are
+/// public resting data values: scalars, unforgeable names, closed collection
+/// bodies, and rhocalc's tagged bag ABI.
+#[cfg(feature = "runtime-report")]
+pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationValue> {
+    if let Some(value) = par_as_unforgeable_observation(par) {
+        return Some(value);
+    }
+
+    match single_expr_instance(par)? {
+        ExprInstance::GBool(value) => Some(RuntimeObservationValue::Bool(*value)),
+        ExprInstance::GInt(value) => Some(RuntimeObservationValue::Int(*value)),
+        ExprInstance::GString(value) => Some(RuntimeObservationValue::Text(value.clone())),
+        ExprInstance::GUri(value) => Some(RuntimeObservationValue::Uri(value.clone())),
+        ExprInstance::GByteArray(value) => Some(RuntimeObservationValue::Bytes(value.clone())),
+        ExprInstance::GDouble(value) => Some(RuntimeObservationValue::DoubleBits(*value)),
+        ExprInstance::GBigInt(value) => Some(RuntimeObservationValue::BigIntBytes(value.clone())),
+        ExprInstance::GBigRat(value) => Some(RuntimeObservationValue::BigRationalBytes {
+            numerator: value.numerator.clone(),
+            denominator: value.denominator.clone(),
+        }),
+        ExprInstance::GFixedPoint(value) => Some(RuntimeObservationValue::FixedPointBytes {
+            unscaled: value.unscaled.clone(),
+            scale: value.scale,
+        }),
+        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
+            if let Some(entries) = decode_rhocalc_bag(list) {
+                Some(RuntimeObservationValue::Bag(entries))
+            } else {
+                Some(RuntimeObservationValue::List(decode_runtime_values(&list.ps)?))
+            }
+        },
+        ExprInstance::ETupleBody(tuple) if !tuple.connective_used => {
+            Some(RuntimeObservationValue::Tuple(decode_runtime_values(&tuple.ps)?))
+        },
+        ExprInstance::ESetBody(set) if set.remainder.is_none() && !set.connective_used => {
+            let mut values = decode_runtime_values(&set.ps)?;
+            values.sort();
+            Some(RuntimeObservationValue::Set(values))
+        },
+        ExprInstance::EMapBody(map) if map.remainder.is_none() && !map.connective_used => {
+            Some(RuntimeObservationValue::Map(decode_runtime_map(&map.kvs)?))
         },
         _ => None,
     }
@@ -412,6 +575,42 @@ pub async fn run_validated_program_with_call_and_read_bools(
     run_validated_program_with_call_and_read_ground(program, call, out_channel, par_as_bool).await
 }
 
+/// Build an in-memory `RhoRuntime`, inject a validated generated artifact to
+/// quiescence, and return every closed Rho ground value left resting on the
+/// quoted channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
+#[cfg(feature = "runtime-report")]
+pub async fn run_validated_program_and_read_runtime_values(
+    program: &ValidatedRhoProgram,
+    out_channel: &str,
+) -> Result<Vec<RuntimeObservationValue>, String> {
+    run_validated_program_and_read_ground(program, out_channel, par_as_runtime_observation_value)
+        .await
+}
+
+/// Build an in-memory `RhoRuntime`, inject a validated generated artifact
+/// composed with a dynamic call process, and return every closed Rho ground
+/// value left resting on the quoted channel `@"<out_channel>"`.
+///
+/// This is a raw shape-validated artifact helper. Generated backend observation
+/// should prefer `PlannedRhoBackend`.
+#[cfg(feature = "runtime-report")]
+pub async fn run_validated_program_with_call_and_read_runtime_values(
+    program: &ValidatedRhoProgram,
+    call: &Par,
+    out_channel: &str,
+) -> Result<Vec<RuntimeObservationValue>, String> {
+    run_validated_program_with_call_and_read_ground(
+        program,
+        call,
+        out_channel,
+        par_as_runtime_observation_value,
+    )
+    .await
+}
+
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every ground boolean left resting on the quoted
 /// channel `@"<out_channel>"`.
@@ -430,6 +629,17 @@ pub async fn run_normalized_par_for_oracle_and_read_strings(
     out_channel: &str,
 ) -> Result<Vec<String>, String> {
     run_par_and_read_ground(program, out_channel, par_as_string).await
+}
+
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every closed Rho ground value left resting on
+/// the quoted channel `@"<out_channel>"`.
+#[cfg(feature = "runtime-report")]
+pub async fn run_normalized_par_for_oracle_and_read_runtime_values(
+    program: &Par,
+    out_channel: &str,
+) -> Result<Vec<RuntimeObservationValue>, String> {
+    run_par_and_read_ground(program, out_channel, par_as_runtime_observation_value).await
 }
 
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an

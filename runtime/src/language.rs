@@ -117,6 +117,20 @@ pub enum RuntimeObservationValue {
     Text(String),
     TermDisplay(String),
     Bytes(Vec<u8>),
+    Uri(String),
+    DoubleBits(u64),
+    BigIntBytes(Vec<u8>),
+    BigRationalBytes { numerator: Vec<u8>, denominator: Vec<u8> },
+    FixedPointBytes { unscaled: Vec<u8>, scale: u32 },
+    PrivateName(Vec<u8>),
+    DeployId(Vec<u8>),
+    DeployerId(Vec<u8>),
+    SysAuthToken,
+    List(Vec<RuntimeObservationValue>),
+    Tuple(Vec<RuntimeObservationValue>),
+    Set(Vec<RuntimeObservationValue>),
+    Map(Vec<(RuntimeObservationValue, RuntimeObservationValue)>),
+    Bag(Vec<(RuntimeObservationValue, usize)>),
 }
 
 impl fmt::Display for RuntimeObservationValue {
@@ -127,8 +141,70 @@ impl fmt::Display for RuntimeObservationValue {
             RuntimeObservationValue::Text(value) => write!(f, "{:?}", value),
             RuntimeObservationValue::TermDisplay(value) => write!(f, "{}", value),
             RuntimeObservationValue::Bytes(value) => write!(f, "0x{}", hex_bytes(value)),
+            RuntimeObservationValue::Uri(value) => write!(f, "Uri({:?})", value),
+            RuntimeObservationValue::DoubleBits(value) => write!(f, "DoubleBits(0x{value:016x})"),
+            RuntimeObservationValue::BigIntBytes(value) => {
+                write!(f, "BigInt(0x{})", hex_bytes(value))
+            },
+            RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
+                write!(f, "BigRat(0x{}/0x{})", hex_bytes(numerator), hex_bytes(denominator))
+            },
+            RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                write!(f, "FixedPoint(0x{} scale {scale})", hex_bytes(unscaled))
+            },
+            RuntimeObservationValue::PrivateName(value) => {
+                write!(f, "Private(0x{})", hex_bytes(value))
+            },
+            RuntimeObservationValue::DeployId(value) => {
+                write!(f, "DeployId(0x{})", hex_bytes(value))
+            },
+            RuntimeObservationValue::DeployerId(value) => {
+                write!(f, "DeployerId(0x{})", hex_bytes(value))
+            },
+            RuntimeObservationValue::SysAuthToken => write!(f, "SysAuthToken"),
+            RuntimeObservationValue::List(values) => fmt_observation_sequence(f, "[", values, "]"),
+            RuntimeObservationValue::Tuple(values) => fmt_observation_sequence(f, "(", values, ")"),
+            RuntimeObservationValue::Set(values) => {
+                fmt_observation_sequence(f, "Set{", values, "}")
+            },
+            RuntimeObservationValue::Map(entries) => {
+                write!(f, "{{")?;
+                for (idx, (key, value)) in entries.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", key, value)?;
+                }
+                write!(f, "}}")
+            },
+            RuntimeObservationValue::Bag(entries) => {
+                write!(f, "Bag{{")?;
+                for (idx, (value, count)) in entries.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{} * {}", value, count)?;
+                }
+                write!(f, "}}")
+            },
         }
     }
+}
+
+fn fmt_observation_sequence(
+    f: &mut fmt::Formatter<'_>,
+    open: &str,
+    values: &[RuntimeObservationValue],
+    close: &str,
+) -> fmt::Result {
+    write!(f, "{open}")?;
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{value}")?;
+    }
+    write!(f, "{close}")
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {

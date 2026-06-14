@@ -7,13 +7,14 @@
 use std::sync::Arc;
 
 use mettail_ast::language::LanguageDef;
-use mettail_languages::rhocalc::{Bag, Int, List, Map, Proc, Str};
+use mettail_languages::rhocalc::{Bag, Int, List, Map, Name, Proc, Str};
 use mettail_rho_codegen::{
     plan_rho_default_backend_with_evidence_audit, RhoCoverageEvidence, RhoDefaultBackendEvidence,
 };
 use mettail_rho_runtime::{
-    lower_rhocalc_proc, rho_runtime_backed_rhocalc_strings, run_normalized_par_for_oracle,
-    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RHOCALC_BAG_ABI_TAG,
+    lower_rhocalc_proc, rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
+    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_strings,
+    PlannedRhoBackend, RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::{
     clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
@@ -83,6 +84,14 @@ fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
     PlannedRhoBackend::from_plan(plan)
 }
 
+fn quoted_name(value: &str) -> Name {
+    Name::NQuote(Arc::new(Proc::CastStr(Arc::new(Str::StringLit(value.to_string())))))
+}
+
+fn output_to_out(payload: Proc) -> Proc {
+    Proc::POutput(Arc::new(quoted_name("OUT")), Arc::new(payload))
+}
+
 async fn read_strings(source: &str) -> Vec<String> {
     let par = parse_lower(source);
     let mut values = run_normalized_par_for_oracle_and_read_strings(&par, "OUT")
@@ -92,11 +101,37 @@ async fn read_strings(source: &str) -> Vec<String> {
     values
 }
 
+async fn observe_runtime_values(payload: Proc) -> Vec<RuntimeObservationValue> {
+    let call = lower_rhocalc_proc(&output_to_out(payload)).expect("payload output should lower");
+    rhocalc_dynamic_backend()
+        .run_with_call_and_observe_runtime_values(&call, "OUT")
+        .await
+        .expect("structured runtime observation should execute")
+        .values
+}
+
 #[tokio::test]
 async fn single_channel_comm_executes_payload_process() {
     let source = r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#;
 
     assert_eq!(read_strings(source).await, vec!["p".to_string()]);
+}
+
+#[test]
+fn rhocalc_language_default_report_observes_runtime_values() {
+    let language = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT");
+    let term = language
+        .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
+        .expect("rhocalc source must parse through the generated language");
+
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("Rho-backed RhoCalc language must return a structured observation report");
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("Rho-backed RhoCalc report must expose OUT observations");
+
+    assert_eq!(out.values, vec![RuntimeObservationValue::Text("p".to_string())]);
 }
 
 #[test]
@@ -135,6 +170,52 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         compat_err
             .contains("RhoMachine backend for language RhoCalc returned runtime observations"),
         "{compat_err}"
+    );
+}
+
+#[tokio::test]
+async fn runtime_value_observation_preserves_rhocalc_list_map_and_bag_payloads() {
+    let list_values = observe_runtime_values(Proc::CastList(Arc::new(List::ListLit(vec![
+        Proc::CastInt(Arc::new(Int::NumLit(1))),
+        Proc::CastStr(Arc::new(Str::StringLit("two".to_string()))),
+    ]))))
+    .await;
+    assert_eq!(
+        list_values,
+        vec![RuntimeObservationValue::List(vec![
+            RuntimeObservationValue::Int(1),
+            RuntimeObservationValue::Text("two".to_string()),
+        ])]
+    );
+
+    let mut map_entries = mettail_runtime::HashMapLit::new();
+    map_entries.insert(
+        Proc::CastStr(Arc::new(Str::StringLit("key".to_string()))),
+        Proc::CastInt(Arc::new(Int::NumLit(7))),
+    );
+    let map_values =
+        observe_runtime_values(Proc::CastMap(Arc::new(Map::MapLit(map_entries)))).await;
+    assert_eq!(
+        map_values,
+        vec![RuntimeObservationValue::Map(vec![(
+            RuntimeObservationValue::Text("key".to_string()),
+            RuntimeObservationValue::Int(7),
+        )])]
+    );
+
+    let alpha = Proc::CastStr(Arc::new(Str::StringLit("alpha".to_string())));
+    let beta = Proc::CastStr(Arc::new(Str::StringLit("beta".to_string())));
+    let mut bag = mettail_runtime::HashBag::new();
+    bag.insert(beta);
+    bag.insert(alpha.clone());
+    bag.insert(alpha);
+    let bag_values = observe_runtime_values(Proc::CastBag(Arc::new(Bag::BagLit(bag)))).await;
+    assert_eq!(
+        bag_values,
+        vec![RuntimeObservationValue::Bag(vec![
+            (RuntimeObservationValue::Text("alpha".to_string()), 2),
+            (RuntimeObservationValue::Text("beta".to_string()), 1),
+        ])]
     );
 }
 

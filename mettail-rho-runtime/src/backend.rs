@@ -29,6 +29,11 @@ use crate::run::{
     run_validated_program_with_call_and_read_ints,
     run_validated_program_with_call_and_read_strings,
 };
+#[cfg(feature = "runtime-report")]
+use crate::run::{
+    run_validated_program_and_read_runtime_values,
+    run_validated_program_with_call_and_read_runtime_values,
+};
 
 /// Runtime boundary that produced a Rho observation report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +109,13 @@ impl IntoRuntimeObservationValue for String {
 impl IntoRuntimeObservationValue for Vec<u8> {
     fn into_runtime_observation_value(self) -> RuntimeObservationValue {
         RuntimeObservationValue::Bytes(self)
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl IntoRuntimeObservationValue for RuntimeObservationValue {
+    fn into_runtime_observation_value(self) -> RuntimeObservationValue {
+        self
     }
 }
 
@@ -338,6 +350,54 @@ impl PlannedRhoBackend {
             .await?;
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
+
+    /// Run the generated backend artifact and read closed Rho ground values
+    /// from a quoted output channel.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_and_read_runtime_values(
+        &self,
+        out_channel: &str,
+    ) -> Result<Vec<RuntimeObservationValue>, String> {
+        run_validated_program_and_read_runtime_values(self.program(), out_channel).await
+    }
+
+    /// Run the generated backend artifact together with a dynamic call process
+    /// and read closed Rho ground values from a quoted output channel.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_with_call_and_read_runtime_values(
+        &self,
+        call: &Par,
+        out_channel: &str,
+    ) -> Result<Vec<RuntimeObservationValue>, String> {
+        run_validated_program_with_call_and_read_runtime_values(self.program(), call, out_channel)
+            .await
+    }
+
+    /// Run the generated backend artifact and return a typed observation report
+    /// for closed Rho ground values resting on a quoted output channel.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_and_observe_runtime_values(
+        &self,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<RuntimeObservationValue>, String> {
+        let values = self.run_and_read_runtime_values(out_channel).await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+
+    /// Run the generated backend artifact with a dynamic call process and
+    /// return a typed observation report for closed Rho ground values resting on
+    /// a quoted output channel.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_with_call_and_observe_runtime_values(
+        &self,
+        call: &Par,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<RuntimeObservationValue>, String> {
+        let values = self
+            .run_with_call_and_read_runtime_values(call, out_channel)
+            .await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
 }
 
 /// Dynamic operation that a Rho-backed generated language wants to execute for
@@ -351,6 +411,9 @@ pub enum RhoBackendInvocation {
     RunAndObserveBools { out_channel: String },
     /// Run the planned backend and observe string values on the channel.
     RunAndObserveStrings { out_channel: String },
+    /// Run the planned backend and observe closed Rho ground values on the
+    /// channel.
+    RunAndObserveRuntimeValues { out_channel: String },
     /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
     /// integer values on the channel.
     RunWithCallAndObserveInts { call: Par, out_channel: String },
@@ -360,6 +423,9 @@ pub enum RhoBackendInvocation {
     /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
     /// string values on the channel.
     RunWithCallAndObserveStrings { call: Par, out_channel: String },
+    /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
+    /// closed Rho ground values on the channel.
+    RunWithCallAndObserveRuntimeValues { call: Par, out_channel: String },
 }
 
 #[cfg(feature = "runtime-report")]
@@ -386,6 +452,13 @@ impl RhoBackendInvocation {
                 .await?
                 .try_into_runtime_backend_report(evidence_refs)
                 .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
+            RhoBackendInvocation::RunAndObserveRuntimeValues { out_channel } => backend
+                .run_and_observe_runtime_values(&out_channel)
+                .await?
+                .try_into_runtime_backend_report(evidence_refs)
+                .map_err(|err| {
+                    format!("failed to convert Rho runtime value observation report: {err:?}")
+                }),
             RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel } => backend
                 .run_with_call_and_observe_ints(&call, &out_channel)
                 .await?
@@ -405,6 +478,15 @@ impl RhoBackendInvocation {
                 .await?
                 .try_into_runtime_backend_report(evidence_refs)
                 .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
+            RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { call, out_channel } => {
+                backend
+                    .run_with_call_and_observe_runtime_values(&call, &out_channel)
+                    .await?
+                    .try_into_runtime_backend_report(evidence_refs)
+                    .map_err(|err| {
+                        format!("failed to convert Rho runtime value observation report: {err:?}")
+                    })
+            },
         }
     }
 }

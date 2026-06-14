@@ -78,21 +78,32 @@ string.
 `RuntimeBackendReport` is the common user-facing envelope for Ascent,
 Dovetail, and Rho-backed execution. For Rho-backed execution the report is
 observation-shaped: it names a quoted RSpace channel and the ground values left
-resting there. The current planned Rho backend observes exactly the scalar
-payloads it can lower as native Rholang ground data:
+resting there. The planned Rho backend reads closed Rho ground data into
+`RuntimeObservationValue`; it rejects arbitrary processes, open collection
+remainders, connective bodies, sends, receives, bundles, and operator
+expression bodies as non-ground observations.
 
 | Rho ground payload | Generic runtime payload | Example lowerable rules |
 |---|---|---|
 | `GInt(n)` | `RuntimeObservationValue::Int(n)` | `AddInt`, `SubInt`, `MulInt`, `DivInt`, `ModInt`, unary `Neg` |
 | `GBool(b)` | `RuntimeObservationValue::Bool(b)` | `EqInt`, `NeInt`, `LtInt`, `GtInt`, `LtEqInt`, `GtEqInt`, the same six comparisons for `Bool` and `Str`, plus `And`, `Or`, `Not` |
 | `GString(s)` | `RuntimeObservationValue::Text(s)` | `Concat`, `AddStr`, ambiguity-witness key/payload facts |
+| `GUri(u)` | `RuntimeObservationValue::Uri(u)` | URI-valued native handlers |
+| `GByteArray(bytes)` | `RuntimeObservationValue::Bytes(bytes)` | byte-array native handlers and future bytecode-facing data |
+| `GDouble(bits)` | `RuntimeObservationValue::DoubleBits(bits)` | bit-exact `Float` payloads |
+| `GBigInt(bytes)` | `RuntimeObservationValue::BigIntBytes(bytes)` | arbitrary-precision integer payloads |
+| `GBigRat(n,d)` | `RuntimeObservationValue::BigRationalBytes { numerator: n, denominator: d }` | exact rational payloads |
+| `GFixedPoint(unscaled, scale)` | `RuntimeObservationValue::FixedPointBytes { unscaled, scale }` | fixed-point decimal payloads |
+| unforgeable private/deploy/deployer/sysauth names | `PrivateName`, `DeployId`, `DeployerId`, or `SysAuthToken` | private channels, ABI tags, and host authority names |
+| closed `EList`, `ETuple`, `ESet`, `EMap` | recursive `List`, `Tuple`, `Set`, or `Map` values | rhocalc and future language collection payloads |
+| rhocalc tagged bag ABI | `RuntimeObservationValue::Bag([(value,count),...])` | `Bag::BagLit` without losing multiplicity |
 
-Other generic payload variants, such as byte arrays, remain valid in the
-substrate-neutral runtime envelope but are not advertised by the planned Rho
-backend until the generated AST builder and artifact validator expose matching
-Rho-native literals. A production flip must therefore prove coverage for the
-actual observed payload domain, not merely rely on the envelope having a wider
-future-proof type.
+A production flip must still prove coverage for the actual observed payload
+domain of the language being flipped. The envelope being wider than one
+language's current needs is not, by itself, a coverage proof. The current
+rhocalc gate exercises the structured path by lowering list, map, and bag typed
+AST payloads to `rhoapi::Par`, executing them on the host RhoRuntime, and
+observing the corresponding recursive runtime values.
 
 Scalar operation coverage is type-sensitive. The generated Rho backend must not
 select Rholang operators from terminals alone because the same source token can
@@ -180,11 +191,13 @@ wrapped value. The Rocq model
 runtime capability list supports exactly the backends reported by the wrapper
 and that inherited non-Rho capabilities cannot remain default after wrapping.
 
-For the RhoCalc process path, the reusable mapper is
-`mettail_rho_runtime::rhocalc_observe_strings_invocation` or
-`mettail_rho_runtime::rhocalc_observe_ints_invocation`, and the convenience
-wrappers are `rho_runtime_backed_rhocalc_strings` and
-`rho_runtime_backed_rhocalc_ints`. They accept the generated
+For the RhoCalc process path, the reusable mappers include
+`mettail_rho_runtime::rhocalc_observe_values_invocation` for closed Rho ground
+values plus the narrower scalar helpers
+`rhocalc_observe_strings_invocation` and `rhocalc_observe_ints_invocation`.
+The convenience wrappers are `rho_runtime_backed_rhocalc_values`,
+`rho_runtime_backed_rhocalc_strings`, and `rho_runtime_backed_rhocalc_ints`.
+They accept the generated
 `RhoCalcLanguage` term returned by the retained MeTTaIL/WPDA parser, downcast it
 to a typed `Proc` alternative, lower that process directly to `rhoapi::Par`, and
 execute it as a dynamic call against a flip-gated `PlannedRhoBackend`. The

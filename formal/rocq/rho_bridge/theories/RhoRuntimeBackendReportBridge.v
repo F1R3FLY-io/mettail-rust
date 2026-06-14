@@ -4,11 +4,13 @@
  * boundary and never fabricates an Ascent-shaped result.
  *
  * Rust image:
- *   - `RhoObservationReport<T>::into_runtime_backend_report` maps typed Rho
+ *   - `RhoObservationReport<T>::try_into_runtime_backend_report` maps typed Rho
  *     values into `RuntimeObservationValue`.
  *   - The resulting `RuntimeBackendReport` has backend `RhoMachine`, artifact
  *     `RhoNormalizedAst`, exactly one channel observation, the same read-order
  *     values after payload mapping, and copied evidence references.
+ *   - Closed Rho ground payloads preserve scalar and structured collection
+ *     shape when they are read as generic runtime observation values.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -34,24 +36,90 @@ Section RhoRuntimeBackendReportBridge.
   Inductive RhoPayload : Type :=
   | RhoInt : nat -> RhoPayload
   | RhoBool : bool -> RhoPayload
-  | RhoText : nat -> RhoPayload.
+  | RhoText : nat -> RhoPayload
+  | RhoBytes : nat -> RhoPayload
+  | RhoPrivateName : nat -> RhoPayload
+  | RhoList : list RhoPayload -> RhoPayload
+  | RhoTuple : list RhoPayload -> RhoPayload
+  | RhoSet : list RhoPayload -> RhoPayload
+  | RhoMap : list (RhoPayload * RhoPayload) -> RhoPayload
+  | RhoBag : list (RhoPayload * nat) -> RhoPayload.
 
   Inductive RuntimeObservationValue : Type :=
   | RuntimeFact : nat -> RuntimeObservationValue
   | RuntimeInt : nat -> RuntimeObservationValue
   | RuntimeBool : bool -> RuntimeObservationValue
-  | RuntimeText : nat -> RuntimeObservationValue.
+  | RuntimeText : nat -> RuntimeObservationValue
+  | RuntimeBytes : nat -> RuntimeObservationValue
+  | RuntimePrivateName : nat -> RuntimeObservationValue
+  | RuntimeList : list RuntimeObservationValue -> RuntimeObservationValue
+  | RuntimeTuple : list RuntimeObservationValue -> RuntimeObservationValue
+  | RuntimeSet : list RuntimeObservationValue -> RuntimeObservationValue
+  | RuntimeMap : list (RuntimeObservationValue * RuntimeObservationValue) ->
+      RuntimeObservationValue
+  | RuntimeBag : list (RuntimeObservationValue * nat) ->
+      RuntimeObservationValue.
 
   Definition fact_to_runtime_value (fact : nat) : RuntimeObservationValue :=
     RuntimeFact fact.
 
-  Definition payload_to_runtime_value
-      (payload : RhoPayload) : RuntimeObservationValue :=
-    match payload with
-    | RhoInt value => RuntimeInt value
-    | RhoBool value => RuntimeBool value
-    | RhoText value => RuntimeText value
-    end.
+  Inductive payload_maps_to : RhoPayload -> RuntimeObservationValue -> Prop :=
+  | PayloadMapsInt : forall value,
+      payload_maps_to (RhoInt value) (RuntimeInt value)
+  | PayloadMapsBool : forall value,
+      payload_maps_to (RhoBool value) (RuntimeBool value)
+  | PayloadMapsText : forall value,
+      payload_maps_to (RhoText value) (RuntimeText value)
+  | PayloadMapsBytes : forall value,
+      payload_maps_to (RhoBytes value) (RuntimeBytes value)
+  | PayloadMapsPrivateName : forall value,
+      payload_maps_to (RhoPrivateName value) (RuntimePrivateName value)
+  | PayloadMapsListNil :
+      payload_maps_to (RhoList []) (RuntimeList [])
+  | PayloadMapsListCons :
+      forall rho_head rho_tail runtime_head runtime_tail,
+        payload_maps_to rho_head runtime_head ->
+        payload_maps_to (RhoList rho_tail) (RuntimeList runtime_tail) ->
+        payload_maps_to
+          (RhoList (rho_head :: rho_tail))
+          (RuntimeList (runtime_head :: runtime_tail))
+  | PayloadMapsTupleNil :
+      payload_maps_to (RhoTuple []) (RuntimeTuple [])
+  | PayloadMapsTupleCons :
+      forall rho_head rho_tail runtime_head runtime_tail,
+        payload_maps_to rho_head runtime_head ->
+        payload_maps_to (RhoTuple rho_tail) (RuntimeTuple runtime_tail) ->
+        payload_maps_to
+          (RhoTuple (rho_head :: rho_tail))
+          (RuntimeTuple (runtime_head :: runtime_tail))
+  | PayloadMapsSetNil :
+      payload_maps_to (RhoSet []) (RuntimeSet [])
+  | PayloadMapsSetCons :
+      forall rho_head rho_tail runtime_head runtime_tail,
+        payload_maps_to rho_head runtime_head ->
+        payload_maps_to (RhoSet rho_tail) (RuntimeSet runtime_tail) ->
+        payload_maps_to
+          (RhoSet (rho_head :: rho_tail))
+          (RuntimeSet (runtime_head :: runtime_tail))
+  | PayloadMapsMapNil :
+      payload_maps_to (RhoMap []) (RuntimeMap [])
+  | PayloadMapsMapCons :
+      forall rho_key rho_value rho_tail runtime_key runtime_value runtime_tail,
+        payload_maps_to rho_key runtime_key ->
+        payload_maps_to rho_value runtime_value ->
+        payload_maps_to (RhoMap rho_tail) (RuntimeMap runtime_tail) ->
+        payload_maps_to
+          (RhoMap ((rho_key, rho_value) :: rho_tail))
+          (RuntimeMap ((runtime_key, runtime_value) :: runtime_tail))
+  | PayloadMapsBagNil :
+      payload_maps_to (RhoBag []) (RuntimeBag [])
+  | PayloadMapsBagCons :
+      forall rho_value rho_tail runtime_value runtime_tail count,
+        payload_maps_to rho_value runtime_value ->
+        payload_maps_to (RhoBag rho_tail) (RuntimeBag runtime_tail) ->
+        payload_maps_to
+          (RhoBag ((rho_value, count) :: rho_tail))
+          (RuntimeBag ((runtime_value, count) :: runtime_tail)).
 
   Lemma fact_to_runtime_value_map_length : forall values,
     length (map fact_to_runtime_value values) = length values.
@@ -140,16 +208,55 @@ Section RhoRuntimeBackendReportBridge.
   Qed.
 
   Theorem runtime_payload_mapping_preserves_bool : forall value,
-    payload_to_runtime_value (RhoBool value) = RuntimeBool value.
-  Proof. intros value. reflexivity. Qed.
+    payload_maps_to (RhoBool value) (RuntimeBool value).
+  Proof. intros value. constructor. Qed.
 
   Theorem runtime_payload_mapping_preserves_int : forall value,
-    payload_to_runtime_value (RhoInt value) = RuntimeInt value.
-  Proof. intros value. reflexivity. Qed.
+    payload_maps_to (RhoInt value) (RuntimeInt value).
+  Proof. intros value. constructor. Qed.
 
   Theorem runtime_payload_mapping_preserves_text : forall value,
-    payload_to_runtime_value (RhoText value) = RuntimeText value.
-  Proof. intros value. reflexivity. Qed.
+    payload_maps_to (RhoText value) (RuntimeText value).
+  Proof. intros value. constructor. Qed.
+
+  Theorem runtime_payload_mapping_preserves_list_pair :
+    forall rho_left rho_right runtime_left runtime_right,
+      payload_maps_to rho_left runtime_left ->
+      payload_maps_to rho_right runtime_right ->
+      payload_maps_to
+        (RhoList [rho_left; rho_right])
+        (RuntimeList [runtime_left; runtime_right]).
+  Proof.
+    intros rho_left rho_right runtime_left runtime_right Hleft Hright.
+    apply PayloadMapsListCons; [exact Hleft |].
+    apply PayloadMapsListCons; [exact Hright |].
+    apply PayloadMapsListNil.
+  Qed.
+
+  Theorem runtime_payload_mapping_preserves_map_singleton :
+    forall rho_key rho_value runtime_key runtime_value,
+      payload_maps_to rho_key runtime_key ->
+      payload_maps_to rho_value runtime_value ->
+      payload_maps_to
+        (RhoMap [(rho_key, rho_value)])
+        (RuntimeMap [(runtime_key, runtime_value)]).
+  Proof.
+    intros rho_key rho_value runtime_key runtime_value Hkey Hvalue.
+    apply PayloadMapsMapCons; [exact Hkey | exact Hvalue |].
+    apply PayloadMapsMapNil.
+  Qed.
+
+  Theorem runtime_payload_mapping_preserves_bag_singleton :
+    forall rho_value runtime_value count,
+      payload_maps_to rho_value runtime_value ->
+      payload_maps_to
+        (RhoBag [(rho_value, count)])
+        (RuntimeBag [(runtime_value, count)]).
+  Proof.
+    intros rho_value runtime_value count Hvalue.
+    apply PayloadMapsBagCons; [exact Hvalue |].
+    apply PayloadMapsBagNil.
+  Qed.
 
   Theorem rho_runtime_report_preserves_evidence_refs :
     forall evidence_refs report,

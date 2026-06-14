@@ -672,6 +672,21 @@ text. After F1r3node executes the artifact, the result is a
 `RhoObservationReport` or generic `RuntimeBackendReport`, not a new
 `DovetailRunReport`.
 
+When the observed Rho datum is ground data, the runtime report preserves its
+shape explicitly. For example, a complete Dovetail report for a language-level
+collection payload may later produce:
+
+| Runtime observation value | Meaning after Rho execution |
+|---|---|
+| `RuntimeObservationValue::List([Int(1), Text("two")])` | a closed Rholang list payload was left on the observed channel |
+| `RuntimeObservationValue::Map([(Text("key"), Int(7))])` | a closed Rholang map payload was observed without display-string comparison |
+| `RuntimeObservationValue::Bag([(Text("alpha"), 2), (Text("beta"), 1)])` | a rhocalc tagged bag ABI was decoded with multiplicity preserved |
+
+Those values are runtime observations, not Dovetail report fields. The Dovetail
+report supplies the complete exact-keyed rewrite evidence that authorized the
+backend artifact; the runtime observation records what the Rho machine left in
+RSpace after executing that artifact.
+
 A bounded cyclic case would keep the same table shape but change the terminal
 metadata:
 

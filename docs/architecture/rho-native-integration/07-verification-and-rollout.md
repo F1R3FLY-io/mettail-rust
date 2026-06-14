@@ -33,7 +33,7 @@ The current proof and coverage sources are
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
-| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, and evidence references without fabricating an Ascent-shaped result |
+| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, evidence references, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
 | call-by-need observation and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, and bounded force admission respects lookahead and heap budgets |
@@ -46,7 +46,7 @@ The current proof and coverage sources are
 | per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires proof, oracle, exact coverage of rejected rules, artifact validation, scheduler-fairness, evidence-reference validity, and deadlock gates |
 | planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
-| runtime backend dispatch and wrapper | `RuntimeBackendDispatch.v`, `RhoLanguageBackendWrapper.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_rho_runtime::RhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Rho defaults return observation-shaped reports and are rejected by the legacy Ascent-shaped compatibility wrapper; the runtime report bridge preserves observation value tags for native `Int`, `Bool`, and text payloads; the Rho wrapper selects `RhoMachine` as the default, delegates non-Rho backend support to the inner generated language, requires a planned backend plus total typed invocation for Rho reports, and rejects Ascent-shaped seeded facts on the Rho path |
+| runtime backend dispatch and wrapper | `RuntimeBackendDispatch.v`, `RhoLanguageBackendWrapper.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_rho_runtime::RhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Rho defaults return observation-shaped reports and are rejected by the legacy Ascent-shaped compatibility wrapper; the runtime report bridge preserves observation value tags for native scalar payloads and structured list/map/bag payloads; the Rho wrapper selects `RhoMachine` as the default, delegates non-Rho backend support to the inner generated language, requires a planned backend plus total typed invocation for Rho reports, and rejects Ascent-shaped seeded facts on the Rho path |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
 | COMM schedule family and guarded joins | `RhoCommScheduleFamily.v`, `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | proves every finite independent-redex Rho reserve/fire schedule erases to the same visible observations as the direct Dovetail fire schedule, full permutation schedules enable completion, missing-redex prefixes reject completion, and permutation schedules preserve the fired-redex set; the generated process-calculus suite independently checks no deadlock, all 24 visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, weak-fair scheduler completion, and guarded-join non-consumption: a failed guard releases data, a valid join can commit afterward, and the rejected bad datum remains observable |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
@@ -86,13 +86,18 @@ convert through `try_into_runtime_backend_report`, which fails closed for future
 unknown artifact kinds. The generic report carries the selected backend,
 artifact kind, evidence references, and channel observations so callers can
 select `RhoMachine` without depending on Ascent-shaped fact materialization.
-The current planned Rho backend observes lowered native `Int`, `Bool`, and
-`Str` payloads as `RuntimeObservationValue::Int`, `RuntimeObservationValue::Bool`,
-and `RuntimeObservationValue::Text`; `RhoRuntimeBackendReportBridge.v` names the
-tag-preservation contract, and `mettail-rho-runtime/tests/run_calculator.rs`
-executes the full native calculator scalar family currently admitted by the
-lowerer on the real in-memory RhoRuntime: integer arithmetic, integer, boolean,
-and string comparisons, boolean `and`/`or`/`not`, and string concatenation.
+The current planned Rho backend observes lowered native scalar and collection
+payloads through `RuntimeObservationValue`: `Int`, `Bool`, and `Str` become
+`Int`, `Bool`, and `Text`; byte, URI, bit-exact numeric, unforgeable-name, list,
+tuple, set, map, and tagged rhocalc-bag payloads retain their own runtime value
+tags. `RhoRuntimeBackendReportBridge.v` names the tag-preservation contract.
+`mettail-rho-runtime/tests/run_calculator.rs` executes the full native
+calculator scalar family currently admitted by the lowerer on the real
+in-memory RhoRuntime: integer arithmetic, integer, boolean, and string
+comparisons, boolean `and`/`or`/`not`, and string concatenation.
+`mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the structured path by
+lowering rhocalc list, map, and bag typed AST payloads directly to `rhoapi::Par`
+and observing recursive runtime values from RSpace.
 The string-valued check is deliberately end-to-end at the wrapper boundary:
 the Calculator snippets `"rho" ++ "net"` and `"rho" + "net"` are parsed by the
 retained MeTTaIL/WPDA frontend, mapped to typed `Str::Concat` and `Str::AddStr`
