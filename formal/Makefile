@@ -182,6 +182,7 @@ rocq-rho-bridge-flip-gate: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoRuntimeBackendReportBridge.vo
 	$(MAKE) -C rocq/rho_bridge theories/DovetailLanguageBackendWrapper.vo
 	$(MAKE) -C rocq/rho_bridge theories/RhoLanguageBackendWrapper.vo
+	$(MAKE) -C rocq/rho_bridge theories/DovetailRhoLanguageBackendWrapper.vo
 	$(MAKE) -C rocq/rho_bridge theories/RuntimeBackendDispatch.vo
 
 process-rho-generated-check: require-capped

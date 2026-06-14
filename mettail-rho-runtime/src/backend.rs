@@ -20,9 +20,9 @@ use mettail_rho_codegen::{
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendCapability,
-    RuntimeBackendReport, RuntimeChannelObservation, RuntimeObservationReportError,
-    RuntimeObservationValue, SeedFacts, Term, TermType, VarTypeInfo, WeightedRewriteSeed,
-    WeightedSeedId,
+    RuntimeBackendReport, RuntimeChannelObservation, RuntimeDovetailRunReport,
+    RuntimeObservationReportError, RuntimeObservationValue, SeedFacts, Term, TermType, VarTypeInfo,
+    WeightedRewriteSeed, WeightedSeedId,
 };
 use models::rhoapi::Par;
 
@@ -620,6 +620,37 @@ fn run_rho_invocation_blocking(
         .map_err(|_| "Rho backend runtime worker panicked".to_string())?
 }
 
+#[cfg(feature = "runtime-report")]
+fn checked_complete_dovetail_report<L, D>(
+    language: &L,
+    term: &dyn Term,
+    dovetail: &D,
+) -> Result<RuntimeDovetailRunReport, String>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+{
+    let report = dovetail(term).map_err(|err| {
+        format!(
+            "Dovetail stage for language {} could not build a checked report: {err}",
+            language.name()
+        )
+    })?;
+    report.validate_shape().map_err(|err| {
+        format!(
+            "Dovetail stage for language {} produced malformed report: {err}",
+            language.name()
+        )
+    })?;
+    report.assert_complete().map_err(|status| {
+        format!(
+            "Dovetail stage for language {} produced incomplete report: {status}",
+            language.name()
+        )
+    })?;
+    Ok(report)
+}
+
 /// Runtime adapter that makes a generated language select a flip-gated
 /// [`PlannedRhoBackend`] through the generic [`Language`] report API.
 ///
@@ -633,6 +664,23 @@ fn run_rho_invocation_blocking(
 pub struct RhoRuntimeBackedLanguage<L, F> {
     inner: L,
     backend: PlannedRhoBackend,
+    invocation: F,
+}
+
+/// Production runtime adapter for the replacement path:
+///
+/// ```text
+/// parsed MeTTaIL term -> checked Dovetail report -> Rho AST invocation -> RSpace observations
+/// ```
+///
+/// `RhoMachine` is the default executable backend. `Dovetail` remains exposed
+/// as the checked intermediate report for diagnostics and query tooling. The
+/// legacy Ascent runtime is not exposed through this wrapper.
+#[cfg(feature = "runtime-report")]
+pub struct DovetailRhoRuntimeBackedLanguage<L, D, F> {
+    inner: L,
+    backend: PlannedRhoBackend,
+    dovetail: D,
     invocation: F,
 }
 
@@ -684,6 +732,48 @@ where
         }
 
         Ok(Self { inner, backend, invocation })
+    }
+
+    pub fn inner(&self) -> &L {
+        &self.inner
+    }
+
+    pub fn backend(&self) -> &PlannedRhoBackend {
+        &self.backend
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<L, D, F> DovetailRhoRuntimeBackedLanguage<L, D, F>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
+        + Send
+        + Sync,
+{
+    /// Install a generated language as a Dovetail-checked, Rho-executed
+    /// production runtime.
+    ///
+    /// The `dovetail` closure is the language-specific rewrite compiler. The
+    /// `invocation` closure receives the already shape-validated, complete
+    /// Dovetail report and must produce a Rho AST invocation, not source text.
+    pub fn new(
+        inner: L,
+        backend: PlannedRhoBackend,
+        dovetail: D,
+        invocation: F,
+    ) -> Result<Self, RhoRuntimeBackedLanguageError> {
+        let language_name = inner.name();
+        let plan_language_name = backend.plan().language_name();
+        if language_name != plan_language_name {
+            return Err(RhoRuntimeBackedLanguageError::LanguagePlanMismatch {
+                language_name: language_name.to_string(),
+                plan_language_name: plan_language_name.to_string(),
+            });
+        }
+
+        Ok(Self { inner, backend, dovetail, invocation })
     }
 
     pub fn inner(&self) -> &L {
@@ -908,7 +998,241 @@ where
         term: &dyn Term,
         evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
     ) -> bool {
-        self.inner.decompose_into_cek(term, evaluator)
+        let _ = (term, evaluator);
+        false
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<L, D, F> Language for DovetailRhoRuntimeBackedLanguage<L, D, F>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
+        + Send
+        + Sync,
+{
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn metadata(&self) -> &'static dyn mettail_runtime::LanguageMetadata {
+        self.inner.metadata()
+    }
+
+    fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        self.inner.parse_term(input)
+    }
+
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        self.inner.parse_term_for_env(input)
+    }
+
+    fn parse_term_with_weighted_seed_ids(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
+        self.inner.parse_term_with_weighted_seed_ids(input)
+    }
+
+    fn parse_term_with_weighted_rewrite_seeds(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedRewriteSeed>), String> {
+        self.inner.parse_term_with_weighted_rewrite_seeds(input)
+    }
+
+    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
+        let _ = term;
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+            self.name()
+        ))
+    }
+
+    fn default_runtime_backend(&self) -> RuntimeBackend {
+        RuntimeBackend::RhoMachine
+    }
+
+    fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
+        vec![
+            RuntimeBackendCapability {
+                backend: RuntimeBackend::RhoMachine,
+                is_default: true,
+            },
+            RuntimeBackendCapability {
+                backend: RuntimeBackend::Dovetail,
+                is_default: false,
+            },
+        ]
+    }
+
+    fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
+        match backend {
+            RuntimeBackend::RhoMachine | RuntimeBackend::Dovetail => true,
+            RuntimeBackend::Ascent => false,
+            _ => false,
+        }
+    }
+
+    fn run_backend_report(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::RhoMachine => {
+                let dovetail_report =
+                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail)?;
+                let invocation = (self.invocation)(term, &dovetail_report).map_err(|err| {
+                    format!(
+                        "RhoMachine backend for language {} could not build an AST invocation from the checked Dovetail report: {err}",
+                        self.name()
+                    )
+                })?;
+                run_rho_invocation_blocking(self.backend.clone(), invocation)
+            },
+            RuntimeBackend::Dovetail => {
+                let dovetail_report =
+                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail)?;
+                RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
+                    format!(
+                        "Dovetail stage for language {} produced malformed report: {err}",
+                        self.name()
+                    )
+                })
+            },
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+                self.name()
+            )),
+            _ => Err(format!(
+                "{} backend is not exposed by Dovetail+Rho-backed language {}",
+                backend,
+                self.name()
+            )),
+        }
+    }
+
+    fn run_ascent_with_facts(
+        &self,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<AscentResults, String> {
+        let _ = (term, facts);
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+            self.name()
+        ))
+    }
+
+    fn run_backend_report_with_facts(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::RhoMachine | RuntimeBackend::Dovetail if facts.is_empty() => {
+                self.run_backend_report(backend, term)
+            },
+            RuntimeBackend::RhoMachine | RuntimeBackend::Dovetail => Err(format!(
+                "{} backend for language {} does not accept Ascent-shaped seeded facts",
+                backend,
+                self.name()
+            )),
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+                self.name()
+            )),
+            _ => Err(format!(
+                "{} backend is not exposed by Dovetail+Rho-backed language {}",
+                backend,
+                self.name()
+            )),
+        }
+    }
+
+    fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
+        self.inner.try_direct_eval(term)
+    }
+
+    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+        self.inner.normalize_term(term)
+    }
+
+    fn format_term(&self, term: &dyn Term) -> String {
+        self.inner.format_term(term)
+    }
+
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        self.inner.create_env()
+    }
+
+    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
+        self.inner.add_to_env(env, name, term)
+    }
+
+    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
+        self.inner.remove_from_env(env, name)
+    }
+
+    fn clear_env(&self, env: &mut dyn Any) {
+        self.inner.clear_env(env)
+    }
+
+    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
+        self.inner.substitute_env(term, env)
+    }
+
+    fn substitute_env_preserve_structure(
+        &self,
+        term: &dyn Term,
+        env: &dyn Any,
+    ) -> Result<Box<dyn Term>, String> {
+        self.inner.substitute_env_preserve_structure(term, env)
+    }
+
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+        self.inner.list_env(env)
+    }
+
+    fn set_env_comment(
+        &self,
+        env: &mut dyn Any,
+        name: &str,
+        comment: String,
+    ) -> Result<(), String> {
+        self.inner.set_env_comment(env, name, comment)
+    }
+
+    fn is_env_empty(&self, env: &dyn Any) -> bool {
+        self.inner.is_env_empty(env)
+    }
+
+    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
+        self.inner.get_env_term(env, name)
+    }
+
+    fn infer_term_type(&self, term: &dyn Term) -> TermType {
+        self.inner.infer_term_type(term)
+    }
+
+    fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
+        self.inner.infer_var_types(term)
+    }
+
+    fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
+        self.inner.infer_var_type(term, var_name)
+    }
+
+    fn decompose_into_cek(
+        &self,
+        term: &dyn Term,
+        evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
+    ) -> bool {
+        let _ = (term, evaluator);
+        false
     }
 }
 

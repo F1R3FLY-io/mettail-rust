@@ -42,4 +42,5 @@ theories/RhoObservationReportBoundary.v
 theories/RhoRuntimeBackendReportBridge.v
 theories/DovetailLanguageBackendWrapper.v
 theories/RhoLanguageBackendWrapper.v
+theories/DovetailRhoLanguageBackendWrapper.v
 theories/OracleQuotientEquivalence.v

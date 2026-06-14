@@ -11,9 +11,14 @@ use mettail_rho_codegen::{
     CallByNeedInitialState, CallByNeedThunkSpec, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
-use mettail_rho_runtime::{PlannedRhoBackend, RhoBackendInvocation, RhoRuntimeBackedLanguage};
+use mettail_rho_runtime::{
+    DovetailRhoRuntimeBackedLanguage, PlannedRhoBackend, RhoBackendInvocation,
+    RhoRuntimeBackedLanguage,
+};
 use mettail_runtime::{
-    Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue, SeedFacts, Term,
+    Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendOutput,
+    RuntimeDovetailCompleteness, RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
+    RuntimeObservationValue, SeedFacts, Term,
 };
 
 const CALC_RUN_FRAGMENT: &str = r#"
@@ -84,6 +89,36 @@ fn calculator_backend() -> PlannedRhoBackend {
         "wrapper-installed Calculator plan must preserve its source LanguageDef name"
     );
     backend
+}
+
+fn complete_dovetail_report_for(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+    let key = format!("calculator:{}", term).into_bytes();
+    Ok(RuntimeDovetailRunReport {
+        roots: vec![key.clone()],
+        root_ordinals: vec![0],
+        terms: vec![RuntimeDovetailTermRecord {
+            ordinal: 0,
+            class_id: 0,
+            key,
+            op_display: format!("{}", term),
+            weight_display: "0".to_string(),
+            is_root: true,
+        }],
+        derivation_edges: Vec::new(),
+        completeness: RuntimeDovetailCompleteness::Complete,
+    })
+}
+
+fn bounded_dovetail_report_for(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+    let mut report = complete_dovetail_report_for(term)?;
+    report.completeness = RuntimeDovetailCompleteness::BoundedByCycleCut;
+    Ok(report)
+}
+
+fn malformed_dovetail_report_for(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+    let mut report = complete_dovetail_report_for(term)?;
+    report.root_ordinals[0] = 1;
+    Ok(report)
 }
 
 fn int_literal(term: &Int) -> Result<i64, String> {
@@ -741,6 +776,11 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     )
     .expect("Calculator plan should install on CalculatorLanguage");
     let term = language.parse_term("2 + 3").expect("calculator parse");
+    let mut evaluator = mettail_prattail::cek_eval::CekEvaluator::new(format!("{}", term));
+    assert!(
+        !language.decompose_into_cek(term.as_ref(), &mut evaluator),
+        "Rho runtime wrapper must not expose the legacy CEK/CESK decomposition path"
+    );
 
     assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
@@ -858,6 +898,118 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT Str plus observations");
     assert_eq!(add_str_out.values, vec![RuntimeObservationValue::Text("rhonet".to_string())]);
+}
+
+#[test]
+fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    let observed_dovetail_roots = Arc::new(AtomicUsize::new(0));
+    let observed_dovetail_roots_for_invocation = Arc::clone(&observed_dovetail_roots);
+    let language = DovetailRhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        calculator_backend(),
+        complete_dovetail_report_for,
+        move |term, report| {
+            report
+                .assert_complete()
+                .expect("adapter must pass only complete Dovetail reports to Rho invocation");
+            observed_dovetail_roots_for_invocation.fetch_add(report.root_count(), Ordering::SeqCst);
+            calculator_invocation(term)
+        },
+    )
+    .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+    let mut evaluator = mettail_prattail::cek_eval::CekEvaluator::new(format!("{}", term));
+    assert!(
+        !language.decompose_into_cek(term.as_ref(), &mut evaluator),
+        "Dovetail+Rho production wrapper must not expose the legacy CEK/CESK decomposition path"
+    );
+
+    assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+    assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+    assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
+    assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+    assert_eq!(language.runtime_backend_capabilities().len(), 2);
+    assert_eq!(language.runtime_backend_capabilities()[0].backend, RuntimeBackend::RhoMachine);
+    assert!(language.runtime_backend_capabilities()[0].is_default);
+    assert_eq!(language.runtime_backend_capabilities()[1].backend, RuntimeBackend::Dovetail);
+    assert!(!language.runtime_backend_capabilities()[1].is_default);
+
+    let dovetail_report = language
+        .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+        .expect("explicit Dovetail report should expose the checked intermediate");
+    assert_eq!(dovetail_report.backend(), RuntimeBackend::Dovetail);
+    assert_eq!(dovetail_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+    let RuntimeBackendOutput::Dovetail(dovetail_output) = dovetail_report.into_output() else {
+        panic!("Dovetail backend must return Dovetail report output");
+    };
+    assert!(dovetail_output.is_complete());
+    assert_eq!(dovetail_output.root_count(), 1);
+    assert_eq!(observed_dovetail_roots.load(Ordering::SeqCst), 0);
+
+    let rho_report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("Rho default backend must execute after checked Dovetail compilation");
+    assert_eq!(rho_report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(rho_report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+    let out = rho_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
+    assert_eq!(observed_dovetail_roots.load(Ordering::SeqCst), 1);
+
+    let ascent_err = language
+        .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
+        .expect_err("Dovetail+Rho production wrapper must not expose Ascent");
+    assert!(ascent_err.contains("legacy Ascent runtime is not exposed"), "{ascent_err}");
+
+    let mut facts = SeedFacts::new();
+    facts.insert("certified".to_string(), vec![vec!["2 + 3".to_string()]]);
+    let seeded_err = language
+        .run_default_backend_report_with_facts(term.as_ref(), &facts)
+        .expect_err("Dovetail+Rho path must reject Ascent-shaped fact seeding");
+    assert!(
+        seeded_err.contains("does not accept Ascent-shaped seeded facts"),
+        "{seeded_err}"
+    );
+}
+
+#[test]
+fn dovetail_rho_runtime_backed_language_rejects_bad_dovetail_stage() {
+    let bounded_language = DovetailRhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        calculator_backend(),
+        bounded_dovetail_report_for,
+        |term, _report| calculator_invocation(term),
+    )
+    .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");
+    let term = bounded_language
+        .parse_term("2 + 3")
+        .expect("calculator parse");
+    let bounded_err = bounded_language
+        .run_default_backend_report(term.as_ref())
+        .expect_err("bounded Dovetail reports must not reach Rho execution");
+    assert!(
+        bounded_err.contains("produced incomplete report: BoundedByCycleCut"),
+        "{bounded_err}"
+    );
+
+    let malformed_language = DovetailRhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        calculator_backend(),
+        malformed_dovetail_report_for,
+        |term, _report| calculator_invocation(term),
+    )
+    .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");
+    let malformed_err = malformed_language
+        .run_default_backend_report(term.as_ref())
+        .expect_err("malformed Dovetail reports must not reach Rho execution");
+    assert!(malformed_err.contains("produced malformed report"), "{malformed_err}");
+    assert!(malformed_err.contains("term ordinal 1"), "{malformed_err}");
 }
 
 #[test]

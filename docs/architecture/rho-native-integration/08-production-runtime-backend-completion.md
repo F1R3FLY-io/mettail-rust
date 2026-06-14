@@ -18,7 +18,7 @@ The target state is:
 
 The full Rho-native runtime path is therefore:
 
-`typed MeTTaIL term -> Dovetail report -> RhoNet plan -> rhoapi::Par -> RhoRuntime -> RSpace observations -> RuntimeBackendReport`
+`typed MeTTaIL term -> RuntimeDovetailRunReport(Complete, well-formed) -> RhoBackendInvocation(rhoapi::Par) -> PlannedRhoBackend -> RhoRuntime -> RSpace observations -> RuntimeBackendReport`
 
 The direct Dovetail runtime-backend path stops at the checked report:
 
@@ -51,7 +51,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
 | `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend without fabricating Ascent-shaped graphs, accepting malformed report tables, or accepting incomplete cycle-bounded reports as exhaustive |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
-| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, `RhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime or allowing observation-shaped output under non-Rho backend/artifact identities |
+| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
 | CESK runtime path | legacy runtime backend | unavailable as the selected production backend once the Rho gate is satisfied for a language |
@@ -314,11 +314,13 @@ Steps:
 
 Generated language crates remain substrate-neutral. They expose `Language`,
 metadata, parsing, environments, type inference, direct evaluation helpers, and
-the explicit Ascent oracle. The Rho runtime crate supplies
-`RhoRuntimeBackedLanguage<L, F>` when a language has passed the Rho flip gate:
+the explicit transition oracle. The Rho runtime crate supplies the composed
+production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
+has passed both the Dovetail rewrite-coverage gate and the Rho flip gate:
 
 ```text
-Given a generated language L, a planned Rho backend B, and an invocation mapper F:
+Given a generated language L, a planned Rho backend B, a Dovetail compiler D,
+and an invocation mapper F:
   build a RhoDefaultBackendPlan with plan_rho_default_backend
   require exact rejected-rule and guard coverage
   require normalized rhoapi::Par artifact validation
@@ -326,19 +328,25 @@ Given a generated language L, a planned Rho backend B, and an invocation mapper 
   require B.plan.language_name = L.name before wrapper installation
   keep L as the owner of parsing, environments, and type inference
   expose RhoMachine as the default runtime backend through Language methods
-  delegate explicit non-Rho backend requests back to L
-  map each typed term to a RhoBackendInvocation through F
+  expose Dovetail as a non-default checked intermediate report
+  reject Ascent as a supported production runtime backend
+  build RuntimeDovetailRunReport through D
+  require the Dovetail report to validate shape
+  require the Dovetail report to be Complete, not BoundedByCycleCut
+  pass the checked Dovetail report to F
+  map the typed term plus checked report to a RhoBackendInvocation through F
   execute B with the invocation as normalized rhoapi::Par
   if F returns a planned call-by-need thunk, execute that thunk plan through the same report boundary
   return RuntimeBackendReport with RhoMachine, RhoNormalizedAst, and observations
-  reject Ascent-shaped seeded facts on the Rho path unless the fact set is empty
+  reject Ascent-shaped seeded facts on the Dovetail and Rho paths unless the fact set is empty
 ```
 
 The wrapper is intentionally outside the generated language crate. This avoids
 a Cargo cycle with `mettail-rho-runtime` while still allowing a verified
-language instance to become Rho-default. The wrapper does not parse generated
-Rholang text; invocation mappers construct `rhoapi::Par` values directly, and
-future bytecode variants can use the same report boundary.
+language instance to become Dovetail-checked and Rho-executed by construction.
+The wrapper does not parse generated Rholang text; invocation mappers construct
+`rhoapi::Par` values directly from the typed term and checked Dovetail report,
+and future bytecode variants can use the same report boundary.
 The runtime integration tests construct `RhoDefaultBackendPlan` values through
 the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
