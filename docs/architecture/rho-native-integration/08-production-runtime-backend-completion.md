@@ -376,6 +376,10 @@ an installed `Dovetail` report over the selected default report: a selected
 capability carries the complete checked rewrite graph. A complete Dovetail
 report is graph evidence; a `BoundedByCycleCut` report is not proof of
 termination or temporal-property satisfaction.
+Test utilities that only need output membership, such as equation-symmetry
+smoke checks, consume the generic `RuntimeBackendReport` output projection and
+therefore accept Ascent graphs, Dovetail report summaries, or Rho observations
+without forcing an Ascent-shaped graph.
 The runtime integration tests construct `RhoDefaultBackendPlan` values through
 the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
