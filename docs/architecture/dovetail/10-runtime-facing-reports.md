@@ -15,6 +15,31 @@ rewrite engine just proved, enumerated, and bounded. It is called a report
 because it reports checked facts to another component, not because it is a
 diagnostic transcript for a human.
 
+## Reader's Mental Model
+
+The shortest useful definition is:
+
+`Dovetail report = checked rewrite result + exact identities + boundary status`
+
+That definition matters because Dovetail is not just an evaluator. It is the
+component that explains a rewrite search well enough for another runtime to
+consume it without reopening Dovetail internals. A report is therefore the
+handoff object between "the rewrite engine has finished a checked phase" and
+"a backend, oracle, or tool may now act on the checked result."
+
+Use this quick test when reading or changing the code:
+
+| If the value answers... | It is probably... |
+|---|---|
+| "How did saturation stop?" | `SatReport` |
+| "What did extraction emit, and was that emission complete?" | `Extraction<T>` |
+| "What exact derivation forest may a backend or oracle consume?" | `DovetailRunReport` |
+| "What did a runtime observe after executing a backend artifact?" | Not a Dovetail report; it is a runtime observation |
+
+So a report is not an extra logging layer. It is the reason Dovetail can remain
+substrate-neutral while still giving Rho, Ascent-oracle checks, tests, and
+future bytecode paths the same exact semantic payload.
+
 ## Definitions
 
 | Term | Meaning |

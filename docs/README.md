@@ -33,6 +33,7 @@ machine backend:
 - **`architecture/dovetail/07-formal-verification-and-tests.md`** - Mechanized proof and test coverage matrix
 - **`architecture/dovetail/08-engineering-handoff.md`** - Maintenance guide for future agents and implementers
 - **`architecture/dovetail/09-worked-example.md`** - End-to-end example from rewrite rules to checked extraction
+- **`architecture/dovetail/10-runtime-facing-reports.md`** - What Dovetail reports are, why a rewrite engine needs them, and how consumers must handle them
 
 ---
 

@@ -17,7 +17,8 @@ For principals:
 
 1. [Executive Brief](00-executive-brief.md)
 2. [Engine Architecture](02-engine-architecture.md)
-3. [Formal Verification and Tests](07-formal-verification-and-tests.md)
+3. [Runtime-Facing Reports](10-runtime-facing-reports.md)
+4. [Formal Verification and Tests](07-formal-verification-and-tests.md)
 
 For implementers:
 
