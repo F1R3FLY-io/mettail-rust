@@ -968,7 +968,7 @@ fn call_by_need_plans_match_ascent_golden_for_supported_scalar_families() {
 #[test]
 fn rho_runtime_backed_language_dispatches_default_report() {
     let language = RhoRuntimeBackedLanguage::new(
-        CalculatorLanguage,
+        FragmentMatchedCalculatorLanguage,
         calculator_backend(),
         calculator_invocation,
     )
@@ -1224,7 +1224,7 @@ fn dovetail_rho_runtime_backed_language_rejects_bad_dovetail_stage() {
 #[test]
 fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
     let language = RhoRuntimeBackedLanguage::new(
-        CalculatorLanguage,
+        FragmentMatchedCalculatorLanguage,
         calculator_backend(),
         calculator_call_by_need_invocation,
     )
@@ -1267,6 +1267,23 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
             "CBN report must preserve textual eval marker for {snippet:?}"
         );
     }
+}
+
+#[test]
+fn rho_runtime_backed_language_rejects_fragment_plan_for_full_calculator() {
+    let result = RhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        calculator_backend(),
+        calculator_invocation,
+    );
+    let err = match result {
+        Ok(_) => panic!("fragment Rho plan must not install on the full generated Calculator"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch { .. }),
+        "{err}"
+    );
 }
 
 #[test]

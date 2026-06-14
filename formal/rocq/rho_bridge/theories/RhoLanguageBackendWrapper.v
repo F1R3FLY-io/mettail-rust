@@ -18,7 +18,7 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
-From Stdlib Require Import Bool List.
+From Stdlib Require Import Bool List PeanoNat.
 
 Import ListNotations.
 
@@ -43,16 +43,22 @@ Section RhoLanguageBackendWrapper.
   }.
 
   Record InnerLanguage : Type := {
+    inner_definition_id : nat;
     inner_supports_ascent : bool;
     inner_supports_dovetail : bool
   }.
 
   Record RhoWrapper : Type := {
     wrapped_inner : InnerLanguage;
+    rho_plan_definition_id : nat;
     planned_rho_backend : bool;
-    plan_matches_language : bool;
     invocation_total : bool
   }.
+
+  Definition plan_matches_language (wrapper : RhoWrapper) : bool :=
+    Nat.eqb
+      (rho_plan_definition_id wrapper)
+      (inner_definition_id (wrapped_inner wrapper)).
 
   Definition wrapper_installs_rho (wrapper : RhoWrapper) : bool :=
     planned_rho_backend wrapper && plan_matches_language wrapper.
@@ -168,12 +174,19 @@ Section RhoLanguageBackendWrapper.
         (wrapper_runtime_capabilities wrapper) backend =
       wrapper_supports wrapper backend.
   Proof.
-    intros [[supports_ascent supports_dovetail] planned same_language invocation] backend.
+    intros [[definition_id supports_ascent supports_dovetail]
+              plan_id planned invocation] backend.
+    unfold wrapper_runtime_capabilities, wrapper_supports,
+      wrapper_installs_rho, plan_matches_language,
+      demoted_inner_capabilities, inner_supports, capabilities_support,
+      backend_eqb.
     destruct backend;
       destruct planned;
-      destruct same_language;
+      simpl;
+      destruct (plan_id =? definition_id);
       destruct supports_ascent;
       destruct supports_dovetail;
+      simpl;
       reflexivity.
   Qed.
 
@@ -182,14 +195,18 @@ Section RhoLanguageBackendWrapper.
       exists tail,
         wrapper_runtime_capabilities
           {| wrapped_inner := inner;
+             rho_plan_definition_id := inner_definition_id inner;
              planned_rho_backend := true;
-             plan_matches_language := true;
              invocation_total := invocation |} =
         {| capability_backend := RhoMachine;
            capability_is_default := true |} :: tail.
   Proof.
     intros inner invocation.
     exists (demoted_inner_capabilities inner).
+    unfold wrapper_runtime_capabilities, wrapper_installs_rho,
+      plan_matches_language.
+    simpl.
+    rewrite Nat.eqb_refl.
     reflexivity.
   Qed.
 
@@ -205,12 +222,19 @@ Section RhoLanguageBackendWrapper.
       (fun capability => no_non_rho_default capability = true)
       (wrapper_runtime_capabilities wrapper).
   Proof.
-    intros [[supports_ascent supports_dovetail] planned same_language invocation].
+    intros [[definition_id supports_ascent supports_dovetail]
+              plan_id planned invocation].
+    unfold wrapper_runtime_capabilities, wrapper_installs_rho,
+      plan_matches_language, demoted_inner_capabilities,
+      no_non_rho_default.
     destruct planned;
-      destruct same_language;
+      simpl;
+      destruct (plan_id =? definition_id);
       destruct supports_ascent;
       destruct supports_dovetail;
-      repeat constructor.
+      simpl;
+      repeat constructor;
+      reflexivity.
   Qed.
 
   Theorem wrapper_rejects_ascent_support : forall wrapper,
@@ -261,25 +285,38 @@ Section RhoLanguageBackendWrapper.
   Theorem planned_total_wrapper_default_report_runs : forall inner,
     wrapper_default_report_runs
       {| wrapped_inner := inner;
+         rho_plan_definition_id := inner_definition_id inner;
          planned_rho_backend := true;
-         plan_matches_language := true;
          invocation_total := true |} = true.
-  Proof. intros inner. reflexivity. Qed.
+  Proof.
+    intros inner.
+    unfold wrapper_default_report_runs, wrapper_installs_rho,
+      plan_matches_language.
+    simpl.
+    rewrite Nat.eqb_refl.
+    reflexivity.
+  Qed.
 
-  Theorem mismatched_plan_never_installs_rho : forall inner planned invocation,
+  Theorem mismatched_plan_never_installs_rho :
+    forall inner plan_id planned invocation,
+    Nat.eqb plan_id (inner_definition_id inner) = false ->
     wrapper_supports
       {| wrapped_inner := inner;
+         rho_plan_definition_id := plan_id;
          planned_rho_backend := planned;
-         plan_matches_language := false;
          invocation_total := invocation |}
       RhoMachine = false /\
     wrapper_default_report_runs
       {| wrapped_inner := inner;
+         rho_plan_definition_id := plan_id;
          planned_rho_backend := planned;
-         plan_matches_language := false;
          invocation_total := invocation |} = false.
   Proof.
-    intros inner planned invocation.
+    intros inner plan_id planned invocation Hmismatch.
+    unfold wrapper_supports, wrapper_default_report_runs,
+      wrapper_installs_rho, plan_matches_language.
+    simpl.
+    rewrite Hmismatch.
     destruct planned; simpl; split; reflexivity.
   Qed.
 

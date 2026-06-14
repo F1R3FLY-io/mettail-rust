@@ -809,6 +809,32 @@ impl fmt::Display for RhoRuntimeBackedLanguageError {
 impl std::error::Error for RhoRuntimeBackedLanguageError {}
 
 #[cfg(feature = "runtime-report")]
+fn require_matching_plan_definition<L>(
+    inner: &L,
+    backend: &PlannedRhoBackend,
+) -> Result<String, RhoRuntimeBackedLanguageError>
+where
+    L: Language,
+{
+    let language_name = inner.name();
+    let language_definition_fingerprint =
+        inner.metadata().definition_fingerprint().ok_or_else(|| {
+            RhoRuntimeBackedLanguageError::MissingLanguageDefinitionFingerprint {
+                language_name: language_name.to_string(),
+            }
+        })?;
+    let plan_definition_fingerprint = backend.plan().definition_fingerprint();
+    if language_definition_fingerprint != plan_definition_fingerprint {
+        return Err(RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch {
+            language_name: language_name.to_string(),
+            language_definition_fingerprint: language_definition_fingerprint.to_string(),
+            plan_definition_fingerprint: plan_definition_fingerprint.to_string(),
+        });
+    }
+    Ok(language_definition_fingerprint.to_string())
+}
+
+#[cfg(feature = "runtime-report")]
 impl<L, F> RhoRuntimeBackedLanguage<L, F>
 where
     L: Language,
@@ -827,6 +853,7 @@ where
                 plan_language_name: plan_language_name.to_string(),
             });
         }
+        require_matching_plan_definition(&inner, &backend)?;
 
         Ok(Self { inner, backend, invocation })
     }
@@ -869,31 +896,18 @@ where
                 plan_language_name: plan_language_name.to_string(),
             });
         }
-        let language_definition_fingerprint = inner
-            .metadata()
-            .definition_fingerprint()
-            .ok_or_else(|| RhoRuntimeBackedLanguageError::MissingLanguageDefinitionFingerprint {
-                language_name: language_name.to_string(),
-            })?;
-        let plan_definition_fingerprint = backend.plan().definition_fingerprint();
-        if language_definition_fingerprint != plan_definition_fingerprint {
-            return Err(RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch {
-                language_name: language_name.to_string(),
-                language_definition_fingerprint: language_definition_fingerprint.to_string(),
-                plan_definition_fingerprint: plan_definition_fingerprint.to_string(),
-            });
-        }
+        let language_definition_fingerprint = require_matching_plan_definition(&inner, &backend)?;
         if language_definition_fingerprint != dovetail.definition_fingerprint() {
             return Err(RhoRuntimeBackedLanguageError::DovetailCompilerDefinitionMismatch {
                 language_name: language_name.to_string(),
-                language_definition_fingerprint: language_definition_fingerprint.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.clone(),
                 compiler_definition_fingerprint: dovetail.definition_fingerprint().to_string(),
             });
         }
         if language_definition_fingerprint != invocation.definition_fingerprint() {
             return Err(RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch {
                 language_name: language_name.to_string(),
-                language_definition_fingerprint: language_definition_fingerprint.to_string(),
+                language_definition_fingerprint,
                 compiler_definition_fingerprint: invocation.definition_fingerprint().to_string(),
             });
         }
