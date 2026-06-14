@@ -32,6 +32,12 @@ MeTTaIL/WPDA, an implementation discussion about rewrite correctness is usually
 about Dovetail, and an implementation discussion about host parallel execution
 is usually about the Rho backend and F1r3node.
 
+For the shortest cohesive walkthrough of those handoffs, read
+[architecture/runtime-backend-spine.md](architecture/runtime-backend-spine.md)
+before entering the detailed Dovetail and Rho-native suites. That page defines
+the exact artifact chain, the two production runtime lanes, and the terms that
+must not be conflated.
+
 ```
 ┌─────────────────────────────────────────────┐
 │         User Theory Definition              │
@@ -71,8 +77,9 @@ is usually about the Rho backend and F1r3node.
 
 ## Rewrite Engine Architecture Tracks
 
-The diagram above describes the existing generated Ascent execution path, which
-is legacy for production rewrite execution. Dovetail itself is documented in
+The diagram above is historical context for the existing generated Ascent
+execution path, which is legacy for production rewrite execution. Dovetail
+itself is documented in
 [architecture/dovetail/README.md](architecture/dovetail/README.md). That suite
 covers the standalone rewrite engine: exact-key equality saturation, rules as
 data, weighted-tree-automaton interpretation, checked extraction, cyclic

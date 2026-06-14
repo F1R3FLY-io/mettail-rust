@@ -11,6 +11,7 @@ These documents are actively maintained and should always reflect the current st
 - **`main_goals.md`** - Project vision, objectives, and roadmap
 - **`getting_started.md`** - Quick start guide for new users
 - **`architecture.md`** - System design and implementation overview
+- **`architecture/runtime-backend-spine.md`** - Cohesive artifact spine for the Dovetail and Rho runtime-backend replacement path
 - **`architecture/dovetail/README.md`** - Standalone Dovetail rewrite engine architecture, design, proof, and handoff suite
 - **`architecture/rho-native-integration/README.md`** - Rho-native MeTTaIL / Dovetail / F1r3node integration architecture
 - **`contributing.md`** - How to contribute to the project
@@ -52,16 +53,18 @@ and Rho machine integration:
 - **`architecture/rho-native-integration/05-rspace-parallel-scheduling.md`** - How RSpace schedules enabled rewrites in parallel
 - **`architecture/rho-native-integration/06-correctness-and-coverage.md`** - Mathematical prose proofs and non-claims
 - **`architecture/rho-native-integration/07-verification-and-rollout.md`** - M-RHO verification and rollout gates
+- **`architecture/rho-native-integration/08-production-runtime-backend-completion.md`** - Production completion gates for replacing the CESK runtime backend path
 - **`architecture/rho-native-integration/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/rho-native-integration/validate.sh`** - Reproducible local validation for the suite
 
 The cohesive runtime-backend reading path is:
 
-1. **`architecture/dovetail/README.md`** - Dovetail's standalone contract and the direct Dovetail runtime lane
-2. **`architecture/dovetail/10-runtime-facing-reports.md`** - the report artifact that connects Dovetail to downstream consumers
-3. **`architecture/rho-native-integration/README.md`** - the full artifact spine from `language!` to `RuntimeBackendReport`
-4. **`architecture/rho-native-integration/02-end-to-end-architecture.md`** - the stage-by-stage runtime backend replacement path
-5. **`architecture/rho-native-integration/04-rho-native-dataflow-lowering.md`** - the AST-first Rho-native lowering details
+1. **`architecture/runtime-backend-spine.md`** - the compact artifact spine and ownership boundaries
+2. **`architecture/dovetail/README.md`** - Dovetail's standalone contract and the direct Dovetail runtime lane
+3. **`architecture/dovetail/10-runtime-facing-reports.md`** - the report artifact that connects Dovetail to downstream consumers
+4. **`architecture/rho-native-integration/README.md`** - the full artifact spine from `language!` to `RuntimeBackendReport`
+5. **`architecture/rho-native-integration/02-end-to-end-architecture.md`** - the stage-by-stage runtime backend replacement path
+6. **`architecture/rho-native-integration/04-rho-native-dataflow-lowering.md`** - the AST-first Rho-native lowering details
 
 ---
 
