@@ -1222,11 +1222,15 @@ pub trait Language: Send + Sync {
     /// Returns `true` if the term was decomposed (frames were pushed),
     /// `false` if the language has no CEK decomposition (default).
     ///
-    /// The same evaluator + observer pattern supports all consumers:
-    /// - REPL `exec`: `NullEvalObserver` + `run_to_completion()`
-    /// - nREPL: same, with `reset_with_term()` for env persistence
+    /// The same evaluator + observer pattern supports explicit CEK/CESK consumers:
+    /// - nREPL: `NullEvalObserver` + `run_to_completion()`, with `reset_with_term()`
+    ///   for env persistence
     /// - CLI debugger: custom observer + `step()` loop
     /// - DAP server: protocol observer + `step()` loop
+    ///
+    /// REPL `exec` uses `run_default_backend_report()` so selected backend
+    /// metadata, Dovetail reports, and Rho-machine observations stay
+    /// authoritative at the command boundary.
     fn decompose_into_cek(
         &self,
         term: &dyn Term,

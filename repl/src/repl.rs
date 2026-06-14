@@ -42,6 +42,223 @@ fn extract_parsed_input(line: &str) -> &str {
     line
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_runtime::{
+        BackendCapabilityDef, LanguageMetadata, RuntimeBackendArtifact, RuntimeBackendReport,
+        RuntimeChannelObservation, RuntimeObservationValue, Term, TermType, VarTypeInfo,
+    };
+    use std::fmt;
+
+    #[derive(Debug, Clone)]
+    struct TestTerm {
+        display: &'static str,
+        id: u64,
+    }
+
+    impl fmt::Display for TestTerm {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.display)
+        }
+    }
+
+    impl Term for TestTerm {
+        fn clone_box(&self) -> Box<dyn Term> {
+            Box::new(self.clone())
+        }
+
+        fn term_id(&self) -> u64 {
+            self.id
+        }
+
+        fn term_eq(&self, other: &dyn Term) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<TestTerm>()
+                .is_some_and(|rhs| rhs.id == self.id && rhs.display == self.display)
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    struct RhoDefaultMetadata;
+
+    static RHO_DEFAULT_BACKENDS: &[BackendCapabilityDef] = &[
+        BackendCapabilityDef {
+            backend: RuntimeBackend::RhoMachine,
+            is_default: true,
+            evidence_refs: &["repl-test:rho-default"],
+        },
+        BackendCapabilityDef {
+            backend: RuntimeBackend::Ascent,
+            is_default: false,
+            evidence_refs: &["repl-test:ascent-reference"],
+        },
+    ];
+
+    impl LanguageMetadata for RhoDefaultMetadata {
+        fn name(&self) -> &'static str {
+            "BypassProbe"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            RHO_DEFAULT_BACKENDS
+        }
+    }
+
+    static RHO_DEFAULT_METADATA: RhoDefaultMetadata = RhoDefaultMetadata;
+
+    struct RhoDefaultLanguage;
+
+    impl Language for RhoDefaultLanguage {
+        fn name(&self) -> &'static str {
+            "BypassProbe"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &RHO_DEFAULT_METADATA
+        }
+
+        fn parse_term(&self, _input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(TestTerm { display: "parsed", id: 1 }))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            panic!("REPL exec must not fall back to Ascent for a Rho-default language")
+        }
+
+        fn run_backend_report(
+            &self,
+            backend: RuntimeBackend,
+            _term: &dyn Term,
+        ) -> Result<RuntimeBackendReport, String> {
+            match backend {
+                RuntimeBackend::RhoMachine => RuntimeBackendReport::try_observations(
+                    RuntimeBackend::RhoMachine,
+                    RuntimeBackendArtifact::RhoNormalizedAst,
+                    vec![RuntimeChannelObservation::new(
+                        "OUT",
+                        vec![RuntimeObservationValue::Text("rho-backend".to_string())],
+                    )],
+                    vec!["repl-test:rho-default".to_string()],
+                )
+                .map_err(|err| err.to_string()),
+                other => Err(format!("unexpected backend: {other}")),
+            }
+        }
+
+        fn try_direct_eval(&self, _term: &dyn Term) -> Option<Box<dyn Term>> {
+            Some(Box::new(TestTerm { display: "direct-eval", id: 2 }))
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
+    #[test]
+    fn exec_uses_selected_backend_report_instead_of_legacy_direct_eval() {
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(RhoDefaultLanguage));
+        let mut repl = Repl::new(registry).expect("test REPL can be constructed");
+
+        repl.load_language("BypassProbe")
+            .expect("test language is registered");
+        repl.cmd_exec_term("input")
+            .expect("Rho backend observations should execute through exec");
+
+        let report = repl
+            .state
+            .backend_report()
+            .expect("exec stores the selected runtime backend report");
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+        assert_eq!(report.evidence_refs(), &["repl-test:rho-default"]);
+
+        let out = report
+            .observations_for_channel("OUT")
+            .expect("Rho backend report carries the OUT channel");
+        assert_eq!(
+            out.membership_fingerprint(),
+            std::collections::BTreeSet::from([RuntimeObservationValue::Text(
+                "rho-backend".to_string()
+            )])
+        );
+        assert_eq!(format!("{}", repl.state.current_term().unwrap()), "\"rho-backend\"");
+    }
+}
+
 /// Fallback term used when a displayed normal form cannot be reparsed.
 ///
 /// This keeps REPL state navigable for display/history even when display syntax
@@ -348,7 +565,7 @@ impl Repl {
         println!();
         println!("{}", "  Term Input:".yellow());
         println!(
-            "    {}    Execute a program (direct evaluation → result)",
+            "    {}    Execute a program with the selected runtime backend",
             "exec <term>".green()
         );
         println!(
@@ -445,7 +662,7 @@ impl Repl {
         println!();
 
         println!("{} Language loaded successfully!", "✓".green());
-        println!("  {}  direct evaluation (result)", "'exec <term>'".cyan());
+        println!("  {}  selected runtime backend (result)", "'exec <term>'".cyan());
         println!(
             "  {}  step-by-step, then {} to reduce",
             "'step <term>'".cyan(),
@@ -1035,13 +1252,18 @@ impl Repl {
 
     /// Step-by-step execution: run Ascent but leave current term at the initial term
     /// so the user can type `apply 0` to apply one rewrite at a time.
-    /// Step mode never uses direct eval so the user always sees the initial term and can apply rewrites.
+    /// Step mode requires an Ascent-shaped graph so the user always sees the initial
+    /// term and can apply rewrites.
     fn cmd_step_term(&mut self, term_str: &str) -> Result<()> {
         self.exec_or_step_term(term_str.trim(), /* step_mode: */ true)
     }
 
-    /// Shared parse + substitute + (optionally) direct-eval + Ascent. When step_mode is true,
-    /// we never use try_direct_eval so the initial term is always shown and rewrites can be applied.
+    /// Shared parse + substitute + selected backend execution.
+    ///
+    /// `exec` always uses the language's selected default runtime backend so
+    /// non-Ascent backends can return their checked runtime reports. `step`
+    /// requires the selected backend to produce an Ascent-shaped graph because
+    /// graph-navigation commands operate over Ascent results.
     fn exec_or_step_term(&mut self, term_str: &str, step_mode: bool) -> Result<()> {
         let language_name = self
             .state
@@ -1120,58 +1342,7 @@ impl Repl {
         // Normalize (beta-reduce Apply/MApply of Lam/MLam) before evaluation
         let term = language.normalize_term(term.as_ref());
 
-        // Direct eval only for exec: step must always run Ascent and show the initial term
-        if !step_mode {
-            let start_time = Instant::now();
-            if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
-                let elapsed = start_time.elapsed();
-                print!("Direct eval... ");
-                println!("Time taken: {:?}", elapsed);
-                println!("{}", "Done!".green());
-                let result_id = result_term.term_id();
-                let results = AscentResults::from_single_term(result_term.as_ref());
-                println!();
-                println!("{}", "Current term (result):".bold());
-                let formatted = format_term_pretty(&format!("{}", result_term));
-                println!("{}", formatted.cyan());
-                println!();
-                self.state
-                    .set_term_with_id(result_term, results, result_id)?;
-                return Ok(());
-            }
-
-            // CEK evaluation: decompose AST into frames, drive to normal form
-            {
-                let mut evaluator = mettail_runtime::CekEvaluator::new(format!("{}", term));
-                if language.decompose_into_cek(term.as_ref(), &mut evaluator) {
-                    let start = Instant::now();
-                    let mut obs = mettail_runtime::NullEvalObserver;
-                    match evaluator.run_to_completion(&mut obs) {
-                        Ok(result_str) => {
-                            let elapsed = start.elapsed();
-                            print!("CEK eval... ");
-                            println!("Time taken: {:?}", elapsed);
-                            if let Ok(result_term) = language.parse_term(&result_str) {
-                                let result_id = result_term.term_id();
-                                let results = AscentResults::from_single_term(result_term.as_ref());
-                                println!("{}", "Done!".green());
-                                println!();
-                                println!("{}", "Current term (result):".bold());
-                                println!("{}", format_term_pretty(&result_str).cyan());
-                                println!();
-                                self.state
-                                    .set_term_with_id(result_term, results, result_id)?;
-                                return Ok(());
-                            }
-                        },
-                        Err(_) => {}, // Fall through to the selected rewrite backend
-                    }
-                }
-            }
-        }
-
-        // Full rewrite graph using the language's selected backend (always for
-        // step, fallback for exec).
+        // Execute using the language's selected backend.
         let backend = language.default_runtime_backend();
         if step_mode && backend != RuntimeBackend::Ascent {
             anyhow::bail!(
