@@ -2,17 +2,15 @@
 
 use mettail_languages::{calculator as calc, rhocalc};
 use mettail_runtime::Language;
+use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
 
 fn calc_nf_displays(input: &str) -> Vec<String> {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term(input).expect("parse");
-    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect()
+    let report = run_default_backend_report(&lang, term.as_ref(), "calculator numeric cast eval")
+        .expect("default backend");
+    report_semantic_outputs(&report)
 }
 
 fn calc_normal_form(input: &str, expected: &str) {
@@ -26,11 +24,13 @@ fn calc_normal_form(input: &str, expected: &str) {
     );
 }
 
-fn rho_run(input: &str) -> mettail_runtime::AscentResults {
+fn rho_nf_displays(input: &str) -> Vec<String> {
     mettail_runtime::clear_var_cache();
     let lang = rhocalc::RhoCalcLanguage;
     let term = lang.parse_term(input).expect("parse");
-    lang.run_ascent(term.as_ref()).expect("run_ascent")
+    let report = run_default_backend_report(&lang, term.as_ref(), "rhocalc numeric cast eval")
+        .expect("default backend");
+    report_semantic_outputs(&report)
 }
 
 #[test]
@@ -71,22 +71,18 @@ fn calc_repl_parse_preserves_huge_n_suffix() {
     let t = lang
         .parse_term_for_env("32478132567813256718n")
         .expect("parse_term_for_env");
-    let results = lang.run_ascent(t.as_ref()).expect("run");
-    let ok = results
-        .normal_forms()
+    let report =
+        run_default_backend_report(&lang, t.as_ref(), "calculator repl bigint eval").expect("run");
+    let displays = report_semantic_outputs(&report);
+    let ok = displays
         .iter()
-        .any(|nf| nf.display == "32478132567813256718" || nf.display == "32478132567813256718n");
-    assert!(ok, "unexpected NFs: {:?}", results.normal_forms());
+        .any(|display| display == "32478132567813256718" || display == "32478132567813256718n");
+    assert!(ok, "unexpected backend outputs: {:?}", displays);
 }
 
 #[test]
 fn rho_bigint_from_sci_float() {
-    let results = rho_run("{bigint(3.14e100)}");
-    let nfs: Vec<_> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let nfs = rho_nf_displays("{bigint(3.14e100)}");
     assert!(
         nfs.iter()
             .any(|d| !d.contains("error") && d.chars().filter(|c| c.is_ascii_digit()).count() > 80),

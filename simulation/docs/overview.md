@@ -169,15 +169,15 @@ The simulation pipeline processes each test case through the following stages:
           │ term: Box<dyn Term>
           ▼
    ┌─────────────┐
-   │  Rewrite    │  language.run_ascent(term) → AscentResults
-   │  (Ascent)   │  Rewrites to saturation via Datalog fixpoint
+   │  Backend    │  language.run_default_backend_report(term)
+   │  Report     │  RuntimeBackendReport from selected backend
    └──────┬──────┘
-          │ AscentResults { all_terms, rewrites, equivalences }
+          │ Ascent graph or runtime observations
           ▼
    ┌─────────────┐
-   │  BFS Walk   │  Iterative BFS from initial term to normal form
-   │  Rewrite    │  Records each rewrite step, checks invariants
-   │  Graph      │  Tracks morphology metrics
+   │ Interpret   │  Ascent: BFS from initial term to normal form
+   │ Report      │  Observations: terminal runtime-observation outcome
+   │             │  Records observable steps and morphology metrics
    └──────┬──────┘
           │
           ▼

@@ -12,37 +12,33 @@
 
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::Language;
+use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Shared helpers
 // ════════════════════════════════════════════════════════════════════════════════
 
-/// Parse input via the Calculator language, run Ascent, assert `expected` is
-/// among the normal-form display strings.
+/// Parse input via the Calculator language, run the selected default backend,
+/// assert `expected` is among the semantic backend outputs.
 fn calc_normal_form(input: &str, expected: &str) {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang
         .parse_term(input)
         .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-    let results = lang
-        .run_ascent(term.as_ref())
-        .unwrap_or_else(|e| panic!("run_ascent({:?}) failed: {}", input, e));
-    let displays: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = run_default_backend_report(&lang, term.as_ref(), "calculator edge-case eval")
+        .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+    let displays: Vec<String> = report_semantic_outputs(&report);
     assert!(
         displays.contains(&expected.to_string()),
-        "expected normal form {:?} for {:?}, got: {:?}",
+        "expected backend output {:?} for {:?}, got: {:?}",
         expected,
         input,
         displays,
     );
 }
 
-/// Parse input via the Calculator language — assert parse succeeds (no Ascent).
+/// Parse input via the Calculator language; assert parse succeeds.
 fn calc_parses(input: &str) {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
@@ -61,30 +57,28 @@ fn calc_parse_fails(input: &str) {
     );
 }
 
-/// Parse + Ascent via a generic Language, assert `expected` is among normal forms.
+/// Parse + selected default backend via a generic Language; assert `expected`
+/// is among semantic backend outputs.
+#[cfg(feature = "composition")]
 fn lang_normal_form(lang: &dyn Language, input: &str, expected: &str) {
     mettail_runtime::clear_var_cache();
     let term = lang
         .parse_term(input)
         .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-    let results = lang
-        .run_ascent(term.as_ref())
-        .unwrap_or_else(|e| panic!("run_ascent({:?}) failed: {}", input, e));
-    let displays: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
+    let report = run_default_backend_report(lang, term.as_ref(), "language edge-case eval")
+        .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+    let displays: Vec<String> = report_semantic_outputs(&report);
     assert!(
         displays.contains(&expected.to_string()),
-        "expected normal form {:?} for {:?}, got: {:?}",
+        "expected backend output {:?} for {:?}, got: {:?}",
         expected,
         input,
         displays,
     );
 }
 
-/// Parse via a generic Language — assert parse succeeds (no Ascent).
+/// Parse via a generic Language; assert parse succeeds.
+#[cfg(feature = "composition")]
 fn lang_parses(lang: &dyn Language, input: &str) {
     mettail_runtime::clear_var_cache();
     lang.parse_term(input)
@@ -1047,6 +1041,7 @@ mod negative_tests {
 // Category 14: Lambda Language Edge Cases (~10 tests, parse-only)
 // ════════════════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "lambda")]
 mod lambda_edge_cases {
     use mettail_languages::lambda::Term;
 
@@ -1110,6 +1105,7 @@ mod lambda_edge_cases {
 // Category 15: Ambient Calculus Edge Cases (~10 tests, parse-only)
 // ════════════════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "ambient")]
 mod ambient_edge_cases {
     use mettail_languages::ambient::Proc;
 
@@ -1173,9 +1169,11 @@ mod ambient_edge_cases {
 // Category 16: RhoCalc Edge Cases (~16 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "rhocalc")]
 mod rhocalc_edge_cases {
     use mettail_languages::rhocalc::{Proc, RhoCalcLanguage};
     use mettail_runtime::Language;
+    use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
 
     fn rhocalc_parses(input: &str) {
         mettail_runtime::clear_var_cache();
@@ -1188,14 +1186,9 @@ mod rhocalc_edge_cases {
         let term = lang
             .parse_term(input)
             .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-        let results = lang
-            .run_ascent(term.as_ref())
-            .unwrap_or_else(|e| panic!("run_ascent({:?}) failed: {}", input, e));
-        let nfs: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = run_default_backend_report(&lang, term.as_ref(), "rhocalc edge-case eval")
+            .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+        let nfs: Vec<String> = report_semantic_outputs(&report);
 
         // Parse expected in a fresh context for display comparison
         mettail_runtime::clear_var_cache();
@@ -1307,6 +1300,7 @@ mod rhocalc_edge_cases {
 // Category 17: Composition Language Edge Cases (~10 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "composition")]
 mod composition_edge_cases {
     use super::*;
     use mettail_languages::composition::composed_lang::CalcLambdaLanguage;
@@ -1370,9 +1364,11 @@ mod composition_edge_cases {
 // Category 18: LedTest Edge Cases (~9 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "led-test")]
 mod led_test_edge_cases {
     use mettail_languages::led_test::LedTestLanguage;
     use mettail_runtime::Language;
+    use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
 
     fn led_normal_form(input: &str, expected: &str) {
         mettail_runtime::clear_var_cache();
@@ -1380,17 +1376,12 @@ mod led_test_edge_cases {
         let term = lang
             .parse_term(input)
             .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-        let results = lang
-            .run_ascent(term.as_ref())
-            .unwrap_or_else(|e| panic!("run_ascent({:?}) failed: {}", input, e));
-        let displays: Vec<String> = results
-            .normal_forms()
-            .iter()
-            .map(|nf| nf.display.clone())
-            .collect();
+        let report = run_default_backend_report(&lang, term.as_ref(), "led edge-case eval")
+            .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+        let displays: Vec<String> = report_semantic_outputs(&report);
         assert!(
             displays.contains(&expected.to_string()),
-            "expected normal form {:?} for {:?}, got: {:?}",
+            "expected backend output {:?} for {:?}, got: {:?}",
             expected,
             input,
             displays,
@@ -1510,7 +1501,8 @@ mod precedence_associativity_stress {
     #[test]
     fn right_assoc_power() {
         // 2 ^ 3 ^ 2 = 2 ^ (3^2) = 2 ^ 9 = 512 (right-associative)
-        // Uses direct eval() since Ascent doesn't fully reduce chained power.
+        // Uses direct eval() because this test targets parser associativity,
+        // not runtime-backend reduction.
         use mettail_languages::calculator::Int;
         mettail_runtime::clear_var_cache();
         let result = Int::parse("2 ^ 3 ^ 2").expect("should parse");

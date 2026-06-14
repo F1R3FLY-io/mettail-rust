@@ -119,6 +119,7 @@ identity.
 
 | Subsystem | Relationship |
 |---|---|
+| `language!` specification macro | Upstream source of language truth; Dovetail consumes its generated semantic inventory rather than replacing it. |
 | WPDA parser | Upstream producer of typed terms; not replaced by Dovetail. |
 | Ascent | Legacy production rewrite backend and reference/oracle path during rollout. |
 | CESK runtime backend | Runtime backend path being replaced by Dovetail plus Rho-native execution. |

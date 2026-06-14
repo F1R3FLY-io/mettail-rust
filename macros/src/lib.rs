@@ -8,6 +8,8 @@
 //! - Metadata for REPL introspection
 //! - Language implementation struct
 
+#[cfg(test)]
+mod doc_examples;
 mod gen;
 mod logic;
 

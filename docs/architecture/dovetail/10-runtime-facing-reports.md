@@ -15,6 +15,10 @@ rewrite engine just proved, enumerated, and bounded. It is called a report
 because it reports checked facts to another component, not because it is a
 diagnostic transcript for a human.
 
+The chapter is organized in the same order a consumer encounters the artifact:
+first the mental model, then the phase boundaries and invariants, then a
+concrete `language!`-to-Rho handoff example.
+
 ## Reader's Mental Model
 
 The shortest useful definition is:
@@ -162,33 +166,6 @@ The core distinction is:
 
 `RhoObservationReport = Rho-runtime observation artifact`
 
-## Report Means Certificate, Not Debug Output
-
-The word "report" is used in Dovetail in the engineering sense of a typed
-result artifact. The artifact is part of the API contract. It can be stored,
-compared, checked by proofs, converted into a runtime envelope, or lowered by a
-backend.
-
-It is not:
-
-| Not a report meaning | Why Dovetail rejects that interpretation |
-|---|---|
-| debug log | logs are optional narration; Dovetail reports are semantic artifacts |
-| pretty-printed output | display text can conflate distinct exact derivations |
-| Boolean success flag | a rewrite run can be bounded, cyclic, partial, or converged |
-| single normal form | MeTTaIL rewrite semantics can preserve multiple valid alternatives |
-| Rho observation | observations are produced after a runtime consumes a report |
-
-A report answers questions that a plain return value cannot answer:
-
-| Question | Where the answer lives |
-|---|---|
-| Did saturation converge, or did a bound stop it? | `SatReport::outcome` |
-| Which extracted roots were produced, and in what order? | `DovetailRunReport::roots` |
-| Which exact derivation tree does each root identify? | `DovetailRunReport::terms` and `derivation_edges` |
-| Is the extracted set exhaustive? | `DovetailRunReport::completeness` |
-| May a downstream runtime treat the result as complete? | `DovetailRunReport::assert_complete()` |
-
 ## Naming Discipline
 
 Dovetail documentation and code should use the noun precisely:
@@ -207,14 +184,13 @@ lowered into a Rho artifact; a Rho runtime observation is produced later by the
 Rho machine. Treating those as the same object would blur compilation evidence
 with execution evidence.
 
-## Why Reports Exist
+## Phase Boundaries and Invariants
 
-A plain result shape such as `rewrite(input) -> value` is too weak for
-Dovetail. It loses the difference between an exhaustive finite result and a
-finite prefix from a cyclic derivation space. It also hides whether two visible
-values came from distinct exact derivation trees.
+A plain result shape such as `rewrite(input) -> value` is too weak for the
+Dovetail pipeline because it loses both boundary status and exact derivation
+identity. Dovetail therefore uses explicit artifacts at each phase boundary:
 
-Dovetail therefore uses the following boundary:
+The boundaries are:
 
 `saturate(seed, rules, bounds) -> SatReport`
 
@@ -308,6 +284,63 @@ is `DovetailRunReport<L, W>`.
 Ordinals are stable positions inside one report. They are not semantic
 identities. The semantic identity is always `ContentKey`.
 
+The three report shapes look like this at the API boundary:
+
+```rust
+SatReport {
+    outcome: SaturationOutcome::Converged
+        | SaturationOutcome::NodeLimit
+        | SaturationOutcome::IterationLimit,
+    stats: SatStats {
+        iterations: usize,
+        total_merges: usize,
+    },
+}
+```
+
+```rust
+Extraction<T> {
+    value: T,
+    completeness: ExtractionCompleteness::Complete
+        | ExtractionCompleteness::BoundedByCycleCut,
+}
+```
+
+```rust
+DovetailRunReport<L, W> {
+    roots: Vec<ContentKey>,
+    root_ordinals: Vec<usize>,
+    terms: Vec<DovetailTermRecord<L, W>>,
+    derivation_edges: Vec<DovetailDerivationEdge>,
+    completeness: ExtractionCompleteness,
+}
+```
+
+and each term and derivation-edge record has the following logical shape:
+
+```rust
+DovetailTermRecord<L, W> {
+    ordinal: usize,
+    class: EClassId,
+    key: ContentKey,
+    op: L,
+    weight: W,
+    is_root: bool,
+}
+
+DovetailDerivationEdge {
+    ordinal: usize,
+    parent_key: ContentKey,
+    child_key: ContentKey,
+    child_index: usize,
+}
+```
+
+These snippets show field shape, not a serialization format. In persisted or
+cross-process contexts, the exact `ContentKey` bytes are the identity-bearing
+payload. Human-friendly labels such as `k_for_a_x` below are abbreviations for
+exact byte streams.
+
 ## Literate Pseudocode
 
 ```text
@@ -382,6 +415,261 @@ The edge list preserves ordered children:
 The report is therefore a compact graph-shaped representation of the extracted
 derivation forest. It is not merely the displayed values `S(Z)` and
 `Add(Z, S(Z))`.
+
+## MiniRhoFor Report Example
+
+This example uses a fictitious but `language!`-shaped language to show the
+whole path from a language specification to runtime dispatch. It is a tiny
+name-passing fragment with parallel composition, output, and a one-input
+for-comprehension.
+
+The key distinction is that there are two pipelines:
+
+`language! spec → LanguageDef → LanguageMetadata → Dovetail rewrite rules`
+
+and:
+
+`code snippet → parser → typed AST → DovetailRunReport → rhoapi::Par`
+
+`LanguageDef` is the compile-time language model parsed from the macro input.
+`LanguageMetadata` is the generated runtime-facing inventory exposed by
+`Language::metadata()`. Dovetail should consume those generated inventories; it
+should not duplicate category lists by hand.
+
+```rust
+language! {
+    name: MiniRhoFor,
+
+    options {
+        emit_simulator: false,
+        emit_blockly: false,
+    },
+
+    types {
+        Proc
+        Name
+    },
+
+    terms {
+        PZero . |- "0" : Proc ;
+
+        PPar . ps:HashBag(Proc)
+            |- "{" ps.*sep("|") "}" : Proc ;
+
+        POutput . n:Name, q:Name
+            |- n "!" "(" q ")" : Proc ;
+
+        PFor . n:Name, ^x.p:[Name -> Proc]
+            |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+    },
+
+    equations {},
+
+    rewrites {
+        Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest})
+            ~> (PPar {(eval cont Q), ...rest});
+
+        ParCong . | S ~> T
+            |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+    }
+}
+```
+
+The syntax above follows the repository DSL shape used by the checked
+languages and is guarded by
+[`doc_examples.rs`](../../../macros/src/doc_examples.rs).
+`Proc` and `Name` are categories. `POutput`, `PFor`, and `PPar` are
+constructors. Because `Name` has no explicit literal constructor, the generated
+language supplies its normal parseable variable form, such as `Name::NVar(a)`.
+The `PFor` constructor binds a `Name` variable in a `Proc` body, and `eval cont
+Q` applies that generated binding function during the communication rewrite.
+
+### Static Compilation Path
+
+At macro-expansion time, the specification becomes a `LanguageDef`. The
+MeTTaIL code generator then emits:
+
+| Generated artifact | What it contains |
+|---|---|
+| `enum Proc`, `enum Name` | typed AST constructors such as `Proc::PFor`, `Proc::POutput`, and generated name variables |
+| parser methods | `parse_term` and weighted/exact seed variants used by runtime entry points |
+| display methods | reader-facing rendering such as `for (x <- a) { x!(z) }` |
+| `LanguageMetadata` | exact inventory of categories, constructors, equations, rewrites, guards, and backend capabilities |
+| `Language` implementation | dispatch methods such as `run_default_backend_report` |
+
+Dovetail's static adapter reads the generated metadata and lowers the rewrite
+inventory to Dovetail rules. For the important rule, the high-level meaning is:
+
+`Comm(N, Q, cont, rest): { for (x <- N) { cont(x) } | N!(Q) | rest } → { cont(Q) | rest }`
+
+That is the semantic rule Dovetail must preserve. The displayed Rholang-like
+surface is for readers; the generated values are typed AST and metadata.
+
+### Runtime Snippet Path
+
+Consider this source-level example:
+
+```text
+{ for (x <- a) { x!(z) } | a!(b) }
+```
+
+The runtime path is:
+
+1. `MiniRhoForLanguage::parse_term` parses the snippet.
+2. The parser returns a typed AST plus exact/weighted rewrite seeds when the
+   generated language exposes them.
+3. `Language::run_default_backend_report` dispatches to the selected runtime
+   backend.
+4. The Dovetail backend saturates the generated rewrite rules and extracts a
+   checked report.
+5. The Rho backend lowers a complete report to normalized Rholang AST,
+   currently represented as `rhoapi::Par`.
+
+The parsed AST is logically:
+
+```text
+Proc::PPar {
+    Proc::PFor(Name::NVar(a), λx. Proc::POutput(Name::NVar(x), Name::NVar(z))),
+    Proc::POutput(Name::NVar(a), Name::NVar(b)),
+}
+```
+
+Applying `Comm` substitutes `b` for the bound name `x`:
+
+`{ for (x <- a) { x!(z) } | a!(b) } → { b!(z) }`
+
+At the Dovetail boundary, the same idea is represented as exact-keyed terms:
+
+| Display form | Logical constructor | Abbreviated key |
+|---|---|---|
+| `a` | generated `Name::NVar(a)` | `k_name_a` |
+| `b` | generated `Name::NVar(b)` | `k_name_b` |
+| `z` | generated `Name::NVar(z)` | `k_name_z` |
+| `x!(z)` | `Proc::POutput(x, z)` inside the binding body | `k_body_out_x_z` |
+| `for (x <- a) { x!(z) }` | `Proc::PFor(a, λx. x!(z))` | `k_for_a_x` |
+| `a!(b)` | `Proc::POutput(a, b)` | `k_out_a_b` |
+| `{ for (x <- a) { x!(z) } | a!(b) }` | `Proc::PPar({k_for_a_x, k_out_a_b})` | `k_par_comm` |
+| `{ b!(z) }` | `Proc::PPar({Proc::POutput(b, z)})` | `k_par_out_b_z` |
+
+After saturation, Dovetail's saturation report may look like:
+
+```rust
+SatReport {
+    outcome: SaturationOutcome::Converged,
+    stats: SatStats {
+        iterations: 2,
+        total_merges: 1,
+    },
+}
+```
+
+The exact numbers are implementation data, but their meaning is stable: the run
+reached a fixpoint under its configured node and iteration bounds, and one new
+equality/merge was added by the communication rewrite.
+
+The runtime-facing report freezes the checked extraction into a graph-shaped
+handoff:
+
+```rust
+DovetailRunReport<MiniRhoForOp, TropicalWeight> {
+    roots: [k_par_out_b_z],
+    root_ordinals: [0],
+    terms: [
+        DovetailTermRecord {
+            ordinal: 0,
+            class: q_result,
+            key: k_par_out_b_z,
+            op: Proc::PPar,
+            weight: 1.0,
+            is_root: true,
+        },
+        DovetailTermRecord {
+            ordinal: 1,
+            class: q_out,
+            key: k_out_b_z,
+            op: Proc::POutput,
+            weight: 0.0,
+            is_root: false,
+        },
+        DovetailTermRecord {
+            ordinal: 2,
+            class: q_name_b,
+            key: k_name_b,
+            op: Name::NVar,
+            weight: 0.0,
+            is_root: false,
+        },
+        DovetailTermRecord {
+            ordinal: 3,
+            class: q_name_z,
+            key: k_name_z,
+            op: Name::NVar,
+            weight: 0.0,
+            is_root: false,
+        },
+    ],
+    derivation_edges: [
+        DovetailDerivationEdge {
+            ordinal: 0,
+            parent_key: k_par_out_b_z,
+            child_key: k_out_b_z,
+            child_index: 0,
+        },
+        DovetailDerivationEdge {
+            ordinal: 1,
+            parent_key: k_out_b_z,
+            child_key: k_name_b,
+            child_index: 0,
+        },
+        DovetailDerivationEdge {
+            ordinal: 2,
+            parent_key: k_out_b_z,
+            child_key: k_name_z,
+            child_index: 1,
+        },
+    ],
+    completeness: ExtractionCompleteness::Complete,
+}
+```
+
+The report does not say "the Rho machine has run." It says Dovetail has checked
+and extracted the exact derivation forest that a Rho backend may consume. The
+Rho backend then lowers the complete report to a normalized AST artifact. The
+documentation may annotate that artifact as reader text:
+
+```text
+b!(z)
+```
+
+but the generated value is a Rholang AST, conceptually:
+
+```text
+rhoapi::Par {
+    sends: [send(channel = b, data = z)]
+}
+```
+
+That AST can be injected into F1r3node's Rho runtime today, and the same
+boundary can later feed a Rholang bytecode emitter without reparsing source
+text. After F1r3node executes the artifact, the result is a
+`RhoObservationReport` or generic `RuntimeBackendReport`, not a new
+`DovetailRunReport`.
+
+A bounded cyclic case would keep the same table shape but change the terminal
+metadata:
+
+```rust
+DovetailRunReport<MiniRhoForOp, TropicalWeight> {
+    roots: [k_some_finite_prefix],
+    root_ordinals: [0],
+    terms: [...],
+    derivation_edges: [...],
+    completeness: ExtractionCompleteness::BoundedByCycleCut,
+}
+```
+
+That report can still be useful for diagnostics or bounded testing, but a
+production Rho backend must not advertise it as an exhaustive execution plan.
 
 ## Concrete Handoff Example
 

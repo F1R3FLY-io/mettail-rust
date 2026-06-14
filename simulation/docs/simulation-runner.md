@@ -10,7 +10,7 @@ Located in `simulation/src/runner.rs`.
 
 The runner provides two levels of API:
 
-1. **Single-term simulation**: `run_to_normal_form(input: &str)` parses a term, rewrites it to normal form via the Ascent fixpoint engine, checks invariants at every step, and returns a complete `ExecutionTrace`.
+1. **Single-term simulation**: `run_to_normal_form(input: &str)` parses a term, runs the language's selected default runtime backend through `RuntimeBackendReport`, checks invariants at every observable step, and returns a complete `ExecutionTrace`. Ascent-shaped reports are walked as rewrite graphs to a normal form. Observation-shaped reports become terminal runtime-observation outcomes instead of fabricated Ascent graphs.
 
 2. **Campaign mode**: `run_campaign(strategy)` generates many terms, runs each through the single-term pipeline, collects ALL failures (does not stop at the first), attempts shrinking for each failure, and returns aggregate `CampaignResults`.
 
@@ -92,7 +92,7 @@ pub struct SimulationConfig {
 
 ### The Single-Term Pipeline
 
-`run_to_normal_form(input: &str)` executes a three-phase pipeline:
+`run_to_normal_form(input: &str)` executes a report-aware pipeline:
 
 ```
 Phase 1: Parse
@@ -103,12 +103,15 @@ Phase 1: Parse
 ├── check_invariants()                  // check all invariants
 └── steps.push(TraceEntry { op: "parse" })
 
-Phase 2: Ascent (Rewrite to Saturation)
+Phase 2: Selected Runtime Backend
 ├── clear_var_cache()
-├── results ← language.run_ascent(term) // Datalog fixpoint
-└── results contains: all_terms, rewrites, equivalences
+├── report ← language.run_default_backend_report(term)
+├── IF report.output is Ascent:
+│     results contains: all_terms, rewrites, equivalences
+└── IF report.output is Observations:
+      observations contain backend-visible channels and values
 
-Phase 3: BFS Walk of Rewrite Graph
+Phase 3A: BFS Walk of Ascent Rewrite Graph
 ├── queue ← [(initial_id, [])]          // BFS frontier
 ├── visited ← {initial_id}
 │
@@ -132,9 +135,24 @@ Phase 3: BFS Walk of Rewrite Graph
 │     steps.push(TraceEntry { op: "rewrite:RuleName" })
 │
 └── determine outcome: NormalForm | StepLimitReached | InvariantViolation
+
+Phase 3B: Runtime Observation Outcome
+├── summarize observations by channel
+├── append one terminal runtime step
+└── determine outcome: RuntimeObservations | InvariantViolation
 ```
 
-The BFS finds the **shortest** path from the initial term to any normal form in the rewrite graph. This is important: the Ascent engine computes all possible rewrites to saturation, producing a graph that may contain multiple paths to the same normal form. BFS ensures the trace records the most direct path.
+For Ascent-shaped reports, the BFS finds the **shortest** path from the initial
+term to any normal form in the rewrite graph. This is important: the Ascent
+engine computes all possible rewrites to saturation, producing a graph that may
+contain multiple paths to the same normal form. BFS ensures the trace records
+the most direct path.
+
+For observation-shaped reports, there is no Ascent rewrite graph to walk. The
+simulation records the backend, artifact, channel count, observed values, and
+terminal observation summary. A normal-form invariant requested against an
+observation-shaped report fails explicitly because runtime observations are not
+normal-form graph evidence.
 
 ### Trampoline-Style Rewriting
 
@@ -142,11 +160,19 @@ The rewrite graph walk uses iterative BFS with a `VecDeque` work queue, not recu
 
 ### Normal Form as First-Class Concept
 
-Normal form is the central outcome concept. A term is in normal form when no further rewrite rules apply to it (the Ascent engine marks such terms via `is_normal_form` in `TermInfo`). The simulation framework treats normal form reachability as a core property:
+Normal form is the central graph outcome for Ascent-shaped reports. A term is
+in normal form when no further rewrite rules apply to it; Ascent-shaped reports
+mark such terms via `is_normal_form` in `TermInfo`. The simulation framework
+treats normal-form reachability as a core property when a rewrite graph is
+available:
 
 - The `NormalFormReachable` invariant explicitly checks it (see [invariants.md](invariants.md))
 - The `TraceOutcome` enum has a dedicated `NormalForm` variant
 - The `check_trace_ltl()` temporal checker provides an `IsNormalForm` atomic proposition for LTL formulas like `F(normal_form)` ("eventually, normal form is reached")
+
+Rho/default-backend observation reports instead use
+`TraceOutcome::RuntimeObservations`. That outcome is terminal runtime evidence,
+not a normal-form graph claim.
 
 ## Seed Persistence and Regression Files
 
@@ -208,7 +234,8 @@ Possible outcome variants:
 | `NormalForm`         | `term`, `steps`                | Rewriting terminated successfully      |
 | `StepLimitReached`   | `final_term`                   | Max steps exceeded without normal form |
 | `InvariantViolation` | `step`, `invariant`, `message` | An invariant was violated              |
-| `Error`              | `message`                      | Parse or Ascent error                  |
+| `RuntimeObservations` | `backend`, `artifact`, `channels`, `values`, `summary` | Selected runtime backend produced observations |
+| `Error`              | `message`                      | Parse or selected-backend error        |
 
 ### Line N+3 (optional): Morphology
 

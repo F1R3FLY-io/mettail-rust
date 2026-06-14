@@ -42,6 +42,54 @@ and Rholang's reflective names and COMM rule
 ([RHO-2005](references.md#rho-2005),
 [RHOLANG-DOCS](references.md#rholang-docs)).
 
+## `language!` Versus Dovetail And The Rho Backend
+
+The `language!` macro, Dovetail, and the Rho backend all mention terms,
+constructors, rules, and normal forms. They differ by ownership.
+
+`language!` is the source-of-truth specification mechanism for a modeled
+language. It declares categories, constructors, concrete display forms,
+parsing hooks, equations, rewrites, native folds, guards, predicates, and
+metadata. Its expansion produces typed Rust AST values and language inventory
+that other crates can consume. When the category set changes, that inventory is
+the authority; downstream backends should discover the categories from the
+generated metadata instead of keeping hard-coded lists such as
+`is_known_category_head`.
+
+Dovetail is not a competing specification macro. It is the rewrite engine that
+consumes the inventory emitted by `language!`. It gives the declared equations
+and rewrites exact identities, saturates them, extracts alternatives, and emits
+checked reports with terminal completeness metadata. It does not own concrete
+syntax, category declarations, parser generation, language crate generation,
+or native handler implementations.
+
+The Rho backend is not a competing specification macro either. It consumes a
+complete Dovetail report, classifies the covered rewrite network as Rho-native
+dataflow, and emits normalized Rholang AST values. Documentation may show
+Rholang text annotations because they are readable, but the generated execution
+artifact is AST such as `rhoapi::Par`, not text that will be reparsed. That AST
+boundary is deliberately bytecode-ready: a later Rholang bytecode emitter can
+target the same normalized artifact contract.
+
+The ownership pipeline is:
+
+`language! spec → semantic inventory → Dovetail reports → RhoNet plan → rhoapi::Par → RhoRuntime observations`
+
+| Concern | `language!` | Dovetail | Rho backend |
+|---|---|---|---|
+| language categories | declares them | consumes generated inventory | uses inventory-derived channels and tags |
+| typed AST | generates source-language terms | stores exact-keyed terms and derivations | lowers covered terms to Rholang AST |
+| concrete syntax | owns parser/display hooks | does not parse source text | may attach reader text only as annotation |
+| rewrite declarations | declares rules and metadata | saturates, extracts, and reports checked consequences | compiles covered rule instances to Rho dataflow |
+| native operations | declares and binds handlers | records explicit external contracts | routes handlers through Rho/native boundary |
+| runtime scheduling | does not schedule | defines substrate-neutral rewrite semantics | lets RSpace schedule enabled COMM events |
+| completeness status | supplies requirement inventory | reports `Complete` or `BoundedByCycleCut` | rejects incomplete reports for production execution |
+
+The apparent overlap is therefore intentional provenance tracking. Dovetail and
+the Rho backend repeat enough rule and constructor information to prove that
+execution preserves the `language!` semantics, but they do not replace the
+macro as the language-definition authority.
+
 ## Bridge Crate Boundary
 
 The design uses small one-way bridge crates rather than a runtime fork:

@@ -7,6 +7,7 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | Term | Definition |
 |---|---|
 | MeTTaIL | A language modeling system that defines syntax and rewrite semantics for object languages. |
+| `language!` | The MeTTaIL specification macro that declares categories, constructors, syntax, rewrites, native hooks, and metadata for a modeled language. |
 | Dovetail | The standalone MeTTaIL rewrite engine crate at `dovetail/`. |
 | rewrite rule | A data value with a left-hand pattern and right-hand pattern. |
 | equality saturation | Iterative growth of an equality graph until no new equalities are found or a bound stops the run. |
@@ -110,6 +111,7 @@ The report completeness contract is:
 
 | Name | Boundary |
 |---|---|
+| `language!` | Source-of-truth language declarations and generated semantic inventory. |
 | Dovetail | Rewrite semantics and extraction. |
 | Rho backend | Lowering and execution bridge from Dovetail semantics to RhoRuntime. |
 | Rho machine | Host process-calculus runtime in F1r3node/Rholang. |

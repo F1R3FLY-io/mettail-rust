@@ -1,6 +1,7 @@
 //! Regression coverage for empty and non-empty collection parsing.
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::Language;
+use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
 
 #[test]
 fn test_parse_non_empty_list() {
@@ -41,23 +42,19 @@ fn test_parse_empty_list() {
 
 #[test]
 fn test_exec_flow_empty_list() {
-    // Simulate REPL exec flow: parse -> ascent -> parse_term(display) for some reachable term
+    // Simulate REPL exec flow: parse -> selected backend -> parse_term(display)
+    // for some backend-produced semantic output.
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term("list()").expect("parse");
-    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let report = run_default_backend_report(&lang, term.as_ref(), "empty collection exec flow")
+        .expect("run");
     let display = format!("{}", term);
-    // Prefer normal form reachable from initial term (REPL exec behavior); else any term with same display
-    let to_parse = results
-        .normal_form_reachable_from(term.term_id())
-        .map(|nf| nf.display.clone())
-        .or_else(|| {
-            results
-                .all_terms
-                .iter()
-                .find(|t| t.display == display)
-                .map(|t| t.display.clone())
-        })
+    let outputs = report_semantic_outputs(&report);
+    let to_parse = outputs
+        .iter()
+        .find(|candidate| lang.parse_term(candidate).is_ok())
+        .cloned()
         .unwrap_or(display);
     let result_term = lang.parse_term(&to_parse);
     assert!(
