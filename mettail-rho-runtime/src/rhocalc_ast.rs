@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use mettail_languages::rhocalc::{
     Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
-use mettail_runtime::{Binder, FramedSemanticKeyHasher, FreeVar, OrdVar, Term, Var};
+use mettail_runtime::{Binder, FramedSemanticKeyHasher, FreeVar, Language, OrdVar, Term, Var};
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
@@ -46,6 +46,24 @@ pub enum RhocalcAstLowerError {
     FreeVarWithoutName,
     EmptyInputJoin,
     InputArityMismatch { names: usize, binders: usize },
+}
+
+fn rhocalc_invocation_stage(
+    mapper: RhocalcInvocationMapper,
+) -> Result<
+    crate::backend::RhoInvocationCompilerStage<RhocalcInvocationMapper>,
+    crate::backend::RhoRuntimeBackedLanguageError,
+> {
+    let language_name = RhoCalcLanguage.name();
+    let fingerprint = RhoCalcLanguage
+        .metadata()
+        .definition_fingerprint()
+        .ok_or_else(|| {
+            crate::backend::RhoRuntimeBackedLanguageError::MissingLanguageDefinitionFingerprint {
+                language_name: language_name.to_string(),
+            }
+        })?;
+    Ok(crate::backend::RhoInvocationCompilerStage::new(fingerprint, mapper))
 }
 
 /// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
@@ -99,7 +117,8 @@ pub fn rho_runtime_backed_rhocalc_strings(
     let out_channel = out_channel.into();
     let mapper: RhocalcInvocationMapper =
         Box::new(move |term| rhocalc_observe_strings_invocation(term, out_channel.clone()));
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, mapper)
+    let invocation = rhocalc_invocation_stage(mapper)?;
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, invocation)
 }
 
 /// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
@@ -111,7 +130,8 @@ pub fn rho_runtime_backed_rhocalc_ints(
     let out_channel = out_channel.into();
     let mapper: RhocalcInvocationMapper =
         Box::new(move |term| rhocalc_observe_ints_invocation(term, out_channel.clone()));
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, mapper)
+    let invocation = rhocalc_invocation_stage(mapper)?;
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, invocation)
 }
 
 /// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
@@ -123,7 +143,8 @@ pub fn rho_runtime_backed_rhocalc_values(
     let out_channel = out_channel.into();
     let mapper: RhocalcInvocationMapper =
         Box::new(move |term| rhocalc_observe_values_invocation(term, out_channel.clone()));
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, mapper)
+    let invocation = rhocalc_invocation_stage(mapper)?;
+    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, invocation)
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.

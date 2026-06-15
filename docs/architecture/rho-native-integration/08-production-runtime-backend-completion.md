@@ -1,6 +1,6 @@
 # Production Runtime Backend Completion Guide
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 This guide turns the architecture suite into an executable handoff for an
 agent completing the runtime backend replacement. Here, **backend** means
@@ -51,7 +51,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
 | `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, or accepting incomplete cycle-bounded reports as exhaustive |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
-| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
+| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
 | CESK runtime path | legacy runtime backend | unavailable as the selected production backend once the Rho gate is satisfied for a language |
@@ -324,9 +324,16 @@ Steps:
 
 Generated language crates remain substrate-neutral. They expose `Language`,
 metadata, parsing, environments, type inference, direct evaluation helpers, and
-the explicit transition oracle. The Rho runtime crate supplies the composed
+the explicit transition oracle. The Rho runtime crate supplies a direct
+`RhoRuntimeBackedLanguage<L, F>` wrapper for Rho-only plans and the composed
 production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
-has passed both the Dovetail rewrite-coverage gate and the Rho flip gate:
+has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. The
+direct wrapper is useful for Rho-native fragments and transition tests, but it
+is not a shortcut around identity: `F` is installed as a
+`RhoInvocationCompilerStage` and must carry the same macro-expanded
+`LanguageDef` fingerprint as `L` and the planned backend.
+
+The composed production wrapper follows this flow:
 
 ```text
 Given a generated language L, a planned Rho backend B, a Dovetail compiler D,

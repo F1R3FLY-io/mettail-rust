@@ -10,6 +10,8 @@
  *     Rho-backed value.
  *   - The wrapper installs only a planned backend whose `LanguageDef` identity
  *     matches the generated language being wrapped.
+ *   - The invocation compiler must also be derived from that same generated
+ *     `LanguageDef`; otherwise the wrapper exposes no Rho default.
  *   - The Rho path returns an observation-shaped `RuntimeBackendReport`, not
  *     `AscentResults`.
  *   - Ascent-shaped seeded facts are rejected on the Rho path unless the fact
@@ -51,6 +53,7 @@ Section RhoLanguageBackendWrapper.
   Record RhoWrapper : Type := {
     wrapped_inner : InnerLanguage;
     rho_plan_definition_id : nat;
+    invocation_compiler_definition_id : nat;
     planned_rho_backend : bool;
     invocation_total : bool
   }.
@@ -60,8 +63,16 @@ Section RhoLanguageBackendWrapper.
       (rho_plan_definition_id wrapper)
       (inner_definition_id (wrapped_inner wrapper)).
 
+  Definition invocation_compiler_matches_language
+      (wrapper : RhoWrapper) : bool :=
+    Nat.eqb
+      (invocation_compiler_definition_id wrapper)
+      (inner_definition_id (wrapped_inner wrapper)).
+
   Definition wrapper_installs_rho (wrapper : RhoWrapper) : bool :=
-    planned_rho_backend wrapper && plan_matches_language wrapper.
+    planned_rho_backend wrapper &&
+    plan_matches_language wrapper &&
+    invocation_compiler_matches_language wrapper.
 
   Definition inner_supports
       (inner : InnerLanguage) (backend : Backend) : bool :=
@@ -163,9 +174,36 @@ Section RhoLanguageBackendWrapper.
     unfold wrapper_installs_rho in Hinstall.
     destruct (planned_rho_backend wrapper);
       destruct (plan_matches_language wrapper);
+      destruct (invocation_compiler_matches_language wrapper);
       simpl in Hinstall;
       try reflexivity;
       discriminate Hinstall.
+  Qed.
+
+  Theorem wrapper_installs_rho_requires_invocation_match : forall wrapper,
+    wrapper_installs_rho wrapper = true ->
+    invocation_compiler_matches_language wrapper = true.
+  Proof.
+    intros wrapper Hinstall.
+    unfold wrapper_installs_rho in Hinstall.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      destruct (invocation_compiler_matches_language wrapper);
+      simpl in Hinstall;
+      try reflexivity;
+      discriminate Hinstall.
+  Qed.
+
+  Theorem mismatched_invocation_compiler_blocks_installation : forall wrapper,
+    invocation_compiler_matches_language wrapper = false ->
+    wrapper_installs_rho wrapper = false.
+  Proof.
+    intros wrapper Hmismatch.
+    unfold wrapper_installs_rho.
+    rewrite Hmismatch.
+    destruct (planned_rho_backend wrapper);
+      destruct (plan_matches_language wrapper);
+      reflexivity.
   Qed.
 
   Theorem wrapper_capabilities_support_matches_wrapper_supports :
@@ -175,15 +213,17 @@ Section RhoLanguageBackendWrapper.
       wrapper_supports wrapper backend.
   Proof.
     intros [[definition_id supports_ascent supports_dovetail]
-              plan_id planned invocation] backend.
+              plan_id invocation_id planned invocation] backend.
     unfold wrapper_runtime_capabilities, wrapper_supports,
       wrapper_installs_rho, plan_matches_language,
+      invocation_compiler_matches_language,
       demoted_inner_capabilities, inner_supports, capabilities_support,
       backend_eqb.
     destruct backend;
       destruct planned;
       simpl;
       destruct (plan_id =? definition_id);
+      destruct (invocation_id =? definition_id);
       destruct supports_ascent;
       destruct supports_dovetail;
       simpl;
@@ -196,6 +236,7 @@ Section RhoLanguageBackendWrapper.
         wrapper_runtime_capabilities
           {| wrapped_inner := inner;
              rho_plan_definition_id := inner_definition_id inner;
+             invocation_compiler_definition_id := inner_definition_id inner;
              planned_rho_backend := true;
              invocation_total := invocation |} =
         {| capability_backend := RhoMachine;
@@ -204,7 +245,7 @@ Section RhoLanguageBackendWrapper.
     intros inner invocation.
     exists (demoted_inner_capabilities inner).
     unfold wrapper_runtime_capabilities, wrapper_installs_rho,
-      plan_matches_language.
+      plan_matches_language, invocation_compiler_matches_language.
     simpl.
     rewrite Nat.eqb_refl.
     reflexivity.
@@ -223,13 +264,15 @@ Section RhoLanguageBackendWrapper.
       (wrapper_runtime_capabilities wrapper).
   Proof.
     intros [[definition_id supports_ascent supports_dovetail]
-              plan_id planned invocation].
+              plan_id invocation_id planned invocation].
     unfold wrapper_runtime_capabilities, wrapper_installs_rho,
-      plan_matches_language, demoted_inner_capabilities,
+      plan_matches_language, invocation_compiler_matches_language,
+      demoted_inner_capabilities,
       no_non_rho_default.
     destruct planned;
       simpl;
       destruct (plan_id =? definition_id);
+      destruct (invocation_id =? definition_id);
       destruct supports_ascent;
       destruct supports_dovetail;
       simpl;
@@ -266,9 +309,23 @@ Section RhoLanguageBackendWrapper.
     unfold wrapper_default_report_runs, wrapper_installs_rho in Hrun.
     destruct (planned_rho_backend wrapper);
       destruct (plan_matches_language wrapper);
+      destruct (invocation_compiler_matches_language wrapper);
       simpl in Hrun;
       try reflexivity;
       discriminate Hrun.
+  Qed.
+
+  Theorem wrapper_default_report_requires_invocation_match : forall wrapper,
+    wrapper_default_report_runs wrapper = true ->
+    invocation_compiler_matches_language wrapper = true.
+  Proof.
+    intros wrapper Hrun.
+    unfold wrapper_default_report_runs in Hrun.
+    destruct (wrapper_installs_rho wrapper) eqn:Hinstall;
+      simpl in Hrun.
+    - apply wrapper_installs_rho_requires_invocation_match.
+      exact Hinstall.
+    - discriminate Hrun.
   Qed.
 
   Theorem wrapper_default_report_requires_total_invocation : forall wrapper,
@@ -286,38 +343,78 @@ Section RhoLanguageBackendWrapper.
     wrapper_default_report_runs
       {| wrapped_inner := inner;
          rho_plan_definition_id := inner_definition_id inner;
+         invocation_compiler_definition_id := inner_definition_id inner;
          planned_rho_backend := true;
          invocation_total := true |} = true.
   Proof.
     intros inner.
     unfold wrapper_default_report_runs, wrapper_installs_rho,
-      plan_matches_language.
+      plan_matches_language, invocation_compiler_matches_language.
     simpl.
     rewrite Nat.eqb_refl.
     reflexivity.
   Qed.
 
   Theorem mismatched_plan_never_installs_rho :
-    forall inner plan_id planned invocation,
+    forall inner plan_id invocation_id planned invocation,
     Nat.eqb plan_id (inner_definition_id inner) = false ->
     wrapper_supports
       {| wrapped_inner := inner;
          rho_plan_definition_id := plan_id;
+         invocation_compiler_definition_id := invocation_id;
          planned_rho_backend := planned;
          invocation_total := invocation |}
       RhoMachine = false /\
     wrapper_default_report_runs
       {| wrapped_inner := inner;
          rho_plan_definition_id := plan_id;
+         invocation_compiler_definition_id := invocation_id;
          planned_rho_backend := planned;
          invocation_total := invocation |} = false.
   Proof.
-    intros inner plan_id planned invocation Hmismatch.
+    intros inner plan_id invocation_id planned invocation Hmismatch.
     unfold wrapper_supports, wrapper_default_report_runs,
-      wrapper_installs_rho, plan_matches_language.
+      wrapper_installs_rho, plan_matches_language,
+      invocation_compiler_matches_language.
     simpl.
     rewrite Hmismatch.
     destruct planned; simpl; split; reflexivity.
+  Qed.
+
+  Theorem mismatched_invocation_never_installs_rho :
+    forall inner plan_id invocation_id planned invocation,
+    Nat.eqb invocation_id (inner_definition_id inner) = false ->
+    wrapper_supports
+      {| wrapped_inner := inner;
+         rho_plan_definition_id := plan_id;
+         invocation_compiler_definition_id := invocation_id;
+         planned_rho_backend := planned;
+         invocation_total := invocation |}
+      RhoMachine = false /\
+    wrapper_default_report_runs
+      {| wrapped_inner := inner;
+         rho_plan_definition_id := plan_id;
+         invocation_compiler_definition_id := invocation_id;
+         planned_rho_backend := planned;
+         invocation_total := invocation |} = false.
+  Proof.
+    intros inner plan_id invocation_id planned invocation Hmismatch.
+    assert (Hinstall :
+      wrapper_installs_rho
+        {| wrapped_inner := inner;
+           rho_plan_definition_id := plan_id;
+           invocation_compiler_definition_id := invocation_id;
+           planned_rho_backend := planned;
+           invocation_total := invocation |} = false).
+    {
+      apply mismatched_invocation_compiler_blocks_installation.
+      unfold invocation_compiler_matches_language.
+      simpl.
+      exact Hmismatch.
+    }
+    split.
+    - unfold wrapper_supports. exact Hinstall.
+    - unfold wrapper_default_report_runs. rewrite Hinstall. reflexivity.
   Qed.
 
   Theorem wrapper_default_report_is_observation_shaped : forall wrapper,

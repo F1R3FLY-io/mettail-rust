@@ -664,7 +664,7 @@ where
 pub struct RhoRuntimeBackedLanguage<L, F> {
     inner: L,
     backend: PlannedRhoBackend,
-    invocation: F,
+    invocation: RhoInvocationCompilerStage<F>,
 }
 
 /// Production runtime adapter for the replacement path:
@@ -843,7 +843,7 @@ where
     pub fn new(
         inner: L,
         backend: PlannedRhoBackend,
-        invocation: F,
+        invocation: RhoInvocationCompilerStage<F>,
     ) -> Result<Self, RhoRuntimeBackedLanguageError> {
         let language_name = inner.name();
         let plan_language_name = backend.plan().language_name();
@@ -853,7 +853,14 @@ where
                 plan_language_name: plan_language_name.to_string(),
             });
         }
-        require_matching_plan_definition(&inner, &backend)?;
+        let language_definition_fingerprint = require_matching_plan_definition(&inner, &backend)?;
+        if language_definition_fingerprint != invocation.definition_fingerprint() {
+            return Err(RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint,
+                compiler_definition_fingerprint: invocation.definition_fingerprint().to_string(),
+            });
+        }
 
         Ok(Self { inner, backend, invocation })
     }
@@ -1009,7 +1016,7 @@ where
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
             RuntimeBackend::RhoMachine => {
-                let invocation = (self.invocation)(term).map_err(|err| {
+                let invocation = (self.invocation.compiler)(term).map_err(|err| {
                     format!(
                         "RhoMachine backend for language {} could not build an AST invocation: {err}",
                         self.name()

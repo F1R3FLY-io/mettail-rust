@@ -116,6 +116,10 @@ fn stage_fingerprint(backend: &PlannedRhoBackend) -> String {
     backend.plan().definition_fingerprint().to_string()
 }
 
+fn invocation_stage<F>(backend: &PlannedRhoBackend, compiler: F) -> RhoInvocationCompilerStage<F> {
+    RhoInvocationCompilerStage::new(stage_fingerprint(backend), compiler)
+}
+
 struct FragmentMatchedCalculatorLanguage;
 
 struct FragmentMatchedCalculatorMetadata;
@@ -972,12 +976,11 @@ fn call_by_need_plans_match_ascent_golden_for_supported_scalar_families() {
 
 #[test]
 fn rho_runtime_backed_language_dispatches_default_report() {
-    let language = RhoRuntimeBackedLanguage::new(
-        FragmentMatchedCalculatorLanguage,
-        calculator_backend(),
-        calculator_invocation,
-    )
-    .expect("Calculator plan should install on CalculatorLanguage");
+    let backend = calculator_backend();
+    let invocation = invocation_stage(&backend, calculator_invocation);
+    let language =
+        RhoRuntimeBackedLanguage::new(FragmentMatchedCalculatorLanguage, backend, invocation)
+            .expect("Calculator plan should install on CalculatorLanguage");
     let term = language.parse_term("2 + 3").expect("calculator parse");
     let mut evaluator = mettail_prattail::cek_eval::CekEvaluator::new(format!("{}", term));
     assert!(
@@ -1228,12 +1231,11 @@ fn dovetail_rho_runtime_backed_language_rejects_bad_dovetail_stage() {
 
 #[test]
 fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
-    let language = RhoRuntimeBackedLanguage::new(
-        FragmentMatchedCalculatorLanguage,
-        calculator_backend(),
-        calculator_call_by_need_invocation,
-    )
-    .expect("Calculator plan should install on CalculatorLanguage");
+    let backend = calculator_backend();
+    let invocation = invocation_stage(&backend, calculator_call_by_need_invocation);
+    let language =
+        RhoRuntimeBackedLanguage::new(FragmentMatchedCalculatorLanguage, backend, invocation)
+            .expect("Calculator plan should install on CalculatorLanguage");
 
     let cases = [
         ("2 + 3", RuntimeObservationValue::Int(5), "AddInt"),
@@ -1276,11 +1278,9 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
 
 #[test]
 fn rho_runtime_backed_language_rejects_fragment_plan_for_full_calculator() {
-    let result = RhoRuntimeBackedLanguage::new(
-        CalculatorLanguage,
-        calculator_backend(),
-        calculator_invocation,
-    );
+    let backend = calculator_backend();
+    let invocation = invocation_stage(&backend, calculator_invocation);
+    let result = RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation);
     let err = match result {
         Ok(_) => panic!("fragment Rho plan must not install on the full generated Calculator"),
         Err(err) => err,
@@ -1292,14 +1292,31 @@ fn rho_runtime_backed_language_rejects_fragment_plan_for_full_calculator() {
 }
 
 #[test]
+fn rho_runtime_backed_language_rejects_mismatched_invocation_stage() {
+    let backend = calculator_backend();
+    let result = RhoRuntimeBackedLanguage::new(
+        FragmentMatchedCalculatorLanguage,
+        backend,
+        RhoInvocationCompilerStage::new("different-definition", calculator_invocation),
+    );
+    let err = match result {
+        Ok(_) => panic!("mismatched Rho invocation compiler must not install"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch { .. }),
+        "{err}"
+    );
+    assert!(err.to_string().contains("different-definition"), "{err}");
+}
+
+#[test]
 fn rho_runtime_backed_language_rejects_cross_language_plan_installation() {
     let mismatched_fragment =
         CALC_RUN_FRAGMENT.replacen("name: Calculator", "name: NotCalculator", 1);
-    let result = RhoRuntimeBackedLanguage::new(
-        CalculatorLanguage,
-        backend_from_fragment(&mismatched_fragment),
-        calculator_invocation,
-    );
+    let backend = backend_from_fragment(&mismatched_fragment);
+    let invocation = invocation_stage(&backend, calculator_invocation);
+    let result = RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation);
     assert!(result.is_err(), "a NotCalculator plan must not install on CalculatorLanguage");
     let err = result
         .err()
