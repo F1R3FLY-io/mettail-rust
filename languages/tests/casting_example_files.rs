@@ -1,5 +1,5 @@
 //! Batch-check `repl/src/examples/*-casting.txt`: every `exec ...` line must
-//! parse and run the selected default runtime backend.
+//! parse and run the explicit Ascent reference oracle.
 //!
 //! Run (all tests in this file):
 //!   cargo test -p mettail-languages --test casting_example_files -- --nocapture
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use mettail_languages::{calculator as calc, rhocalc};
 use mettail_runtime::{clear_var_cache, Language};
-use mettail_testkit::runtime_report::run_default_backend_report;
+use mettail_testkit::runtime_report::run_ascent_oracle_report;
 
 fn examples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../repl/src/examples")
@@ -45,10 +45,9 @@ fn check_exec_lines(path: &std::path::Path, lang: &dyn Language, label: &str) {
                 continue;
             },
         };
-        if let Err(e) = run_default_backend_report(lang, term.as_ref(), "casting example exec line")
-        {
+        if let Err(e) = run_ascent_oracle_report(lang, term.as_ref(), "casting example exec line") {
             failures.push(format!(
-                "{label} {}:{} default backend failed: {term_str:?}\n  {e}",
+                "{label} {}:{} Ascent oracle failed: {term_str:?}\n  {e}",
                 path.display(),
                 line_no
             ));

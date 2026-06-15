@@ -225,7 +225,7 @@ After dispatch, the selected backend determines the final lane:
 |---|---|---|
 | `RuntimeBackend::Dovetail` | `typed Proc AST + LanguageMetadata → SatReport → DovetailRunReport → RuntimeDovetailRunReport` | report-shaped `RuntimeBackendOutput::Dovetail` |
 | `RuntimeBackend::RhoMachine` | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → RSpace observations` | observation-shaped `RuntimeBackendReport` |
-| `RuntimeBackend::Ascent` | generated legacy relation execution | oracle or compatibility output during rollout |
+| `RuntimeBackend::Ascent` | generated legacy relation execution | explicit reference-oracle output only; not a generated production default |
 
 This dispatch trace is intentionally high-level. It names the shape-changing
 boundaries without requiring the reader to learn every generated Rust type

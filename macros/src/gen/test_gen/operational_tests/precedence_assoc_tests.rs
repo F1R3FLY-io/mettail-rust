@@ -432,7 +432,7 @@ fn generate_precedence_test(
         let input_str = \"{}\";\n    \
         let lang = {};\n    \
         let parsed = lang.parse_term(input_str).expect(\"parse should succeed\");\n    \
-        let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated precedence eval\")\n            .expect(\"eval should succeed\");\n    \
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, parsed.as_ref(), \"generated precedence eval\")\n            .expect(\"eval should succeed\");\n    \
         let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n    \
         {}}}",
         high_op.label,
@@ -547,7 +547,7 @@ fn generate_paren_override_test(
         let input_str = \"{expr}\";\n    \
         let lang = {lang_struct};\n    \
         let parsed = lang.parse_term(input_str).expect(\"parse should succeed\");\n    \
-        let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated parenthesization eval\")\n            .expect(\"eval should succeed\");\n    \
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, parsed.as_ref(), \"generated parenthesization eval\")\n            .expect(\"eval should succeed\");\n    \
         let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n    \
         {assertion}}}",
         low = low_op.label,
@@ -657,7 +657,7 @@ fn generate_associativity_test(
         let input_str = \"{expr}\";\n    \
         let lang = {lang_struct};\n    \
         let parsed = lang.parse_term(input_str).expect(\"parse should succeed\");\n    \
-        let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated associativity eval\")\n            .expect(\"eval should succeed\");\n    \
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, parsed.as_ref(), \"generated associativity eval\")\n            .expect(\"eval should succeed\");\n    \
         let outputs = mettail_testkit::runtime_report::report_observed_outputs(&report);\n    \
         {assertion}}}",
         label = op.label,

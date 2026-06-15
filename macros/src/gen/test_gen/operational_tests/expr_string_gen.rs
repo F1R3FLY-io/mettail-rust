@@ -34,7 +34,7 @@ pub fn generate_test_function(test: &TestCase) -> String {
         "    let parsed = lang.parse_term(&input_str).expect(\"parse should succeed\");\n",
     );
     out.push_str(
-        "    let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), \"generated operational eval\")\n",
+        "    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, parsed.as_ref(), \"generated operational eval\")\n",
     );
     out.push_str("        .expect(\"eval should succeed\");\n");
 

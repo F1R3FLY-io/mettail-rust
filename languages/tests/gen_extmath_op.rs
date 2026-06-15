@@ -37,7 +37,7 @@ fn eval_extmath_sub_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -60,7 +60,7 @@ fn eval_extmath_sub_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -83,7 +83,7 @@ fn eval_extmath_sub_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -106,7 +106,7 @@ fn eval_extmath_sub_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -129,7 +129,7 @@ fn eval_extmath_sub_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -152,7 +152,7 @@ fn eval_extmath_sub_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -175,7 +175,7 @@ fn eval_extmath_sub_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -198,7 +198,7 @@ fn eval_extmath_sub_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -221,7 +221,7 @@ fn eval_extmath_sub_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -244,7 +244,7 @@ fn eval_extmath_sub_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -267,7 +267,7 @@ fn eval_extmath_sub_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -290,7 +290,7 @@ fn eval_extmath_sub_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -313,7 +313,7 @@ fn eval_extmath_sub_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -336,7 +336,7 @@ fn eval_extmath_sub_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -359,7 +359,7 @@ fn eval_extmath_sub_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -382,7 +382,7 @@ fn eval_extmath_sub_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -405,7 +405,7 @@ fn eval_extmath_sub_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -428,7 +428,7 @@ fn eval_extmath_sub_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -451,7 +451,7 @@ fn eval_extmath_sub_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -474,7 +474,7 @@ fn eval_extmath_sub_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -497,7 +497,7 @@ fn eval_extmath_add_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -520,7 +520,7 @@ fn eval_extmath_add_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -543,7 +543,7 @@ fn eval_extmath_add_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -566,7 +566,7 @@ fn eval_extmath_add_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -589,7 +589,7 @@ fn eval_extmath_add_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -612,7 +612,7 @@ fn eval_extmath_add_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -635,7 +635,7 @@ fn eval_extmath_add_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -658,7 +658,7 @@ fn eval_extmath_add_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -681,7 +681,7 @@ fn eval_extmath_add_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -704,7 +704,7 @@ fn eval_extmath_add_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -727,7 +727,7 @@ fn eval_extmath_add_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -750,7 +750,7 @@ fn eval_extmath_add_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -773,7 +773,7 @@ fn eval_extmath_add_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -796,7 +796,7 @@ fn eval_extmath_add_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -819,7 +819,7 @@ fn eval_extmath_add_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -842,7 +842,7 @@ fn eval_extmath_add_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -865,7 +865,7 @@ fn eval_extmath_add_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -888,7 +888,7 @@ fn eval_extmath_add_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -911,7 +911,7 @@ fn eval_extmath_add_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -934,7 +934,7 @@ fn eval_extmath_add_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -966,7 +966,7 @@ fn nested_extmath_sub_add_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -994,7 +994,7 @@ fn nested_extmath_sub_add_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1022,7 +1022,7 @@ fn nested_extmath_sub_add_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1050,7 +1050,7 @@ fn nested_extmath_sub_add_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1078,7 +1078,7 @@ fn nested_extmath_sub_add_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1106,7 +1106,7 @@ fn nested_extmath_sub_add_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1134,7 +1134,7 @@ fn nested_extmath_add_sub_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1162,7 +1162,7 @@ fn nested_extmath_add_sub_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1190,7 +1190,7 @@ fn nested_extmath_add_sub_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1218,7 +1218,7 @@ fn nested_extmath_add_sub_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1246,7 +1246,7 @@ fn nested_extmath_add_sub_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1274,7 +1274,7 @@ fn nested_extmath_add_sub_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1301,7 +1301,7 @@ fn wfst_extmath_dispatch_add_eval() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1319,7 +1319,7 @@ fn wfst_extmath_dispatch_sub_eval() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1341,7 +1341,7 @@ fn prec_extmath_sub_add_tighter_than_1_2_3() {
         let input_str = "1 + 2 - 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated precedence eval",
@@ -1365,7 +1365,7 @@ fn prec_extmath_paren_override_add_sub_1_2_3() {
         let input_str = "(1 + 2) - 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated parenthesization eval",
@@ -1389,7 +1389,7 @@ fn assoc_extmath_add_left() {
         let input_str = "1 + 2 + 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -1413,7 +1413,7 @@ fn assoc_extmath_sub_left() {
         let input_str = "1 - 2 - 3";
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -1441,7 +1441,7 @@ fn wpda_extmath_add_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1459,7 +1459,7 @@ fn wpda_extmath_add_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1477,7 +1477,7 @@ fn wpda_extmath_add_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1495,7 +1495,7 @@ fn wpda_extmath_add_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1513,7 +1513,7 @@ fn wpda_extmath_add_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1531,7 +1531,7 @@ fn wpda_extmath_add_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1549,7 +1549,7 @@ fn wpda_extmath_add_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1567,7 +1567,7 @@ fn wpda_extmath_add_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1585,7 +1585,7 @@ fn wpda_extmath_add_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1603,7 +1603,7 @@ fn wpda_extmath_add_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1621,7 +1621,7 @@ fn wpda_extmath_add_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1639,7 +1639,7 @@ fn wpda_extmath_add_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1657,7 +1657,7 @@ fn wpda_extmath_add_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1675,7 +1675,7 @@ fn wpda_extmath_add_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1693,7 +1693,7 @@ fn wpda_extmath_add_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1711,7 +1711,7 @@ fn wpda_extmath_add_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1729,7 +1729,7 @@ fn wpda_extmath_add_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1747,7 +1747,7 @@ fn wpda_extmath_add_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1765,7 +1765,7 @@ fn wpda_extmath_add_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1783,7 +1783,7 @@ fn wpda_extmath_add_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1801,7 +1801,7 @@ fn wpda_extmath_sub_0_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1819,7 +1819,7 @@ fn wpda_extmath_sub_0_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1837,7 +1837,7 @@ fn wpda_extmath_sub_0_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1855,7 +1855,7 @@ fn wpda_extmath_sub_0_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1873,7 +1873,7 @@ fn wpda_extmath_sub_0_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1891,7 +1891,7 @@ fn wpda_extmath_sub_1_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1909,7 +1909,7 @@ fn wpda_extmath_sub_1_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1927,7 +1927,7 @@ fn wpda_extmath_sub_1_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1945,7 +1945,7 @@ fn wpda_extmath_sub_1_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1963,7 +1963,7 @@ fn wpda_extmath_sub_1_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1981,7 +1981,7 @@ fn wpda_extmath_sub_2_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1999,7 +1999,7 @@ fn wpda_extmath_sub_2_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2017,7 +2017,7 @@ fn wpda_extmath_sub_2_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2035,7 +2035,7 @@ fn wpda_extmath_sub_2_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2053,7 +2053,7 @@ fn wpda_extmath_sub_2_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2071,7 +2071,7 @@ fn wpda_extmath_sub_3_0() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2089,7 +2089,7 @@ fn wpda_extmath_sub_3_1() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2107,7 +2107,7 @@ fn wpda_extmath_sub_3_2() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2125,7 +2125,7 @@ fn wpda_extmath_sub_3_3() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2143,7 +2143,7 @@ fn wpda_extmath_sub_3_5() {
     let input_str = format!("{}", input_term);
     let lang = ExtMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2169,7 +2169,7 @@ fn type_pres_extmath_add_0_0() {
         let input_str = format!("{}", input_term);
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -2205,7 +2205,7 @@ fn type_pres_extmath_sub_0_0() {
         let input_str = format!("{}", input_term);
         let lang = ExtMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",

@@ -107,7 +107,7 @@ fn eval_rhocalc_tostr_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -124,7 +124,7 @@ fn eval_rhocalc_tostr_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -141,7 +141,7 @@ fn eval_rhocalc_tobool_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -158,7 +158,7 @@ fn eval_rhocalc_tobool_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -175,7 +175,7 @@ fn eval_rhocalc_len_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -192,7 +192,7 @@ fn eval_rhocalc_len_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -209,7 +209,7 @@ fn eval_rhocalc_not_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -226,7 +226,7 @@ fn eval_rhocalc_not_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -243,7 +243,7 @@ fn eval_rhocalc_valuesmap_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -260,7 +260,7 @@ fn eval_rhocalc_valuesmap_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -277,7 +277,7 @@ fn eval_rhocalc_keysmap_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -294,7 +294,7 @@ fn eval_rhocalc_keysmap_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -311,7 +311,7 @@ fn eval_rhocalc_hasmap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -328,7 +328,7 @@ fn eval_rhocalc_hasmap_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -345,7 +345,7 @@ fn eval_rhocalc_hasmap_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -363,7 +363,7 @@ fn eval_rhocalc_hasmap_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -380,7 +380,7 @@ fn eval_rhocalc_mergemap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -398,7 +398,7 @@ fn eval_rhocalc_mergemap_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -416,7 +416,7 @@ fn eval_rhocalc_mergemap_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -434,7 +434,7 @@ fn eval_rhocalc_mergemap_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -452,7 +452,7 @@ fn eval_rhocalc_deletemap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -470,7 +470,7 @@ fn eval_rhocalc_deletemap_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -488,7 +488,7 @@ fn eval_rhocalc_deletemap_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -506,7 +506,7 @@ fn eval_rhocalc_deletemap_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -527,7 +527,7 @@ fn eval_rhocalc_putmap_err_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -548,7 +548,7 @@ fn eval_rhocalc_putmap_err_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -569,7 +569,7 @@ fn eval_rhocalc_putmap_err_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -590,7 +590,7 @@ fn eval_rhocalc_putmap_err_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -611,7 +611,7 @@ fn eval_rhocalc_putmap_pzero_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -632,7 +632,7 @@ fn eval_rhocalc_putmap_pzero_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -653,7 +653,7 @@ fn eval_rhocalc_putmap_pzero_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -674,7 +674,7 @@ fn eval_rhocalc_putmap_pzero_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -691,7 +691,7 @@ fn eval_rhocalc_getmap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -708,7 +708,7 @@ fn eval_rhocalc_getmap_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -725,7 +725,7 @@ fn eval_rhocalc_getmap_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -743,7 +743,7 @@ fn eval_rhocalc_getmap_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -760,7 +760,7 @@ fn eval_rhocalc_countbag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -778,7 +778,7 @@ fn eval_rhocalc_countbag_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -796,7 +796,7 @@ fn eval_rhocalc_countbag_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -814,7 +814,7 @@ fn eval_rhocalc_countbag_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -831,7 +831,7 @@ fn eval_rhocalc_diffbag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -849,7 +849,7 @@ fn eval_rhocalc_diffbag_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -867,7 +867,7 @@ fn eval_rhocalc_diffbag_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -885,7 +885,7 @@ fn eval_rhocalc_diffbag_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -903,7 +903,7 @@ fn eval_rhocalc_removebag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -921,7 +921,7 @@ fn eval_rhocalc_removebag_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -939,7 +939,7 @@ fn eval_rhocalc_removebag_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -957,7 +957,7 @@ fn eval_rhocalc_removebag_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -974,7 +974,7 @@ fn eval_rhocalc_unionbag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -992,7 +992,7 @@ fn eval_rhocalc_unionbag_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1010,7 +1010,7 @@ fn eval_rhocalc_unionbag_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1028,7 +1028,7 @@ fn eval_rhocalc_unionbag_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1046,7 +1046,7 @@ fn eval_rhocalc_deletelist_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1064,7 +1064,7 @@ fn eval_rhocalc_deletelist_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1082,7 +1082,7 @@ fn eval_rhocalc_deletelist_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1100,7 +1100,7 @@ fn eval_rhocalc_deletelist_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1117,7 +1117,7 @@ fn eval_rhocalc_elemlist_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1135,7 +1135,7 @@ fn eval_rhocalc_elemlist_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1153,7 +1153,7 @@ fn eval_rhocalc_elemlist_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1171,7 +1171,7 @@ fn eval_rhocalc_elemlist_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1189,7 +1189,7 @@ fn eval_rhocalc_concatlist_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1207,7 +1207,7 @@ fn eval_rhocalc_concatlist_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1225,7 +1225,7 @@ fn eval_rhocalc_concatlist_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1243,7 +1243,7 @@ fn eval_rhocalc_concatlist_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1260,7 +1260,7 @@ fn eval_rhocalc_negproc_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1277,7 +1277,7 @@ fn eval_rhocalc_negproc_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1294,7 +1294,7 @@ fn eval_rhocalc_mod_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1311,7 +1311,7 @@ fn eval_rhocalc_mod_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1328,7 +1328,7 @@ fn eval_rhocalc_mod_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1345,7 +1345,7 @@ fn eval_rhocalc_mod_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1362,7 +1362,7 @@ fn eval_rhocalc_div_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1379,7 +1379,7 @@ fn eval_rhocalc_div_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1396,7 +1396,7 @@ fn eval_rhocalc_div_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1413,7 +1413,7 @@ fn eval_rhocalc_div_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1430,7 +1430,7 @@ fn eval_rhocalc_mul_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1447,7 +1447,7 @@ fn eval_rhocalc_mul_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1464,7 +1464,7 @@ fn eval_rhocalc_mul_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1481,7 +1481,7 @@ fn eval_rhocalc_mul_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1498,7 +1498,7 @@ fn eval_rhocalc_sub_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1515,7 +1515,7 @@ fn eval_rhocalc_sub_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1532,7 +1532,7 @@ fn eval_rhocalc_sub_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1549,7 +1549,7 @@ fn eval_rhocalc_sub_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1566,7 +1566,7 @@ fn eval_rhocalc_add_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1583,7 +1583,7 @@ fn eval_rhocalc_add_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1600,7 +1600,7 @@ fn eval_rhocalc_add_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1617,7 +1617,7 @@ fn eval_rhocalc_add_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1634,7 +1634,7 @@ fn eval_rhocalc_lteq_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1651,7 +1651,7 @@ fn eval_rhocalc_lteq_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1668,7 +1668,7 @@ fn eval_rhocalc_lteq_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1685,7 +1685,7 @@ fn eval_rhocalc_lteq_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1702,7 +1702,7 @@ fn eval_rhocalc_gteq_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1719,7 +1719,7 @@ fn eval_rhocalc_gteq_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1736,7 +1736,7 @@ fn eval_rhocalc_gteq_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1753,7 +1753,7 @@ fn eval_rhocalc_gteq_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1770,7 +1770,7 @@ fn eval_rhocalc_lt_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1787,7 +1787,7 @@ fn eval_rhocalc_lt_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1804,7 +1804,7 @@ fn eval_rhocalc_lt_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1821,7 +1821,7 @@ fn eval_rhocalc_lt_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1838,7 +1838,7 @@ fn eval_rhocalc_gt_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1855,7 +1855,7 @@ fn eval_rhocalc_gt_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1872,7 +1872,7 @@ fn eval_rhocalc_gt_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1889,7 +1889,7 @@ fn eval_rhocalc_gt_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1906,7 +1906,7 @@ fn eval_rhocalc_ne_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1923,7 +1923,7 @@ fn eval_rhocalc_ne_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1940,7 +1940,7 @@ fn eval_rhocalc_ne_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1957,7 +1957,7 @@ fn eval_rhocalc_ne_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1974,7 +1974,7 @@ fn eval_rhocalc_eq_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1991,7 +1991,7 @@ fn eval_rhocalc_eq_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2008,7 +2008,7 @@ fn eval_rhocalc_eq_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2025,7 +2025,7 @@ fn eval_rhocalc_eq_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2042,7 +2042,7 @@ fn eval_rhocalc_bitnot_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2059,7 +2059,7 @@ fn eval_rhocalc_bitnot_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2076,7 +2076,7 @@ fn eval_rhocalc_bitand_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2093,7 +2093,7 @@ fn eval_rhocalc_bitand_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2110,7 +2110,7 @@ fn eval_rhocalc_bitand_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2128,7 +2128,7 @@ fn eval_rhocalc_bitand_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2145,7 +2145,7 @@ fn eval_rhocalc_bitor_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2162,7 +2162,7 @@ fn eval_rhocalc_bitor_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2179,7 +2179,7 @@ fn eval_rhocalc_bitor_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2197,7 +2197,7 @@ fn eval_rhocalc_bitor_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2214,7 +2214,7 @@ fn eval_rhocalc_and_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2231,7 +2231,7 @@ fn eval_rhocalc_and_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2248,7 +2248,7 @@ fn eval_rhocalc_and_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2265,7 +2265,7 @@ fn eval_rhocalc_and_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2282,7 +2282,7 @@ fn eval_rhocalc_or_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2299,7 +2299,7 @@ fn eval_rhocalc_or_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2316,7 +2316,7 @@ fn eval_rhocalc_or_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2333,7 +2333,7 @@ fn eval_rhocalc_or_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2351,7 +2351,7 @@ fn eval_rhocalc_fractionproc_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2369,7 +2369,7 @@ fn eval_rhocalc_fractionproc_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2387,7 +2387,7 @@ fn eval_rhocalc_fractionproc_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2405,7 +2405,7 @@ fn eval_rhocalc_fractionproc_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2422,7 +2422,7 @@ fn eval_rhocalc_negint_5() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2444,7 +2444,7 @@ fn eval_rhocalc_negint_3() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2466,7 +2466,7 @@ fn eval_rhocalc_negint_2() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2488,7 +2488,7 @@ fn eval_rhocalc_negint_1() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2510,7 +2510,7 @@ fn eval_rhocalc_negint_0() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2532,7 +2532,7 @@ fn eval_rhocalc_bigratcastproc_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2549,7 +2549,7 @@ fn eval_rhocalc_bigratcastproc_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2566,7 +2566,7 @@ fn eval_rhocalc_bigintcastproc_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2583,7 +2583,7 @@ fn eval_rhocalc_bigintcastproc_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2601,7 +2601,7 @@ fn eval_rhocalc_fixedbinproc_err_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2619,7 +2619,7 @@ fn eval_rhocalc_fixedbinproc_err_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2637,7 +2637,7 @@ fn eval_rhocalc_fixedbinproc_err_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2655,7 +2655,7 @@ fn eval_rhocalc_fixedbinproc_err_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2673,7 +2673,7 @@ fn eval_rhocalc_fixedbinproc_err_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2693,7 +2693,7 @@ fn eval_rhocalc_fixedbinproc_pzero_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2713,7 +2713,7 @@ fn eval_rhocalc_fixedbinproc_pzero_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2733,7 +2733,7 @@ fn eval_rhocalc_fixedbinproc_pzero_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2753,7 +2753,7 @@ fn eval_rhocalc_fixedbinproc_pzero_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2773,7 +2773,7 @@ fn eval_rhocalc_fixedbinproc_pzero_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2791,7 +2791,7 @@ fn eval_rhocalc_floatbinproc_err_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2809,7 +2809,7 @@ fn eval_rhocalc_floatbinproc_err_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2827,7 +2827,7 @@ fn eval_rhocalc_floatbinproc_err_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2845,7 +2845,7 @@ fn eval_rhocalc_floatbinproc_err_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2863,7 +2863,7 @@ fn eval_rhocalc_floatbinproc_err_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2883,7 +2883,7 @@ fn eval_rhocalc_floatbinproc_pzero_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2903,7 +2903,7 @@ fn eval_rhocalc_floatbinproc_pzero_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2923,7 +2923,7 @@ fn eval_rhocalc_floatbinproc_pzero_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2943,7 +2943,7 @@ fn eval_rhocalc_floatbinproc_pzero_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2963,7 +2963,7 @@ fn eval_rhocalc_floatbinproc_pzero_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2981,7 +2981,7 @@ fn eval_rhocalc_uintbinproc_err_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2999,7 +2999,7 @@ fn eval_rhocalc_uintbinproc_err_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3017,7 +3017,7 @@ fn eval_rhocalc_uintbinproc_err_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3035,7 +3035,7 @@ fn eval_rhocalc_uintbinproc_err_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3053,7 +3053,7 @@ fn eval_rhocalc_uintbinproc_err_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3071,7 +3071,7 @@ fn eval_rhocalc_uintbinproc_pzero_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3089,7 +3089,7 @@ fn eval_rhocalc_uintbinproc_pzero_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3107,7 +3107,7 @@ fn eval_rhocalc_uintbinproc_pzero_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3125,7 +3125,7 @@ fn eval_rhocalc_uintbinproc_pzero_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3143,7 +3143,7 @@ fn eval_rhocalc_uintbinproc_pzero_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3161,7 +3161,7 @@ fn eval_rhocalc_intbinproc_err_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3179,7 +3179,7 @@ fn eval_rhocalc_intbinproc_err_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3197,7 +3197,7 @@ fn eval_rhocalc_intbinproc_err_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3215,7 +3215,7 @@ fn eval_rhocalc_intbinproc_err_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3233,7 +3233,7 @@ fn eval_rhocalc_intbinproc_err_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3251,7 +3251,7 @@ fn eval_rhocalc_intbinproc_pzero_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3269,7 +3269,7 @@ fn eval_rhocalc_intbinproc_pzero_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3287,7 +3287,7 @@ fn eval_rhocalc_intbinproc_pzero_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3305,7 +3305,7 @@ fn eval_rhocalc_intbinproc_pzero_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3323,7 +3323,7 @@ fn eval_rhocalc_intbinproc_pzero_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3344,7 +3344,7 @@ fn nested_rhocalc_tostr_tobool_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3362,7 +3362,7 @@ fn nested_rhocalc_tostr_tobool_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3379,7 +3379,7 @@ fn nested_rhocalc_tostr_len_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3396,7 +3396,7 @@ fn nested_rhocalc_tostr_len_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3413,7 +3413,7 @@ fn nested_rhocalc_tostr_not_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3430,7 +3430,7 @@ fn nested_rhocalc_tostr_not_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3448,7 +3448,7 @@ fn nested_rhocalc_tostr_valuesmap_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3466,7 +3466,7 @@ fn nested_rhocalc_tostr_valuesmap_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3484,7 +3484,7 @@ fn nested_rhocalc_tostr_keysmap_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3502,7 +3502,7 @@ fn nested_rhocalc_tostr_keysmap_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3522,7 +3522,7 @@ fn nested_rhocalc_tostr_hasmap_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3542,7 +3542,7 @@ fn nested_rhocalc_tostr_hasmap_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3562,7 +3562,7 @@ fn nested_rhocalc_tostr_hasmap_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3582,7 +3582,7 @@ fn nested_rhocalc_tostr_mergemap_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3602,7 +3602,7 @@ fn nested_rhocalc_tostr_mergemap_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3622,7 +3622,7 @@ fn nested_rhocalc_tostr_mergemap_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3642,7 +3642,7 @@ fn nested_rhocalc_tostr_deletemap_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3662,7 +3662,7 @@ fn nested_rhocalc_tostr_deletemap_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3682,7 +3682,7 @@ fn nested_rhocalc_tostr_deletemap_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3703,7 +3703,7 @@ fn nested_rhocalc_tostr_putmap_pzero_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3724,7 +3724,7 @@ fn nested_rhocalc_tostr_putmap_pzero_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3745,7 +3745,7 @@ fn nested_rhocalc_tostr_putmap_pzero_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3765,7 +3765,7 @@ fn nested_rhocalc_tostr_getmap_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3785,7 +3785,7 @@ fn nested_rhocalc_tostr_getmap_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3805,7 +3805,7 @@ fn nested_rhocalc_tostr_getmap_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3825,7 +3825,7 @@ fn nested_rhocalc_tostr_diffbag_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3845,7 +3845,7 @@ fn nested_rhocalc_tostr_diffbag_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3865,7 +3865,7 @@ fn nested_rhocalc_tostr_diffbag_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3885,7 +3885,7 @@ fn nested_rhocalc_tostr_removebag_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3905,7 +3905,7 @@ fn nested_rhocalc_tostr_removebag_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3925,7 +3925,7 @@ fn nested_rhocalc_tostr_removebag_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3945,7 +3945,7 @@ fn nested_rhocalc_tostr_unionbag_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3965,7 +3965,7 @@ fn nested_rhocalc_tostr_unionbag_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3985,7 +3985,7 @@ fn nested_rhocalc_tostr_unionbag_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4005,7 +4005,7 @@ fn nested_rhocalc_tostr_deletelist_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4025,7 +4025,7 @@ fn nested_rhocalc_tostr_deletelist_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4045,7 +4045,7 @@ fn nested_rhocalc_tostr_deletelist_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4065,7 +4065,7 @@ fn nested_rhocalc_tostr_elemlist_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4085,7 +4085,7 @@ fn nested_rhocalc_tostr_elemlist_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4105,7 +4105,7 @@ fn nested_rhocalc_tostr_elemlist_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4125,7 +4125,7 @@ fn nested_rhocalc_tostr_concatlist_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4145,7 +4145,7 @@ fn nested_rhocalc_tostr_concatlist_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4165,7 +4165,7 @@ fn nested_rhocalc_tostr_concatlist_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4183,7 +4183,7 @@ fn nested_rhocalc_tostr_negproc_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4201,7 +4201,7 @@ fn nested_rhocalc_tostr_negproc_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4221,7 +4221,7 @@ fn nested_rhocalc_tostr_mod_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4241,7 +4241,7 @@ fn nested_rhocalc_tostr_mod_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4261,7 +4261,7 @@ fn nested_rhocalc_tostr_mod_pzero_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4281,7 +4281,7 @@ fn nested_rhocalc_tostr_div_err_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4301,7 +4301,7 @@ fn nested_rhocalc_tostr_div_pzero_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4322,7 +4322,7 @@ fn cross_cat_rhocalc_cast_castbigrat_from_bigrat_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4339,7 +4339,7 @@ fn cross_cat_rhocalc_cast_castfixed_from_fixed_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4358,7 +4358,7 @@ fn cross_cat_rhocalc_cast_castfloat_from_float_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4375,7 +4375,7 @@ fn cross_cat_rhocalc_cast_castbigint_from_bigint_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4392,7 +4392,7 @@ fn cross_cat_rhocalc_cast_castuint32_from_uint32_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4409,7 +4409,7 @@ fn cross_cat_rhocalc_cast_castint_from_int_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4426,7 +4426,7 @@ fn cross_cat_rhocalc_cast_castbool_from_bool_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4443,7 +4443,7 @@ fn cross_cat_rhocalc_cast_caststr_from_str_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4460,7 +4460,7 @@ fn cross_cat_rhocalc_cast_castlist_from_list_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4477,7 +4477,7 @@ fn cross_cat_rhocalc_cast_castbag_from_bag_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4494,7 +4494,7 @@ fn cross_cat_rhocalc_cast_castmap_from_map_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4511,7 +4511,7 @@ fn cross_cat_rhocalc_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4528,7 +4528,7 @@ fn cross_cat_rhocalc_cast_booltouint32_from_bool_to_uint32() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4545,7 +4545,7 @@ fn cross_cat_rhocalc_cast_booltobigint_from_bool_to_bigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4562,7 +4562,7 @@ fn cross_cat_rhocalc_cast_booltobigrat_from_bool_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4579,7 +4579,7 @@ fn cross_cat_rhocalc_cast_inttobigint_from_int_to_bigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4596,7 +4596,7 @@ fn cross_cat_rhocalc_cast_inttobigrat_from_int_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4613,7 +4613,7 @@ fn cross_cat_rhocalc_cast_uint32toint_from_uint32_to_int() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4630,7 +4630,7 @@ fn cross_cat_rhocalc_cast_uint32tobigint_from_uint32_to_bigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4647,7 +4647,7 @@ fn cross_cat_rhocalc_cast_uint32tobigrat_from_uint32_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4666,7 +4666,7 @@ fn cross_cat_rhocalc_cast_floattobigrat_from_float_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4684,7 +4684,7 @@ fn cross_cat_rhocalc_cast_biginttobigrat_from_bigint_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4702,7 +4702,7 @@ fn cross_cat_rhocalc_cast_fixedtobigrat_from_fixed_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4721,7 +4721,7 @@ fn cross_cat_rhocalc_chain_castbigrat_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4740,7 +4740,7 @@ fn cross_cat_rhocalc_chain_castfixed_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4759,7 +4759,7 @@ fn cross_cat_rhocalc_chain_castfloat_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4778,7 +4778,7 @@ fn cross_cat_rhocalc_chain_castbigint_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4797,7 +4797,7 @@ fn cross_cat_rhocalc_chain_castuint32_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4815,7 +4815,7 @@ fn cross_cat_rhocalc_chain_castint_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4833,7 +4833,7 @@ fn cross_cat_rhocalc_chain_castbool_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4852,7 +4852,7 @@ fn cross_cat_rhocalc_chain_caststr_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4871,7 +4871,7 @@ fn cross_cat_rhocalc_chain_castlist_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4890,7 +4890,7 @@ fn cross_cat_rhocalc_chain_castbag_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4909,7 +4909,7 @@ fn cross_cat_rhocalc_chain_castmap_nquote() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4928,7 +4928,7 @@ fn cross_cat_rhocalc_chain_booltoint_castint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4947,7 +4947,7 @@ fn cross_cat_rhocalc_chain_booltoint_inttobigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4966,7 +4966,7 @@ fn cross_cat_rhocalc_chain_booltoint_inttobigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4985,7 +4985,7 @@ fn cross_cat_rhocalc_chain_booltouint32_castuint32() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5004,7 +5004,7 @@ fn cross_cat_rhocalc_chain_booltouint32_uint32toint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5023,7 +5023,7 @@ fn cross_cat_rhocalc_chain_booltouint32_uint32tobigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5042,7 +5042,7 @@ fn cross_cat_rhocalc_chain_booltouint32_uint32tobigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5061,7 +5061,7 @@ fn cross_cat_rhocalc_chain_booltobigint_castbigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5080,7 +5080,7 @@ fn cross_cat_rhocalc_chain_booltobigint_biginttobigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5099,7 +5099,7 @@ fn cross_cat_rhocalc_chain_booltobigrat_castbigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5118,7 +5118,7 @@ fn cross_cat_rhocalc_chain_inttobigint_castbigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5137,7 +5137,7 @@ fn cross_cat_rhocalc_chain_inttobigint_biginttobigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5156,7 +5156,7 @@ fn cross_cat_rhocalc_chain_inttobigrat_castbigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5175,7 +5175,7 @@ fn cross_cat_rhocalc_chain_uint32toint_castint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5194,7 +5194,7 @@ fn cross_cat_rhocalc_chain_uint32toint_inttobigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5213,7 +5213,7 @@ fn cross_cat_rhocalc_chain_uint32toint_inttobigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5232,7 +5232,7 @@ fn cross_cat_rhocalc_chain_uint32tobigint_castbigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5251,7 +5251,7 @@ fn cross_cat_rhocalc_chain_uint32tobigint_biginttobigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5270,7 +5270,7 @@ fn cross_cat_rhocalc_chain_uint32tobigrat_castbigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5289,7 +5289,7 @@ fn cross_cat_rhocalc_chain_floattobigrat_castbigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5308,7 +5308,7 @@ fn cross_cat_rhocalc_chain_biginttobigrat_castbigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5327,7 +5327,7 @@ fn cross_cat_rhocalc_chain_fixedtobigrat_castbigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5349,7 +5349,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5371,7 +5371,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5393,7 +5393,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5415,7 +5415,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5434,7 +5434,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5453,7 +5453,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5477,7 +5477,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5501,7 +5501,7 @@ fn cross_cat_rhocalc_castop_or_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5525,7 +5525,7 @@ fn cross_cat_rhocalc_castop_and_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5549,7 +5549,7 @@ fn cross_cat_rhocalc_castop_bitor_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5573,7 +5573,7 @@ fn cross_cat_rhocalc_castop_bitand_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5592,7 +5592,7 @@ fn cross_cat_rhocalc_castop_bitnot_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5616,7 +5616,7 @@ fn cross_cat_rhocalc_castop_eq_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5640,7 +5640,7 @@ fn cross_cat_rhocalc_castop_ne_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5664,7 +5664,7 @@ fn cross_cat_rhocalc_castop_gt_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5688,7 +5688,7 @@ fn cross_cat_rhocalc_castop_lt_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5712,7 +5712,7 @@ fn cross_cat_rhocalc_castop_gteq_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5736,7 +5736,7 @@ fn cross_cat_rhocalc_castop_lteq_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5760,7 +5760,7 @@ fn cross_cat_rhocalc_castop_add_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5784,7 +5784,7 @@ fn cross_cat_rhocalc_castop_sub_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5808,7 +5808,7 @@ fn cross_cat_rhocalc_castop_mul_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5832,7 +5832,7 @@ fn cross_cat_rhocalc_castop_div_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5856,7 +5856,7 @@ fn cross_cat_rhocalc_castop_mod_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5875,7 +5875,7 @@ fn cross_cat_rhocalc_castop_negproc_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5899,7 +5899,7 @@ fn cross_cat_rhocalc_castop_concatlist_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5923,7 +5923,7 @@ fn cross_cat_rhocalc_castop_elemlist_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5947,7 +5947,7 @@ fn cross_cat_rhocalc_castop_deletelist_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5971,7 +5971,7 @@ fn cross_cat_rhocalc_castop_unionbag_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -5995,7 +5995,7 @@ fn cross_cat_rhocalc_castop_removebag_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6019,7 +6019,7 @@ fn cross_cat_rhocalc_castop_diffbag_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6043,7 +6043,7 @@ fn cross_cat_rhocalc_castop_getmap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6070,7 +6070,7 @@ fn cross_cat_rhocalc_castop_putmap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6094,7 +6094,7 @@ fn cross_cat_rhocalc_castop_deletemap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6118,7 +6118,7 @@ fn cross_cat_rhocalc_castop_mergemap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6142,7 +6142,7 @@ fn cross_cat_rhocalc_castop_hasmap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6161,7 +6161,7 @@ fn cross_cat_rhocalc_castop_keysmap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6180,7 +6180,7 @@ fn cross_cat_rhocalc_castop_valuesmap_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6199,7 +6199,7 @@ fn cross_cat_rhocalc_castop_not_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6218,7 +6218,7 @@ fn cross_cat_rhocalc_castop_len_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6237,7 +6237,7 @@ fn cross_cat_rhocalc_castop_tobool_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6256,7 +6256,7 @@ fn cross_cat_rhocalc_castop_tostr_castbigrat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6278,7 +6278,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6300,7 +6300,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6322,7 +6322,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6344,7 +6344,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6363,7 +6363,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6382,7 +6382,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6406,7 +6406,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6430,7 +6430,7 @@ fn cross_cat_rhocalc_castop_or_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6454,7 +6454,7 @@ fn cross_cat_rhocalc_castop_and_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6478,7 +6478,7 @@ fn cross_cat_rhocalc_castop_bitor_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6502,7 +6502,7 @@ fn cross_cat_rhocalc_castop_bitand_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6521,7 +6521,7 @@ fn cross_cat_rhocalc_castop_bitnot_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6545,7 +6545,7 @@ fn cross_cat_rhocalc_castop_eq_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6569,7 +6569,7 @@ fn cross_cat_rhocalc_castop_ne_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6593,7 +6593,7 @@ fn cross_cat_rhocalc_castop_gt_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6617,7 +6617,7 @@ fn cross_cat_rhocalc_castop_lt_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6641,7 +6641,7 @@ fn cross_cat_rhocalc_castop_gteq_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6665,7 +6665,7 @@ fn cross_cat_rhocalc_castop_lteq_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6689,7 +6689,7 @@ fn cross_cat_rhocalc_castop_add_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6713,7 +6713,7 @@ fn cross_cat_rhocalc_castop_sub_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6737,7 +6737,7 @@ fn cross_cat_rhocalc_castop_mul_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6761,7 +6761,7 @@ fn cross_cat_rhocalc_castop_div_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6785,7 +6785,7 @@ fn cross_cat_rhocalc_castop_mod_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6804,7 +6804,7 @@ fn cross_cat_rhocalc_castop_negproc_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6828,7 +6828,7 @@ fn cross_cat_rhocalc_castop_concatlist_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6852,7 +6852,7 @@ fn cross_cat_rhocalc_castop_elemlist_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6876,7 +6876,7 @@ fn cross_cat_rhocalc_castop_deletelist_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6900,7 +6900,7 @@ fn cross_cat_rhocalc_castop_unionbag_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6924,7 +6924,7 @@ fn cross_cat_rhocalc_castop_removebag_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6948,7 +6948,7 @@ fn cross_cat_rhocalc_castop_diffbag_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6972,7 +6972,7 @@ fn cross_cat_rhocalc_castop_getmap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -6999,7 +6999,7 @@ fn cross_cat_rhocalc_castop_putmap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7023,7 +7023,7 @@ fn cross_cat_rhocalc_castop_deletemap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7047,7 +7047,7 @@ fn cross_cat_rhocalc_castop_mergemap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7071,7 +7071,7 @@ fn cross_cat_rhocalc_castop_hasmap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7090,7 +7090,7 @@ fn cross_cat_rhocalc_castop_keysmap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7109,7 +7109,7 @@ fn cross_cat_rhocalc_castop_valuesmap_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7128,7 +7128,7 @@ fn cross_cat_rhocalc_castop_not_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7147,7 +7147,7 @@ fn cross_cat_rhocalc_castop_len_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7166,7 +7166,7 @@ fn cross_cat_rhocalc_castop_tobool_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7185,7 +7185,7 @@ fn cross_cat_rhocalc_castop_tostr_castfixed_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7207,7 +7207,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7229,7 +7229,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7251,7 +7251,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7273,7 +7273,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7292,7 +7292,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7311,7 +7311,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7335,7 +7335,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7359,7 +7359,7 @@ fn cross_cat_rhocalc_castop_or_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7383,7 +7383,7 @@ fn cross_cat_rhocalc_castop_and_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7407,7 +7407,7 @@ fn cross_cat_rhocalc_castop_bitor_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7431,7 +7431,7 @@ fn cross_cat_rhocalc_castop_bitand_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7450,7 +7450,7 @@ fn cross_cat_rhocalc_castop_bitnot_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7474,7 +7474,7 @@ fn cross_cat_rhocalc_castop_eq_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7498,7 +7498,7 @@ fn cross_cat_rhocalc_castop_ne_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7522,7 +7522,7 @@ fn cross_cat_rhocalc_castop_gt_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7546,7 +7546,7 @@ fn cross_cat_rhocalc_castop_lt_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7570,7 +7570,7 @@ fn cross_cat_rhocalc_castop_gteq_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7594,7 +7594,7 @@ fn cross_cat_rhocalc_castop_lteq_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7618,7 +7618,7 @@ fn cross_cat_rhocalc_castop_add_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7642,7 +7642,7 @@ fn cross_cat_rhocalc_castop_sub_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7666,7 +7666,7 @@ fn cross_cat_rhocalc_castop_mul_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7690,7 +7690,7 @@ fn cross_cat_rhocalc_castop_div_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7714,7 +7714,7 @@ fn cross_cat_rhocalc_castop_mod_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7733,7 +7733,7 @@ fn cross_cat_rhocalc_castop_negproc_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7757,7 +7757,7 @@ fn cross_cat_rhocalc_castop_concatlist_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7781,7 +7781,7 @@ fn cross_cat_rhocalc_castop_elemlist_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7805,7 +7805,7 @@ fn cross_cat_rhocalc_castop_deletelist_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7829,7 +7829,7 @@ fn cross_cat_rhocalc_castop_unionbag_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7853,7 +7853,7 @@ fn cross_cat_rhocalc_castop_removebag_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7877,7 +7877,7 @@ fn cross_cat_rhocalc_castop_diffbag_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7901,7 +7901,7 @@ fn cross_cat_rhocalc_castop_getmap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7928,7 +7928,7 @@ fn cross_cat_rhocalc_castop_putmap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7952,7 +7952,7 @@ fn cross_cat_rhocalc_castop_deletemap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -7976,7 +7976,7 @@ fn cross_cat_rhocalc_castop_mergemap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8000,7 +8000,7 @@ fn cross_cat_rhocalc_castop_hasmap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8019,7 +8019,7 @@ fn cross_cat_rhocalc_castop_keysmap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8038,7 +8038,7 @@ fn cross_cat_rhocalc_castop_valuesmap_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8057,7 +8057,7 @@ fn cross_cat_rhocalc_castop_not_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8076,7 +8076,7 @@ fn cross_cat_rhocalc_castop_len_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8095,7 +8095,7 @@ fn cross_cat_rhocalc_castop_tobool_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8114,7 +8114,7 @@ fn cross_cat_rhocalc_castop_tostr_castfloat_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8136,7 +8136,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8158,7 +8158,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8180,7 +8180,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8202,7 +8202,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8221,7 +8221,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8240,7 +8240,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8264,7 +8264,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8288,7 +8288,7 @@ fn cross_cat_rhocalc_castop_or_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8312,7 +8312,7 @@ fn cross_cat_rhocalc_castop_and_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8336,7 +8336,7 @@ fn cross_cat_rhocalc_castop_bitor_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8360,7 +8360,7 @@ fn cross_cat_rhocalc_castop_bitand_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8379,7 +8379,7 @@ fn cross_cat_rhocalc_castop_bitnot_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8403,7 +8403,7 @@ fn cross_cat_rhocalc_castop_eq_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8427,7 +8427,7 @@ fn cross_cat_rhocalc_castop_ne_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8451,7 +8451,7 @@ fn cross_cat_rhocalc_castop_gt_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8475,7 +8475,7 @@ fn cross_cat_rhocalc_castop_lt_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8499,7 +8499,7 @@ fn cross_cat_rhocalc_castop_gteq_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8523,7 +8523,7 @@ fn cross_cat_rhocalc_castop_lteq_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8547,7 +8547,7 @@ fn cross_cat_rhocalc_castop_add_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8571,7 +8571,7 @@ fn cross_cat_rhocalc_castop_sub_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8595,7 +8595,7 @@ fn cross_cat_rhocalc_castop_mul_castbigint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8617,7 +8617,7 @@ fn wfst_rhocalc_dispatch_intbinproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8635,7 +8635,7 @@ fn wfst_rhocalc_dispatch_uintbinproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8655,7 +8655,7 @@ fn wfst_rhocalc_dispatch_floatbinproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8675,7 +8675,7 @@ fn wfst_rhocalc_dispatch_fixedbinproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8692,7 +8692,7 @@ fn wfst_rhocalc_dispatch_bigintcastproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8709,7 +8709,7 @@ fn wfst_rhocalc_dispatch_bigratcastproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8727,7 +8727,7 @@ fn wfst_rhocalc_dispatch_fractionproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8745,7 +8745,7 @@ fn wfst_rhocalc_dispatch_concatlist_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8763,7 +8763,7 @@ fn wfst_rhocalc_dispatch_elemlist_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8781,7 +8781,7 @@ fn wfst_rhocalc_dispatch_deletelist_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8799,7 +8799,7 @@ fn wfst_rhocalc_dispatch_unionbag_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8817,7 +8817,7 @@ fn wfst_rhocalc_dispatch_removebag_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8835,7 +8835,7 @@ fn wfst_rhocalc_dispatch_diffbag_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8853,7 +8853,7 @@ fn wfst_rhocalc_dispatch_countbag_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8871,7 +8871,7 @@ fn wfst_rhocalc_dispatch_getmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8892,7 +8892,7 @@ fn wfst_rhocalc_dispatch_putmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8910,7 +8910,7 @@ fn wfst_rhocalc_dispatch_deletemap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8928,7 +8928,7 @@ fn wfst_rhocalc_dispatch_mergemap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8946,7 +8946,7 @@ fn wfst_rhocalc_dispatch_hasmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8963,7 +8963,7 @@ fn wfst_rhocalc_dispatch_keysmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8980,7 +8980,7 @@ fn wfst_rhocalc_dispatch_valuesmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -8997,7 +8997,7 @@ fn wfst_rhocalc_dispatch_len_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9014,7 +9014,7 @@ fn wfst_rhocalc_dispatch_tobool_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9031,7 +9031,7 @@ fn wfst_rhocalc_dispatch_tostr_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9048,7 +9048,7 @@ fn wfst_rhocalc_dispatch_negint_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9065,7 +9065,7 @@ fn wfst_rhocalc_dispatch_or_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9082,7 +9082,7 @@ fn wfst_rhocalc_dispatch_and_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9100,7 +9100,7 @@ fn wfst_rhocalc_dispatch_bitor_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9118,7 +9118,7 @@ fn wfst_rhocalc_dispatch_bitand_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9135,7 +9135,7 @@ fn wfst_rhocalc_dispatch_bitnot_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9152,7 +9152,7 @@ fn wfst_rhocalc_dispatch_eq_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9169,7 +9169,7 @@ fn wfst_rhocalc_dispatch_ne_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9186,7 +9186,7 @@ fn wfst_rhocalc_dispatch_gt_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9203,7 +9203,7 @@ fn wfst_rhocalc_dispatch_lt_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9220,7 +9220,7 @@ fn wfst_rhocalc_dispatch_gteq_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9237,7 +9237,7 @@ fn wfst_rhocalc_dispatch_lteq_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9254,7 +9254,7 @@ fn wfst_rhocalc_dispatch_add_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9271,7 +9271,7 @@ fn wfst_rhocalc_dispatch_sub_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9288,7 +9288,7 @@ fn wfst_rhocalc_dispatch_mul_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9305,7 +9305,7 @@ fn wfst_rhocalc_dispatch_div_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9322,7 +9322,7 @@ fn wfst_rhocalc_dispatch_mod_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9339,7 +9339,7 @@ fn wfst_rhocalc_dispatch_negproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9356,7 +9356,7 @@ fn wfst_rhocalc_dispatch_not_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9378,7 +9378,7 @@ fn wpda_rhocalc_intbinproc_pzero_0() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9396,7 +9396,7 @@ fn wpda_rhocalc_intbinproc_pzero_1() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9414,7 +9414,7 @@ fn wpda_rhocalc_intbinproc_pzero_2() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9432,7 +9432,7 @@ fn wpda_rhocalc_intbinproc_pzero_3() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9450,7 +9450,7 @@ fn wpda_rhocalc_intbinproc_pzero_5() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9468,7 +9468,7 @@ fn wpda_rhocalc_intbinproc_err_0() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9486,7 +9486,7 @@ fn wpda_rhocalc_intbinproc_err_1() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9504,7 +9504,7 @@ fn wpda_rhocalc_intbinproc_err_2() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9522,7 +9522,7 @@ fn wpda_rhocalc_intbinproc_err_3() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9540,7 +9540,7 @@ fn wpda_rhocalc_intbinproc_err_5() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9558,7 +9558,7 @@ fn wpda_rhocalc_uintbinproc_pzero_0() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9576,7 +9576,7 @@ fn wpda_rhocalc_countbag_pzero_pzero() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9594,7 +9594,7 @@ fn wpda_rhocalc_countbag_pzero_err() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9612,7 +9612,7 @@ fn wpda_rhocalc_countbag_err_pzero() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -9638,7 +9638,7 @@ fn type_pres_rhocalc_intbinproc_pzero_0() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9674,7 +9674,7 @@ fn type_pres_rhocalc_uintbinproc_pzero_0() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9710,7 +9710,7 @@ fn type_pres_rhocalc_floatbinproc_pzero_0() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9746,7 +9746,7 @@ fn type_pres_rhocalc_fixedbinproc_pzero_0() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9779,7 +9779,7 @@ fn type_pres_rhocalc_bigintcastproc_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9812,7 +9812,7 @@ fn type_pres_rhocalc_bigratcastproc_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9845,7 +9845,7 @@ fn type_pres_rhocalc_negint_0() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9879,7 +9879,7 @@ fn type_pres_rhocalc_fractionproc_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9913,7 +9913,7 @@ fn type_pres_rhocalc_or_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9947,7 +9947,7 @@ fn type_pres_rhocalc_and_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -9981,7 +9981,7 @@ fn type_pres_rhocalc_bitor_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10015,7 +10015,7 @@ fn type_pres_rhocalc_bitand_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10048,7 +10048,7 @@ fn type_pres_rhocalc_bitnot_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10082,7 +10082,7 @@ fn type_pres_rhocalc_eq_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10116,7 +10116,7 @@ fn type_pres_rhocalc_ne_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10150,7 +10150,7 @@ fn type_pres_rhocalc_gt_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10184,7 +10184,7 @@ fn type_pres_rhocalc_lt_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10218,7 +10218,7 @@ fn type_pres_rhocalc_gteq_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10252,7 +10252,7 @@ fn type_pres_rhocalc_lteq_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10286,7 +10286,7 @@ fn type_pres_rhocalc_add_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10320,7 +10320,7 @@ fn type_pres_rhocalc_sub_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10354,7 +10354,7 @@ fn type_pres_rhocalc_mul_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10388,7 +10388,7 @@ fn type_pres_rhocalc_div_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10422,7 +10422,7 @@ fn type_pres_rhocalc_mod_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10455,7 +10455,7 @@ fn type_pres_rhocalc_negproc_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10489,7 +10489,7 @@ fn type_pres_rhocalc_concatlist_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10523,7 +10523,7 @@ fn type_pres_rhocalc_elemlist_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10557,7 +10557,7 @@ fn type_pres_rhocalc_deletelist_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10591,7 +10591,7 @@ fn type_pres_rhocalc_unionbag_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10625,7 +10625,7 @@ fn type_pres_rhocalc_removebag_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10659,7 +10659,7 @@ fn type_pres_rhocalc_diffbag_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10693,7 +10693,7 @@ fn type_pres_rhocalc_countbag_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10727,7 +10727,7 @@ fn type_pres_rhocalc_getmap_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10764,7 +10764,7 @@ fn type_pres_rhocalc_putmap_pzero_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10798,7 +10798,7 @@ fn type_pres_rhocalc_deletemap_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10832,7 +10832,7 @@ fn type_pres_rhocalc_mergemap_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10866,7 +10866,7 @@ fn type_pres_rhocalc_hasmap_pzero_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10899,7 +10899,7 @@ fn type_pres_rhocalc_keysmap_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10932,7 +10932,7 @@ fn type_pres_rhocalc_valuesmap_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10965,7 +10965,7 @@ fn type_pres_rhocalc_not_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -10998,7 +10998,7 @@ fn type_pres_rhocalc_len_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -11031,7 +11031,7 @@ fn type_pres_rhocalc_tobool_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -11064,7 +11064,7 @@ fn type_pres_rhocalc_tostr_pzero() {
         let input_str = format!("{}", input_term);
         let lang = RhoCalcLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",

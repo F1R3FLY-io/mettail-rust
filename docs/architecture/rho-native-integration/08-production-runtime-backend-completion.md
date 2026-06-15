@@ -381,9 +381,11 @@ from a display/default metadata fallback. Production callers must ask
 `selected_default_runtime_backend()` or `default_runtime_backend()` and fail
 closed when they return `None`.
 This is the rule implemented by `run_default_*`, the REPL, the simulation
-runner, and testkit helpers. No default-backend query is allowed to report
-`Ascent` unless the concrete runtime capability view actually advertises an
-Ascent default.
+runner, and production testkit helpers. No default-backend query is allowed to
+report `Ascent` unless the concrete runtime capability view actually
+advertises an Ascent default. The separate
+`run_ascent_oracle_report` test helper is intentionally named as a reference
+oracle and does not participate in production default dispatch.
 Graph-shaped test utilities follow the same runtime-view rule. When a property
 such as an LTL execution-model check needs rewrite-graph evidence, it prefers
 an installed `Dovetail` report over the selected default report: a selected
@@ -408,17 +410,17 @@ important:
 | static metadata, `LanguageMetadata::runtime_backends()` | generated language crate | compile-time constant | backends that the generated crate can execute without an external runtime wrapper |
 | runtime view, `Language::runtime_backend_capabilities()` | concrete `Language` value | value-level overlay | backends executable by this particular value, including wrapper-installed defaults |
 
-For a generated language such as Calculator, static metadata still advertises
-the generated Ascent oracle as its transition default. After the language is
-wrapped with a flip-gated `PlannedRhoBackend`, the production runtime view
-starts with `RuntimeBackendCapability { backend: RhoMachine, is_default: true,
-… }` and strips the legacy Ascent runtime from the wrapped value. This is the
-reason `language.metadata().runtime_backends()` can remain Ascent-only during
-transition while `language.default_runtime_backend()` reports
-`Some(RhoMachine)`,
+For a generated language such as Calculator, static metadata is
+substrate-neutral and advertises no production runtime backend. After the
+language is wrapped with a flip-gated `PlannedRhoBackend`, the production
+runtime view starts with
+`RuntimeBackendCapability { backend: RhoMachine, is_default: true, … }` and
+continues to hide the legacy Ascent runtime from the wrapped value. This is the
+reason `language.metadata().runtime_backends()` can be empty while
+`language.default_runtime_backend()` reports `Some(RhoMachine)`,
 `language.supports_runtime_backend(RuntimeBackend::Ascent)` reports `false`,
-and `language.run_default_backend_report(…)` uses the production Rho surface for
-that wrapped value. The Rocq model
+and `language.run_default_backend_report(…)` uses the production Rho surface
+for that wrapped value. The Rocq model
 `formal/rocq/rho_bridge/theories/RhoLanguageBackendWrapper.v` proves that the
 runtime capability list supports exactly the backends reported by the wrapper
 and that inherited Ascent capability is not exposed after wrapping.
@@ -524,10 +526,10 @@ When SimulationRunner executes a term:
 
 Report-shaped and observation-shaped runtime outputs are terminal simulation
 outcomes. They are not normal-form graph evidence, and they intentionally
-bypass the Ascent-only normal-form BFS. This preserves the old simulation
-semantics for Ascent-default languages while allowing Dovetail-default
-languages to expose checked report evidence and Rho-default languages to be
-simulated by their actual runtime observations.
+bypass the Ascent-only normal-form BFS. Explicit Ascent-oracle tests may still
+provide legacy reference evidence, while Dovetail-default languages expose
+checked report evidence and Rho-default languages are simulated by their actual
+runtime observations.
 
 `mettail-simulation` remains substrate-neutral: its focused unit tests use a
 small mock language that returns a Rho-shaped observation report. Generated
@@ -544,27 +546,34 @@ when the test only exercises Calculator.
 
 Generated operational tests are part of the runtime-backend replacement surface
 because they define the regression corpus future generated language crates will
-compile. Their templates must therefore exercise the selected default runtime
-backend through `RuntimeBackendReport`; they must not bake in
-`Language::run_ascent` as the only successful execution path.
+compile. While a test is explicitly serving as legacy reference evidence, its
+template calls `mettail_testkit::runtime_report::run_ascent_oracle_report` so
+the use of the old engine is visible at the call site. Production and
+application-level tests use the selected default runtime backend through
+`RuntimeBackendReport`; they must not recover Ascent through metadata fallback.
 
 The intended generated-test behavior is:
 
 ```text
-When a generated operational test evaluates a parsed term:
-  ask the selected default backend for a RuntimeBackendReport
+When a generated operational test evaluates a parsed term as reference evidence:
+  run the explicit Ascent oracle and wrap it as a RuntimeBackendReport
   compare expected values through report-aware helpers
-  accept Ascent normal forms, Dovetail report roots, and Rho/runtime observations as backend outputs
+  accept Ascent normal forms as the reference output
   use semantic outputs, not channel-summary diagnostics, for parseability checks
   keep graph-only assertions behind explicit Ascent-shaped graph checks
+
+When an application-level runtime test evaluates a parsed term:
+  ask the selected default backend for a RuntimeBackendReport
+  accept Dovetail report roots and Rho/runtime observations as production backend outputs
+  fail closed when the concrete language value has no selected default
 ```
 
 This boundary lets generated expected-output, smoke, precedence,
 associativity, type-preservation, and algebraic-property tests continue to
-work while a language is Ascent-default, and then continue to test the same
-semantic obligation when the language is wrapped as Dovetail-default or
-Rho-default. The templates also generate property-based identity-law checks for
-both `f(e,a)=a` and `f(a,e)=a`; the side of the identity element is part of the
+work as explicit oracle regressions during the replacement campaign, while
+application-level tests exercise the wrapper-installed Dovetail or Rho default.
+The templates also generate property-based identity-law checks for both
+`f(e,a)=a` and `f(a,e)=a`; the side of the identity element is part of the
 detected property, not a hard-coded convention.
 
 ## Diagram Tooling Policy

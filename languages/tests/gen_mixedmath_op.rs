@@ -40,7 +40,7 @@ fn eval_mixedmath_neg_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -62,7 +62,7 @@ fn eval_mixedmath_neg_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -84,7 +84,7 @@ fn eval_mixedmath_neg_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -106,7 +106,7 @@ fn eval_mixedmath_neg_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -128,7 +128,7 @@ fn eval_mixedmath_neg_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -150,7 +150,7 @@ fn eval_mixedmath_not_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -172,7 +172,7 @@ fn eval_mixedmath_not_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -197,7 +197,7 @@ fn eval_mixedmath_or_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -222,7 +222,7 @@ fn eval_mixedmath_or_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -247,7 +247,7 @@ fn eval_mixedmath_or_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -272,7 +272,7 @@ fn eval_mixedmath_or_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -297,7 +297,7 @@ fn eval_mixedmath_and_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -322,7 +322,7 @@ fn eval_mixedmath_and_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -347,7 +347,7 @@ fn eval_mixedmath_and_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -372,7 +372,7 @@ fn eval_mixedmath_and_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -395,7 +395,7 @@ fn eval_mixedmath_mulint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -418,7 +418,7 @@ fn eval_mixedmath_mulint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -441,7 +441,7 @@ fn eval_mixedmath_mulint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -464,7 +464,7 @@ fn eval_mixedmath_mulint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -487,7 +487,7 @@ fn eval_mixedmath_mulint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -510,7 +510,7 @@ fn eval_mixedmath_mulint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -533,7 +533,7 @@ fn eval_mixedmath_mulint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -556,7 +556,7 @@ fn eval_mixedmath_mulint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -579,7 +579,7 @@ fn eval_mixedmath_mulint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -602,7 +602,7 @@ fn eval_mixedmath_mulint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -625,7 +625,7 @@ fn eval_mixedmath_mulint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -648,7 +648,7 @@ fn eval_mixedmath_mulint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -671,7 +671,7 @@ fn eval_mixedmath_mulint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -694,7 +694,7 @@ fn eval_mixedmath_mulint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -717,7 +717,7 @@ fn eval_mixedmath_mulint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -740,7 +740,7 @@ fn eval_mixedmath_mulint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -763,7 +763,7 @@ fn eval_mixedmath_mulint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -786,7 +786,7 @@ fn eval_mixedmath_mulint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -809,7 +809,7 @@ fn eval_mixedmath_mulint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -832,7 +832,7 @@ fn eval_mixedmath_mulint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -855,7 +855,7 @@ fn eval_mixedmath_subint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -878,7 +878,7 @@ fn eval_mixedmath_subint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -901,7 +901,7 @@ fn eval_mixedmath_subint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -924,7 +924,7 @@ fn eval_mixedmath_subint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -947,7 +947,7 @@ fn eval_mixedmath_subint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -970,7 +970,7 @@ fn eval_mixedmath_subint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -993,7 +993,7 @@ fn eval_mixedmath_subint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1016,7 +1016,7 @@ fn eval_mixedmath_subint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1039,7 +1039,7 @@ fn eval_mixedmath_subint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1062,7 +1062,7 @@ fn eval_mixedmath_subint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1085,7 +1085,7 @@ fn eval_mixedmath_subint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1108,7 +1108,7 @@ fn eval_mixedmath_subint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1131,7 +1131,7 @@ fn eval_mixedmath_subint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1154,7 +1154,7 @@ fn eval_mixedmath_subint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1177,7 +1177,7 @@ fn eval_mixedmath_subint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1200,7 +1200,7 @@ fn eval_mixedmath_subint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1223,7 +1223,7 @@ fn eval_mixedmath_subint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1246,7 +1246,7 @@ fn eval_mixedmath_subint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1269,7 +1269,7 @@ fn eval_mixedmath_subint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1292,7 +1292,7 @@ fn eval_mixedmath_subint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1315,7 +1315,7 @@ fn eval_mixedmath_addint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1338,7 +1338,7 @@ fn eval_mixedmath_addint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1361,7 +1361,7 @@ fn eval_mixedmath_addint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1384,7 +1384,7 @@ fn eval_mixedmath_addint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1407,7 +1407,7 @@ fn eval_mixedmath_addint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1430,7 +1430,7 @@ fn eval_mixedmath_addint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1453,7 +1453,7 @@ fn eval_mixedmath_addint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1476,7 +1476,7 @@ fn eval_mixedmath_addint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1499,7 +1499,7 @@ fn eval_mixedmath_addint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1522,7 +1522,7 @@ fn eval_mixedmath_addint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1545,7 +1545,7 @@ fn eval_mixedmath_addint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1568,7 +1568,7 @@ fn eval_mixedmath_addint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1591,7 +1591,7 @@ fn eval_mixedmath_addint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1614,7 +1614,7 @@ fn eval_mixedmath_addint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1637,7 +1637,7 @@ fn eval_mixedmath_addint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1660,7 +1660,7 @@ fn eval_mixedmath_addint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1683,7 +1683,7 @@ fn eval_mixedmath_addint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1706,7 +1706,7 @@ fn eval_mixedmath_addint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1729,7 +1729,7 @@ fn eval_mixedmath_addint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1752,7 +1752,7 @@ fn eval_mixedmath_addint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1781,7 +1781,7 @@ fn nested_mixedmath_neg_mulint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1806,7 +1806,7 @@ fn nested_mixedmath_neg_mulint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1831,7 +1831,7 @@ fn nested_mixedmath_neg_mulint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1856,7 +1856,7 @@ fn nested_mixedmath_neg_subint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1881,7 +1881,7 @@ fn nested_mixedmath_neg_subint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1906,7 +1906,7 @@ fn nested_mixedmath_neg_subint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1931,7 +1931,7 @@ fn nested_mixedmath_neg_addint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1956,7 +1956,7 @@ fn nested_mixedmath_neg_addint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1981,7 +1981,7 @@ fn nested_mixedmath_neg_addint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2006,7 +2006,7 @@ fn nested_mixedmath_not_or_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2031,7 +2031,7 @@ fn nested_mixedmath_not_or_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2056,7 +2056,7 @@ fn nested_mixedmath_not_or_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2081,7 +2081,7 @@ fn nested_mixedmath_not_and_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2106,7 +2106,7 @@ fn nested_mixedmath_not_and_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2131,7 +2131,7 @@ fn nested_mixedmath_not_and_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2156,7 +2156,7 @@ fn nested_mixedmath_or_not_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2181,7 +2181,7 @@ fn nested_mixedmath_or_not_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2209,7 +2209,7 @@ fn nested_mixedmath_or_and_false_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2237,7 +2237,7 @@ fn nested_mixedmath_or_and_true_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2265,7 +2265,7 @@ fn nested_mixedmath_or_and_true_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2290,7 +2290,7 @@ fn nested_mixedmath_or_not_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2315,7 +2315,7 @@ fn nested_mixedmath_or_not_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2343,7 +2343,7 @@ fn nested_mixedmath_or_and_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2371,7 +2371,7 @@ fn nested_mixedmath_or_and_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2399,7 +2399,7 @@ fn nested_mixedmath_or_and_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2424,7 +2424,7 @@ fn nested_mixedmath_and_not_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2449,7 +2449,7 @@ fn nested_mixedmath_and_not_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2477,7 +2477,7 @@ fn nested_mixedmath_and_or_false_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2505,7 +2505,7 @@ fn nested_mixedmath_and_or_true_false_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2533,7 +2533,7 @@ fn nested_mixedmath_and_or_true_true_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2558,7 +2558,7 @@ fn nested_mixedmath_and_not_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2583,7 +2583,7 @@ fn nested_mixedmath_and_not_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2611,7 +2611,7 @@ fn nested_mixedmath_and_or_false_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2639,7 +2639,7 @@ fn nested_mixedmath_and_or_true_false_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2667,7 +2667,7 @@ fn nested_mixedmath_and_or_true_true_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2692,7 +2692,7 @@ fn nested_mixedmath_mulint_neg_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2717,7 +2717,7 @@ fn nested_mixedmath_mulint_neg_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2742,7 +2742,7 @@ fn nested_mixedmath_mulint_neg_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2770,7 +2770,7 @@ fn nested_mixedmath_mulint_subint_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2798,7 +2798,7 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2826,7 +2826,7 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2854,7 +2854,7 @@ fn nested_mixedmath_mulint_addint_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2882,7 +2882,7 @@ fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2910,7 +2910,7 @@ fn nested_mixedmath_mulint_addint_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2935,7 +2935,7 @@ fn nested_mixedmath_mulint_neg_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2960,7 +2960,7 @@ fn nested_mixedmath_mulint_neg_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2985,7 +2985,7 @@ fn nested_mixedmath_mulint_neg_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3013,7 +3013,7 @@ fn nested_mixedmath_mulint_subint_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3041,7 +3041,7 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3069,7 +3069,7 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3098,7 +3098,7 @@ fn edge_mixedmath_and_bool_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3123,7 +3123,7 @@ fn edge_mixedmath_and_bool_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3148,7 +3148,7 @@ fn edge_mixedmath_and_bool_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3173,7 +3173,7 @@ fn edge_mixedmath_and_bool_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3198,7 +3198,7 @@ fn edge_mixedmath_or_bool_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3223,7 +3223,7 @@ fn edge_mixedmath_or_bool_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3248,7 +3248,7 @@ fn edge_mixedmath_or_bool_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3273,7 +3273,7 @@ fn edge_mixedmath_or_bool_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3295,7 +3295,7 @@ fn edge_mixedmath_not_bool_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3317,7 +3317,7 @@ fn edge_mixedmath_not_bool_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3343,7 +3343,7 @@ fn cross_cat_mixedmath_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3363,7 +3363,7 @@ fn cross_cat_mixedmath_castop_addint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3383,7 +3383,7 @@ fn cross_cat_mixedmath_castop_subint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3403,7 +3403,7 @@ fn cross_cat_mixedmath_castop_mulint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3421,7 +3421,7 @@ fn cross_cat_mixedmath_castop_neg_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3441,7 +3441,7 @@ fn cross_cat_mixedmath_mixed_addint_cast_booltoint_lhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3461,7 +3461,7 @@ fn cross_cat_mixedmath_mixed_addint_cast_booltoint_rhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3481,7 +3481,7 @@ fn cross_cat_mixedmath_composite_addint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3501,7 +3501,7 @@ fn cross_cat_mixedmath_composite_subint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3521,7 +3521,7 @@ fn cross_cat_mixedmath_composite_mulint_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3539,7 +3539,7 @@ fn cross_cat_mixedmath_composite_neg_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3561,7 +3561,7 @@ fn wfst_mixedmath_dispatch_addint_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3579,7 +3579,7 @@ fn wfst_mixedmath_dispatch_subint_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3597,7 +3597,7 @@ fn wfst_mixedmath_dispatch_mulint_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3617,7 +3617,7 @@ fn wfst_mixedmath_dispatch_and_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3637,7 +3637,7 @@ fn wfst_mixedmath_dispatch_or_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3654,7 +3654,7 @@ fn wfst_mixedmath_dispatch_not_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3671,7 +3671,7 @@ fn wfst_mixedmath_dispatch_neg_eval() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3693,7 +3693,7 @@ fn prec_mixedmath_mulint_subint_tighter_than_1_2_3() {
         let input_str = "1 - 2 * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated precedence eval",
@@ -3717,7 +3717,7 @@ fn prec_mixedmath_paren_override_subint_mulint_1_2_3() {
         let input_str = "(1 - 2) * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated parenthesization eval",
@@ -3741,7 +3741,7 @@ fn prec_mixedmath_mulint_addint_tighter_than_1_2_3() {
         let input_str = "1 + 2 * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated precedence eval",
@@ -3765,7 +3765,7 @@ fn prec_mixedmath_paren_override_addint_mulint_1_2_3() {
         let input_str = "(1 + 2) * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated parenthesization eval",
@@ -3789,7 +3789,7 @@ fn prec_mixedmath_subint_addint_tighter_than_1_2_3() {
         let input_str = "1 + 2 - 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated precedence eval",
@@ -3813,7 +3813,7 @@ fn prec_mixedmath_paren_override_addint_subint_1_2_3() {
         let input_str = "(1 + 2) - 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated parenthesization eval",
@@ -3837,7 +3837,7 @@ fn assoc_mixedmath_addint_left() {
         let input_str = "1 + 2 + 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -3861,7 +3861,7 @@ fn assoc_mixedmath_subint_left() {
         let input_str = "1 - 2 - 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -3885,7 +3885,7 @@ fn assoc_mixedmath_mulint_left() {
         let input_str = "1 * 2 * 3";
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -3913,7 +3913,7 @@ fn wpda_mixedmath_addint_0_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3931,7 +3931,7 @@ fn wpda_mixedmath_addint_0_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3949,7 +3949,7 @@ fn wpda_mixedmath_addint_0_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3967,7 +3967,7 @@ fn wpda_mixedmath_addint_0_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3985,7 +3985,7 @@ fn wpda_mixedmath_addint_0_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4003,7 +4003,7 @@ fn wpda_mixedmath_addint_1_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4021,7 +4021,7 @@ fn wpda_mixedmath_addint_1_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4039,7 +4039,7 @@ fn wpda_mixedmath_addint_1_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4057,7 +4057,7 @@ fn wpda_mixedmath_addint_1_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4075,7 +4075,7 @@ fn wpda_mixedmath_addint_1_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4093,7 +4093,7 @@ fn wpda_mixedmath_addint_2_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4111,7 +4111,7 @@ fn wpda_mixedmath_addint_2_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4129,7 +4129,7 @@ fn wpda_mixedmath_addint_2_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4147,7 +4147,7 @@ fn wpda_mixedmath_addint_2_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4165,7 +4165,7 @@ fn wpda_mixedmath_addint_2_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4183,7 +4183,7 @@ fn wpda_mixedmath_addint_3_0() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4201,7 +4201,7 @@ fn wpda_mixedmath_addint_3_1() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4219,7 +4219,7 @@ fn wpda_mixedmath_addint_3_2() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4237,7 +4237,7 @@ fn wpda_mixedmath_addint_3_3() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4255,7 +4255,7 @@ fn wpda_mixedmath_addint_3_5() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4275,7 +4275,7 @@ fn wpda_mixedmath_and_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4295,7 +4295,7 @@ fn wpda_mixedmath_and_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4315,7 +4315,7 @@ fn wpda_mixedmath_and_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4335,7 +4335,7 @@ fn wpda_mixedmath_and_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4355,7 +4355,7 @@ fn wpda_mixedmath_or_true_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4375,7 +4375,7 @@ fn wpda_mixedmath_or_true_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4395,7 +4395,7 @@ fn wpda_mixedmath_or_false_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4415,7 +4415,7 @@ fn wpda_mixedmath_or_false_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4432,7 +4432,7 @@ fn wpda_mixedmath_not_true() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4449,7 +4449,7 @@ fn wpda_mixedmath_not_false() {
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4475,7 +4475,7 @@ fn type_pres_mixedmath_addint_0_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4511,7 +4511,7 @@ fn type_pres_mixedmath_subint_0_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4547,7 +4547,7 @@ fn type_pres_mixedmath_mulint_0_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4583,7 +4583,7 @@ fn type_pres_mixedmath_and_true_true() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4619,7 +4619,7 @@ fn type_pres_mixedmath_or_true_true() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4652,7 +4652,7 @@ fn type_pres_mixedmath_not_true() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4685,7 +4685,7 @@ fn type_pres_mixedmath_neg_0() {
         let input_str = format!("{}", input_term);
         let lang = MixedMathLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",

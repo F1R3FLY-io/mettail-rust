@@ -9,10 +9,10 @@ use mettail_runtime::{Language, Term};
 /// Evaluates the term twice and verifies the results are alpha-equivalent.
 pub fn assert_eval_determinism(lang: &dyn Language, term: &dyn Term) -> Result<(), String> {
     let result_1 =
-        runtime_report::run_default_backend_report(lang, term, "first deterministic evaluation")?;
+        runtime_report::run_ascent_oracle_report(lang, term, "first deterministic evaluation")?;
 
     let result_2 =
-        runtime_report::run_default_backend_report(lang, term, "second deterministic evaluation")?;
+        runtime_report::run_ascent_oracle_report(lang, term, "second deterministic evaluation")?;
 
     let signature_1 = runtime_report::report_signature(&result_1);
     let signature_2 = runtime_report::report_signature(&result_2);
@@ -63,7 +63,7 @@ pub fn assert_evals_to(lang: &dyn Language, input: &str, expected: &str) -> Resu
         return Ok(());
     }
 
-    let report = runtime_report::run_default_backend_report(
+    let report = runtime_report::run_ascent_oracle_report(
         lang,
         term.as_ref(),
         &format!("evaluation for '{}'", input),

@@ -175,7 +175,7 @@ fn generate_type_preservation_for_all_eval_rules(
 /// 1. Constructs a ground term
 /// 2. Displays it
 /// 3. Parses it
-/// 4. Evaluates via the selected default runtime backend
+/// 4. Evaluates via the explicit Ascent reference oracle
 /// 5. Verifies each semantic backend output can be displayed and re-parsed
 fn generate_type_pres_test_case(
     test_name: &str,
@@ -191,7 +191,7 @@ fn generate_type_pres_test_case(
     let input_str = format!("{{}}", input_term);
     let lang = {lang_struct};
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(&lang, parsed.as_ref(), "generated type preservation eval")
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, parsed.as_ref(), "generated type preservation eval")
         .expect("eval should succeed");
     let outputs = mettail_testkit::runtime_report::report_semantic_outputs(&report);
     assert!(!outputs.is_empty(),

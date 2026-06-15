@@ -6,22 +6,22 @@
 //! 4. `compose_languages!` — CalcLambda delegates to Calculator + Lambda
 
 use mettail_runtime::Language;
-use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
+use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse, run the selected default runtime backend, assert `expected` is among
+/// Parse, run the explicit Ascent reference oracle, assert `expected` is among
 /// the semantic backend outputs.
 fn assert_normal_form(lang: &dyn Language, input: &str, expected: &str) {
     mettail_runtime::clear_var_cache();
     let term = lang.parse_term(input).unwrap_or_else(|e| {
         panic!("parse({:?}) failed: {}", input, e);
     });
-    let report = run_default_backend_report(lang, term.as_ref(), "composition eval")
-        .unwrap_or_else(|e| {
-            panic!("default backend({:?}) failed: {}", input, e);
+    let report =
+        run_ascent_oracle_report(lang, term.as_ref(), "composition eval").unwrap_or_else(|e| {
+            panic!("Ascent oracle({:?}) failed: {}", input, e);
         });
     let displays: Vec<String> = report_semantic_outputs(&report);
     assert!(

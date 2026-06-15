@@ -12,13 +12,13 @@
 
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::Language;
-use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
+use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Shared helpers
 // ════════════════════════════════════════════════════════════════════════════════
 
-/// Parse input via the Calculator language, run the selected default backend,
+/// Parse input via the Calculator language, run the explicit Ascent oracle,
 /// assert `expected` is among the semantic backend outputs.
 fn calc_normal_form(input: &str, expected: &str) {
     mettail_runtime::clear_var_cache();
@@ -26,8 +26,8 @@ fn calc_normal_form(input: &str, expected: &str) {
     let term = lang
         .parse_term(input)
         .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-    let report = run_default_backend_report(&lang, term.as_ref(), "calculator edge-case eval")
-        .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+    let report = run_ascent_oracle_report(&lang, term.as_ref(), "calculator edge-case eval")
+        .unwrap_or_else(|e| panic!("Ascent oracle({:?}) failed: {}", input, e));
     let displays: Vec<String> = report_semantic_outputs(&report);
     assert!(
         displays.contains(&expected.to_string()),
@@ -57,7 +57,7 @@ fn calc_parse_fails(input: &str) {
     );
 }
 
-/// Parse + selected default backend via a generic Language; assert `expected`
+/// Parse + explicit Ascent oracle via a generic Language; assert `expected`
 /// is among semantic backend outputs.
 #[cfg(feature = "composition")]
 fn lang_normal_form(lang: &dyn Language, input: &str, expected: &str) {
@@ -65,8 +65,8 @@ fn lang_normal_form(lang: &dyn Language, input: &str, expected: &str) {
     let term = lang
         .parse_term(input)
         .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-    let report = run_default_backend_report(lang, term.as_ref(), "language edge-case eval")
-        .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+    let report = run_ascent_oracle_report(lang, term.as_ref(), "language edge-case eval")
+        .unwrap_or_else(|e| panic!("Ascent oracle({:?}) failed: {}", input, e));
     let displays: Vec<String> = report_semantic_outputs(&report);
     assert!(
         displays.contains(&expected.to_string()),
@@ -1173,7 +1173,7 @@ mod ambient_edge_cases {
 mod rhocalc_edge_cases {
     use mettail_languages::rhocalc::{Proc, RhoCalcLanguage};
     use mettail_runtime::Language;
-    use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
+    use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
     fn rhocalc_parses(input: &str) {
         mettail_runtime::clear_var_cache();
@@ -1186,8 +1186,8 @@ mod rhocalc_edge_cases {
         let term = lang
             .parse_term(input)
             .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-        let report = run_default_backend_report(&lang, term.as_ref(), "rhocalc edge-case eval")
-            .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+        let report = run_ascent_oracle_report(&lang, term.as_ref(), "rhocalc edge-case eval")
+            .unwrap_or_else(|e| panic!("Ascent oracle({:?}) failed: {}", input, e));
         let nfs: Vec<String> = report_semantic_outputs(&report);
 
         // Parse expected in a fresh context for display comparison
@@ -1368,7 +1368,7 @@ mod composition_edge_cases {
 mod led_test_edge_cases {
     use mettail_languages::led_test::LedTestLanguage;
     use mettail_runtime::Language;
-    use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
+    use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
     fn led_normal_form(input: &str, expected: &str) {
         mettail_runtime::clear_var_cache();
@@ -1376,8 +1376,8 @@ mod led_test_edge_cases {
         let term = lang
             .parse_term(input)
             .unwrap_or_else(|e| panic!("parse({:?}) failed: {}", input, e));
-        let report = run_default_backend_report(&lang, term.as_ref(), "led edge-case eval")
-            .unwrap_or_else(|e| panic!("default backend({:?}) failed: {}", input, e));
+        let report = run_ascent_oracle_report(&lang, term.as_ref(), "led edge-case eval")
+            .unwrap_or_else(|e| panic!("Ascent oracle({:?}) failed: {}", input, e));
         let displays: Vec<String> = report_semantic_outputs(&report);
         assert!(
             displays.contains(&expected.to_string()),

@@ -17,7 +17,7 @@ pub fn assert_equation_symmetry(
         .parse_term(lhs_str)
         .map_err(|e| format!("Failed to parse LHS '{}': {}", lhs_str, e))?;
 
-    let report = runtime_report::run_default_backend_report(
+    let report = runtime_report::run_ascent_oracle_report(
         lang,
         lhs.as_ref(),
         &format!("equation symmetry LHS '{}'", lhs_str),
@@ -37,7 +37,7 @@ pub fn assert_equation_symmetry(
         .parse_term(rhs_str)
         .map_err(|e| format!("Failed to parse RHS '{}': {}", rhs_str, e))?;
 
-    let report = runtime_report::run_default_backend_report(
+    let report = runtime_report::run_ascent_oracle_report(
         lang,
         rhs.as_ref(),
         &format!("equation symmetry RHS '{}'", rhs_str),
@@ -61,7 +61,7 @@ pub fn assert_rewrite_fires(lang: &dyn Language, input: &str) -> Result<(), Stri
         .parse_term(input)
         .map_err(|e| format!("Failed to parse '{}': {}", input, e))?;
 
-    let report = runtime_report::run_default_backend_report(
+    let report = runtime_report::run_ascent_oracle_report(
         lang,
         term.as_ref(),
         &format!("rewrite firing check for '{}'", input),
@@ -82,7 +82,7 @@ pub fn assert_rewrites_to(lang: &dyn Language, input: &str, expected: &str) -> R
         .parse_term(input)
         .map_err(|e| format!("Failed to parse '{}': {}", input, e))?;
 
-    let report = runtime_report::run_default_backend_report(
+    let report = runtime_report::run_ascent_oracle_report(
         lang,
         term.as_ref(),
         &format!("rewrite-to check for '{}'", input),
@@ -105,7 +105,7 @@ pub fn assert_normal_form(lang: &dyn Language, input: &str) -> Result<(), String
         .parse_term(input)
         .map_err(|e| format!("Failed to parse '{}': {}", input, e))?;
 
-    let report = runtime_report::run_default_backend_report(
+    let report = runtime_report::run_ascent_oracle_report(
         lang,
         term.as_ref(),
         &format!("normal-form check for '{}'", input),

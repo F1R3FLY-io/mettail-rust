@@ -988,9 +988,10 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
     let static_capabilities = language.metadata().runtime_backends();
-    assert_eq!(static_capabilities.len(), 1);
-    assert_eq!(static_capabilities[0].backend, RuntimeBackend::Ascent);
-    assert!(static_capabilities[0].is_default);
+    assert!(
+        static_capabilities.is_empty(),
+        "Rho wrapper must not mutate substrate-neutral generated metadata"
+    );
 
     let capabilities = language.runtime_backend_capabilities();
     assert_eq!(capabilities.len(), 1);

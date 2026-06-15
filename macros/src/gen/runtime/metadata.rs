@@ -46,9 +46,10 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
     // Generate rewrite definitions
     let rewrite_defs = generate_rewrite_defs(language);
 
-    // Generated languages currently expose the generated Ascent runner as their
-    // executable runtime backend. Rho-machine defaults are installed only by a
-    // generated language implementation that can also route `run_with_backend`.
+    // Raw generated languages are substrate-neutral: they do not advertise a
+    // production runtime backend by default. The generated Ascent runner remains
+    // available only through explicit reference-oracle calls. Dovetail/Rho
+    // defaults are installed by checked runtime wrappers.
     let runtime_backend_defs = generate_runtime_backend_defs();
 
     // Generate logic relation and rule definitions
@@ -129,10 +130,7 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
 
 fn generate_runtime_backend_defs() -> TokenStream {
     quote! {
-        &[mettail_runtime::BackendCapabilityDef {
-            backend: mettail_runtime::RuntimeBackend::Ascent,
-            is_default: true,
-        }]
+        mettail_runtime::NO_RUNTIME_BACKEND_CAPABILITIES
     }
 }
 

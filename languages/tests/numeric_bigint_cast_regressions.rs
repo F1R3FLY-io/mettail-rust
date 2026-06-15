@@ -2,14 +2,14 @@
 
 use mettail_languages::{calculator as calc, rhocalc};
 use mettail_runtime::Language;
-use mettail_testkit::runtime_report::{report_semantic_outputs, run_default_backend_report};
+use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
 fn calc_nf_displays(input: &str) -> Vec<String> {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term(input).expect("parse");
-    let report = run_default_backend_report(&lang, term.as_ref(), "calculator numeric cast eval")
-        .expect("default backend");
+    let report = run_ascent_oracle_report(&lang, term.as_ref(), "calculator numeric cast eval")
+        .expect("Ascent oracle");
     report_semantic_outputs(&report)
 }
 
@@ -28,8 +28,8 @@ fn rho_nf_displays(input: &str) -> Vec<String> {
     mettail_runtime::clear_var_cache();
     let lang = rhocalc::RhoCalcLanguage;
     let term = lang.parse_term(input).expect("parse");
-    let report = run_default_backend_report(&lang, term.as_ref(), "rhocalc numeric cast eval")
-        .expect("default backend");
+    let report = run_ascent_oracle_report(&lang, term.as_ref(), "rhocalc numeric cast eval")
+        .expect("Ascent oracle");
     report_semantic_outputs(&report)
 }
 
@@ -72,7 +72,7 @@ fn calc_repl_parse_preserves_huge_n_suffix() {
         .parse_term_for_env("32478132567813256718n")
         .expect("parse_term_for_env");
     let report =
-        run_default_backend_report(&lang, t.as_ref(), "calculator repl bigint eval").expect("run");
+        run_ascent_oracle_report(&lang, t.as_ref(), "calculator repl bigint eval").expect("run");
     let displays = report_semantic_outputs(&report);
     let ok = displays
         .iter()

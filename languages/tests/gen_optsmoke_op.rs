@@ -45,7 +45,7 @@ fn eval_optsmoke_ifelse_false_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -66,7 +66,7 @@ fn eval_optsmoke_ifelse_false_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -87,7 +87,7 @@ fn eval_optsmoke_ifelse_false_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -108,7 +108,7 @@ fn eval_optsmoke_ifelse_false_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -129,7 +129,7 @@ fn eval_optsmoke_ifelse_false_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -150,7 +150,7 @@ fn eval_optsmoke_ifelse_true_5() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -176,7 +176,7 @@ fn eval_optsmoke_ifelse_true_3() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -202,7 +202,7 @@ fn eval_optsmoke_ifelse_true_2() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -228,7 +228,7 @@ fn eval_optsmoke_ifelse_true_1() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -254,7 +254,7 @@ fn eval_optsmoke_ifelse_true_0() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -280,7 +280,7 @@ fn cross_cat_optsmoke_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -301,7 +301,7 @@ fn cross_cat_optsmoke_eval_ifelse() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -327,7 +327,7 @@ fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -352,7 +352,7 @@ fn wfst_optsmoke_dispatch_ifelse_eval() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -377,7 +377,7 @@ fn wpda_optsmoke_ifelse_true_0() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -398,7 +398,7 @@ fn wpda_optsmoke_ifelse_true_1() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -419,7 +419,7 @@ fn wpda_optsmoke_ifelse_true_2() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -440,7 +440,7 @@ fn wpda_optsmoke_ifelse_true_3() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -461,7 +461,7 @@ fn wpda_optsmoke_ifelse_true_5() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -482,7 +482,7 @@ fn wpda_optsmoke_ifelse_false_0() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -503,7 +503,7 @@ fn wpda_optsmoke_ifelse_false_1() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -524,7 +524,7 @@ fn wpda_optsmoke_ifelse_false_2() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -545,7 +545,7 @@ fn wpda_optsmoke_ifelse_false_3() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -566,7 +566,7 @@ fn wpda_optsmoke_ifelse_false_5() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -593,7 +593,7 @@ fn type_pres_optsmoke_ifelse_true_0() {
         let input_str = format!("{}", input_term);
         let lang = OptSmokeLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",

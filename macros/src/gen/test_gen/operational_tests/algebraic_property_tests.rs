@@ -463,9 +463,9 @@ fn generate_algebraic_eq_test(
     let lang = {lang_struct};
     let lhs_parsed = lang.parse_term(&lhs_str).expect("LHS parse should succeed");
     let rhs_parsed = lang.parse_term(&rhs_str).expect("RHS parse should succeed");
-    let lhs_report = mettail_testkit::runtime_report::run_default_backend_report(&lang, lhs_parsed.as_ref(), "generated algebraic LHS eval")
+    let lhs_report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, lhs_parsed.as_ref(), "generated algebraic LHS eval")
         .expect("LHS eval should succeed");
-    let rhs_report = mettail_testkit::runtime_report::run_default_backend_report(&lang, rhs_parsed.as_ref(), "generated algebraic RHS eval")
+    let rhs_report = mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, rhs_parsed.as_ref(), "generated algebraic RHS eval")
         .expect("RHS eval should succeed");
     let lhs_outputs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lhs_report).into_iter().collect();
     let rhs_outputs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rhs_report).into_iter().collect();
@@ -634,8 +634,8 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        let rhs_str = format!(\"{}\", rhs);\n");
                 out.push_str("        if let (Ok(lp), Ok(rp)) = (lang.parse_term(&lhs_str), lang.parse_term(&rhs_str)) {\n");
                 out.push_str("            if let (Ok(lr), Ok(rr)) = (\n");
-                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, lp.as_ref(), \"generated commutativity LHS eval\"),\n");
-                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, rp.as_ref(), \"generated commutativity RHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, lp.as_ref(), \"generated commutativity LHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, rp.as_ref(), \"generated commutativity RHS eval\"),\n");
                 out.push_str("            ) {\n");
                 out.push_str("                let lnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lr).into_iter().collect();\n");
                 out.push_str("                let rnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rr).into_iter().collect();\n");
@@ -684,8 +684,8 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        let rhs_str = format!(\"{}\", rhs);\n");
                 out.push_str("        if let (Ok(lp), Ok(rp)) = (lang.parse_term(&lhs_str), lang.parse_term(&rhs_str)) {\n");
                 out.push_str("            if let (Ok(lr), Ok(rr)) = (\n");
-                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, lp.as_ref(), \"generated associativity LHS eval\"),\n");
-                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, rp.as_ref(), \"generated associativity RHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, lp.as_ref(), \"generated associativity LHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, rp.as_ref(), \"generated associativity RHS eval\"),\n");
                 out.push_str("            ) {\n");
                 out.push_str("                let lnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lr).into_iter().collect();\n");
                 out.push_str("                let rnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rr).into_iter().collect();\n");
@@ -775,8 +775,8 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        let rhs_str = format!(\"{}\", rhs);\n");
                 out.push_str("        if let (Ok(lp), Ok(rp)) = (lang.parse_term(&lhs_str), lang.parse_term(&rhs_str)) {\n");
                 out.push_str("            if let (Ok(lr), Ok(rr)) = (\n");
-                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, lp.as_ref(), \"generated identity LHS eval\"),\n");
-                out.push_str("                mettail_testkit::runtime_report::run_default_backend_report(&lang, rp.as_ref(), \"generated identity RHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, lp.as_ref(), \"generated identity LHS eval\"),\n");
+                out.push_str("                mettail_testkit::runtime_report::run_ascent_oracle_report(&lang, rp.as_ref(), \"generated identity RHS eval\"),\n");
                 out.push_str("            ) {\n");
                 out.push_str("                let lnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&lr).into_iter().collect();\n");
                 out.push_str("                let rnfs: std::collections::HashSet<String> = mettail_testkit::runtime_report::report_semantic_outputs(&rr).into_iter().collect();\n");

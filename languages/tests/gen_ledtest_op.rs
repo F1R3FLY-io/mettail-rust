@@ -61,7 +61,7 @@ fn eval_ledtest_andpred_false_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -86,7 +86,7 @@ fn eval_ledtest_andpred_false_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -111,7 +111,7 @@ fn eval_ledtest_andpred_true_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -136,7 +136,7 @@ fn eval_ledtest_andpred_true_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -158,7 +158,7 @@ fn eval_ledtest_factnum_5_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -175,7 +175,7 @@ fn eval_ledtest_factnum_3_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -192,7 +192,7 @@ fn eval_ledtest_factnum_2_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -209,7 +209,7 @@ fn eval_ledtest_factnum_1_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -226,7 +226,7 @@ fn eval_ledtest_factnum_0_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -243,7 +243,7 @@ fn eval_ledtest_negnum_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -265,7 +265,7 @@ fn eval_ledtest_negnum_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -287,7 +287,7 @@ fn eval_ledtest_negnum_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -309,7 +309,7 @@ fn eval_ledtest_negnum_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -331,7 +331,7 @@ fn eval_ledtest_negnum_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -354,7 +354,7 @@ fn eval_ledtest_mulnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -377,7 +377,7 @@ fn eval_ledtest_mulnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -400,7 +400,7 @@ fn eval_ledtest_mulnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -423,7 +423,7 @@ fn eval_ledtest_mulnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -446,7 +446,7 @@ fn eval_ledtest_mulnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -469,7 +469,7 @@ fn eval_ledtest_mulnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -492,7 +492,7 @@ fn eval_ledtest_mulnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -515,7 +515,7 @@ fn eval_ledtest_mulnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -538,7 +538,7 @@ fn eval_ledtest_mulnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -561,7 +561,7 @@ fn eval_ledtest_mulnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -584,7 +584,7 @@ fn eval_ledtest_mulnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -607,7 +607,7 @@ fn eval_ledtest_mulnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -630,7 +630,7 @@ fn eval_ledtest_mulnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -653,7 +653,7 @@ fn eval_ledtest_mulnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -676,7 +676,7 @@ fn eval_ledtest_mulnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -699,7 +699,7 @@ fn eval_ledtest_mulnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -722,7 +722,7 @@ fn eval_ledtest_mulnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -745,7 +745,7 @@ fn eval_ledtest_mulnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -768,7 +768,7 @@ fn eval_ledtest_mulnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -791,7 +791,7 @@ fn eval_ledtest_mulnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -814,7 +814,7 @@ fn eval_ledtest_addnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -837,7 +837,7 @@ fn eval_ledtest_addnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -860,7 +860,7 @@ fn eval_ledtest_addnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -883,7 +883,7 @@ fn eval_ledtest_addnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -906,7 +906,7 @@ fn eval_ledtest_addnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -929,7 +929,7 @@ fn eval_ledtest_addnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -952,7 +952,7 @@ fn eval_ledtest_addnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -975,7 +975,7 @@ fn eval_ledtest_addnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -998,7 +998,7 @@ fn eval_ledtest_addnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1021,7 +1021,7 @@ fn eval_ledtest_addnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1044,7 +1044,7 @@ fn eval_ledtest_addnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1067,7 +1067,7 @@ fn eval_ledtest_addnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1090,7 +1090,7 @@ fn eval_ledtest_addnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1113,7 +1113,7 @@ fn eval_ledtest_addnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1136,7 +1136,7 @@ fn eval_ledtest_addnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1159,7 +1159,7 @@ fn eval_ledtest_addnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1182,7 +1182,7 @@ fn eval_ledtest_addnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1205,7 +1205,7 @@ fn eval_ledtest_addnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1228,7 +1228,7 @@ fn eval_ledtest_addnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1251,7 +1251,7 @@ fn eval_ledtest_addnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1274,7 +1274,7 @@ fn eval_ledtest_nenum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1297,7 +1297,7 @@ fn eval_ledtest_nenum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1320,7 +1320,7 @@ fn eval_ledtest_nenum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1343,7 +1343,7 @@ fn eval_ledtest_nenum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1366,7 +1366,7 @@ fn eval_ledtest_nenum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1389,7 +1389,7 @@ fn eval_ledtest_nenum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1412,7 +1412,7 @@ fn eval_ledtest_nenum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1435,7 +1435,7 @@ fn eval_ledtest_nenum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1458,7 +1458,7 @@ fn eval_ledtest_nenum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1481,7 +1481,7 @@ fn eval_ledtest_nenum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1504,7 +1504,7 @@ fn eval_ledtest_nenum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1527,7 +1527,7 @@ fn eval_ledtest_nenum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1550,7 +1550,7 @@ fn eval_ledtest_nenum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1573,7 +1573,7 @@ fn eval_ledtest_nenum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1596,7 +1596,7 @@ fn eval_ledtest_nenum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1619,7 +1619,7 @@ fn eval_ledtest_nenum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1642,7 +1642,7 @@ fn eval_ledtest_nenum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1665,7 +1665,7 @@ fn eval_ledtest_nenum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1688,7 +1688,7 @@ fn eval_ledtest_nenum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1711,7 +1711,7 @@ fn eval_ledtest_nenum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1734,7 +1734,7 @@ fn eval_ledtest_eqnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1757,7 +1757,7 @@ fn eval_ledtest_eqnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1780,7 +1780,7 @@ fn eval_ledtest_eqnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1803,7 +1803,7 @@ fn eval_ledtest_eqnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1826,7 +1826,7 @@ fn eval_ledtest_eqnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1849,7 +1849,7 @@ fn eval_ledtest_eqnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1872,7 +1872,7 @@ fn eval_ledtest_eqnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1895,7 +1895,7 @@ fn eval_ledtest_eqnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1918,7 +1918,7 @@ fn eval_ledtest_eqnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1941,7 +1941,7 @@ fn eval_ledtest_eqnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1964,7 +1964,7 @@ fn eval_ledtest_eqnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -1987,7 +1987,7 @@ fn eval_ledtest_eqnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2010,7 +2010,7 @@ fn eval_ledtest_eqnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2033,7 +2033,7 @@ fn eval_ledtest_eqnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2056,7 +2056,7 @@ fn eval_ledtest_eqnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2079,7 +2079,7 @@ fn eval_ledtest_eqnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2102,7 +2102,7 @@ fn eval_ledtest_eqnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2125,7 +2125,7 @@ fn eval_ledtest_eqnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2148,7 +2148,7 @@ fn eval_ledtest_eqnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2171,7 +2171,7 @@ fn eval_ledtest_eqnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2203,7 +2203,7 @@ fn nested_ledtest_andpred_nenum_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2231,7 +2231,7 @@ fn nested_ledtest_andpred_nenum_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2259,7 +2259,7 @@ fn nested_ledtest_andpred_nenum_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2287,7 +2287,7 @@ fn nested_ledtest_andpred_eqnum_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2315,7 +2315,7 @@ fn nested_ledtest_andpred_eqnum_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2343,7 +2343,7 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2371,7 +2371,7 @@ fn nested_ledtest_andpred_nenum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2399,7 +2399,7 @@ fn nested_ledtest_andpred_nenum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2427,7 +2427,7 @@ fn nested_ledtest_andpred_nenum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2455,7 +2455,7 @@ fn nested_ledtest_andpred_eqnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2483,7 +2483,7 @@ fn nested_ledtest_andpred_eqnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2511,7 +2511,7 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2534,7 +2534,7 @@ fn nested_ledtest_factnum_negnum_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2552,7 +2552,7 @@ fn nested_ledtest_factnum_negnum_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2570,7 +2570,7 @@ fn nested_ledtest_factnum_negnum_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2590,7 +2590,7 @@ fn nested_ledtest_factnum_mulnum_0_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2610,7 +2610,7 @@ fn nested_ledtest_factnum_mulnum_0_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2630,7 +2630,7 @@ fn nested_ledtest_factnum_mulnum_0_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2650,7 +2650,7 @@ fn nested_ledtest_factnum_addnum_0_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2670,7 +2670,7 @@ fn nested_ledtest_factnum_addnum_0_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2690,7 +2690,7 @@ fn nested_ledtest_factnum_addnum_0_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2708,7 +2708,7 @@ fn nested_ledtest_negnum_factnum_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2726,7 +2726,7 @@ fn nested_ledtest_negnum_factnum_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2744,7 +2744,7 @@ fn nested_ledtest_negnum_factnum_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2764,7 +2764,7 @@ fn nested_ledtest_negnum_mulnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2789,7 +2789,7 @@ fn nested_ledtest_negnum_mulnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2814,7 +2814,7 @@ fn nested_ledtest_negnum_mulnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2839,7 +2839,7 @@ fn nested_ledtest_negnum_addnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2864,7 +2864,7 @@ fn nested_ledtest_negnum_addnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2889,7 +2889,7 @@ fn nested_ledtest_negnum_addnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2914,7 +2914,7 @@ fn nested_ledtest_mulnum_factnum_2_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2934,7 +2934,7 @@ fn nested_ledtest_mulnum_factnum_1_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2954,7 +2954,7 @@ fn nested_ledtest_mulnum_factnum_0_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2974,7 +2974,7 @@ fn nested_ledtest_mulnum_negnum_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -2999,7 +2999,7 @@ fn nested_ledtest_mulnum_negnum_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3024,7 +3024,7 @@ fn nested_ledtest_mulnum_negnum_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3052,7 +3052,7 @@ fn nested_ledtest_mulnum_addnum_0_2_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3080,7 +3080,7 @@ fn nested_ledtest_mulnum_addnum_0_1_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3108,7 +3108,7 @@ fn nested_ledtest_mulnum_addnum_0_0_in_slot1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3133,7 +3133,7 @@ fn nested_ledtest_mulnum_factnum_2_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3153,7 +3153,7 @@ fn nested_ledtest_mulnum_factnum_1_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3173,7 +3173,7 @@ fn nested_ledtest_mulnum_factnum_0_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3193,7 +3193,7 @@ fn nested_ledtest_mulnum_negnum_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3218,7 +3218,7 @@ fn nested_ledtest_mulnum_negnum_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3243,7 +3243,7 @@ fn nested_ledtest_mulnum_negnum_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3271,7 +3271,7 @@ fn nested_ledtest_mulnum_addnum_0_2_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3299,7 +3299,7 @@ fn nested_ledtest_mulnum_addnum_0_1_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3327,7 +3327,7 @@ fn nested_ledtest_mulnum_addnum_0_0_in_slot0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3352,7 +3352,7 @@ fn nested_ledtest_addnum_factnum_2_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3372,7 +3372,7 @@ fn nested_ledtest_addnum_factnum_1_in_slot1__smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3396,7 +3396,7 @@ fn edge_ledtest_andpred_bool_false_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3421,7 +3421,7 @@ fn edge_ledtest_andpred_bool_true_false() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3446,7 +3446,7 @@ fn edge_ledtest_andpred_bool_false_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3471,7 +3471,7 @@ fn edge_ledtest_andpred_bool_true_true() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3497,7 +3497,7 @@ fn cross_cat_ledtest_cast_castnum_from_num_to_expr() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3514,7 +3514,7 @@ fn cross_cat_ledtest_cast_castpred_from_pred_to_expr() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3531,7 +3531,7 @@ fn cross_cat_ledtest_cast_predtonum_from_pred_to_num() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3549,7 +3549,7 @@ fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3568,7 +3568,7 @@ fn cross_cat_ledtest_chain_castpred_exprtonum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3587,7 +3587,7 @@ fn cross_cat_ledtest_chain_predtonum_castnum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3605,7 +3605,7 @@ fn cross_cat_ledtest_eval_eqnum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3628,7 +3628,7 @@ fn cross_cat_ledtest_eval_nenum() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3653,7 +3653,7 @@ fn cross_cat_ledtest_castop_addnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3673,7 +3673,7 @@ fn cross_cat_ledtest_castop_mulnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3691,7 +3691,7 @@ fn cross_cat_ledtest_castop_negnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3709,7 +3709,7 @@ fn cross_cat_ledtest_castop_factnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3729,7 +3729,7 @@ fn cross_cat_ledtest_mixed_addnum_cast_predtonum_lhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3749,7 +3749,7 @@ fn cross_cat_ledtest_mixed_addnum_cast_predtonum_rhs_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3769,7 +3769,7 @@ fn cross_cat_ledtest_composite_addnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3789,7 +3789,7 @@ fn cross_cat_ledtest_composite_mulnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3807,7 +3807,7 @@ fn cross_cat_ledtest_composite_negnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3825,7 +3825,7 @@ fn cross_cat_ledtest_composite_factnum_predtonum_smoke() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3847,7 +3847,7 @@ fn wfst_ledtest_dispatch_eqnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3865,7 +3865,7 @@ fn wfst_ledtest_dispatch_nenum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3883,7 +3883,7 @@ fn wfst_ledtest_dispatch_addnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3901,7 +3901,7 @@ fn wfst_ledtest_dispatch_mulnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3918,7 +3918,7 @@ fn wfst_ledtest_dispatch_negnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3935,7 +3935,7 @@ fn wfst_ledtest_dispatch_factnum_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3955,7 +3955,7 @@ fn wfst_ledtest_dispatch_andpred_eval() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -3977,7 +3977,7 @@ fn prec_ledtest_mulnum_addnum_tighter_than_1_2_3() {
         let input_str = "1 + 2 * 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated precedence eval",
@@ -4001,7 +4001,7 @@ fn prec_ledtest_paren_override_addnum_mulnum_1_2_3() {
         let input_str = "(1 + 2) * 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated parenthesization eval",
@@ -4025,7 +4025,7 @@ fn assoc_ledtest_addnum_left() {
         let input_str = "1 + 2 + 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -4049,7 +4049,7 @@ fn assoc_ledtest_mulnum_left() {
         let input_str = "1 * 2 * 3";
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated associativity eval",
@@ -4077,7 +4077,7 @@ fn wpda_ledtest_addnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4095,7 +4095,7 @@ fn wpda_ledtest_addnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4113,7 +4113,7 @@ fn wpda_ledtest_addnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4131,7 +4131,7 @@ fn wpda_ledtest_addnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4149,7 +4149,7 @@ fn wpda_ledtest_addnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4167,7 +4167,7 @@ fn wpda_ledtest_eqnum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4185,7 +4185,7 @@ fn wpda_ledtest_eqnum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4203,7 +4203,7 @@ fn wpda_ledtest_eqnum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4221,7 +4221,7 @@ fn wpda_ledtest_eqnum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4239,7 +4239,7 @@ fn wpda_ledtest_eqnum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4257,7 +4257,7 @@ fn wpda_ledtest_eqnum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4275,7 +4275,7 @@ fn wpda_ledtest_eqnum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4293,7 +4293,7 @@ fn wpda_ledtest_eqnum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4311,7 +4311,7 @@ fn wpda_ledtest_eqnum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4329,7 +4329,7 @@ fn wpda_ledtest_eqnum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4347,7 +4347,7 @@ fn wpda_ledtest_eqnum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4365,7 +4365,7 @@ fn wpda_ledtest_eqnum_2_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4383,7 +4383,7 @@ fn wpda_ledtest_eqnum_2_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4401,7 +4401,7 @@ fn wpda_ledtest_eqnum_2_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4419,7 +4419,7 @@ fn wpda_ledtest_eqnum_2_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4437,7 +4437,7 @@ fn wpda_ledtest_eqnum_3_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4455,7 +4455,7 @@ fn wpda_ledtest_eqnum_3_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4473,7 +4473,7 @@ fn wpda_ledtest_eqnum_3_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4491,7 +4491,7 @@ fn wpda_ledtest_eqnum_3_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4509,7 +4509,7 @@ fn wpda_ledtest_eqnum_3_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4527,7 +4527,7 @@ fn wpda_ledtest_nenum_0_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4545,7 +4545,7 @@ fn wpda_ledtest_nenum_0_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4563,7 +4563,7 @@ fn wpda_ledtest_nenum_0_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4581,7 +4581,7 @@ fn wpda_ledtest_nenum_0_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4599,7 +4599,7 @@ fn wpda_ledtest_nenum_0_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4617,7 +4617,7 @@ fn wpda_ledtest_nenum_1_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4635,7 +4635,7 @@ fn wpda_ledtest_nenum_1_1() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4653,7 +4653,7 @@ fn wpda_ledtest_nenum_1_2() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4671,7 +4671,7 @@ fn wpda_ledtest_nenum_1_3() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4689,7 +4689,7 @@ fn wpda_ledtest_nenum_1_5() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4707,7 +4707,7 @@ fn wpda_ledtest_nenum_2_0() {
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let report = mettail_testkit::runtime_report::run_default_backend_report(
+    let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
         &lang,
         parsed.as_ref(),
         "generated operational eval",
@@ -4733,7 +4733,7 @@ fn type_pres_ledtest_eqnum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4769,7 +4769,7 @@ fn type_pres_ledtest_nenum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4805,7 +4805,7 @@ fn type_pres_ledtest_addnum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4841,7 +4841,7 @@ fn type_pres_ledtest_mulnum_0_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4874,7 +4874,7 @@ fn type_pres_ledtest_negnum_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4907,7 +4907,7 @@ fn type_pres_ledtest_factnum_0() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",
@@ -4943,7 +4943,7 @@ fn type_pres_ledtest_andpred_true_true() {
         let input_str = format!("{}", input_term);
         let lang = LedTestLanguage;
         let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-        let report = mettail_testkit::runtime_report::run_default_backend_report(
+        let report = mettail_testkit::runtime_report::run_ascent_oracle_report(
             &lang,
             parsed.as_ref(),
             "generated type preservation eval",

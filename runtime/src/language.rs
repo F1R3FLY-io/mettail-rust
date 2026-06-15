@@ -2335,7 +2335,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_backend_dispatch_defaults_to_ascent_and_fails_closed() {
+    fn runtime_backend_dispatch_uses_explicit_ascent_capability_and_fails_closed() {
         let language = DispatchLanguage;
         let term = DispatchTerm;
 

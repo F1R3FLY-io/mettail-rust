@@ -4,10 +4,12 @@
  *
  * The Rust trait `mettail_runtime::Language` exposes an optional selected
  * `RuntimeBackend` query. The base metadata trait advertises no backend unless
- * the implementation explicitly returns one. Generated languages may advertise
- * `Ascent` as the transition oracle default until a Dovetail/Rho flip gate
- * installs a different backend, but a concrete language value with no selected
- * default returns `None` and must not silently fabricate an Ascent fallback.
+ * the implementation explicitly returns one. Raw generated languages advertise
+ * no production backend by default; Dovetail/Rho production defaults are
+ * installed by checked wrappers. The legacy Ascent runner can still be modeled
+ * as an explicit reference-oracle capability, but a concrete language value
+ * with no selected default returns `None` and must not silently fabricate an
+ * Ascent fallback.
  * Requested backend selection must also fail closed when the requested backend
  * is absent.
  * A selected backend runs through the report API; the production trait no
@@ -74,7 +76,7 @@ Section RuntimeBackendDispatch.
     can_select_default_backend state &&
     output_shape_matches_backend (default_backend state) (default_output_shape state).
 
-  Definition generated_legacy_state : BackendState :=
+  Definition explicit_ascent_oracle_state : BackendState :=
     {|
       ascent_installed := true;
       dovetail_installed := false;
@@ -84,12 +86,12 @@ Section RuntimeBackendDispatch.
       default_output_shape := AscentResultsShape
     |}.
 
-  Theorem generated_legacy_default_runs :
-    can_select_default_backend generated_legacy_state = true.
+  Theorem explicit_ascent_oracle_default_runs :
+    can_select_default_backend explicit_ascent_oracle_state = true.
   Proof. reflexivity. Qed.
 
-  Theorem generated_legacy_default_report_runs :
-    can_run_default_backend_report generated_legacy_state = true.
+  Theorem explicit_ascent_oracle_default_report_runs :
+    can_run_default_backend_report explicit_ascent_oracle_state = true.
   Proof. reflexivity. Qed.
 
   Definition empty_metadata_state : BackendState :=

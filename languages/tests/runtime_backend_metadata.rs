@@ -4,26 +4,19 @@ use mettail_languages::calculator::CalculatorLanguage;
 use mettail_runtime::{Language, RuntimeBackend};
 
 #[test]
-fn generated_language_runtime_backends_are_metadata_driven() {
+fn generated_language_runtime_backends_are_substrate_neutral() {
     let language = CalculatorLanguage;
     let capabilities = language.metadata().runtime_backends();
 
-    assert_eq!(capabilities.len(), 1);
-    assert_eq!(capabilities[0].backend, RuntimeBackend::Ascent);
-    assert!(capabilities[0].is_default);
-
-    let metadata_default = capabilities
-        .iter()
-        .find(|capability| capability.is_default)
-        .map(|capability| capability.backend)
-        .expect("generated languages must advertise a default backend");
+    assert!(
+        capabilities.is_empty(),
+        "raw generated languages must not advertise a production runtime backend"
+    );
     let runtime_capabilities = language.runtime_backend_capabilities();
 
-    assert_eq!(language.default_runtime_backend(), Some(metadata_default));
-    assert_eq!(runtime_capabilities.len(), 1);
-    assert_eq!(runtime_capabilities[0].backend, RuntimeBackend::Ascent);
-    assert!(runtime_capabilities[0].is_default);
-    assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
+    assert_eq!(language.default_runtime_backend(), None);
+    assert!(runtime_capabilities.is_empty());
+    assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
     assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
 }

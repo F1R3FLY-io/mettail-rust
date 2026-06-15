@@ -18,6 +18,23 @@ pub fn run_default_backend_report(
         .map_err(|error| format!("{} failed on {} backend: {}", context, backend, error))
 }
 
+/// Run the legacy Ascent engine as an explicit reference oracle.
+///
+/// This helper is for generated regression tests and differential-oracle
+/// checks. It deliberately does not consult `Language::default_runtime_backend`
+/// and must not be used as production runtime dispatch.
+pub fn run_ascent_oracle_report(
+    language: &dyn Language,
+    term: &dyn Term,
+    context: &str,
+) -> Result<RuntimeBackendReport, String> {
+    mettail_runtime::clear_var_cache();
+    language
+        .run_ascent(term)
+        .map(RuntimeBackendReport::ascent)
+        .map_err(|error| format!("{} failed on explicit Ascent oracle: {}", context, error))
+}
+
 pub fn expect_ascent_graph(
     report: RuntimeBackendReport,
     context: &str,
