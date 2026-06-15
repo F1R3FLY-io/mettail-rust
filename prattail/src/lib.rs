@@ -372,6 +372,11 @@ pub mod proof_output;
 /// BooleanAlgebra trait, decidability classification (T1-T4), guard analysis.
 pub mod symbolic;
 
+/// `AnyAlgebra`: a single `BooleanAlgebra` carrier ranging over a family of
+/// per-sort effective Boolean algebras (Int/Char/Bool in M0), so one symbolic
+/// automaton/transducer can guard predicates of any supported data type.
+pub mod any_algebra;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
