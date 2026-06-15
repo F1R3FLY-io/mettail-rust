@@ -7,10 +7,10 @@
 //!
 //! The metadata also serves as the **bridge between the macro and the
 //! stochastic simulator** ([`mettail_simulation::LanguageStateMachine`]).
-//! Every field that the simulator needs — including the guard configuration
-//! from the `guards { }` block (theories, channels, built-in predicates,
-//! connectives) — is carried through this trait with default-empty methods
-//! for backward compatibility.
+//! Every field that the simulator needs — including runtime backend evidence
+//! and the guard configuration from the `guards { }` block (theories,
+//! channels, built-in predicates, connectives) — is carried through this trait
+//! with default-empty methods.
 
 use crate::language::RuntimeBackend;
 
@@ -52,7 +52,7 @@ pub trait LanguageMetadata: 'static + Send + Sync {
     /// [`crate::Language::runtime_backend_capabilities`] instead of mutating
     /// this static table.
     fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
-        DEFAULT_ASCENT_BACKEND_CAPABILITIES
+        NO_RUNTIME_BACKEND_CAPABILITIES
     }
 
     /// Custom logic relation definitions
@@ -142,17 +142,14 @@ pub trait LanguageMetadata: 'static + Send + Sync {
 /// Static runtime backend installed for a generated language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilityDef {
-    /// Backend exposed through `Language::run_with_backend`.
+    /// Backend exposed through `Language::run_backend_report`.
     pub backend: RuntimeBackend,
 
     /// Whether this backend is the language's user-facing default.
     pub is_default: bool,
 }
 
-pub const DEFAULT_ASCENT_BACKEND_CAPABILITIES: &[BackendCapabilityDef] = &[BackendCapabilityDef {
-    backend: RuntimeBackend::Ascent,
-    is_default: true,
-}];
+pub const NO_RUNTIME_BACKEND_CAPABILITIES: &[BackendCapabilityDef] = &[];
 
 /// Definition of a type (category) in the language
 #[derive(Debug, Clone, Copy)]
@@ -442,7 +439,7 @@ mod guard_metadata_tests {
         assert!(m.channels().is_empty());
         assert!(m.join_patterns().is_empty());
         assert!(m.connectives().is_empty());
-        assert_eq!(m.runtime_backends(), DEFAULT_ASCENT_BACKEND_CAPABILITIES);
+        assert_eq!(m.runtime_backends(), NO_RUNTIME_BACKEND_CAPABILITIES);
     }
 
     /// A metadata impl that returns non-empty guard data. Verifies the

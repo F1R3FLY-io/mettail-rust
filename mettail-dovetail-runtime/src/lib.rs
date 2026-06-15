@@ -449,6 +449,10 @@ mod tests {
         native_type: None,
         is_primary: true,
     }];
+    static DUMMY_ASCENT_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
+        backend: RuntimeBackend::Ascent,
+        is_default: true,
+    }];
 
     impl LanguageMetadata for DummyMetadata {
         fn name(&self) -> &'static str {
@@ -476,7 +480,7 @@ mod tests {
         }
 
         fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
-            mettail_runtime::DEFAULT_ASCENT_BACKEND_CAPABILITIES
+            DUMMY_ASCENT_BACKENDS
         }
     }
 

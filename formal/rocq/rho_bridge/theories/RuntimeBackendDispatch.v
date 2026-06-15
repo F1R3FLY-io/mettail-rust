@@ -3,10 +3,11 @@
  * MeTTaIL languages.
  *
  * The Rust trait `mettail_runtime::Language` exposes an optional selected
- * `RuntimeBackend` query. Generated languages may advertise `Ascent` as the
- * transition oracle default until a Dovetail/Rho flip gate installs a
- * different backend, but a concrete language value with no selected default
- * returns `None` and must not silently fabricate an Ascent fallback.
+ * `RuntimeBackend` query. The base metadata trait advertises no backend unless
+ * the implementation explicitly returns one. Generated languages may advertise
+ * `Ascent` as the transition oracle default until a Dovetail/Rho flip gate
+ * installs a different backend, but a concrete language value with no selected
+ * default returns `None` and must not silently fabricate an Ascent fallback.
  * Requested backend selection must also fail closed when the requested backend
  * is absent.
  * A selected backend runs through the report API; the production trait no
@@ -90,6 +91,28 @@ Section RuntimeBackendDispatch.
   Theorem generated_legacy_default_report_runs :
     can_run_default_backend_report generated_legacy_state = true.
   Proof. reflexivity. Qed.
+
+  Definition empty_metadata_state : BackendState :=
+    {|
+      ascent_installed := false;
+      dovetail_installed := false;
+      rho_machine_installed := false;
+      default_selected := false;
+      default_backend := Ascent;
+      default_output_shape := AscentResultsShape
+    |}.
+
+  Theorem empty_metadata_selects_no_default :
+    selected_default_backend empty_metadata_state = None.
+  Proof. reflexivity. Qed.
+
+  Theorem empty_metadata_runs_no_default_report :
+    can_run_default_backend_report empty_metadata_state = false.
+  Proof. reflexivity. Qed.
+
+  Theorem empty_metadata_does_not_fabricate_ascent :
+    selected_default_backend empty_metadata_state <> Some Ascent.
+  Proof. discriminate. Qed.
 
   Theorem selected_default_query_returns_backend : forall state,
     default_selected state = true ->
