@@ -1,0 +1,11 @@
+# Rocq project for the symbolic-algebra proofs (M3-M5 of the symbolic-predicate
+# generalization): the abstract effective Boolean algebra (EBA) and the closure
+# family (product/sum/collection/tree), plus the Heyting tier and tier/behavioral
+# negation proofs.
+#
+# Dependency order (each file is self-contained unless noted):
+#   EffectiveBooleanAlgebra.v   — EBA record + laws + derived Boolean identities
+
+-Q theories SymbolicAlgebra
+
+theories/EffectiveBooleanAlgebra.v

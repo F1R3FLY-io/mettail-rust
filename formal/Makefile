@@ -34,7 +34,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
 .PHONY: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
-.PHONY: rocq-sft rocq-unification
+.PHONY: rocq-sft rocq-unification rocq-symbolic-algebra
 .PHONY: process-rho-generated-check process-rho-comm-slice process-rho-first-slice mcrl2-rho-machine maude-rho-machine tla-rho-machine tla-rho-settlement
 .PHONY: why3-dovetail-budget creusot-dovetail-budget prepare-creusot-data
 
@@ -98,7 +98,7 @@ rocq-support: require-capped prepare-tmp rocq-trampoline rocq-advanced-automata
 rocq-support: rocq-ascent-optimizations rocq-codegen-optimizations
 rocq-support: rocq-dovetail rocq-rho-bridge rocq-egraph rocq-lattice rocq-logict rocq-mathematical-analyses
 rocq-support: rocq-predicate-dispatch rocq-presburger rocq-rule-consolidation
-rocq-support: rocq-sft rocq-unification rocq-critical-zero-admission
+rocq-support: rocq-sft rocq-unification rocq-symbolic-algebra rocq-critical-zero-admission
 
 rocq-prattail-wpda: require-capped
 	$(MAKE) -C rocq/prattail_wpda_runtime
@@ -262,6 +262,9 @@ rocq-rule-consolidation: require-capped
 
 rocq-sft: require-capped
 	$(MAKE) -C rocq/sft
+
+rocq-symbolic-algebra: require-capped
+	$(MAKE) -C rocq/symbolic_algebra
 
 rocq-unification: require-capped
 	$(MAKE) -C rocq/unification

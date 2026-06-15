@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ROOTS = [
     "dovetail/formal/rocq/theories",
     "formal/rocq/rho_bridge/theories",
+    "formal/rocq/symbolic_algebra/theories",
 ]
 BANNED_COMMAND = re.compile(
     r"^\s*(?:Local\s+|Global\s+|Polymorphic\s+|Monomorphic\s+)*"
