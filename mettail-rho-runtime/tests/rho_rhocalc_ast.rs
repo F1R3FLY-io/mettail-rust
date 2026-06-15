@@ -4,8 +4,7 @@
 //! MeTTaIL/WPDA parser, and lowered directly to normalized `rhoapi::Par`.
 //! Rholang source text is not generated or parsed on this path.
 
-use std::any::Any;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use mettail_ast::language::LanguageDef;
 use mettail_languages::rhocalc::{
@@ -16,15 +15,13 @@ use mettail_rho_codegen::{
     RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{
-    lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_values,
-    rhocalc_observe_strings_invocation, rhocalc_observe_values_invocation,
-    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_strings,
-    PlannedRhoBackend, RhoInvocationCompilerStage, RhoRuntimeBackedLanguage, RhocalcAstLowerError,
-    RhocalcInvocationMapper, RHOCALC_BAG_ABI_TAG,
+    lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_strings,
+    rho_runtime_backed_rhocalc_values, run_normalized_par_for_oracle,
+    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
+    RHOCALC_AST_RUNTIME_PLAN_FRAGMENT, RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::{
-    clear_var_cache, AscentResults, Language, LanguageMetadata, RuntimeBackend,
-    RuntimeBackendArtifact, RuntimeObservationValue, Term, TermType, VarTypeInfo,
+    clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::EList;
@@ -39,12 +36,6 @@ fn parse_lower(source: &str) -> Par {
         .unwrap_or_else(|err| panic!("rhocalc AST lowering failed for {source:?}: {err:?}"))
 }
 
-const RHOCALC_DYNAMIC_PLAN_FRAGMENT: &str = r#"
-    name: RhoCalc,
-    types { Proc }
-    terms {}
-"#;
-
 fn passing_dynamic_requirements() -> RhoDefaultBackendRequirements {
     RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::AllRulesLowered,
@@ -53,7 +44,7 @@ fn passing_dynamic_requirements() -> RhoDefaultBackendRequirements {
 }
 
 fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
-    let def = syn::parse_str::<LanguageDef>(RHOCALC_DYNAMIC_PLAN_FRAGMENT)
+    let def = syn::parse_str::<LanguageDef>(RHOCALC_AST_RUNTIME_PLAN_FRAGMENT)
         .expect("dynamic rhocalc runtime fragment must parse");
     let plan = plan_rho_default_backend(&def, passing_dynamic_requirements())
         .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
@@ -68,174 +59,18 @@ fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
     PlannedRhoBackend::from_plan(plan)
 }
 
-fn rhocalc_dynamic_fingerprint() -> &'static str {
-    static FINGERPRINT: OnceLock<&'static str> = OnceLock::new();
-    FINGERPRINT.get_or_init(|| {
-        let backend = rhocalc_dynamic_backend();
-        Box::leak(
-            backend
-                .plan()
-                .definition_fingerprint()
-                .to_string()
-                .into_boxed_str(),
-        )
-    })
-}
-
-struct DynamicRhoCalcLanguage;
-
-struct DynamicRhoCalcMetadata;
-
-static DYNAMIC_RHOCALC_METADATA: DynamicRhoCalcMetadata = DynamicRhoCalcMetadata;
-
-impl LanguageMetadata for DynamicRhoCalcMetadata {
-    fn name(&self) -> &'static str {
-        mettail_languages::rhocalc::RhoCalcLanguage
-            .metadata()
-            .name()
-    }
-
-    fn definition_fingerprint(&self) -> Option<&'static str> {
-        Some(rhocalc_dynamic_fingerprint())
-    }
-
-    fn types(&self) -> &'static [mettail_runtime::TypeDef] {
-        mettail_languages::rhocalc::RhoCalcLanguage
-            .metadata()
-            .types()
-    }
-
-    fn terms(&self) -> &'static [mettail_runtime::TermDef] {
-        mettail_languages::rhocalc::RhoCalcLanguage
-            .metadata()
-            .terms()
-    }
-
-    fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
-        mettail_languages::rhocalc::RhoCalcLanguage
-            .metadata()
-            .equations()
-    }
-
-    fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
-        mettail_languages::rhocalc::RhoCalcLanguage
-            .metadata()
-            .rewrites()
-    }
-}
-
-impl Language for DynamicRhoCalcLanguage {
-    fn name(&self) -> &'static str {
-        mettail_languages::rhocalc::RhoCalcLanguage.name()
-    }
-
-    fn metadata(&self) -> &'static dyn LanguageMetadata {
-        &DYNAMIC_RHOCALC_METADATA
-    }
-
-    fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.parse_term(input)
-    }
-
-    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.parse_term_for_env(input)
-    }
-
-    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.run_ascent(term)
-    }
-
-    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
-        mettail_languages::rhocalc::RhoCalcLanguage.create_env()
-    }
-
-    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.add_to_env(env, name, term)
-    }
-
-    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.remove_from_env(env, name)
-    }
-
-    fn clear_env(&self, env: &mut dyn Any) {
-        mettail_languages::rhocalc::RhoCalcLanguage.clear_env(env)
-    }
-
-    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.substitute_env(term, env)
-    }
-
-    fn substitute_env_preserve_structure(
-        &self,
-        term: &dyn Term,
-        env: &dyn Any,
-    ) -> Result<Box<dyn Term>, String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.substitute_env_preserve_structure(term, env)
-    }
-
-    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
-        mettail_languages::rhocalc::RhoCalcLanguage.list_env(env)
-    }
-
-    fn set_env_comment(
-        &self,
-        env: &mut dyn Any,
-        name: &str,
-        comment: String,
-    ) -> Result<(), String> {
-        mettail_languages::rhocalc::RhoCalcLanguage.set_env_comment(env, name, comment)
-    }
-
-    fn is_env_empty(&self, env: &dyn Any) -> bool {
-        mettail_languages::rhocalc::RhoCalcLanguage.is_env_empty(env)
-    }
-
-    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
-        mettail_languages::rhocalc::RhoCalcLanguage.get_env_term(env, name)
-    }
-
-    fn infer_term_type(&self, term: &dyn Term) -> TermType {
-        mettail_languages::rhocalc::RhoCalcLanguage.infer_term_type(term)
-    }
-
-    fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
-        mettail_languages::rhocalc::RhoCalcLanguage.infer_var_types(term)
-    }
-
-    fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
-        mettail_languages::rhocalc::RhoCalcLanguage.infer_var_type(term, var_name)
-    }
-}
-
-fn dynamic_rhocalc_invocation_stage<F>(
-    backend: &PlannedRhoBackend,
-    compiler: F,
-) -> RhoInvocationCompilerStage<F> {
-    RhoInvocationCompilerStage::new(backend.plan().definition_fingerprint().to_string(), compiler)
-}
-
-fn dynamic_rhocalc_values_language(
-    backend: PlannedRhoBackend,
-    out_channel: impl Into<String>,
-) -> Result<RhoRuntimeBackedLanguage<DynamicRhoCalcLanguage, RhocalcInvocationMapper>, String> {
-    let out_channel = out_channel.into();
-    let mapper: RhocalcInvocationMapper =
-        Box::new(move |term| rhocalc_observe_values_invocation(term, out_channel.clone()));
-    let invocation = dynamic_rhocalc_invocation_stage(&backend, mapper);
-    RhoRuntimeBackedLanguage::new(DynamicRhoCalcLanguage, backend, invocation)
-        .map_err(|err| err.to_string())
-}
-
-fn dynamic_rhocalc_strings_language(
-    backend: PlannedRhoBackend,
-    out_channel: impl Into<String>,
-) -> Result<RhoRuntimeBackedLanguage<DynamicRhoCalcLanguage, RhocalcInvocationMapper>, String> {
-    let out_channel = out_channel.into();
-    let mapper: RhocalcInvocationMapper =
-        Box::new(move |term| rhocalc_observe_strings_invocation(term, out_channel.clone()));
-    let invocation = dynamic_rhocalc_invocation_stage(&backend, mapper);
-    RhoRuntimeBackedLanguage::new(DynamicRhoCalcLanguage, backend, invocation)
-        .map_err(|err| err.to_string())
+fn wrong_name_dynamic_backend() -> PlannedRhoBackend {
+    let def = syn::parse_str::<LanguageDef>(
+        r#"
+            name: NotRhoCalc,
+            types { Proc }
+            terms {}
+        "#,
+    )
+    .expect("wrong-name dynamic runtime fragment must parse");
+    let plan = plan_rho_default_backend(&def, passing_dynamic_requirements())
+        .expect("empty wrong-name Rho backend plan must pass the Rho-default gate");
+    PlannedRhoBackend::from_plan(plan)
 }
 
 fn quoted_name(value: &str) -> Name {
@@ -325,8 +160,8 @@ fn ambiguous_term_rejects_cross_category_alternative_instead_of_dropping_it() {
 
 #[test]
 fn rhocalc_language_default_report_observes_runtime_values() {
-    let language = dynamic_rhocalc_values_language(rhocalc_dynamic_backend(), "OUT")
-        .expect("dynamic RhoCalc plan should install on matching test language");
+    let language = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT")
+        .expect("dynamic RhoCalc plan should install through the public AST helper");
     let term = language
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
@@ -343,8 +178,8 @@ fn rhocalc_language_default_report_observes_runtime_values() {
 
 #[test]
 fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
-    let language = dynamic_rhocalc_strings_language(rhocalc_dynamic_backend(), "OUT")
-        .expect("dynamic RhoCalc plan should install on matching test language");
+    let language = rho_runtime_backed_rhocalc_strings(rhocalc_dynamic_backend(), "OUT")
+        .expect("dynamic RhoCalc plan should install through the public AST helper");
     let term = language
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
@@ -365,17 +200,28 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
 }
 
 #[test]
-fn public_rhocalc_helper_rejects_dynamic_fragment_plan_for_full_language() {
+fn public_rhocalc_helper_installs_dynamic_ast_runtime_fragment() {
     let result = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT");
 
+    if let Err(err) = result {
+        panic!(
+            "dynamic RhoCalc AST runtime fragment must install through the public helper: {err}"
+        );
+    }
+}
+
+#[test]
+fn public_rhocalc_helper_rejects_wrong_language_identity() {
+    let result = rho_runtime_backed_rhocalc_values(wrong_name_dynamic_backend(), "OUT");
+
     let err = match result {
-        Ok(_) => panic!("dynamic fragment plan must not install on full RhoCalcLanguage"),
+        Ok(_) => panic!("wrong language plan must not install on RhoCalc AST runtime"),
         Err(err) => err,
     };
 
     assert!(
         err.to_string()
-            .contains("cannot be installed on generated language RhoCalc fingerprint"),
+            .contains("cannot be installed on generated language RhoCalc"),
         "{err}"
     );
 }

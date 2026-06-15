@@ -37,8 +37,8 @@
 //! artifact-validation, and deadlock gates pass. The
 //! default `runtime-report` feature exposes the generic `Language`
 //! report-adapter and Dovetail+Rho installer surface. Generated language
-//! fixtures, the Ascent comparison oracle, the RhoCalc generated-language
-//! wrapper, and source-text oracle helpers remain opt-in through
+//! fixtures, the Ascent comparison oracle, the RhoCalc AST-runtime helper, and
+//! source-text oracle helpers remain opt-in through
 //! `oracle-ascent`, `rhocalc-runtime`, and `source-oracle`; the compatibility
 //! `oracle-rhocalc` feature name is retained only as an alias for existing
 //! differential tests.
@@ -66,8 +66,9 @@ pub use rhocalc_ast::{
     lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_ints,
     rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
     rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
-    rhocalc_observe_values_invocation, RhocalcAstLowerError, RhocalcInvocationMapper,
-    RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
+    rhocalc_observe_values_invocation, RhocalcAstLowerError, RhocalcAstRuntimeLanguage,
+    RhocalcInvocationMapper, RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
+    RHOCALC_AST_RUNTIME_PLAN_FRAGMENT,
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{

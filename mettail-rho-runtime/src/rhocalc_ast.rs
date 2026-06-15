@@ -5,12 +5,17 @@
 //! `rhoapi::Par` directly. Rholang-looking strings in docs/tests are reader
 //! annotations only; they are never parsed on this execution path.
 
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::OnceLock;
 
 use mettail_languages::rhocalc::{
     Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
-use mettail_runtime::{Binder, FramedSemanticKeyHasher, FreeVar, Language, OrdVar, Term, Var};
+use mettail_runtime::{
+    Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar, Term, TermType,
+    Var, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
+};
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
@@ -24,13 +29,29 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 
 type BoundEnv = HashMap<FreeVar<String>, usize>;
 
+/// Minimal `language!` fragment accepted by the dynamic RhoCalc AST runtime
+/// plan.
+///
+/// The generated `RhoCalcLanguage` remains the parser and AST model. The Rho
+/// backend plan for native process execution is intentionally smaller: it
+/// declares the `Proc` type and no scalar rewrite contracts because execution
+/// is supplied by the dynamic rhocalc-to-`rhoapi::Par` invocation mapper below.
+/// This fragment is parsed and fingerprinted with the same `LanguageDef`
+/// identity function used by generated languages, so the runtime wrapper still
+/// rejects plans for any other language identity.
+pub const RHOCALC_AST_RUNTIME_PLAN_FRAGMENT: &str = r#"
+    name: RhoCalc,
+    types { Proc }
+    terms {}
+"#;
+
 /// Invocation mapper used by the RhoCalc runtime-backed wrapper helpers.
 pub type RhocalcInvocationMapper =
     Box<dyn Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync>;
 
 /// Rho-default wrapper type used by the RhoCalc helper constructors.
 pub type RhocalcRuntimeBackedLanguage =
-    crate::backend::RhoRuntimeBackedLanguage<RhoCalcLanguage, RhocalcInvocationMapper>;
+    crate::backend::RhoRuntimeBackedLanguage<RhocalcAstRuntimeLanguage, RhocalcInvocationMapper>;
 
 /// Fallible RhoCalc runtime-backed wrapper construction result.
 pub type RhocalcRuntimeBackedLanguageResult =
@@ -48,14 +69,202 @@ pub enum RhocalcAstLowerError {
     InputArityMismatch { names: usize, binders: usize },
 }
 
+fn rhocalc_ast_runtime_fingerprint() -> &'static str {
+    static FINGERPRINT: OnceLock<String> = OnceLock::new();
+    FINGERPRINT
+        .get_or_init(|| {
+            let def: mettail_ast::language::LanguageDef =
+                syn::parse_str(RHOCALC_AST_RUNTIME_PLAN_FRAGMENT)
+                    .expect("RhoCalc AST runtime fragment must parse");
+            mettail_ast::identity::language_definition_fingerprint(&def)
+        })
+        .as_str()
+}
+
+/// RhoCalc language adapter for the AST-first Rho machine runtime path.
+///
+/// This adapter delegates parsing, formatting, normalization, environment
+/// handling, and type inference to the generated `RhoCalcLanguage`, but exposes
+/// the dynamic AST-runtime fragment identity above. It does not forward the
+/// generated Ascent oracle; raw `run_ascent` remains fail-closed and reference
+/// comparison stays behind explicit oracle features.
+pub struct RhocalcAstRuntimeLanguage;
+
+struct RhocalcAstRuntimeMetadata;
+
+static RHOCALC_AST_RUNTIME_METADATA: RhocalcAstRuntimeMetadata = RhocalcAstRuntimeMetadata;
+
+impl LanguageMetadata for RhocalcAstRuntimeMetadata {
+    fn name(&self) -> &'static str {
+        RhoCalcLanguage.metadata().name()
+    }
+
+    fn definition_fingerprint(&self) -> Option<&'static str> {
+        Some(rhocalc_ast_runtime_fingerprint())
+    }
+
+    fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+        RhoCalcLanguage.metadata().types()
+    }
+
+    fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+        RhoCalcLanguage.metadata().terms()
+    }
+
+    fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+        RhoCalcLanguage.metadata().equations()
+    }
+
+    fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+        RhoCalcLanguage.metadata().rewrites()
+    }
+
+    fn runtime_backends(&self) -> &'static [mettail_runtime::BackendCapabilityDef] {
+        RhoCalcLanguage.metadata().runtime_backends()
+    }
+
+    fn logic_relations(&self) -> &'static [mettail_runtime::LogicRelationDef] {
+        RhoCalcLanguage.metadata().logic_relations()
+    }
+
+    fn logic_rules(&self) -> &'static [mettail_runtime::LogicRuleDef] {
+        RhoCalcLanguage.metadata().logic_rules()
+    }
+
+    fn builtin_predicates(&self) -> &'static [mettail_runtime::BuiltinPredicateDef] {
+        RhoCalcLanguage.metadata().builtin_predicates()
+    }
+
+    fn theories(&self) -> &'static [mettail_runtime::TheoryDef] {
+        RhoCalcLanguage.metadata().theories()
+    }
+
+    fn channels(&self) -> &'static [mettail_runtime::ChannelDef] {
+        RhoCalcLanguage.metadata().channels()
+    }
+
+    fn join_patterns(&self) -> &'static [mettail_runtime::JoinPatternDef] {
+        RhoCalcLanguage.metadata().join_patterns()
+    }
+
+    fn connectives(&self) -> &'static [mettail_runtime::ConnectiveDef] {
+        RhoCalcLanguage.metadata().connectives()
+    }
+}
+
+impl Language for RhocalcAstRuntimeLanguage {
+    fn name(&self) -> &'static str {
+        RhoCalcLanguage.name()
+    }
+
+    fn metadata(&self) -> &'static dyn LanguageMetadata {
+        &RHOCALC_AST_RUNTIME_METADATA
+    }
+
+    fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        RhoCalcLanguage.parse_term(input)
+    }
+
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        RhoCalcLanguage.parse_term_for_env(input)
+    }
+
+    fn parse_term_with_weighted_seed_ids(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
+        RhoCalcLanguage.parse_term_with_weighted_seed_ids(input)
+    }
+
+    fn parse_term_with_weighted_rewrite_seeds(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedRewriteSeed>), String> {
+        RhoCalcLanguage.parse_term_with_weighted_rewrite_seeds(input)
+    }
+
+    fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
+        RhoCalcLanguage.try_direct_eval(term)
+    }
+
+    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+        RhoCalcLanguage.normalize_term(term)
+    }
+
+    fn format_term(&self, term: &dyn Term) -> String {
+        RhoCalcLanguage.format_term(term)
+    }
+
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        RhoCalcLanguage.create_env()
+    }
+
+    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
+        RhoCalcLanguage.add_to_env(env, name, term)
+    }
+
+    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
+        RhoCalcLanguage.remove_from_env(env, name)
+    }
+
+    fn clear_env(&self, env: &mut dyn Any) {
+        RhoCalcLanguage.clear_env(env)
+    }
+
+    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
+        RhoCalcLanguage.substitute_env(term, env)
+    }
+
+    fn substitute_env_preserve_structure(
+        &self,
+        term: &dyn Term,
+        env: &dyn Any,
+    ) -> Result<Box<dyn Term>, String> {
+        RhoCalcLanguage.substitute_env_preserve_structure(term, env)
+    }
+
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+        RhoCalcLanguage.list_env(env)
+    }
+
+    fn set_env_comment(
+        &self,
+        env: &mut dyn Any,
+        name: &str,
+        comment: String,
+    ) -> Result<(), String> {
+        RhoCalcLanguage.set_env_comment(env, name, comment)
+    }
+
+    fn is_env_empty(&self, env: &dyn Any) -> bool {
+        RhoCalcLanguage.is_env_empty(env)
+    }
+
+    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
+        RhoCalcLanguage.get_env_term(env, name)
+    }
+
+    fn infer_term_type(&self, term: &dyn Term) -> TermType {
+        RhoCalcLanguage.infer_term_type(term)
+    }
+
+    fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
+        RhoCalcLanguage.infer_var_types(term)
+    }
+
+    fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
+        RhoCalcLanguage.infer_var_type(term, var_name)
+    }
+}
+
 fn rhocalc_invocation_stage(
     mapper: RhocalcInvocationMapper,
 ) -> Result<
     crate::backend::RhoInvocationCompilerStage<RhocalcInvocationMapper>,
     crate::backend::RhoRuntimeBackedLanguageError,
 > {
-    let language_name = RhoCalcLanguage.name();
-    let fingerprint = RhoCalcLanguage
+    let language_name = RhocalcAstRuntimeLanguage.name();
+    let fingerprint = RhocalcAstRuntimeLanguage
         .metadata()
         .definition_fingerprint()
         .ok_or_else(|| {
@@ -108,7 +317,7 @@ pub fn rhocalc_observe_values_invocation(
     })
 }
 
-/// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
+/// Wrap RhoCalc as an AST-first Rho-default language whose default report
 /// observes strings on `out_channel`.
 pub fn rho_runtime_backed_rhocalc_strings(
     backend: crate::backend::PlannedRhoBackend,
@@ -118,10 +327,10 @@ pub fn rho_runtime_backed_rhocalc_strings(
     let mapper: RhocalcInvocationMapper =
         Box::new(move |term| rhocalc_observe_strings_invocation(term, out_channel.clone()));
     let invocation = rhocalc_invocation_stage(mapper)?;
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, invocation)
+    crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
 }
 
-/// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
+/// Wrap RhoCalc as an AST-first Rho-default language whose default report
 /// observes integers on `out_channel`.
 pub fn rho_runtime_backed_rhocalc_ints(
     backend: crate::backend::PlannedRhoBackend,
@@ -131,10 +340,10 @@ pub fn rho_runtime_backed_rhocalc_ints(
     let mapper: RhocalcInvocationMapper =
         Box::new(move |term| rhocalc_observe_ints_invocation(term, out_channel.clone()));
     let invocation = rhocalc_invocation_stage(mapper)?;
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, invocation)
+    crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
 }
 
-/// Wrap `RhoCalcLanguage` as a Rho-default language whose default report
+/// Wrap RhoCalc as an AST-first Rho-default language whose default report
 /// observes closed Rho ground values on `out_channel`.
 pub fn rho_runtime_backed_rhocalc_values(
     backend: crate::backend::PlannedRhoBackend,
@@ -144,7 +353,7 @@ pub fn rho_runtime_backed_rhocalc_values(
     let mapper: RhocalcInvocationMapper =
         Box::new(move |term| rhocalc_observe_values_invocation(term, out_channel.clone()));
     let invocation = rhocalc_invocation_stage(mapper)?;
-    crate::backend::RhoRuntimeBackedLanguage::new(RhoCalcLanguage, backend, invocation)
+    crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.

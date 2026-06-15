@@ -439,9 +439,12 @@ stable compiler-facing fingerprint from the expanded `LanguageDef`, and Rho
 plans carry the fingerprint of the `LanguageDef` they lowered. This prevents a
 partial scalar fragment from being installed as the production runtime for a
 larger generated language merely because the names match. Such fragments remain
-useful as oracle tests, but production installation requires full-definition
-identity across generated metadata, Dovetail compilation, and Rho invocation
-compilation.
+useful as oracle tests, and they may become production surfaces only when they
+have an explicit adapter whose metadata fingerprint is derived from the same
+fragment. The RhoCalc AST runtime helper below is exactly that kind of
+specialized adapter. The general generated-language production path still
+requires full-definition identity across generated metadata, Dovetail
+compilation, and Rho invocation compilation.
 Default execution is selected from the concrete runtime-capability view, not
 from a display/default metadata fallback. Production callers must ask
 `selected_default_runtime_backend()` or `default_runtime_backend()` and fail
@@ -526,12 +529,26 @@ values plus the narrower scalar helpers
 `rhocalc_observe_strings_invocation` and `rhocalc_observe_ints_invocation`.
 The convenience wrappers are `rho_runtime_backed_rhocalc_values`,
 `rho_runtime_backed_rhocalc_strings`, and `rho_runtime_backed_rhocalc_ints`.
-They accept the generated
-`RhoCalcLanguage` term returned by the retained MeTTaIL/WPDA parser, downcast it
-to a typed `Proc` alternative, lower that process directly to `rhoapi::Par`, and
-execute it as a dynamic call against a flip-gated `PlannedRhoBackend`. The
-Rholang text shown in examples remains reader annotation; the runtime value is
-the AST.
+They wrap `RhocalcAstRuntimeLanguage`, a small runtime adapter whose metadata
+fingerprint is computed from the explicit dynamic AST fragment:
+
+```text
+name: RhoCalc,
+types { Proc }
+terms {}
+```
+
+The adapter delegates parsing, environment handling, normalization, formatting,
+and type inference to the generated `RhoCalcLanguage`, but it does not claim the
+full generated `RhoCalcLanguage` definition identity and it does not forward the
+generated Ascent oracle. The public helper therefore installs only a
+`PlannedRhoBackend` derived from this AST-runtime fragment; a plan for another
+language name or another definition fingerprint is rejected. At execution time
+the helper accepts the generated `RhoCalcLanguage` term returned by the retained
+MeTTaIL/WPDA parser, downcasts it to a typed `Proc` alternative, lowers that
+process directly to `rhoapi::Par`, and executes it as a dynamic call against
+the flip-gated backend. The Rholang text shown in examples remains reader
+annotation; the runtime value is the AST.
 
 This convenience path is scoped to the RhoCalc/Rho-shaped fragment. It is the
 native fast path where the parsed MeTTaIL term is already a process-calculus

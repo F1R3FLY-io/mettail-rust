@@ -34,7 +34,13 @@ oracle-ascent = [
 # Pulls in the generated rhocalc language for the production-shaped AST-first
 # rhocalc-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
 # Rholang source text that has to be reparsed.
-rhocalc-runtime = ["runtime-report", "dep:mettail-languages", "mettail-languages/rhocalc"]
+rhocalc-runtime = [
+    "runtime-report",
+    "dep:mettail-ast",
+    "dep:mettail-languages",
+    "dep:syn",
+    "mettail-languages/rhocalc",
+]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.
 oracle-rhocalc = ["rhocalc-runtime"]
@@ -55,6 +61,8 @@ tokio = { workspace = true }
 mettail-languages = { path = "../languages", optional = true, default-features = false }
 mettail-runtime = { path = "../runtime", optional = true }
 mettail-prattail = { path = "../prattail", optional = true }
+mettail-ast = { path = "../ast", optional = true }
+syn = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
