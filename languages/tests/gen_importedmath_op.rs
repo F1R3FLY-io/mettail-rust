@@ -2,6 +2,7 @@
 // Regenerated on each compilation of the language definition.
 // Run with: cargo test -p mettail-languages
 
+#![cfg(feature = "oracle-ascent")]
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::importedmath::*;

@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Exhaustive edge case test suite for all supported grammars.
 //!
 //! Covers cross-category operators inside cast parentheses, comparisons after

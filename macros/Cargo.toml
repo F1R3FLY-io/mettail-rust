@@ -18,8 +18,6 @@ quote = { workspace = true }
 syn = { workspace = true }
 prettyplease = "0.2"
 proc-macro-error = { workspace = true }
-ascent = { workspace = true }
-ascent-byods-rels = { workspace = true }
 moniker = { workspace = true }
 indexmap = { workspace = true }
 mettail-ast = { path = "../ast" }

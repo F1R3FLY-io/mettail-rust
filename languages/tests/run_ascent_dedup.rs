@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Stage 3.13d (2026-05-01) regression coverage.
 //!
 //! Verifies that `run_ascent` returns no duplicate `term_id`s in

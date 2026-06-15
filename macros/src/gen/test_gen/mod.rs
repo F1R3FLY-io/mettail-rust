@@ -164,6 +164,9 @@ fn emit_test_file_header(
     ));
     out.push_str("// Regenerated on each compilation of the language definition.\n");
     out.push_str("// Run with: cargo test -p mettail-languages\n\n");
+    if section == "op" {
+        out.push_str("#![cfg(feature = \"oracle-ascent\")]\n");
+    }
     out.push_str("#![allow(unused_imports, dead_code)]\n\n");
     out.push_str(&format!("use mettail_languages::{}::*;\n", lang_name_lower));
     out.push_str("use mettail_runtime::Language;\n");

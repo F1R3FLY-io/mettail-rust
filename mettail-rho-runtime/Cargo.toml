@@ -27,6 +27,7 @@ oracle-ascent = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/calculator",
+    "mettail-languages/oracle-ascent",
     "mettail-languages/rho-codegen",
 ]
 # Pulls in the generated rhocalc language for the production-shaped AST-first

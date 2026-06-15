@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Systematic test suite for the RhoCalc language.
 //!
 //! Organized by feature area:

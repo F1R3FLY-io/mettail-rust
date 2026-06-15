@@ -29,13 +29,13 @@ use syn::{Ident, LitStr};
 /// iterators instead of `&(T, T)`.
 fn generate_ascent_struct(struct_name: &Ident, content: &TokenStream) -> TokenStream {
     let tokens = quote! {
-        #[cfg(not(feature = "ascent-parallel"))]
+        #[cfg(all(feature = "oracle-ascent", not(feature = "ascent-parallel")))]
         ascent::ascent! {
             struct #struct_name;
             #content
         }
 
-        #[cfg(feature = "ascent-parallel")]
+        #[cfg(all(feature = "oracle-ascent", feature = "ascent-parallel"))]
         ascent::ascent_par! {
             struct #struct_name;
             #content
@@ -1279,9 +1279,14 @@ fn generate_language_struct(
             /// If any term in the fixpoint result exceeds this depth, a warning is
             /// emitted to stderr. This catches pathological grammars where depth-increasing
             /// rules cause unbounded term growth.
+            #[cfg(feature = "oracle-ascent")]
             const MAX_FIXPOINT_TERM_DEPTH: u32 = 100;
 
-            /// Run Ascent on a typed term (seeds with term as-is so step-by-step rewrites are visible)
+            /// Run the explicit Ascent reference oracle on a typed term.
+            ///
+            /// Production rewrite execution is Dovetail/Rho; this helper is compiled only
+            /// for oracle evidence and transition regression tests.
+            #[cfg(feature = "oracle-ascent")]
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 // Sprint B (R1): Clear term equality cache to prevent stale entries
                 // from a previous evaluation affecting this fixpoint computation.
@@ -3323,6 +3328,7 @@ fn generate_language_struct_multi(
             /// If any term in the fixpoint result exceeds this depth, a warning is
             /// emitted to stderr. This catches pathological grammars where depth-increasing
             /// rules cause unbounded term growth.
+            #[cfg(feature = "oracle-ascent")]
             const MAX_FIXPOINT_TERM_DEPTH: u32 = 100;
 
             /// Parse a term from a string (clears var cache). Tries all category parsers.
@@ -3524,7 +3530,9 @@ fn generate_language_struct_multi(
                 Vec::new()
             }
 
-            /// Run Ascent on a typed term (seeds the relation for the term's category).
+            /// Run the explicit Ascent reference oracle on a typed term.
+            ///
+            /// Seeds the relation for the term's category.
             /// For Ambiguous terms, seeds every alternative that survived observational
             /// deduplication so evaluator evidence, not parser declaration order, resolves
             /// the ambiguity.
@@ -3532,6 +3540,10 @@ fn generate_language_struct_multi(
             /// SCC splitting: when available, core-category inputs (e.g., Proc, Name) use
             /// a smaller Ascent struct with fewer rules, reducing fixpoint iteration cost.
             /// Non-core inputs (e.g., Float, Bool, Str) fall back to the full struct.
+            ///
+            /// Production rewrite execution is Dovetail/Rho; this helper is compiled only
+            /// for oracle evidence and transition regression tests.
+            #[cfg(feature = "oracle-ascent")]
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 // Sprint B (R1): Clear term equality cache to prevent stale entries
                 // from a previous evaluation affecting this fixpoint computation.
@@ -3666,11 +3678,22 @@ fn generate_language_trait_impl(
             }
 
             fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, std::string::String> {
-                let typed_term = term
-                    .as_any()
-                    .downcast_ref::<#term_name>()
-                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                Ok(#language_name::run_ascent_typed(typed_term))
+                #[cfg(feature = "oracle-ascent")]
+                {
+                    let typed_term = term
+                        .as_any()
+                        .downcast_ref::<#term_name>()
+                        .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                    Ok(#language_name::run_ascent_typed(typed_term))
+                }
+                #[cfg(not(feature = "oracle-ascent"))]
+                {
+                    let _ = term;
+                    Err(format!(
+                        "Ascent oracle is disabled for {}; enable mettail-languages/oracle-ascent for reference checks",
+                        #name_lit
+                    ))
+                }
             }
 
             fn run_ascent_with_facts(
@@ -3678,27 +3701,38 @@ fn generate_language_trait_impl(
                 term: &dyn mettail_runtime::Term,
                 facts: &mettail_runtime::SeedFacts,
             ) -> Result<mettail_runtime::AscentResults, std::string::String> {
-                let typed_term = term
-                    .as_any()
-                    .downcast_ref::<#term_name>()
-                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                #[cfg(feature = "oracle-ascent")]
+                {
+                    let typed_term = term
+                        .as_any()
+                        .downcast_ref::<#term_name>()
+                        .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
 
-                // Populate thread-local fact snapshot from SeedFacts.
-                let mut __snapshot: std::collections::HashMap<
-                    String,
-                    std::collections::HashSet<Vec<String>>,
-                > = std::collections::HashMap::new();
-                for (rel_name, tuples) in facts {
-                    let mut set = std::collections::HashSet::new();
-                    for tuple in tuples {
-                        set.insert(tuple.clone());
+                    // Populate thread-local fact snapshot from SeedFacts.
+                    let mut __snapshot: std::collections::HashMap<
+                        String,
+                        std::collections::HashSet<Vec<String>>,
+                    > = std::collections::HashMap::new();
+                    for (rel_name, tuples) in facts {
+                        let mut set = std::collections::HashSet::new();
+                        for tuple in tuples {
+                            set.insert(tuple.clone());
+                        }
+                        __snapshot.insert(rel_name.clone(), set);
                     }
-                    __snapshot.insert(rel_name.clone(), set);
+                    mettail_runtime::set_pred_fact_snapshot(__snapshot);
+                    let result = #language_name::run_ascent_typed(typed_term);
+                    mettail_runtime::clear_pred_fact_snapshot();
+                    Ok(result)
                 }
-                mettail_runtime::set_pred_fact_snapshot(__snapshot);
-                let result = #language_name::run_ascent_typed(typed_term);
-                mettail_runtime::clear_pred_fact_snapshot();
-                Ok(result)
+                #[cfg(not(feature = "oracle-ascent"))]
+                {
+                    let _ = (term, facts);
+                    Err(format!(
+                        "Ascent oracle with seeded facts is disabled for {}; enable mettail-languages/oracle-ascent for reference checks",
+                        #name_lit
+                    ))
+                }
             }
 
             #try_direct_eval_method
@@ -4015,11 +4049,22 @@ fn generate_language_trait_impl_multi(
             }
 
             fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, std::string::String> {
-                let typed_term = term
-                    .as_any()
-                    .downcast_ref::<#term_name>()
-                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                Ok(#language_name::run_ascent_typed(typed_term))
+                #[cfg(feature = "oracle-ascent")]
+                {
+                    let typed_term = term
+                        .as_any()
+                        .downcast_ref::<#term_name>()
+                        .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                    Ok(#language_name::run_ascent_typed(typed_term))
+                }
+                #[cfg(not(feature = "oracle-ascent"))]
+                {
+                    let _ = term;
+                    Err(format!(
+                        "Ascent oracle is disabled for {}; enable mettail-languages/oracle-ascent for reference checks",
+                        #name_lit
+                    ))
+                }
             }
 
             fn run_ascent_with_facts(
@@ -4027,27 +4072,38 @@ fn generate_language_trait_impl_multi(
                 term: &dyn mettail_runtime::Term,
                 facts: &mettail_runtime::SeedFacts,
             ) -> Result<mettail_runtime::AscentResults, std::string::String> {
-                let typed_term = term
-                    .as_any()
-                    .downcast_ref::<#term_name>()
-                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                #[cfg(feature = "oracle-ascent")]
+                {
+                    let typed_term = term
+                        .as_any()
+                        .downcast_ref::<#term_name>()
+                        .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
 
-                // Populate thread-local fact snapshot from SeedFacts.
-                let mut __snapshot: std::collections::HashMap<
-                    String,
-                    std::collections::HashSet<Vec<String>>,
-                > = std::collections::HashMap::new();
-                for (rel_name, tuples) in facts {
-                    let mut set = std::collections::HashSet::new();
-                    for tuple in tuples {
-                        set.insert(tuple.clone());
+                    // Populate thread-local fact snapshot from SeedFacts.
+                    let mut __snapshot: std::collections::HashMap<
+                        String,
+                        std::collections::HashSet<Vec<String>>,
+                    > = std::collections::HashMap::new();
+                    for (rel_name, tuples) in facts {
+                        let mut set = std::collections::HashSet::new();
+                        for tuple in tuples {
+                            set.insert(tuple.clone());
+                        }
+                        __snapshot.insert(rel_name.clone(), set);
                     }
-                    __snapshot.insert(rel_name.clone(), set);
+                    mettail_runtime::set_pred_fact_snapshot(__snapshot);
+                    let result = #language_name::run_ascent_typed(typed_term);
+                    mettail_runtime::clear_pred_fact_snapshot();
+                    Ok(result)
                 }
-                mettail_runtime::set_pred_fact_snapshot(__snapshot);
-                let result = #language_name::run_ascent_typed(typed_term);
-                mettail_runtime::clear_pred_fact_snapshot();
-                Ok(result)
+                #[cfg(not(feature = "oracle-ascent"))]
+                {
+                    let _ = (term, facts);
+                    Err(format!(
+                        "Ascent oracle with seeded facts is disabled for {}; enable mettail-languages/oracle-ascent for reference checks",
+                        #name_lit
+                    ))
+                }
             }
 
             #try_direct_eval_method

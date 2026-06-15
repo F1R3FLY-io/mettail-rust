@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Stage 3.13e (2026-05-01) — Bug A regression test.
 //!
 //! Verifies that auto-injected cast wrappers propagate inner reductions

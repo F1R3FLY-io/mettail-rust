@@ -63,23 +63,25 @@ pub use led_test as ledtest;
 #[cfg(any(feature = "calculator", feature = "rhocalc"))]
 mod numeric_dispatch;
 
-// Re-export eqrel for the generated Ascent code
-// The generated code uses `#[ds(crate::eqrel)]` which expects eqrel at crate root
+// Re-export eqrel for the generated Ascent oracle code.
+// The generated code uses `#[ds(crate::eqrel)]` which expects eqrel at crate root.
+#[cfg(feature = "oracle-ascent")]
 pub use ascent_byods_rels::eqrel;
 
-// Dual-indexed binary relation provider (A-RT03).
+// Dual-indexed binary relation provider for the explicit Ascent oracle (A-RT03).
 // The generated code uses `#[ds(crate::dual_indexed)]` for rw_cat, fold_cat,
 // and collection projection relations to ensure O(1) lookups on both columns.
+#[cfg(feature = "oracle-ascent")]
 pub mod dual_indexed;
 
 // Re-export the aliased macro names from the modules
-#[cfg(feature = "ambient")]
+#[cfg(all(feature = "ambient", feature = "oracle-ascent"))]
 pub use ambient::ambient_source;
-#[cfg(feature = "calculator")]
+#[cfg(all(feature = "calculator", feature = "oracle-ascent"))]
 pub use calculator::calculator_source;
-#[cfg(feature = "lambda")]
+#[cfg(all(feature = "lambda", feature = "oracle-ascent"))]
 pub use lambda::lambda_source;
-#[cfg(feature = "rhocalc")]
+#[cfg(all(feature = "rhocalc", feature = "oracle-ascent"))]
 pub use rhocalc::rhocalc_source;
 
 // Note: Different languages may export types with the same names (e.g., Proc, Term)

@@ -96,6 +96,66 @@ Section RuntimeBackendDispatch.
     can_run_default_backend_report explicit_ascent_oracle_state = false.
   Proof. reflexivity. Qed.
 
+  Record GeneratedLanguageBuild : Type := {
+    oracle_ascent_feature_enabled : bool
+  }.
+
+  Definition generated_ascent_oracle_compiled
+      (build : GeneratedLanguageBuild) : bool :=
+    oracle_ascent_feature_enabled build.
+
+  Definition generated_ascent_oracle_callable
+      (build : GeneratedLanguageBuild) : bool :=
+    generated_ascent_oracle_compiled build.
+
+  Definition raw_generated_language_state
+      (build : GeneratedLanguageBuild) : BackendState :=
+    {|
+      ascent_installed := generated_ascent_oracle_compiled build;
+      dovetail_installed := false;
+      rho_machine_installed := false;
+      default_selected := false;
+      default_backend := Ascent;
+      default_output_shape := AscentResultsShape
+    |}.
+
+  Definition no_oracle_generated_build : GeneratedLanguageBuild :=
+    {| oracle_ascent_feature_enabled := false |}.
+
+  Definition oracle_generated_build : GeneratedLanguageBuild :=
+    {| oracle_ascent_feature_enabled := true |}.
+
+  Theorem no_oracle_build_compiles_no_ascent_oracle :
+    generated_ascent_oracle_compiled no_oracle_generated_build = false.
+  Proof. reflexivity. Qed.
+
+  Theorem oracle_build_compiles_reference_oracle :
+    generated_ascent_oracle_compiled oracle_generated_build = true.
+  Proof. reflexivity. Qed.
+
+  Theorem no_oracle_build_has_no_callable_ascent_oracle :
+    generated_ascent_oracle_callable no_oracle_generated_build = false.
+  Proof. reflexivity. Qed.
+
+  Theorem raw_generated_language_selects_no_default : forall build,
+    selected_default_backend (raw_generated_language_state build) = None.
+  Proof. intros build. destruct build. reflexivity. Qed.
+
+  Theorem raw_generated_language_runs_no_default_report : forall build,
+    can_run_default_backend_report (raw_generated_language_state build) = false.
+  Proof. intros build. destruct build. reflexivity. Qed.
+
+  Theorem oracle_feature_does_not_enable_production_ascent_request : forall build,
+    can_request_backend_report (raw_generated_language_state build) Ascent = false.
+  Proof. intros build. destruct build. reflexivity. Qed.
+
+  Theorem oracle_feature_does_not_change_production_default :
+    can_run_default_backend_report
+      (raw_generated_language_state no_oracle_generated_build) =
+    can_run_default_backend_report
+      (raw_generated_language_state oracle_generated_build).
+  Proof. reflexivity. Qed.
+
   Definition empty_metadata_state : BackendState :=
     {|
       ascent_installed := false;

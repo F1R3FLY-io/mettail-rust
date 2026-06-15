@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::{Language, Term};
 

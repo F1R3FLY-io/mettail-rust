@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Batch-check `repl/src/examples/*-casting.txt`: every `exec ...` line must
 //! parse and run the explicit Ascent reference oracle.
 //!

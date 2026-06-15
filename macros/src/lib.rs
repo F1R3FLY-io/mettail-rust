@@ -221,6 +221,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     let combined = quote::quote! {
         #ast_include
         #freshness_include
+        #[cfg(feature = "oracle-ascent")]
         #ascent_include
         #metadata_include
         #language_include

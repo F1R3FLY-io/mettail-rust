@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Tests for LED (Left-Denotation) delegation in sum-type categories.
 //!
 //! The LedTest language has operators on constituent categories (Num, Pred) but

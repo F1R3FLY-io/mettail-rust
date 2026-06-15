@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 use ascent::*;
 use ascent_byods_rels::*;
 use mettail_languages::ambient::*;

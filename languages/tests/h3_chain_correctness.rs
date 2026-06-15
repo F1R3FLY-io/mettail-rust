@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Phase F.13 chain_10000 Plan v6 H3 correctness (2026-05-27): verify
 //! the Earley chain-absorption fast path (H3) produces a parse that
 //! EVALUATES correctly — not just `is_ok()`.

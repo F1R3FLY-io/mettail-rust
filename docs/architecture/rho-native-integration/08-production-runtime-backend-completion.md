@@ -439,6 +439,13 @@ report `Ascent`; an advertised Ascent capability is treated as reference/oracle
 metadata and is filtered out of production default selection. The separate
 `run_ascent_oracle_report` test helper is intentionally named as a reference
 oracle and does not participate in production default dispatch.
+Macro-generated language crates now mirror that rule at compile time. Generated
+Ascent structs, `ascent_source!` source-inspection exports, the crate-root
+`eqrel` re-export, and the dual-indexed Ascent relation provider are behind
+`mettail-languages/oracle-ascent`. Without that feature, generated
+`Language::run_ascent*` methods return an oracle-disabled error and the
+parser/AST/Rho-codegen crate surface has no normal dependency on `ascent` or
+`ascent-byods-rels`.
 Graph-shaped test utilities follow the same runtime-view rule. When a property
 such as an LTL execution-model check needs rewrite-graph evidence, it prefers
 an installed `Dovetail` report over the selected default report: a selected

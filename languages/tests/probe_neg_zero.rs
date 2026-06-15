@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 // Probe: what does Display(Neg(NumLit(0))) actually produce?
 // And what does parse("- 0") + rewrite produce?
 

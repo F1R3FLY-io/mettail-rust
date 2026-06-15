@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Bounded recovery dispatch acceptance tests (Stage 3.20 / L12, 2026-05-06).
 //!
 //! T1-T6 from the user-approved bounded-recovery plan:

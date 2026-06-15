@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Stack-safety tests for the trampolined parser.
 //!
 //! These tests verify that deeply nested inputs parse correctly without

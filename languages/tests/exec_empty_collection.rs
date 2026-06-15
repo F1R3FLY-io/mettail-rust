@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Regression coverage for empty and non-empty collection parsing.
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::Language;

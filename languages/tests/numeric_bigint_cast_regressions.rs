@@ -1,3 +1,5 @@
+#![cfg(feature = "oracle-ascent")]
+
 //! Regression tests for BigInt surface forms, `bigint`/`bigrat` from floats, and binary `int(_, m)`.
 
 use mettail_languages::{calculator as calc, rhocalc};
