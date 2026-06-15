@@ -14,6 +14,7 @@ DEFAULT_ROOTS = [
     "dovetail/formal/rocq/theories",
     "formal/rocq/rho_bridge/theories",
     "formal/rocq/symbolic_algebra/theories",
+    "formal/rocq/sft/theories",
 ]
 BANNED_COMMAND = re.compile(
     r"^\s*(?:Local\s+|Global\s+|Polymorphic\s+|Monomorphic\s+)*"
