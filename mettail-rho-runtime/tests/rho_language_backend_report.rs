@@ -1113,6 +1113,14 @@ fn dovetail_rho_runtime_backed_language_rejects_bad_dovetail_stage() {
         RhoInvocationCompilerStage::new(bounded_fingerprint, calculator_invocation_from_dovetail),
     )
     .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");
+    assert_eq!(
+        bounded_language.default_runtime_backend(),
+        Some(RuntimeBackend::RhoMachine),
+        "capability exposure is an installation property"
+    );
+    assert!(bounded_language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+    assert!(bounded_language.supports_runtime_backend(RuntimeBackend::Dovetail));
+    assert!(!bounded_language.supports_runtime_backend(RuntimeBackend::Ascent));
     let term = bounded_language
         .parse_term("2 + 3")
         .expect("calculator parse");

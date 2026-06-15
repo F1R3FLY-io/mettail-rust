@@ -10,12 +10,17 @@
  *     A production Dovetail/Rho installation must be derived from the same
  *     generated definition identity as the wrapped language.
  *   - A registry entry can expose `RuntimeBackend::RhoMachine` and the
- *     non-default `RuntimeBackend::Dovetail` intermediate only after:
+ *     non-default `RuntimeBackend::Dovetail` intermediate after:
  *       * the Rho plan matches the generated definition,
  *       * the Dovetail compiler matches the generated definition,
  *       * the invocation compiler matches the generated definition,
- *       * the Dovetail report is structurally well formed and complete, and
+ *       * the Rho plan was accepted by the flip gate, and
  *       * the invocation compiler emits an AST-first artifact.
+ *   - A concrete term execution has additional obligations: the Dovetail
+ *     report for that term must be structurally well formed and complete
+ *     before either the Dovetail intermediate report or the Rho observation
+ *     report can be returned, and the Rho invocation compiler must be total
+ *     after receiving that checked report.
  *   - The legacy Ascent runtime is never exposed by the production registry
  *     entry.
  *
@@ -168,11 +173,19 @@ Section GeneratedLanguageInstallation.
     dovetail_compiler_matches_language install &&
     invocation_compiler_matches_language install &&
     rho_plan_accepted (installed_rho_plan install) &&
-    dovetail_report_checked (installed_dovetail_compiler install) &&
-    invocation_total (installed_invocation_compiler install) &&
     artifact_is_ast_first
       (invocation_artifact_boundary
          (installed_invocation_compiler install)).
+
+  Definition production_dovetail_report_ok
+      (install : ProductionInstallation) : bool :=
+    production_installation_ok install &&
+    dovetail_report_checked (installed_dovetail_compiler install).
+
+  Definition production_rho_report_ok
+      (install : ProductionInstallation) : bool :=
+    production_dovetail_report_ok install &&
+    invocation_total (installed_invocation_compiler install).
 
   Definition exposed_capabilities
       (install : ProductionInstallation) : list RuntimeBackendCapability :=
@@ -207,14 +220,17 @@ Section GeneratedLanguageInstallation.
   Definition production_report_shape
       (install : ProductionInstallation) (backend : Backend)
       : option ReportShape :=
-    if production_installation_ok install
-    then
-      match backend with
-      | RhoMachine => Some ObservationShape
-      | Dovetail => Some DovetailReportShape
-      | Ascent => None
-      end
-    else None.
+    match backend with
+    | RhoMachine =>
+        if production_rho_report_ok install
+        then Some ObservationShape
+        else None
+    | Dovetail =>
+        if production_dovetail_report_ok install
+        then Some DovetailReportShape
+        else None
+    | Ascent => None
+    end.
 
   Theorem plan_derived_dovetail_match_equals_plan_match :
     forall lang plan available well_formed completeness total artifact,
@@ -293,7 +309,8 @@ Section GeneratedLanguageInstallation.
     production_installation_ok install = true.
   Proof.
     intros install Hshape.
-    unfold production_report_shape in Hshape.
+    unfold production_report_shape, production_rho_report_ok,
+      production_dovetail_report_ok in Hshape.
     destruct (production_installation_ok install) eqn:Hok.
     - reflexivity.
     - discriminate Hshape.
@@ -304,7 +321,7 @@ Section GeneratedLanguageInstallation.
     production_installation_ok install = true.
   Proof.
     intros install Hshape.
-    unfold production_report_shape in Hshape.
+    unfold production_report_shape, production_dovetail_report_ok in Hshape.
     destruct (production_installation_ok install) eqn:Hok.
     - reflexivity.
     - discriminate Hshape.
@@ -348,21 +365,52 @@ Section GeneratedLanguageInstallation.
       discriminate Hok.
   Qed.
 
-  Theorem ok_installation_requires_checked_dovetail_report : forall install,
-    production_installation_ok install = true ->
+  Theorem dovetail_report_requires_checked_dovetail_report : forall install,
+    production_report_shape install Dovetail = Some DovetailReportShape ->
     dovetail_report_checked (installed_dovetail_compiler install) = true.
   Proof.
-    intros install Hok.
-    unfold production_installation_ok in Hok.
-    destruct (rho_plan_matches_language install);
-      destruct (dovetail_compiler_matches_language install);
-      destruct (invocation_compiler_matches_language install);
-      destruct (rho_plan_accepted (installed_rho_plan install));
+    intros install Hshape.
+    unfold production_report_shape, production_dovetail_report_ok in Hshape.
+    destruct (production_installation_ok install);
       destruct (dovetail_report_checked
                   (installed_dovetail_compiler install));
-      simpl in Hok;
+      simpl in Hshape;
       try reflexivity;
-      discriminate Hok.
+      discriminate Hshape.
+  Qed.
+
+  Theorem rho_report_requires_checked_dovetail_report : forall install,
+    production_report_shape install RhoMachine = Some ObservationShape ->
+    dovetail_report_checked (installed_dovetail_compiler install) = true.
+  Proof.
+    intros install Hshape.
+    unfold production_report_shape, production_rho_report_ok,
+      production_dovetail_report_ok in Hshape.
+    destruct (production_installation_ok install);
+      destruct (dovetail_report_checked
+                  (installed_dovetail_compiler install));
+      destruct (invocation_total
+                  (installed_invocation_compiler install));
+      simpl in Hshape;
+      try reflexivity;
+      discriminate Hshape.
+  Qed.
+
+  Theorem rho_report_requires_total_invocation : forall install,
+    production_report_shape install RhoMachine = Some ObservationShape ->
+    invocation_total (installed_invocation_compiler install) = true.
+  Proof.
+    intros install Hshape.
+    unfold production_report_shape, production_rho_report_ok,
+      production_dovetail_report_ok in Hshape.
+    destruct (production_installation_ok install);
+      destruct (dovetail_report_checked
+                  (installed_dovetail_compiler install));
+      destruct (invocation_total
+                  (installed_invocation_compiler install));
+      simpl in Hshape;
+      try reflexivity;
+      discriminate Hshape.
   Qed.
 
   Theorem ok_installation_requires_ast_first_invocation : forall install,
@@ -377,10 +425,6 @@ Section GeneratedLanguageInstallation.
       destruct (dovetail_compiler_matches_language install);
       destruct (invocation_compiler_matches_language install);
       destruct (rho_plan_accepted (installed_rho_plan install));
-      destruct (dovetail_report_checked
-                  (installed_dovetail_compiler install));
-      destruct (invocation_total
-                  (installed_invocation_compiler install));
       destruct (artifact_is_ast_first
                   (invocation_artifact_boundary
                      (installed_invocation_compiler install)));
@@ -457,9 +501,9 @@ Section GeneratedLanguageInstallation.
     - reflexivity.
   Qed.
 
-  Theorem bounded_dovetail_report_blocks_installation :
+  Theorem bounded_dovetail_report_blocks_reports :
     forall lang plan available well_formed invoke,
-      production_installation_ok
+      let install :=
         {| installed_language := lang;
            installed_rho_plan := plan;
            installed_dovetail_compiler :=
@@ -468,12 +512,16 @@ Section GeneratedLanguageInstallation.
                 dovetail_report_available := available;
                 dovetail_report_well_formed := well_formed;
                 dovetail_report_completeness := BoundedByCycleCut |};
-           installed_invocation_compiler := invoke |} = false.
+           installed_invocation_compiler := invoke |} in
+      production_report_shape install Dovetail = None /\
+      production_report_shape install RhoMachine = None.
   Proof.
     intros lang plan available well_formed invoke.
-    unfold production_installation_ok, dovetail_report_checked,
-      rho_plan_matches_language, dovetail_compiler_matches_language,
-      invocation_compiler_matches_language, language_definition_id.
+    unfold production_report_shape, production_rho_report_ok,
+      production_dovetail_report_ok, production_installation_ok,
+      dovetail_report_checked, rho_plan_matches_language,
+      dovetail_compiler_matches_language, invocation_compiler_matches_language,
+      language_definition_id.
     simpl.
     rewrite Nat.eqb_refl.
     destruct (Nat.eqb (rho_plan_definition_id plan)
@@ -483,7 +531,38 @@ Section GeneratedLanguageInstallation.
       destruct (rho_plan_accepted plan);
       destruct available;
       destruct well_formed;
+      destruct (artifact_is_ast_first
+                  (invocation_artifact_boundary invoke));
+      destruct (invocation_total invoke);
+      split;
       reflexivity.
+  Qed.
+
+  Theorem bounded_dovetail_report_does_not_block_capability_exposure :
+    forall lang plan invoke available well_formed,
+      production_installation_ok
+        {| installed_language := lang;
+           installed_rho_plan := plan;
+           installed_dovetail_compiler :=
+             {| dovetail_compiler_definition_id :=
+                  generated_definition_id lang;
+                dovetail_report_available := available;
+                dovetail_report_well_formed := well_formed;
+                dovetail_report_completeness := BoundedByCycleCut |};
+           installed_invocation_compiler := invoke |} =
+      production_installation_ok
+        {| installed_language := lang;
+           installed_rho_plan := plan;
+           installed_dovetail_compiler :=
+             {| dovetail_compiler_definition_id :=
+                  generated_definition_id lang;
+                dovetail_report_available := available;
+                dovetail_report_well_formed := well_formed;
+                dovetail_report_completeness := Complete |};
+           installed_invocation_compiler := invoke |}.
+  Proof.
+    intros lang plan invoke available well_formed.
+    reflexivity.
   Qed.
 
   Theorem source_text_invocation_blocks_installation :
@@ -525,8 +604,6 @@ Section GeneratedLanguageInstallation.
                         invocation_total := total;
                         invocation_artifact_boundary := SourceText |} |});
       destruct (rho_plan_accepted plan);
-      destruct (dovetail_report_checked dovetail);
-      destruct total;
       reflexivity.
   Qed.
 
