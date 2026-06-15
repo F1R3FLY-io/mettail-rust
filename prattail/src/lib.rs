@@ -382,8 +382,13 @@ pub mod any_algebra;
 /// with a single density-aware witness oracle (`OrderedPoint::witness_in`).
 pub mod ordered_field;
 
+/// Generic symbolic-regex engine: `RegexAlgebra<A>` (= the list algebra) —
+/// symbolic regular languages over any element algebra, compiled to
+/// `SymbolicAutomaton<A>`.
+pub mod regex_sfa;
+
 /// `StringAlgebra`: effective Boolean algebra of symbolic regular languages over
-/// strings (symbolic regex AST compiled to `SymbolicAutomaton<CharClassAlgebra>`).
+/// strings (the `CharClassAlgebra` instantiation of `regex_sfa`).
 pub mod string_algebra;
 
 /// N-ary product (tuples/records) and sum (variants) effective Boolean algebra
