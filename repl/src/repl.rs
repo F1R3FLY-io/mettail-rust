@@ -42,6 +42,25 @@ fn extract_parsed_input(line: &str) -> &str {
     line
 }
 
+fn runtime_backend_summary(language: &dyn Language) -> String {
+    let capabilities = language.runtime_backend_capabilities();
+    if capabilities.is_empty() {
+        return "runtime: none installed".to_string();
+    }
+
+    capabilities
+        .iter()
+        .map(|capability| {
+            if capability.is_default {
+                format!("{} (default)", capability.backend)
+            } else {
+                capability.backend.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +143,112 @@ mod tests {
     }
 
     static RHO_DEFAULT_METADATA: RhoDefaultMetadata = RhoDefaultMetadata;
+
+    struct NoRuntimeMetadata;
+
+    impl LanguageMetadata for NoRuntimeMetadata {
+        fn name(&self) -> &'static str {
+            "ParseOnly"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+    }
+
+    static NO_RUNTIME_METADATA: NoRuntimeMetadata = NoRuntimeMetadata;
+
+    struct NoRuntimeLanguage;
+
+    impl Language for NoRuntimeLanguage {
+        fn name(&self) -> &'static str {
+            "ParseOnly"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &NO_RUNTIME_METADATA
+        }
+
+        fn parse_term(&self, _input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(TestTerm { display: "parsed", id: 10 }))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            panic!("parse-only REPL test language must fail before any backend runs")
+        }
+
+        fn try_direct_eval(&self, _term: &dyn Term) -> Option<Box<dyn Term>> {
+            Some(Box::new(TestTerm { display: "direct-eval", id: 11 }))
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
 
     struct RhoDefaultLanguage;
 
@@ -252,6 +377,47 @@ mod tests {
             )])
         );
         assert_eq!(format!("{}", repl.state.current_term().unwrap()), "\"rho-backend\"");
+    }
+
+    #[test]
+    fn registry_runtime_summary_distinguishes_parse_only_and_rho_default_values() {
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(NoRuntimeLanguage));
+        registry.register(Box::new(RhoDefaultLanguage));
+
+        let infos = registry.list_with_runtime();
+        let parse_only = infos
+            .iter()
+            .find(|info| info.name == "ParseOnly")
+            .expect("parse-only language should be listed");
+        assert_eq!(parse_only.default_backend, None);
+        assert!(parse_only.runtime_backends.is_empty());
+
+        let rho_default = infos
+            .iter()
+            .find(|info| info.name == "BypassProbe")
+            .expect("Rho-default language should be listed");
+        assert_eq!(rho_default.default_backend, Some(RuntimeBackend::RhoMachine));
+        assert!(rho_default
+            .runtime_backends
+            .iter()
+            .any(|capability| capability.backend == RuntimeBackend::RhoMachine
+                && capability.is_default));
+    }
+
+    #[test]
+    fn exec_without_runtime_wrapper_fails_with_dovetail_rho_guidance() {
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(NoRuntimeLanguage));
+        let mut repl = Repl::new(registry).expect("test REPL can be constructed");
+
+        repl.load_language("ParseOnly")
+            .expect("test language is registered");
+        let err = repl
+            .cmd_exec_term("input")
+            .expect_err("parse-only language should fail before backend execution");
+        let message = err.to_string();
+        assert!(message.contains("checked Dovetail/Rho runtime wrapper"), "{message}");
     }
 
     #[test]
@@ -689,13 +855,20 @@ impl Repl {
         println!("{}", "Available languages:".bold());
         println!();
 
-        let languages = self.registry.list();
+        let languages = self.registry.list_with_runtime();
         if languages.is_empty() {
             println!("  {}", "No languages available.".yellow());
             println!("  {}", "Build mettail-examples first with: cargo build".dimmed());
         } else {
             for language in languages {
-                println!("  - {}", language.green());
+                let runtime = if language.runtime_backends.is_empty() {
+                    "runtime: none installed".dimmed()
+                } else if let Some(default) = language.default_backend {
+                    format!("runtime: {} default", default).dimmed()
+                } else {
+                    "runtime: no default".dimmed()
+                };
+                println!("  - {}  {}", language.name.green(), runtime);
             }
         }
 
@@ -712,6 +885,16 @@ impl Repl {
             println!("{}", "═".repeat(70).cyan());
             println!("{:^70}", format!("{} Language", meta.name()).bold());
             println!("{}", "═".repeat(70).cyan());
+
+            println!();
+            println!("{}", "RUNTIME".yellow().bold());
+            println!("  {}", runtime_backend_summary(language).green());
+            if language.selected_default_runtime_backend().is_none() {
+                println!(
+                    "  {}",
+                    "No production runtime wrapper is installed for this language value.".dimmed()
+                );
+            }
 
             // Types
             println!();
@@ -1356,7 +1539,7 @@ impl Repl {
         // Execute using the language's selected backend.
         let backend = language.selected_default_runtime_backend().ok_or_else(|| {
             anyhow::anyhow!(
-                "language {} does not advertise a default runtime backend",
+                "language {} does not advertise a default runtime backend. Raw generated languages are parse/introspection substrates; install a checked Dovetail/Rho runtime wrapper before executing them.",
                 language.name()
             )
         })?;

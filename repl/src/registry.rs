@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mettail_runtime::Language;
+use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendCapability};
 use std::collections::HashMap;
 
 // Import generated language implementations directly
@@ -15,6 +15,14 @@ use mettail_languages::rhocalc::RhoCalcLanguage;
 /// Registry of available languages
 pub struct LanguageRegistry {
     languages: HashMap<String, Box<dyn Language>>,
+}
+
+/// Runtime-facing summary for one registered language value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredLanguageInfo {
+    pub name: String,
+    pub default_backend: Option<RuntimeBackend>,
+    pub runtime_backends: Vec<RuntimeBackendCapability>,
 }
 
 impl LanguageRegistry {
@@ -42,6 +50,22 @@ impl LanguageRegistry {
         self.languages.values().map(|l| l.name()).collect()
     }
 
+    /// List all available languages with the runtime backend view exposed by
+    /// the concrete registered value.
+    pub fn list_with_runtime(&self) -> Vec<RegisteredLanguageInfo> {
+        let mut info = self
+            .languages
+            .values()
+            .map(|language| RegisteredLanguageInfo {
+                name: language.name().to_string(),
+                default_backend: language.selected_default_runtime_backend(),
+                runtime_backends: language.runtime_backend_capabilities(),
+            })
+            .collect::<Vec<_>>();
+        info.sort_by(|left, right| left.name.cmp(&right.name));
+        info
+    }
+
     /// Check if a language exists (case-insensitive)
     pub fn contains(&self, name: &str) -> bool {
         self.languages.contains_key(&name.to_lowercase())
@@ -60,7 +84,9 @@ pub fn build_registry() -> Result<LanguageRegistry> {
     {
         let mut registry = LanguageRegistry::new();
 
-        // Register auto-generated language implementations.
+        // Register raw auto-generated language implementations. These entries
+        // are parse/introspection substrates; Dovetail/Rho production defaults
+        // must be installed by checked wrapper values.
         registry.register(Box::new(AmbientLanguage));
         registry.register(Box::new(CalculatorLanguage));
         registry.register(Box::new(LambdaLanguage));

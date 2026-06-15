@@ -9,7 +9,7 @@ pub use ascent_byods_rels::eqrel;
 
 pub use examples::Example;
 pub use pretty::format_term_pretty;
-pub use registry::{build_registry, LanguageRegistry};
+pub use registry::{build_registry, LanguageRegistry, RegisteredLanguageInfo};
 pub use repl::Repl;
 pub use state::{HistoryEntry, ReplState};
 

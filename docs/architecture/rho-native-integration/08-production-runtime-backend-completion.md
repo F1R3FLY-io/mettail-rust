@@ -113,6 +113,13 @@ value and evaluation-trace channels. The value channel is decoded as typed
 reported `RuntimeObservationValue::Int(5)` is not confused with a trace marker
 such as `RuntimeObservationValue::Text("AddInt")`.
 
+The REPL uses the same concrete runtime-capability view. Its `languages` and
+`info` commands show whether a registered language value has no installed
+runtime, a non-default backend set, or a selected default. Raw generated
+language entries therefore remain useful for parsing and introspection, but
+`exec` fails with explicit Dovetail/Rho wrapper guidance until a checked
+runtime wrapper is registered.
+
 ## Runtime Observation Payloads
 
 `RuntimeBackendReport` is the common user-facing envelope for Ascent,
