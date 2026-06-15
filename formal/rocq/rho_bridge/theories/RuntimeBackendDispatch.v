@@ -495,4 +495,60 @@ Section RuntimeBackendDispatch.
     - destruct backend; cbn in Hproject; discriminate Hproject.
   Qed.
 
+  Inductive QueryEntry : Type :=
+  | RuntimeReportQuery
+  | AscentOracleQuery.
+
+  Definition query_entry_uses_runtime_report (entry : QueryEntry) : bool :=
+    match entry with
+    | RuntimeReportQuery => true
+    | AscentOracleQuery => false
+    end.
+
+  Definition query_entry_is_production (entry : QueryEntry) : bool :=
+    match entry with
+    | RuntimeReportQuery => true
+    | AscentOracleQuery => false
+    end.
+
+  Definition query_report_projects_ascent_results
+      (backend : Backend) (shape : OutputShape) : bool :=
+    match backend, shape with
+    | Ascent, AscentResultsShape => true
+    | _, _ => false
+    end.
+
+  Theorem runtime_report_query_is_production :
+    query_entry_is_production RuntimeReportQuery = true.
+  Proof. reflexivity. Qed.
+
+  Theorem ascent_oracle_query_is_not_production :
+    query_entry_is_production AscentOracleQuery = false.
+  Proof. reflexivity. Qed.
+
+  Theorem production_query_uses_runtime_report : forall entry,
+    query_entry_is_production entry = true ->
+    query_entry_uses_runtime_report entry = true.
+  Proof.
+    intros entry Hproduction.
+    destruct entry; simpl in *; [reflexivity | discriminate Hproduction].
+  Qed.
+
+  Theorem dovetail_query_report_projects_no_ascent_results :
+    query_report_projects_ascent_results Dovetail DovetailReportShape = false.
+  Proof. reflexivity. Qed.
+
+  Theorem rho_query_report_projects_no_ascent_results :
+    query_report_projects_ascent_results RhoMachine ObservationReportShape = false.
+  Proof. reflexivity. Qed.
+
+  Theorem ascent_query_projection_requires_ascent_shape : forall backend shape,
+    query_report_projects_ascent_results backend shape = true ->
+    backend = Ascent /\ shape = AscentResultsShape.
+  Proof.
+    intros backend shape Hproject.
+    destruct backend; destruct shape; simpl in Hproject; try discriminate Hproject.
+    split; reflexivity.
+  Qed.
+
 End RuntimeBackendDispatch.

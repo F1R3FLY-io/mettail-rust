@@ -10,16 +10,20 @@ pub trait QueryDataSource {
     fn get_relation(&self, name: &str) -> Vec<Vec<String>>;
 }
 
-/// Data source backed by `AscentResults.custom_relations`.
-/// All relations (generated + custom) are in one map after unified extraction.
+/// Explicit reference-oracle data source backed by
+/// `AscentResults.custom_relations`.
+///
+/// Production query callers should use [`RuntimeReportDataSource`]. This type
+/// exists so Ascent-shaped reference reports remain queryable without making
+/// `AscentResults` the generic query boundary.
 #[derive(Debug)]
-pub struct AscentResultsDataSource<'a> {
+pub struct AscentOracleDataSource<'a> {
     pub results: &'a AscentResults,
 }
 
-impl<'a> AscentResultsDataSource<'a> {
+impl<'a> AscentOracleDataSource<'a> {
     pub fn new(results: &'a AscentResults) -> Self {
-        AscentResultsDataSource { results }
+        AscentOracleDataSource { results }
     }
 
     pub fn schema(&self) -> QuerySchema {
@@ -27,7 +31,7 @@ impl<'a> AscentResultsDataSource<'a> {
     }
 }
 
-impl QueryDataSource for AscentResultsDataSource<'_> {
+impl QueryDataSource for AscentOracleDataSource<'_> {
     fn get_relation(&self, name: &str) -> Vec<Vec<String>> {
         self.results
             .custom_relations
@@ -144,7 +148,7 @@ impl QueryDataSource for RuntimeReportDataSource<'_> {
 
         match self.report.output() {
             RuntimeBackendOutput::Ascent(results) => {
-                AscentResultsDataSource::new(results).get_relation(name)
+                AscentOracleDataSource::new(results).get_relation(name)
             },
             RuntimeBackendOutput::Dovetail(report) => match name {
                 "dovetail_report" => vec![vec![

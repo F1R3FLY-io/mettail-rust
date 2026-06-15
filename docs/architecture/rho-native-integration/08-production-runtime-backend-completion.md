@@ -570,6 +570,11 @@ and `set_term_preserving_report(…, graph_id)` moves within the current display
 or reference graph without changing the report envelope. The legacy
 `AscentResults` projection is a read-only compatibility view over
 `RuntimeBackendReport::as_ascent_results()`, not the stored state type.
+The query command follows the same boundary: it calls
+`mettail_query::run_query_report` with the cached `RuntimeBackendReport`.
+Raw `AscentResults` can still be queried by tests and reference tooling through
+the explicitly named `run_ascent_oracle_query`, but that API is not the
+production REPL path.
 
 The REPL crate also exposes the bundled generated language registry behind its
 default `bundled-languages` feature. Normal CLI builds keep that feature

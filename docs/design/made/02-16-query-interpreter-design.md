@@ -1,5 +1,26 @@
 # Runtime query interpreter – design plan (2026-02-16)
 
+## Status Update: Report-Native Runtime Boundary (2026-06-15)
+
+This document records the original query-interpreter design. The production
+runtime boundary has since moved from raw `AscentResults` to
+`RuntimeBackendReport`.
+
+Current API names:
+
+| Purpose | Current API |
+|---|---|
+| Query the selected runtime backend report | `mettail_query::run_query_report(rule, report)` |
+| Query explicit Ascent reference-oracle facts | `mettail_query::run_ascent_oracle_query(rule, results)` |
+| Data source for selected backend reports | `RuntimeReportDataSource` |
+| Data source for explicit Ascent reference-oracle facts | `AscentOracleDataSource` |
+
+The REPL now calls `run_query_report` against the `RuntimeBackendReport` cached
+in `ReplState`. It does not require `ReplState` to store `AscentResults`.
+Ascent relations remain queryable only when the cached runtime report is
+explicitly Ascent-shaped reference evidence, or when a test/oracle caller uses
+`run_ascent_oracle_query` directly.
+
 ## Goal
 
 Support a REPL flow:
@@ -81,7 +102,9 @@ Parsing and syntax should be **canonical Ascent** where possible, using **ascent
 
 ### 3. Data source: Ascent results → rows
 
-- **DataSource** implementation that backs the executor from **AscentResults** (and extended relations).
+- **DataSource** implementation that backs the executor from explicit
+  **Ascent oracle results** (and extended relations). Production query execution
+  uses `RuntimeReportDataSource`.
   - `get_relation(name)`:
     - Look up `name` in `custom_relations` (and any extended map).
     - Return rows as `Vec<Vec<String>>` (one row = one tuple of string values). No provenance/FactId.
@@ -94,7 +117,10 @@ Parsing and syntax should be **canonical Ascent** where possible, using **ascent
 ### 4. Execution: Reuse planner + executor
 
 - **Flow**: Parsed `Query` → **Planner::plan** → **Plan** → **Executor::execute(plan, data_source, functions, predicates)**.
-- **DataSource**: Implement `AscentResultsDataSource` (or similar) that holds `AscentResults` and optional extended-relation map; `get_relation` returns rows as `Vec<Vec<String>>` (no FactId/provenance).
+- **DataSource**: Implement `AscentOracleDataSource` for explicit
+  `AscentResults` oracle facts and `RuntimeReportDataSource` for production
+  `RuntimeBackendReport` values; `get_relation` returns rows as
+  `Vec<Vec<String>>` (no FactId/provenance).
 - **Functions/predicates**: For v1, support only **relation**, **negation**, and **if** (comparisons). No need for “let” or custom functions in the first cut; we can stub or leave empty registries.
 
 - **Environment bindings (including current term)**  
@@ -109,7 +135,11 @@ Parsing and syntax should be **canonical Ascent** where possible, using **ascent
 ### 5. Return type: Vec of tuples
 
 - **Executor** returns rows as `Vec<Vec<String>>` (no provenance). The **projection** step picks the head columns, so each row is the head tuple.
-- **API**: `run_query(rule_str, ascent_results, env, current_term_display) -> Result<Vec<Vec<String>>, Error>`. So we return “vec of tuples” where each tuple is the head’s values (order = head args), each element a string (the term’s display form).
+- **API**: `run_query_report(rule_str, runtime_report) -> Result<Vec<Vec<String>>, Error>`
+  for production callers, and `run_ascent_oracle_query(rule_str, ascent_results)`
+  for explicit reference-oracle callers. Both return “vec of tuples” where each
+  tuple is the head’s values (order = head args), each element a string (the
+  term’s display form).
 
 ### 6. Remove “holdea” and fix engine
 
@@ -145,7 +175,7 @@ Introduce a dedicated crate for the query pipeline. The existing `engine/` PoC i
 mettail-query/
 ├── Cargo.toml
 ├── src/
-│   ├── lib.rs              # Public API: run_query, ParseError, etc.
+│   ├── lib.rs              # Public API: run_query_report, run_ascent_oracle_query, ParseError, etc.
 │   ├── ast.rs              # Query, Atom, BodyAtom, Term, Variable (String-based)
 │   ├── parse/
 │   │   ├── mod.rs
@@ -159,45 +189,49 @@ mettail-query/
 │   │   ├── join.rs
 │   │   ├── difference.rs
 │   │   └── project.rs
-│   └── data_source.rs     # AscentResultsDataSource(AscentResults), implements DataSource
+│   └── data_source.rs     # RuntimeReportDataSource and AscentOracleDataSource, implement DataSource
 ```
 
 **Dependencies** (`mettail-query/Cargo.toml`):
 
 - `ascent_syntax_export` (parse Ascent rule)
 - `ascent` (only if operations use `ascent_run!` for join/difference; otherwise pure Rust)
-- `mettail-runtime` (for `AscentResults`, `RelationData`; used by `AscentResultsDataSource` and to derive schema)
+- `mettail-runtime` (for `RuntimeBackendReport`, `AscentResults`, and
+  `RelationData`; used by `RuntimeReportDataSource` and
+  `AscentOracleDataSource` to derive schema)
 
 **Public API** (conceptual):
 
 - `parse_query(rule_str: &str, schema: &QuerySchema) -> Result<Query, ParseError>`
-- `run_query(rule_str: &str, results: &AscentResults) -> Result<Vec<Vec<String>>, QueryError>`  
-  (schema derived from `results.custom_relations` inside `run_query`, or passed in for clarity)
+- `run_query_report(rule_str: &str, report: &RuntimeBackendReport) -> Result<Vec<Vec<String>>, QueryError>`
+- `run_ascent_oracle_query(rule_str: &str, results: &AscentResults) -> Result<Vec<Vec<String>>, QueryError>`
+  (schema derived from the report shape or, for explicit oracle queries, from
+  `results.custom_relations`)
 - `QuerySchema`: built from `AscentResults` by mapping each `custom_relations` entry to `(name, param_types)`.
 
 **Schema source**: `QuerySchema` is derived from `AscentResults.custom_relations`: for each relation name, use `RelationData.param_types`. No separate “query schema” API on the language; once extraction is extended (Phase 2), all queryable relations are in `custom_relations` with `param_types`.
 
 ### Integration with the REPL
 
-- **repl/Cargo.toml**: Add `mettail-query = { path = "../mettail-query" }` (or workspace dep). REPL already has `mettail-runtime`, `mettail-languages`; it gets `AscentResults` from state and env from state.
+- **repl/Cargo.toml**: Add `mettail-query = { path = "../mettail-query" }` (or workspace dep). REPL already has `mettail-runtime` and optionally bundled `mettail-languages`; it gets `RuntimeBackendReport` from state and env from state.
 
 - **Query command**: When the user enters a line that is parsed as the query command (e.g. `query(result) <-- path(term, result), !rw_proc(result, _)`):
-  1. **Require language and prior step**: If no language loaded or no `ascent_results()` in state, error: “Load a language and run step first.”
-  2. **Build env for substitution**: Get `environment()` from state; ensure `current_term` is in the env: if there is a current term, add (or overwrite) binding `current_term` = `format!("{}", current_term)` (or use the same display the REPL uses). The REPL’s env is language-specific (`dyn Any`); the query layer only needs the **substituted string**, so the REPL calls `pre_substitute_env(query_str, language, env)` **before** calling into mettail-query. So: REPL builds env (including `current_term`), does substitution, then calls `mettail_query::run_query(substituted_str, state.ascent_results().unwrap())`.
-  3. **Call**: `mettail_query::run_query(substituted_rule_str, ascent_results)`.
-  4. **Schema**: `run_query` derives schema from `ascent_results.custom_relations` internally.
+  1. **Require language and prior execution**: If no language loaded or no `backend_report()` in state, error: “Load a language and run exec/step first.”
+  2. **Build env for substitution**: Get `environment()` from state; ensure `current_term` is substituted as a single literal argument. The REPL’s env is language-specific (`dyn Any`); the query layer only needs the **substituted string**, so the REPL calls `pre_substitute_env(query_str, language, env)` **before** calling into mettail-query.
+  3. **Call**: `mettail_query::run_query_report(substituted_rule_str, state.backend_report().unwrap())`.
+  4. **Schema**: `run_query_report` derives schema from the report shape. Ascent-shaped reports expose custom relations, Dovetail reports expose report relations, and Rho observation reports expose observation relations.
   5. **Output**: Print each tuple (e.g. one line per row, or formatted table).
 
-- **Where substitution happens**: Substitution (env + `current_term`) is **REPL responsibility**; it requires `Language` and `env`. So the REPL has a helper that: takes raw query string, language, env, and optional “current term display”; augments env with `current_term` if provided; returns `pre_substitute_env(query_str, language, env)`. Then REPL calls `mettail_query::run_query(substituted, results)`.
+- **Where substitution happens**: Substitution (env + `current_term`) is **REPL responsibility**; it requires `Language` and `env`. The REPL then calls `mettail_query::run_query_report(substituted, report)`.
 
-- **State**: `ReplState` already has `ascent_results: Option<AscentResults>` and `ascent_results()`. No change needed; the query command reads from it.
+- **State**: `ReplState` stores `backend_report: Option<RuntimeBackendReport>`. The legacy `ascent_results()` accessor is a read-only projection for explicitly Ascent-shaped reference reports, not the stored state.
 
 ### Summary of integration points
 
 | Component    | Responsibility |
 |-------------|----------------|
-| **mettail-query** | Parse (with schema), plan, execute; `DataSource` over `AscentResults`; return `Vec<Vec<String>>`. |
-| **repl**          | Parse “query” command; build env (REPL env + `current_term`); substitute query string; call `run_query`; print results. |
+| **mettail-query** | Parse (with schema), plan, execute; `DataSource` over `RuntimeBackendReport`; return `Vec<Vec<String>>`. |
+| **repl**          | Parse “query” command; build env (REPL env + `current_term`); substitute query string; call `run_query_report`; print results. |
 | **mettail-runtime** | `AscentResults`, `RelationData`; no change except Phase 2 (extend extraction). |
 | **macros**        | Implement unified relation extraction: full list (generated + logic-block), single loop into `custom_relations`. |
 
@@ -243,12 +277,12 @@ mettail-query/
 |------|----------|
 | **Parse** | Pre-parse rule to get head/body; infer head relation types from body + schema (first positive occurrence per head var); build `relation head(T1,...);` + rule; parse with ascent_syntax_export; map to engine Query. |
 | **Schema** | One set: all relations (generated + logic-block) in `custom_relations`. Macro: list full relation set (from generate_relations + logic.relations), then single extraction loop. Schema = custom_relations (param_types). Validate body relations before planning. |
-| **Data** | DataSource over AscentResults; rows = `Vec<Vec<String>>` (RelationData tuples as string rows); no FactId, no provenance. |
+| **Data** | DataSource over RuntimeBackendReport for production queries; explicit Ascent oracle data source for oracle tests; rows = `Vec<Vec<String>>`; no FactId, no provenance. |
 | **Value type** | QueryValue = String only for v1. |
 | **Environment** | Same as term execution: pre_substitute_env(query_str, language, env) before parsing; env includes REPL bindings + `current_term` = current stepped term display. |
 | **Return** | Vec of head tuples: `Vec<Vec<String>>`. |
 | **Engine** | Remove holdea and FactId; rows and results use `String` only; add deps; keep planner/executor/operations logic. |
 | **Crate** | New crate `mettail-query`: ast, parse (pre_parse + ascent_parse), schema, planner, executor, operations, data_source. Deps: ascent_syntax_export, mettail-runtime; optional ascent if operations use it. |
-| **Integration** | Add `mettail-query` to workspace; repl depends on it. Query command: substitute env + current_term in REPL, call `run_query(substituted, ascent_results)`; schema from results. |
+| **Integration** | Add `mettail-query` to workspace; repl depends on it. Query command: substitute env + current_term in REPL, call `run_query_report(substituted, runtime_report)`; schema from report shape. |
 
 Remaining considerations are listed in **Considerations remaining** (pre-parser, unified extraction, wildcards, constants, if-clauses, operations impl, errors, REPL command shape, current_term guard, testing).

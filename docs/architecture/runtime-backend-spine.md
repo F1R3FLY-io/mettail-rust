@@ -129,6 +129,10 @@ preserving that report envelope. It projects an Ascent-shaped graph only when
 the cached report is explicitly Ascent-shaped reference evidence; the REPL
 crate itself does not carry the generated Ascent BYODS dependency or crate-root
 `eqrel` re-export.
+Runtime queries follow that report boundary as well: production query execution
+uses `mettail_query::run_query_report` over `RuntimeBackendReport`, while
+`run_ascent_oracle_query` is named as an explicit reference-oracle API for raw
+`AscentResults`.
 
 Generated language crates also keep this distinction at build time. Their
 normal parser/AST/Rho-codegen surface does not compile generated Ascent structs,

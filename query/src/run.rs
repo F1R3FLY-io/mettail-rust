@@ -1,6 +1,6 @@
 //! Run a query string against runtime results: parse → plan → execute.
 
-use crate::data_source::{AscentResultsDataSource, RuntimeReportDataSource};
+use crate::data_source::{AscentOracleDataSource, RuntimeReportDataSource};
 use crate::executor::{execute, ExecuteError};
 use crate::parse::{parse_query, ParseError};
 use crate::planner::{PlanError, Planner};
@@ -44,10 +44,16 @@ impl From<ExecuteError> for QueryError {
     }
 }
 
-/// Parse, plan, and execute a single rule over the given Ascent results.
-/// Schema is derived from `results.custom_relations`. Returns one row per result tuple (head columns).
-pub fn run_query(rule_str: &str, results: &AscentResults) -> Result<Vec<Vec<String>>, QueryError> {
-    let data = AscentResultsDataSource::new(results);
+/// Parse, plan, and execute a single rule over explicit Ascent oracle results.
+///
+/// Schema is derived from `results.custom_relations`. Production callers should
+/// use [`run_query_report`] so the query boundary remains
+/// `RuntimeBackendReport`-shaped.
+pub fn run_ascent_oracle_query(
+    rule_str: &str,
+    results: &AscentResults,
+) -> Result<Vec<Vec<String>>, QueryError> {
+    let data = AscentOracleDataSource::new(results);
     run_query_with_schema_and_data(rule_str, data.schema(), &data)
 }
 
@@ -107,9 +113,11 @@ mod tests {
             equivalences: vec![],
             custom_relations,
         };
-        let rows =
-            run_query("query(result) <-- path(\"a\", result), !rw_proc(result, _).", &results)
-                .unwrap();
+        let rows = run_ascent_oracle_query(
+            "query(result) <-- path(\"a\", result), !rw_proc(result, _).",
+            &results,
+        )
+        .unwrap();
         // path("a", result) gives result=b and result=c. !rw_proc(result,_) removes result in rw_proc's first col {a,b}. So only c remains.
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], vec!["c"]);
