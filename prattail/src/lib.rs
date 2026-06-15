@@ -377,6 +377,11 @@ pub mod symbolic;
 /// automaton/transducer can guard predicates of any supported data type.
 pub mod any_algebra;
 
+/// The algebra tower (`RejectSafeAlgebra` ⊃ `HeytingAlgebra` ⊃ classical
+/// `BooleanAlgebra`): keeps semi-decidable (behavioral) algebras from being used
+/// where classical complement is required. `Sat3`, `Classical<A>` bridge.
+pub mod algebra_tower;
+
 /// `OrderedFieldAlgebra<P>`: unbounded interval-union effective Boolean algebra
 /// over any totally-ordered point type (BigInt/BigRational/OrderedF64/i128),
 /// with a single density-aware witness oracle (`OrderedPoint::witness_in`).
