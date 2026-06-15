@@ -535,6 +535,14 @@ pub enum RhoBackendInvocation {
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
     RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
+    /// The typed term is covered by a `NativeHandler` disposition (a native
+    /// fold / generated normalization), not a Rho-lowerable contract: its
+    /// production semantics *is* the checked Dovetail report the composed
+    /// wrapper already built, not a Rho execution. `run_backend_report`
+    /// intercepts this variant and returns that report; it is never executed on
+    /// RhoRuntime. This is what lets a flipped language run *every* op —
+    /// Rho-lowerable terms on Rho, native-fold terms via their Dovetail report.
+    DeferToDovetailReport,
 }
 
 #[cfg(feature = "runtime-report")]
@@ -754,6 +762,12 @@ impl RhoBackendInvocation {
                     .run_and_observe_need_report()
                     .await
             },
+            RhoBackendInvocation::DeferToDovetailReport => Err(
+                "DeferToDovetailReport is a native-handler disposition resolved by the composed \
+                 runtime wrapper to a checked Dovetail report; it must not be executed on \
+                 RhoRuntime"
+                    .to_string(),
+            ),
         }
     }
 }
@@ -1451,7 +1465,23 @@ where
                         self.name()
                     )
                 })?;
-                run_rho_invocation_blocking(self.backend.clone(), invocation)
+                match invocation {
+                    // Native-handler-dispositioned term: its production semantics is the
+                    // checked Dovetail report (a fold / generated normalization), not a Rho
+                    // execution. Surface that already-built report honestly as a
+                    // Dovetail-shaped result so a flipped language executes *every* op —
+                    // Rho-lowerable terms on Rho, native-fold terms via Dovetail — rather than
+                    // failing closed on the non-lowerable ones.
+                    RhoBackendInvocation::DeferToDovetailReport => {
+                        RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
+                            format!(
+                                "Dovetail native-handler stage for language {} produced malformed report: {err}",
+                                self.name()
+                            )
+                        })
+                    },
+                    invocation => run_rho_invocation_blocking(self.backend.clone(), invocation),
+                }
             },
             RuntimeBackend::Dovetail => {
                 let dovetail_report =

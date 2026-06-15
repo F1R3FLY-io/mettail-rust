@@ -231,10 +231,19 @@ fn calculator_invocation_from_dovetail(
     term: &dyn Term,
     report: &RuntimeDovetailRunReport,
 ) -> Result<RhoBackendInvocation, String> {
-    let invocation =
-        CalculatorLanguage::rho_scalar_contract_invocation_from_dovetail_to(term, report, "OUT")?;
-    build_scalar_contract_invocation_from_contract(invocation)
-        .map_err(|err| format!("failed to normalize generated Dovetail-to-Rho invocation: {err}"))
+    // `checked_complete_dovetail_report` runs before this mapper, so `term`
+    // already carries a complete, valid Dovetail report. A term with no ground
+    // scalar contract is therefore a valid native-fold op (Float/Fixed/BigInt/
+    // cast/collection) covered by its `NativeHandler` disposition — defer its
+    // execution to that checked report instead of failing, so the flipped
+    // language runs every op (scalar on Rho, native-fold via Dovetail).
+    match CalculatorLanguage::rho_scalar_contract_invocation_from_dovetail_to(term, report, "OUT") {
+        Ok(invocation) => build_scalar_contract_invocation_from_contract(invocation)
+            .map_err(|err| {
+                format!("failed to normalize generated Dovetail-to-Rho invocation: {err}")
+            }),
+        Err(_) => Ok(RhoBackendInvocation::DeferToDovetailReport),
+    }
 }
 
 fn calculator_call_by_need_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
@@ -951,6 +960,61 @@ fn dovetail_rho_runtime_backed_language_accepts_real_plan_on_full_calculator() {
     let out = report
         .observations_for_channel("OUT")
         .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
+}
+
+#[test]
+fn dovetail_rho_runtime_backed_language_defers_native_fold_op_to_dovetail() {
+    // A flipped Calculator must execute EVERY op, not only the Rho-lowerable
+    // scalar ones. A native-fold op (Float arithmetic — covered by a
+    // `NativeHandler` disposition, not a Rho scalar contract) executes via its
+    // checked Dovetail report instead of failing closed at the Rho mapper.
+    let backend = calculator_backend();
+    let fingerprint = stage_fingerprint(&backend);
+    let language = DovetailRhoRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        backend,
+        DovetailCompilerStage::new(fingerprint.clone(), generated_calculator_dovetail_report_for),
+        RhoInvocationCompilerStage::new(fingerprint, calculator_invocation_from_dovetail),
+    )
+    .expect("real Calculator plan must install on the full generated CalculatorLanguage");
+
+    // Native-fold (Float) op: no ground scalar contract ⇒ the Rho invocation
+    // mapper defers, and the wrapper returns the checked Dovetail report.
+    let float_term = language
+        .parse_term("1.0 + 2.0")
+        .expect("calculator parses a Float addition");
+    let report = language
+        .run_default_backend_report(float_term.as_ref())
+        .expect("flipped Calculator must run a native-fold op via its Dovetail report");
+    assert_eq!(
+        report.artifact(),
+        RuntimeBackendArtifact::DovetailRunReport,
+        "a native-fold op must return its Dovetail native-handler report, not a Rho artifact"
+    );
+    let RuntimeBackendOutput::Dovetail(dovetail_output) = report.into_output() else {
+        panic!("native-fold op must surface a Dovetail-shaped report output");
+    };
+    assert!(
+        dovetail_output.is_complete(),
+        "the native-handler Dovetail report for a folded op must be Complete"
+    );
+    assert!(
+        dovetail_output.root_count() >= 1,
+        "the folded Float op must produce at least one exact-keyed root"
+    );
+
+    // Regression: a Rho-lowerable scalar op on the SAME flipped language still
+    // executes on RhoRuntime and returns observations.
+    let scalar_term = language.parse_term("2 + 3").expect("calculator parse");
+    let scalar_report = language
+        .run_default_backend_report(scalar_term.as_ref())
+        .expect("scalar op still executes on Rho");
+    assert_eq!(scalar_report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(scalar_report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+    let out = scalar_report
+        .observations_for_channel("OUT")
+        .expect("scalar Rho report must expose OUT observations");
     assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
 }
 

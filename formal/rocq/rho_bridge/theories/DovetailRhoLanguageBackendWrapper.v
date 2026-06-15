@@ -14,6 +14,11 @@
  *   - The default Rho path first builds a Dovetail report, checks structural
  *     well-formedness and `Complete`, then passes that checked report to the
  *     Rho AST invocation builder.
+ *   - When that invocation builder DEFERS a native-handler op (a fold /
+ *     generated normalization not lowerable to a Rho contract), the wrapper
+ *     returns the checked Dovetail report itself.  A flipped language therefore
+ *     runs every op end-to-end: Rho-lowerable terms on Rho, native-fold terms
+ *     via their checked Dovetail report.
  *   - The legacy Ascent runtime and Ascent-shaped seeded facts are rejected
  *     through the production wrapped value.
  *
@@ -143,8 +148,17 @@ Section DovetailRhoLanguageBackendWrapper.
       (wrapper : DovetailRhoWrapper) (backend : Backend) : option ReportShape :=
     match backend with
     | RhoMachine =>
-        if wrapper_rho_report_runs wrapper
-        then Some ObservationShape
+        (* A flipped language routes per term-disposition under the RhoMachine
+           default.  When the invocation mapper lowers the term to a Rho contract
+           (`invocation_total_after_dovetail`) the default observes Rho output;
+           when it instead DEFERS a native-handler op (a fold / generated
+           normalization that is not Rho-lowerable) the wrapper returns the
+           checked Dovetail report itself.  Both paths first require the Dovetail
+           report to be checked, so a bounded or malformed report blocks both. *)
+        if wrapper_installs_rho wrapper && dovetail_report_checked wrapper
+        then if invocation_total_after_dovetail wrapper
+             then Some ObservationShape
+             else Some DovetailReportShape
         else None
     | Dovetail =>
         if wrapper_dovetail_report_runs wrapper
@@ -428,7 +442,30 @@ Section DovetailRhoLanguageBackendWrapper.
   Proof.
     intros wrapper Hrun.
     unfold wrapper_default_backend, wrapper_report_shape.
-    rewrite Hrun. reflexivity.
+    unfold wrapper_rho_report_runs in Hrun.
+    destruct (wrapper_installs_rho wrapper);
+      destruct (dovetail_report_checked wrapper);
+      destruct (invocation_total_after_dovetail wrapper);
+      simpl in Hrun |- *;
+      try discriminate Hrun;
+      reflexivity.
+  Qed.
+
+  (* A native-handler op (the invocation mapper defers because the term is not
+     Rho-lowerable) executes via the checked Dovetail report, so the RhoMachine
+     default surfaces a Dovetail-report shape rather than failing closed. This is
+     what lets a flipped language run every op end-to-end: Rho-lowerable terms on
+     Rho, native-fold terms via their checked Dovetail report. *)
+  Theorem rho_default_deferred_report_shape_is_dovetail_report : forall wrapper,
+    wrapper_installs_rho wrapper = true ->
+    dovetail_report_checked wrapper = true ->
+    invocation_total_after_dovetail wrapper = false ->
+    wrapper_report_shape wrapper (wrapper_default_backend wrapper) =
+      Some DovetailReportShape.
+  Proof.
+    intros wrapper Hinstalls Hchecked Hdefer.
+    unfold wrapper_default_backend, wrapper_report_shape.
+    rewrite Hinstalls, Hchecked, Hdefer. reflexivity.
   Qed.
 
   Theorem wrapper_default_is_not_ascent_compat : forall wrapper,
@@ -437,7 +474,9 @@ Section DovetailRhoLanguageBackendWrapper.
     intros wrapper.
     unfold wrapper_default_ascent_compat, wrapper_default_backend,
       wrapper_report_shape.
-    destruct (wrapper_rho_report_runs wrapper); reflexivity.
+    destruct (wrapper_installs_rho wrapper && dovetail_report_checked wrapper);
+      [destruct (invocation_total_after_dovetail wrapper)|];
+      reflexivity.
   Qed.
 
   Theorem bounded_dovetail_blocks_dovetail_and_rho :
