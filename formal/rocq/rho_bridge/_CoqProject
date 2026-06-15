@@ -47,3 +47,4 @@ theories/RhoLanguageBackendWrapper.v
 theories/DovetailRhoLanguageBackendWrapper.v
 theories/GeneratedLanguageInstallation.v
 theories/OracleQuotientEquivalence.v
+theories/RhoGuardedCommSoundness.v
