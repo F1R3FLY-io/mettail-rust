@@ -11,4 +11,5 @@ pub mod language;
 pub mod metadata;
 #[cfg(test)]
 pub mod predicate_lower;
+pub mod rho_invocation;
 pub mod wpda_codegen;

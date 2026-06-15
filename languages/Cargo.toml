@@ -59,11 +59,16 @@ mimalloc = ["dep:mimalloc"]
 ## default (zero overhead); enable with
 ## `cargo test --features walker-stats ...`.
 walker-stats = ["mettail-prattail/walker-stats"]
+## Compile the macro-generated AST-first Rho scalar invocation descriptions.
+## The generated helper returns `mettail_rho_codegen::RhoScalarContractInvocation`
+## and does not link the generated language crate to the Rho runtime.
+rho-codegen = ["dep:mettail-rho-codegen"]
 
 [dependencies]
 mettail-macros = { path = "../macros" }
 mettail-prattail = { path = "../prattail" }
 mettail-runtime = { path = "../runtime" }
+mettail-rho-codegen = { path = "../mettail-rho-codegen", optional = true }
 # Feature-branch: simulation crate for grammar-aware simulator.
 mettail-simulation = { path = "../simulation" }
 # Main-branch: numeric deps for BigInt/BigRat/FixedPoint language support.

@@ -31,7 +31,7 @@ observable rewrite semantics when replacing the CESK runtime backend. The claim
 is not:
 
 - a replacement for the active WPDA parser/recognizer;
-- removal of the temporary Ascent reference/oracle path before Dovetail/Rho has
+- removal of the Ascent reference/oracle path before Dovetail/Rho has
   fully subsumed the required behavior; completion removes it from the live
   production runtime tree;
 - full abstraction for all Rholang contexts;

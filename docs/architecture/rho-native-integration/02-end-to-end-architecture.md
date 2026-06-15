@@ -32,9 +32,9 @@ Readiness is discovered by RSpace communication.
 This move is deliberately downstream of parsing. The active WPDA
 parser/recognizer still produces the typed terms consumed by Dovetail, and
 Ascent is legacy for production rewrite execution. Its role during rollout is
-temporary differential reference/oracle evidence while Dovetail/Rho becomes the
-production rewrite path; campaign completion removes that runtime path from the
-live production tree.
+differential reference/oracle evidence while Dovetail/Rho becomes the production
+rewrite path; campaign completion removes that runtime path from the live
+production tree.
 
 This follows the tuple-space idea that communication can be mediated through a
 shared space ([LINDA-1985](references.md#linda-1985)), the process-calculus view

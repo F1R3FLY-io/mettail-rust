@@ -188,18 +188,24 @@ dispatch plan used by generated extractor code: every plan entry preserves the
 rule label, operand field order, parameter names, source categories, native
 scalar families, result category, and ABI result family. It fails closed if a
 stale or mismatched ABI is paired with the wrong generated definition. The
-runtime helper
-`mettail_rho_runtime::build_scalar_contract_invocation` is the checked dynamic
-call boundary for this inventory: it validates operand arity and scalar payload
-families against `RhoScalarContractAbi`, emits a normalized `rhoapi::Par`
-contract call, and selects integer, boolean, or string observation reports from
-the ABI result family. The proof
+macro-generated `rho-codegen` helper turns a typed generated AST constructor
+into `mettail_rho_codegen::RhoScalarContractInvocation`, a runtime-independent
+payload containing the ABI, constructor-field-order scalar literals, and output
+channel. This keeps generated language crates independent from
+`mettail-rho-runtime`; only runtime-facing adapters call
+`mettail_rho_runtime::build_scalar_contract_invocation_from_contract`. That
+adapter is the checked dynamic call boundary for this inventory: it validates
+operand arity and scalar payload families against `RhoScalarContractAbi`, emits
+a normalized `rhoapi::Par` contract call, and selects integer, boolean, or
+string observation reports from the ABI result family. The proof
 `formal/rocq/rho_bridge/theories/RhoAstSendBoundary.v` models the same checked
 invocation boundary: accepted calls preserve `arguments ++ [return]`, arity
-mismatches reject, and result observations follow the ABI result type. The
-proof `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` also proves
-that an invocation plan derived from a successful scalar ABI preserves the typed
-operand order and result family. The
+mismatches reject, result observations follow the ABI result type, and
+normalizing a codegen-owned invocation payload produces an AST artifact rather
+than source text. The proof
+`formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` also proves that an
+invocation plan derived from a successful scalar ABI preserves the typed operand
+order and result family. The
 executable regressions
 `mettail-rho-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
 `mettail-rho-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and
@@ -207,7 +213,9 @@ executable regressions
 then inspect the generated AST and ABI inventory, require Calculator `AddStr`
 to use `ExprInstance::EPlusPlusBody` with `Str × Str → Str` ABI, and require
 renamed native categories to keep the same native scalar ABI. Runtime wrapper
-tests parse `"rho" + "net"` and observe
+tests route the parsed term through
+`CalculatorLanguage::rho_scalar_contract_invocation_to`, normalize the returned
+`RhoScalarContractInvocation`, execute `"rho" + "net"`, and observe
 `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end chain from
 source snippet through WPDA parsing, typed invocation mapping, validated
 `rhoapi::Par`, RhoRuntime execution, and generic runtime report.

@@ -11,9 +11,12 @@ use mettail_ast::grammar::{GrammarRule, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
 
-use crate::lower::{
-    category_rho_native_scalar, rho_native_scalar_type, RhoLowering, RhoScalarContractAbi,
-    RhoScalarContractShape, RhoScalarType,
+use crate::{
+    ast::RhoAstLiteral,
+    lower::{
+        category_rho_native_scalar, rho_native_scalar_type, RhoLowering, RhoScalarContractAbi,
+        RhoScalarContractShape, RhoScalarType,
+    },
 };
 
 /// One operand that generated invocation code must extract from a typed term
@@ -34,6 +37,34 @@ pub struct RhoScalarInvocationPlan {
     pub result_scalar_type: RhoScalarType,
     pub abi: RhoScalarContractAbi,
     pub operands: Vec<RhoScalarInvocationOperand>,
+}
+
+/// Dynamic scalar-contract call emitted by generated language code.
+///
+/// This type intentionally lives in `mettail-rho-codegen`, not
+/// `mettail-rho-runtime`, so generated language crates can compile an AST-first
+/// invocation description without depending on the Rho machine runtime. Runtime
+/// adapters validate and normalize this payload with
+/// `mettail_rho_runtime::build_scalar_contract_invocation_from_contract`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoScalarContractInvocation {
+    pub abi: RhoScalarContractAbi,
+    pub arguments: Vec<RhoAstLiteral>,
+    pub out_channel: String,
+}
+
+impl RhoScalarContractInvocation {
+    pub fn new(
+        abi: RhoScalarContractAbi,
+        arguments: Vec<RhoAstLiteral>,
+        out_channel: impl Into<String>,
+    ) -> Self {
+        Self {
+            abi,
+            arguments,
+            out_channel: out_channel.into(),
+        }
+    }
 }
 
 /// Inconsistency between a `LanguageDef` and the scalar ABI inventory derived

@@ -37,7 +37,7 @@ and never:
 
 This design replaces only the CESK runtime backend path after a language passes
 its flip gate. The active WPDA parser/recognizer remains the parser front end,
-and the Ascent production rewrite backend is legacy. Ascent/CESK are temporary
+and the Ascent production rewrite backend is legacy. Ascent/CESK are
 reference/oracle transition machinery only; campaign completion removes them
 from the live production runtime tree.
 

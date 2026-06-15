@@ -512,9 +512,16 @@ hard-coded operator list. `mettail_rho_codegen::plan_scalar_invocations` then
 cross-checks that ABI against the macro-expanded term constructors: it records
 the constructor label, operand field positions, parameter names, source
 categories, and native scalar families required by generated extractor code. At
-runtime, `mettail_rho_runtime::build_scalar_contract_invocation` checks the ABI
-against the extracted scalar literals and emits the normalized dynamic
-`rhoapi::Par` call directly.
+the generated-language boundary, the macro emits a `rho-codegen` helper that
+extracts ground scalar literals from typed AST constructors and returns
+`mettail_rho_codegen::RhoScalarContractInvocation`. This payload contains the
+same ABI record, the literal arguments in constructor field order, and the
+output channel name; it deliberately lives in `mettail-rho-codegen`, so
+generated language crates do not depend on the Rho runtime crate. Runtime-facing
+adapters pass that payload to
+`mettail_rho_runtime::build_scalar_contract_invocation_from_contract`, which
+checks the ABI against the extracted scalar literals and emits the normalized
+dynamic `rhoapi::Par` call directly.
 
 Input binders use f1r3node's de Bruijn convention:
 

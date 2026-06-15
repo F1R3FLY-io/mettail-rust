@@ -57,6 +57,12 @@ Section RhoAstSendBoundary.
     scalar_abi_result : ScalarTy
   }.
 
+  Record ScalarContractInvocation : Type := {
+    invocation_abi : ScalarCallAbi;
+    invocation_arguments : list AstLiteral;
+    invocation_out_channel : Atom
+  }.
+
   Inductive DynamicInputArtifact : Type :=
     | AstSendArtifact : AstSend -> DynamicInputArtifact
     | SourceTextInput : list nat -> DynamicInputArtifact.
@@ -144,6 +150,14 @@ Section RhoAstSendBoundary.
          scalar_observation_for (scalar_abi_result abi))
       else None
     else None.
+
+  Definition normalize_scalar_contract_invocation
+      (invocation : ScalarContractInvocation)
+      : option (DynamicInputArtifact * ScalarObservation) :=
+    checked_scalar_contract_invocation
+      (invocation_abi invocation)
+      (invocation_arguments invocation)
+      (invocation_out_channel invocation).
 
   Definition ambiguity_witness
       (witness_channel key payload : Atom) : DynamicInputArtifact :=
@@ -238,6 +252,55 @@ Section RhoAstSendBoundary.
     inversion Hchecked; subst. reflexivity.
   Qed.
 
+  Theorem normalized_scalar_invocation_preserves_codegen_payload :
+    forall invocation artifact observation,
+      normalize_scalar_contract_invocation invocation =
+        Some (artifact, observation) ->
+      send_payloads_of artifact =
+        Some
+          (invocation_arguments invocation ++
+           [LitQuotedChannel (invocation_out_channel invocation)]).
+  Proof.
+    intros invocation artifact observation Hnormalized.
+    unfold normalize_scalar_contract_invocation in Hnormalized.
+    apply checked_scalar_invocation_preserves_payloads in Hnormalized.
+    exact Hnormalized.
+  Qed.
+
+  Theorem normalized_scalar_invocation_observation_follows_codegen_abi :
+    forall invocation artifact observation,
+      normalize_scalar_contract_invocation invocation =
+        Some (artifact, observation) ->
+      observation =
+        scalar_observation_for
+          (scalar_abi_result (invocation_abi invocation)).
+  Proof.
+    intros invocation artifact observation Hnormalized.
+    unfold normalize_scalar_contract_invocation in Hnormalized.
+    apply checked_scalar_invocation_observation_follows_result in Hnormalized.
+    exact Hnormalized.
+  Qed.
+
+  Theorem normalized_scalar_invocation_is_ast_not_source_text :
+    forall invocation artifact observation,
+      normalize_scalar_contract_invocation invocation =
+        Some (artifact, observation) ->
+      dynamic_input_is_source_text artifact = false.
+  Proof.
+    intros invocation artifact observation Hnormalized.
+    unfold normalize_scalar_contract_invocation in Hnormalized.
+    unfold checked_scalar_contract_invocation in Hnormalized.
+    destruct (Nat.eqb
+      (length (invocation_arguments invocation))
+      (length (scalar_abi_operands (invocation_abi invocation))));
+      try discriminate.
+    destruct (scalar_literals_match
+      (invocation_arguments invocation)
+      (scalar_abi_operands (invocation_abi invocation)));
+      try discriminate.
+    inversion Hnormalized; subst. reflexivity.
+  Qed.
+
   Theorem checked_scalar_invocation_rejects_arity_mismatch :
     forall abi arguments return_channel,
       length arguments <> length (scalar_abi_operands abi) ->
@@ -247,6 +310,29 @@ Section RhoAstSendBoundary.
     unfold checked_scalar_contract_invocation.
     apply Nat.eqb_neq in Hneq. rewrite Hneq. reflexivity.
   Qed.
+
+  Theorem normalized_scalar_invocation_rejects_arity_mismatch :
+    forall invocation,
+      length (invocation_arguments invocation) <>
+      length (scalar_abi_operands (invocation_abi invocation)) ->
+      normalize_scalar_contract_invocation invocation = None.
+  Proof.
+    intros invocation Hneq.
+    unfold normalize_scalar_contract_invocation.
+    apply checked_scalar_invocation_rejects_arity_mismatch.
+    exact Hneq.
+  Qed.
+
+  Theorem normalized_scalar_invocation_rejects_non_scalar_payload :
+    forall label rest return_channel,
+      normalize_scalar_contract_invocation
+        {| invocation_abi :=
+             {| scalar_abi_label := label;
+                scalar_abi_operands := [TInt];
+                scalar_abi_result := TInt |};
+           invocation_arguments := LitList rest :: nil;
+           invocation_out_channel := return_channel |} = None.
+  Proof. intros label rest return_channel. reflexivity. Qed.
 
   Theorem checked_string_result_invocation_observes_strings :
     forall label arguments return_channel artifact observation,

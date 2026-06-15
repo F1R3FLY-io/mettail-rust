@@ -78,8 +78,8 @@ pub use deadlock::{
 };
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use invocation::{
-    plan_scalar_invocations, RhoScalarInvocationOperand, RhoScalarInvocationPlan,
-    RhoScalarInvocationPlanError,
+    plan_scalar_invocations, RhoScalarContractInvocation, RhoScalarInvocationOperand,
+    RhoScalarInvocationPlan, RhoScalarInvocationPlanError,
 };
 pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,

@@ -19,8 +19,8 @@ use mettail_rho_codegen::{
 };
 #[cfg(feature = "runtime-report")]
 use mettail_rho_codegen::{
-    RhoAstBuildError, RhoAstLiteral, RhoAstSend, RhoScalarContractAbi, RhoScalarContractShape,
-    RhoScalarType,
+    RhoAstBuildError, RhoAstLiteral, RhoAstSend, RhoScalarContractAbi, RhoScalarContractInvocation,
+    RhoScalarContractShape, RhoScalarType,
 };
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
@@ -676,6 +676,19 @@ pub fn build_scalar_contract_invocation(
             RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel }
         },
     })
+}
+
+/// Build a typed Rho backend invocation from the codegen-owned scalar call
+/// description emitted by generated language helpers.
+///
+/// This is the dependency-clean generated-language boundary: generated AST code
+/// constructs [`RhoScalarContractInvocation`] without linking to the runtime,
+/// then runtime-facing adapters validate and normalize it here.
+#[cfg(feature = "runtime-report")]
+pub fn build_scalar_contract_invocation_from_contract(
+    invocation: RhoScalarContractInvocation,
+) -> Result<RhoBackendInvocation, RhoScalarInvocationError> {
+    build_scalar_contract_invocation(&invocation.abi, invocation.arguments, invocation.out_channel)
 }
 
 #[cfg(feature = "runtime-report")]

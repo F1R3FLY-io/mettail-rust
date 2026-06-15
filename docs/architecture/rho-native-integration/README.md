@@ -9,7 +9,7 @@ For Dovetail's standalone rewrite-engine architecture, see
 
 Scope note: this integration is a replacement path for the CESK runtime backend.
 It is not a replacement for the active WPDA parser/recognizer. Ascent is legacy
-for production rewrite execution and may be used only as temporary oracle
+for production rewrite execution and may be used only as reference/oracle
 evidence during rollout; campaign completion removes Ascent/CESK runtime paths
 from the live production tree.
 

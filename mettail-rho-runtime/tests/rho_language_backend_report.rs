@@ -3,7 +3,6 @@
 //! `mettail-rho-runtime`.
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use mettail_ast::identity::language_definition_fingerprint;
@@ -14,10 +13,10 @@ use mettail_languages::calculator::{
 use mettail_rho_codegen::{
     plan_call_by_need_thunk_with_spec, plan_rho_default_backend, CallByNeedBudget,
     CallByNeedInitialState, CallByNeedThunkSpec, RhoAstLiteral, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoScalarContractAbi,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{
-    build_scalar_contract_invocation, install_dovetail_rho_runtime_backend,
+    build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
     install_rho_runtime_backend, DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage,
     PlannedRhoBackend, RhoBackendInvocation, RhoInvocationCompilerStage, RhoRuntimeBackedLanguage,
     RhoRuntimeBackedLanguageError,
@@ -91,32 +90,6 @@ fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
-}
-
-fn calc_scalar_abi(label: &str) -> Result<&'static RhoScalarContractAbi, String> {
-    static ABI: OnceLock<BTreeMap<String, RhoScalarContractAbi>> = OnceLock::new();
-    let inventory = ABI.get_or_init(|| {
-        let def = syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT)
-            .expect("calculator fragment must parse");
-        let plan = plan_rho_default_backend(&def, passing_requirements())
-            .expect("calculator scalar fragment must pass the Rho-default gate");
-        plan.lowering
-            .scalar_contract_abi
-            .into_iter()
-            .map(|abi| (abi.rule_label.clone(), abi))
-            .collect()
-    });
-    inventory
-        .get(label)
-        .ok_or_else(|| format!("calculator Rho scalar ABI has no contract for {label}"))
-}
-
-fn calc_scalar_invocation(
-    label: &str,
-    arguments: Vec<RhoAstLiteral>,
-) -> Result<RhoBackendInvocation, String> {
-    build_scalar_contract_invocation(calc_scalar_abi(label)?, arguments, "OUT")
-        .map_err(|err| format!("failed to build ABI-checked Rho AST call for {label}: {err}"))
 }
 
 fn calculator_backend() -> PlannedRhoBackend {
@@ -353,18 +326,6 @@ fn int_literal(term: &Int) -> Result<i64, String> {
     }
 }
 
-fn binary_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvocation, String> {
-    let left = int_literal(left)?;
-    let right = int_literal(right)?;
-    calc_scalar_invocation(op, vec![RhoAstLiteral::Int(left), RhoAstLiteral::Int(right)])
-}
-
-fn binary_bool_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvocation, String> {
-    let left = int_literal(left)?;
-    let right = int_literal(right)?;
-    calc_scalar_invocation(op, vec![RhoAstLiteral::Int(left), RhoAstLiteral::Int(right)])
-}
-
 fn bool_literal(term: &Bool) -> Result<bool, String> {
     match term {
         Bool::BoolLit(value) => Ok(*value),
@@ -372,42 +333,11 @@ fn bool_literal(term: &Bool) -> Result<bool, String> {
     }
 }
 
-fn binary_bool_payload_call(
-    op: &str,
-    left: &Bool,
-    right: &Bool,
-) -> Result<RhoBackendInvocation, String> {
-    let left = bool_literal(left)?;
-    let right = bool_literal(right)?;
-    calc_scalar_invocation(op, vec![RhoAstLiteral::Bool(left), RhoAstLiteral::Bool(right)])
-}
-
-fn unary_bool_payload_call(op: &str, value: &Bool) -> Result<RhoBackendInvocation, String> {
-    let value = bool_literal(value)?;
-    calc_scalar_invocation(op, vec![RhoAstLiteral::Bool(value)])
-}
-
 fn string_literal(term: &Str) -> Result<String, String> {
     match term {
         Str::StringLit(value) => Ok(value.clone()),
         other => Err(format!("Rho calculator bridge needs ground string literals, got {other:?}")),
     }
-}
-
-fn binary_string_call(op: &str, left: &Str, right: &Str) -> Result<RhoBackendInvocation, String> {
-    let left = string_literal(left)?;
-    let right = string_literal(right)?;
-    calc_scalar_invocation(op, vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)])
-}
-
-fn binary_string_bool_call(
-    op: &str,
-    left: &Str,
-    right: &Str,
-) -> Result<RhoBackendInvocation, String> {
-    let left = string_literal(left)?;
-    let right = string_literal(right)?;
-    calc_scalar_invocation(op, vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)])
 }
 
 fn calculator_int(term: &dyn Term) -> Result<&Int, String> {
@@ -468,89 +398,19 @@ fn calculator_str_inner(inner: &CalculatorTermInner) -> Option<&Str> {
 }
 
 fn calculator_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
-    if let Ok(int) = calculator_int(term) {
-        return match int {
-            Int::AddInt(left, right) => binary_call("AddInt", left.as_ref(), right.as_ref()),
-            Int::SubInt(left, right) => binary_call("SubInt", left.as_ref(), right.as_ref()),
-            Int::MulInt(left, right) => binary_call("MulInt", left.as_ref(), right.as_ref()),
-            Int::DivInt(left, right) => binary_call("DivInt", left.as_ref(), right.as_ref()),
-            Int::ModInt(left, right) => binary_call("ModInt", left.as_ref(), right.as_ref()),
-            other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
-        };
-    }
-
-    if let Ok(bool_term) = calculator_bool(term) {
-        return match bool_term {
-            Bool::EqInt(left, right) => binary_bool_call("EqInt", left.as_ref(), right.as_ref()),
-            Bool::NeInt(left, right) => binary_bool_call("NeInt", left.as_ref(), right.as_ref()),
-            Bool::LtInt(left, right) => binary_bool_call("LtInt", left.as_ref(), right.as_ref()),
-            Bool::GtInt(left, right) => binary_bool_call("GtInt", left.as_ref(), right.as_ref()),
-            Bool::LtEqInt(left, right) => {
-                binary_bool_call("LtEqInt", left.as_ref(), right.as_ref())
-            },
-            Bool::GtEqInt(left, right) => {
-                binary_bool_call("GtEqInt", left.as_ref(), right.as_ref())
-            },
-            Bool::EqBool(left, right) => {
-                binary_bool_payload_call("EqBool", left.as_ref(), right.as_ref())
-            },
-            Bool::NeBool(left, right) => {
-                binary_bool_payload_call("NeBool", left.as_ref(), right.as_ref())
-            },
-            Bool::LtBool(left, right) => {
-                binary_bool_payload_call("LtBool", left.as_ref(), right.as_ref())
-            },
-            Bool::GtBool(left, right) => {
-                binary_bool_payload_call("GtBool", left.as_ref(), right.as_ref())
-            },
-            Bool::LtEqBool(left, right) => {
-                binary_bool_payload_call("LtEqBool", left.as_ref(), right.as_ref())
-            },
-            Bool::GtEqBool(left, right) => {
-                binary_bool_payload_call("GtEqBool", left.as_ref(), right.as_ref())
-            },
-            Bool::EqStr(left, right) => {
-                binary_string_bool_call("EqStr", left.as_ref(), right.as_ref())
-            },
-            Bool::NeStr(left, right) => {
-                binary_string_bool_call("NeStr", left.as_ref(), right.as_ref())
-            },
-            Bool::LtStr(left, right) => {
-                binary_string_bool_call("LtStr", left.as_ref(), right.as_ref())
-            },
-            Bool::GtStr(left, right) => {
-                binary_string_bool_call("GtStr", left.as_ref(), right.as_ref())
-            },
-            Bool::LtEqStr(left, right) => {
-                binary_string_bool_call("LtEqStr", left.as_ref(), right.as_ref())
-            },
-            Bool::GtEqStr(left, right) => {
-                binary_string_bool_call("GtEqStr", left.as_ref(), right.as_ref())
-            },
-            Bool::And(left, right) => {
-                binary_bool_payload_call("And", left.as_ref(), right.as_ref())
-            },
-            Bool::Or(left, right) => binary_bool_payload_call("Or", left.as_ref(), right.as_ref()),
-            Bool::Not(value) => unary_bool_payload_call("Not", value.as_ref()),
-            other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
-        };
-    }
-
-    match calculator_str(term)? {
-        Str::Concat(left, right) => binary_string_call("Concat", left.as_ref(), right.as_ref()),
-        Str::AddStr(left, right) => binary_string_call("AddStr", left.as_ref(), right.as_ref()),
-        other => Err(format!("calculator Rho backend has no invocation for {other:?}")),
-    }
+    let invocation = CalculatorLanguage::rho_scalar_contract_invocation_to(term, "OUT")?;
+    build_scalar_contract_invocation_from_contract(invocation)
+        .map_err(|err| format!("failed to normalize generated Rho scalar invocation: {err}"))
 }
 
 fn calculator_invocation_from_dovetail(
     term: &dyn Term,
     report: &RuntimeDovetailRunReport,
 ) -> Result<RhoBackendInvocation, String> {
-    report
-        .assert_complete()
-        .expect("adapter must pass only complete Dovetail reports to Rho invocation");
-    calculator_invocation(term)
+    let invocation =
+        CalculatorLanguage::rho_scalar_contract_invocation_from_dovetail_to(term, report, "OUT")?;
+    build_scalar_contract_invocation_from_contract(invocation)
+        .map_err(|err| format!("failed to normalize generated Dovetail-to-Rho invocation: {err}"))
 }
 
 fn calculator_call_by_need_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {

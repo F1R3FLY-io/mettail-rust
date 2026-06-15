@@ -190,11 +190,17 @@ pub fn generate_language_impl(
         "language_trait_impl",
         language_trait_impl,
     );
+    let rho_scalar_invocation_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "rho_scalar_invocation",
+        crate::gen::runtime::rho_invocation::generate_rho_scalar_invocation(language),
+    );
 
     quote! {
         #term_wrapper_include
         #language_struct_include
         #language_trait_impl_include
+        #rho_scalar_invocation_include
     }
 }
 
