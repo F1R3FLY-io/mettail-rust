@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
-use mettail_dovetail_runtime::complete_native_dovetail_report_for_language;
 use mettail_languages::calculator::{
     Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
@@ -320,11 +319,10 @@ fn malformed_dovetail_report_for(term: &dyn Term) -> Result<RuntimeDovetailRunRe
     Ok(report)
 }
 
-fn native_calculator_dovetail_report_for(
+fn generated_calculator_dovetail_report_for(
     term: &dyn Term,
 ) -> Result<RuntimeDovetailRunReport, String> {
-    complete_native_dovetail_report_for_language(&FragmentMatchedCalculatorLanguage, term)
-        .map_err(|err| err.to_string())
+    CalculatorLanguage::dovetail_report_for(term, 64, 1_000_000)
 }
 
 fn int_literal(term: &Int) -> Result<i64, String> {
@@ -984,7 +982,7 @@ fn dovetail_rho_runtime_installer_derives_stage_fingerprints_from_plan() {
     let language = install_dovetail_rho_runtime_backend(
         FragmentMatchedCalculatorLanguage,
         calculator_backend(),
-        native_calculator_dovetail_report_for,
+        generated_calculator_dovetail_report_for,
         calculator_invocation_from_dovetail,
     )
     .expect("plan-derived Dovetail and Rho stages should install on matching language");
@@ -1031,7 +1029,7 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
     let language = DovetailRhoRuntimeBackedLanguage::new(
         FragmentMatchedCalculatorLanguage,
         backend,
-        DovetailCompilerStage::new(fingerprint.clone(), native_calculator_dovetail_report_for),
+        DovetailCompilerStage::new(fingerprint.clone(), generated_calculator_dovetail_report_for),
         RhoInvocationCompilerStage::new(fingerprint, calculator_invocation_from_dovetail),
     )
     .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");

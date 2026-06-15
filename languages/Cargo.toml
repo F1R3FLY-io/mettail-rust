@@ -73,12 +73,21 @@ walker-stats = ["mettail-prattail/walker-stats"]
 ## `mettail_rho_codegen::RhoScalarContractInvocation` values for the
 ## Dovetail/Rho installer, while still avoiding a dependency on the Rho runtime.
 rho-codegen = ["dep:mettail-rho-codegen"]
+## Compile the macro-generated AST-first Dovetail report compiler. Generated
+## helpers lower typed AST constructors and supported rewrite/equation rules
+## directly into `dovetail::EGraph` and checked `RuntimeDovetailRunReport`
+## values; unsupported side-condition families fail closed instead of falling
+## back to Ascent/CESK.
+dovetail-codegen = ["dep:dovetail", "dep:mettail-dovetail-runtime", "dep:rigail"]
 
 [dependencies]
 mettail-macros = { path = "../macros" }
 mettail-prattail = { path = "../prattail" }
 mettail-runtime = { path = "../runtime" }
 mettail-rho-codegen = { path = "../mettail-rho-codegen", optional = true }
+mettail-dovetail-runtime = { path = "../mettail-dovetail-runtime", optional = true }
+dovetail = { path = "../dovetail", optional = true }
+rigail = { path = "../rigail", optional = true }
 # Feature-branch: simulation crate for grammar-aware simulator.
 mettail-simulation = { path = "../simulation" }
 # Main-branch: numeric deps for BigInt/BigRat/FixedPoint language support.

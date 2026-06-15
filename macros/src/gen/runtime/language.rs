@@ -195,12 +195,18 @@ pub fn generate_language_impl(
         "rho_scalar_invocation",
         crate::gen::runtime::rho_invocation::generate_rho_scalar_invocation(language),
     );
+    let dovetail_report_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "dovetail_report",
+        crate::gen::runtime::dovetail_report::generate_dovetail_report(language),
+    );
 
     quote! {
         #term_wrapper_include
         #language_struct_include
         #language_trait_impl_include
         #rho_scalar_invocation_include
+        #dovetail_report_include
     }
 }
 

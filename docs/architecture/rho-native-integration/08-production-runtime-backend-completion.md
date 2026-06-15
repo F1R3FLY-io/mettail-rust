@@ -49,13 +49,65 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | Surface | Current evidence | Production completion condition |
 |---|---|---|
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
-| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, native-handler report helper for generated direct evaluation/normalization, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, accepting native-handler output without exact semantic keys, or accepting incomplete cycle-bounded reports as exhaustive |
+| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, native-handler report helper for generated direct evaluation/normalization, generated `dovetail-codegen` report producer hook, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, accepting native-handler output without exact semantic keys, accepting unsupported generated lowering families as complete, or accepting incomplete cycle-bounded reports as exhaustive |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
 | `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
 | CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `mettail-runtime` CEK/CESK re-exports have been removed from the production runtime API; prattail/testkit CESK evaluator, store, GC, and green-thread scheduler modules require explicit `legacy-cesk-runtime` opt-in features | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook, and default prattail/testkit APIs expose no legacy CESK runtime surface |
 | WPDA parser | active parser/recognizer | retained; runtime-backend work must not weaken parser guarantees |
+
+## Generated Dovetail Report Compiler Boundary
+
+The generated report compiler is the first production-facing bridge from
+`language!` to Dovetail. The macro has already parsed the source language
+definition into `LanguageDef`, so the report compiler uses that structured
+inventory directly:
+
+`language! specification → LanguageDef → generated typed AST + generated Dovetail report compiler`
+
+The generated helper is feature-gated by `mettail-languages/dovetail-codegen`.
+For each generated language it emits a method equivalent to:
+
+```text
+Build a Dovetail report for a generated language term:
+  Read constructor/category/rule inventory from the macro-expanded LanguageDef.
+  Prefer exact generated native normalization when available.
+  Otherwise lower the typed AST and supported rules into a Dovetail e-graph.
+  Require saturation convergence, checked extraction completeness, and runtime report shape validity.
+  Reject unsupported rule families explicitly.
+```
+
+The intentionally supported structural fragment is:
+
+| LanguageDef feature | Current generated Dovetail behavior |
+|---|---|
+| generated typed AST constructors | lowered as structural e-graph nodes, preserving ordered children |
+| generated variables, literals, and nullaries | lowered as exact structural leaves |
+| multi-category alternatives | all exact flat alternatives are considered as report roots |
+| premise-free equations and rewrites | emitted as Dovetail rules when both sides lower structurally |
+| pure congruence rules | represented by e-graph congruence closure rather than duplicated generated rules |
+| direct generated normalization/native handlers | complete root-only report when every root has an exact semantic key |
+
+The current generator rejects, rather than approximates, these families:
+
+| Rejected family | Reason it remains a production obligation |
+|---|---|
+| collection, map, and zip metapatterns | need AC/collection-aware matching and coverage proof |
+| lambda and multi-lambda metapatterns | need binder-aware lowering and freshness/substitution proof |
+| substitution and multi-substitution metapatterns | need generated substitution lowering aligned with binder semantics |
+| non-congruence side conditions | need guard/predicate/RhoNet or external-contract disposition |
+| bounded or non-converged saturation | cannot justify a complete runtime report |
+
+The generated Dovetail compiler therefore improves the backend replacement by
+removing a hand-written report boundary, but it does not by itself flip every
+language to production. A language may install the generated report compiler only
+when the flip gate can prove:
+
+`AllRulesCovered = StructuralDovetailRules ∪ NativeExactReports ∪ RhoNetRules ∪ ExternalContracts`
+
+and every unsupported generated family has been discharged into one of those
+sets with checkable evidence.
 
 ## AST Artifact Contract
 

@@ -166,6 +166,73 @@ fingerprint equals `Language::metadata().definition_fingerprint()`. This keeps a
 valid-looking report producer for one generated language from being installed
 on another language with the same display syntax or category names.
 
+## Generated Language Report Producers
+
+The generated report producer is the compile-time bridge from a `language!`
+specification to a Dovetail report. The `language!` macro parses the
+specification once into a `LanguageDef`; the runtime generator then emits a
+feature-gated `dovetail-codegen` helper from that same structured definition.
+It does not reconstruct the language from display strings, parser output, or
+pretty-printed terms.
+
+For a language named `L`, the generated helper has this logical shape:
+
+`L::dovetail_report_for(term, max_iters, max_nodes) -> RuntimeDovetailRunReport`
+
+The stages are:
+
+```text
+Given a generated typed term and the macro-expanded LanguageDef:
+  Attempt the native/direct-evaluation report path.
+  If native/direct evaluation produced an exact-keyed complete report:
+    Return that checked report.
+  Derive constructor labels, category labels, and rules from LanguageDef.
+  If any rule family needs unsupported specialized lowering:
+    Reject the report producer with an explicit unsupported-lowering reason.
+  Lower the typed AST into a Dovetail e-graph.
+  Saturate with the generated Dovetail rules under node and iteration bounds.
+  If saturation did not converge:
+    Reject rather than reporting a complete runtime result.
+  Extract every root with checked completeness.
+  Project the Dovetail report into RuntimeDovetailRunReport.
+  Validate the runtime report shape before returning it.
+```
+
+The current generated structural lowering covers the conservative fragment:
+
+| Fragment | Generated behavior |
+|---|---|
+| generated variable, literal, and nullary constructors | exact structural leaf nodes |
+| regular constructor applications | Dovetail e-nodes with ordered lowered children |
+| generated multi-category terms | every exact flat alternative becomes a report root candidate |
+| premise-free equations | bidirectional Dovetail rewrite rules when neither side is a bare variable root |
+| premise-free directional rewrites | one Dovetail rewrite rule |
+| pure congruence rules | not emitted as separate rules; e-graph congruence closure supplies context closure after child e-classes merge |
+| generated direct evaluation / native normalization | complete root-only report when every retained root has an exact semantic key |
+
+The helper is deliberately total-or-reject for everything outside that
+fragment. It fails closed for collection, map, and zip metapatterns; lambda and
+multi-lambda metapatterns; substitution and multi-substitution metapatterns;
+non-congruence side conditions; non-converged saturation; malformed projected
+reports; and terms from a different generated language.
+
+This means the current equation for the generated surface is:
+
+`GeneratedReportComplete ⇔ NativeExactReport ∨ (SupportedStructuralLowering ∧ SaturationConverged ∧ ExtractionComplete ∧ RuntimeShapeValid)`
+
+The negation is just as important:
+
+`¬SupportedStructuralLowering ⇒ reject`, not "fall back to Ascent/CESK" and not
+"return a partial complete report."
+
+The implementation lives in
+[`macros/src/gen/runtime/dovetail_report.rs`](../../../macros/src/gen/runtime/dovetail_report.rs)
+and is compiled for generated languages through the `dovetail-codegen` feature.
+The generated language crate keeps the dependency direction substrate-neutral by
+making this feature optional; runtime wrappers decide whether to install the
+result as a direct Dovetail backend or as the Dovetail half of a Dovetail/Rho
+backend.
+
 ## Report Family
 
 "Report" is a family name for typed artifacts at Dovetail phase boundaries. The

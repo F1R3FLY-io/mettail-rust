@@ -28,6 +28,7 @@ oracle-ascent = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/calculator",
+    "mettail-languages/dovetail-codegen",
     "mettail-languages/oracle-ascent",
     "mettail-languages/rho-codegen",
 ]
