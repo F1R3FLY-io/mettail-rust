@@ -1,68 +1,41 @@
-//! `AnyAlgebra` — a single concrete carrier that lets the symbolic-automata
-//! machinery range over a *family* of effective Boolean algebras (one per data
-//! sort) without generic-explosion or `dyn`.
+//! `AnyAlgebra` — the **uniform recursive carrier**: a single `BooleanAlgebra`
+//! that can stand for any supported data type (scalar leaf *or* structured
+//! combinator), so one symbolic automaton/transducer can guard predicates of any
+//! type, and a tree node's heterogeneous children can share one algebra type.
 //!
-//! ## Why this exists
+//! ## Design
 //!
-//! [`BooleanAlgebra`](crate::symbolic::BooleanAlgebra) is parametric in its
-//! `Predicate`/`Domain` associated types. Every concrete algebra therefore
-//! produces a *different* `SymbolicAutomaton<A>` / `SymbolicFiniteTransducer<A,
-//! B>` instantiation. To make one transducer guard predicates of *any* supported
-//! data type — and, later, to put a heterogeneous payload on each node of a
-//! symbolic tree automaton whose children have different sorts — we need a
-//! **single** `Predicate`/`Domain` pair that can stand for any leaf sort.
+//! `AnyAlgebra` is a closed `enum` (no `dyn`, so `Predicate: Eq + Hash` survives
+//! for minterm/determinization hashing). Scalar leaves wrap the concrete element
+//! algebras; combinator variants box the generic combinator algebras
+//! *instantiated at `AnyAlgebra` itself* — `Product(Box<NaryProductAlgebra<
+//! AnyAlgebra>>)`, etc. — giving a finitely-nested uniform carrier. The
+//! [`AnyPred`]/[`AnyDomain`] enums mirror this recursively (the `Box` breaks the
+//! type cycle).
 //!
-//! `AnyAlgebra` is that carrier: a closed `enum` (no `dyn`, so `Predicate: Eq +
-//! Hash` survives for minterm/determinization hashing and there is no allocation
-//! on the hot guard-evaluation path), dispatched by a `match`.
+//! ## Semantics
 //!
-//! ## Many-sorted semantics (exact, not approximate)
-//!
-//! Predicates ([`AnyPred`]) are boolean combinations of *per-sort leaf*
-//! predicates. The domain ([`AnyDomain`]) is the **disjoint union** of the
-//! per-sort domains — every concrete element has exactly one sort.
-//!
-//! A given `AnyAlgebra` *value* (e.g. [`AnyAlgebra::Int`]) is the algebra **of
-//! one sort**; its decision procedures answer questions *about elements of that
-//! sort*. A leaf predicate of a foreign sort is unsatisfiable by an element of
-//! this sort, so it **projects to `⊥`** when this algebra interprets a formula
-//! (see [`fold_pred`]). This is the standard slice of a many-sorted algebra and
-//! is fully exact:
-//!
-//! - `Int(a) ∧ Char(b)` is unsatisfiable for *every* sort (no element is both an
-//!   `Int` and a `Char`), so [`AnyAlgebra::is_satisfiable`] returns `false`.
-//! - `Int(a) ∨ Char(b)` interpreted by the `Int` algebra is satisfiable iff `a`
-//!   is; the same formula interpreted by the `Char` algebra is satisfiable iff
-//!   `b` is.
-//! - `¬Int(a)` interpreted by the `Char` algebra is `⊤`.
-//!
-//! Cross-sort *unions* that must be satisfiable-by-anyone are expressed with the
-//! `Sum`/`Product` combinators, which combine the per-sort answers; they are not
-//! the job of a single leaf algebra.
-//!
-//! ## Supported sorts
-//!
-//! Scalar leaves wrapping the concrete effective Boolean algebras:
-//! - [`Sort::Int`]   → `IntervalAlgebra` (bounded `i64`)
-//! - [`Sort::Char`]  → `CharClassAlgebra` (Unicode)
-//! - [`Sort::Bool`]  → `KatBooleanAlgebra` (propositional truth assignments)
-//! - [`Sort::BigInt`]→ `OrderedFieldAlgebra<BigInt>` (unbounded integers)
-//! - [`Sort::BigRat`]→ `OrderedFieldAlgebra<BigRational>` (exact rationals)
-//! - [`Sort::Fixed`] → `OrderedFieldAlgebra<BigRational>` (fixed-point decimals,
-//!   value `= unscaled / 10^places`, a distinct sort sharing the rational carrier)
-//! - [`Sort::Float`] → `OrderedFieldAlgebra<OrderedF64>` (`f64`, total order)
-//!
-//! M1 (later steps) adds `Str` and the `Product`/`Sum`/`Collection`/`Tree`
-//! combinator variants; the [`SortRegistry`] is the lookup table those
-//! combinators consult to fetch the algebra for a child sort.
+//! Each leaf scalar follows the many-sorted projection semantics: a foreign-sort
+//! leaf predicate projects to `⊥` when an algebra of another sort interprets a
+//! formula (see [`fold_pred`]). Combinator variants **delegate** every operation
+//! to their boxed inner algebra (extract the inner combinator predicate from the
+//! `AnyPred` variant, call the inner algebra, re-wrap), so the recursion bottoms
+//! out at the scalar leaves.
 
 use std::collections::HashMap;
 
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
+use crate::collection_algebra::{BagAlgebra, BagPred};
 use crate::kat::BooleanTest;
 use crate::ordered_field::{OrderedF64, OrderedFieldAlgebra, OrderedFieldPred};
+use crate::product_nary::{
+    NaryProductAlgebra, NaryProductPred, SumAlgebra, SumPred, SumValue,
+};
+use crate::regex_sfa::{RegexAlgebra, RegexPred};
+use crate::string_algebra::{StrPred, StringAlgebra};
+use crate::sym_tree::{SymTerm, TreeAlgebra, TreePred};
 use crate::symbolic::{
     BooleanAlgebra, CharClassAlgebra, CharClassPred, IntervalAlgebra, IntervalPred,
     KatBooleanAlgebra,
@@ -72,48 +45,70 @@ use crate::symbolic::{
 // Sort
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// The sort (data type) a leaf algebra ranges over.
+/// The sort (data type) an algebra ranges over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Sort {
-    /// Bounded integers — `IntervalAlgebra`.
+    /// Bounded integers.
     Int,
-    /// Unicode scalar values — `CharClassAlgebra`.
+    /// Unicode characters.
     Char,
-    /// Propositional truth assignments — `KatBooleanAlgebra`.
+    /// Propositional truth assignments.
     Bool,
-    /// Arbitrary-precision integers — `OrderedFieldAlgebra<BigInt>`.
+    /// Arbitrary-precision integers.
     BigInt,
-    /// Exact rationals — `OrderedFieldAlgebra<BigRational>`.
+    /// Exact rationals.
     BigRat,
-    /// Fixed-point decimals (value `= unscaled / 10^places`), carried as exact
-    /// rationals but a distinct sort — `OrderedFieldAlgebra<BigRational>`.
+    /// Fixed-point decimals (rational carrier, distinct sort).
     Fixed,
-    /// `f64` under a total order — `OrderedFieldAlgebra<OrderedF64>`.
+    /// Floats.
     Float,
+    /// Strings.
+    Str,
+    /// Tuples / records.
+    Product,
+    /// Variants / sums.
+    Sum,
+    /// Sequences.
+    List,
+    /// Multisets.
+    Bag,
+    /// Ranked terms (recursive ADTs).
+    Tree,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AnyDomain — the disjoint union of per-sort domains
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// A concrete element of one of the supported sorts. Every value has exactly one
-/// sort (see [`AnyDomain::sort`]).
+/// A concrete element of one of the supported sorts.
 #[derive(Clone, Debug)]
 pub enum AnyDomain {
-    /// An integer element (sort [`Sort::Int`]).
+    /// Integer (`Sort::Int`).
     Int(i64),
-    /// A character element (sort [`Sort::Char`]).
+    /// Character (`Sort::Char`).
     Char(char),
-    /// A truth assignment (sort [`Sort::Bool`]).
+    /// Truth assignment (`Sort::Bool`).
     Bool(HashMap<String, bool>),
-    /// An arbitrary-precision integer (sort [`Sort::BigInt`]).
+    /// Arbitrary-precision integer (`Sort::BigInt`).
     BigInt(BigInt),
-    /// An exact rational (sort [`Sort::BigRat`]).
+    /// Exact rational (`Sort::BigRat`).
     BigRat(BigRational),
-    /// A fixed-point decimal as an exact rational (sort [`Sort::Fixed`]).
+    /// Fixed-point decimal as a rational (`Sort::Fixed`).
     Fixed(BigRational),
-    /// A float (sort [`Sort::Float`]).
+    /// Float (`Sort::Float`).
     Float(OrderedF64),
+    /// String (`Sort::Str`).
+    Str(String),
+    /// Tuple (`Sort::Product`).
+    Product(Vec<AnyDomain>),
+    /// Tagged variant (`Sort::Sum`). Boxed — `SumValue` holds its payload inline.
+    Sum(Box<SumValue<AnyDomain>>),
+    /// Sequence (`Sort::List`).
+    List(Vec<AnyDomain>),
+    /// Multiset (`Sort::Bag`).
+    Bag(Vec<AnyDomain>),
+    /// Ranked term (`Sort::Tree`). Boxed — `SymTerm` holds its payload inline.
+    Tree(Box<SymTerm<AnyDomain>>),
 }
 
 impl AnyDomain {
@@ -127,6 +122,12 @@ impl AnyDomain {
             AnyDomain::BigRat(_) => Sort::BigRat,
             AnyDomain::Fixed(_) => Sort::Fixed,
             AnyDomain::Float(_) => Sort::Float,
+            AnyDomain::Str(_) => Sort::Str,
+            AnyDomain::Product(_) => Sort::Product,
+            AnyDomain::Sum(_) => Sort::Sum,
+            AnyDomain::List(_) => Sort::List,
+            AnyDomain::Bag(_) => Sort::Bag,
+            AnyDomain::Tree(_) => Sort::Tree,
         }
     }
 }
@@ -135,29 +136,39 @@ impl AnyDomain {
 // AnyPred — boolean combinations of per-sort leaf predicates
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// A predicate over [`AnyDomain`]: a boolean combination of per-sort leaf
-/// predicates. `Eq + Hash` are derived (every leaf predicate type is `Eq +
-/// Hash`), which the minterm/determinization machinery relies on.
+/// A predicate over [`AnyDomain`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AnyPred {
-    /// Satisfied by every element of every sort.
+    /// Satisfied by every element.
     True,
     /// Satisfied by no element.
     False,
-    /// An integer-sort leaf predicate.
+    /// Integer-sort leaf.
     Int(IntervalPred),
-    /// A character-sort leaf predicate.
+    /// Character-sort leaf.
     Char(CharClassPred),
-    /// A boolean-sort leaf predicate.
+    /// Boolean-sort leaf.
     Bool(BooleanTest),
-    /// A big-integer-sort leaf predicate.
+    /// Big-integer-sort leaf.
     BigInt(OrderedFieldPred<BigInt>),
-    /// A rational-sort leaf predicate.
+    /// Rational-sort leaf.
     BigRat(OrderedFieldPred<BigRational>),
-    /// A fixed-point-sort leaf predicate (rational carrier, distinct sort).
+    /// Fixed-point-sort leaf.
     Fixed(OrderedFieldPred<BigRational>),
-    /// A float-sort leaf predicate.
+    /// Float-sort leaf.
     Float(OrderedFieldPred<OrderedF64>),
+    /// String-sort leaf.
+    Str(StrPred),
+    /// Tuple predicate.
+    Product(Box<NaryProductPred<AnyPred>>),
+    /// Variant predicate.
+    Sum(Box<SumPred<AnyPred>>),
+    /// Sequence predicate.
+    List(Box<RegexPred<AnyPred>>),
+    /// Multiset predicate.
+    Bag(Box<BagPred<AnyPred>>),
+    /// Tree predicate.
+    Tree(Box<TreePred<AnyPred>>),
     /// Conjunction.
     And(Box<AnyPred>, Box<AnyPred>),
     /// Disjunction.
@@ -167,8 +178,7 @@ pub enum AnyPred {
 }
 
 impl AnyPred {
-    /// If this is a leaf predicate, the sort it constrains; `None` for the
-    /// boolean-combination nodes and the `True`/`False` constants.
+    /// If this is a leaf predicate, the sort it constrains.
     pub fn leaf_sort(&self) -> Option<Sort> {
         match self {
             AnyPred::Int(_) => Some(Sort::Int),
@@ -178,18 +188,27 @@ impl AnyPred {
             AnyPred::BigRat(_) => Some(Sort::BigRat),
             AnyPred::Fixed(_) => Some(Sort::Fixed),
             AnyPred::Float(_) => Some(Sort::Float),
+            AnyPred::Str(_) => Some(Sort::Str),
+            AnyPred::Product(_) => Some(Sort::Product),
+            AnyPred::Sum(_) => Some(Sort::Sum),
+            AnyPred::List(_) => Some(Sort::List),
+            AnyPred::Bag(_) => Some(Sort::Bag),
+            AnyPred::Tree(_) => Some(Sort::Tree),
             AnyPred::True | AnyPred::False | AnyPred::And(..) | AnyPred::Or(..) | AnyPred::Not(_) => {
                 None
             },
         }
     }
+
+    /// Whether this is a leaf (non-boolean-combination) node.
+    fn is_leaf(&self) -> bool {
+        self.leaf_sort().is_some()
+    }
 }
 
-/// Project an [`AnyPred`] onto a single sort and evaluate the boolean structure
-/// inside that sort's algebra `alg`. `leaf` recognizes the leaf predicates that
-/// belong to `alg`'s sort; leaves of any *other* sort fall through to
-/// `alg.false_pred()` (a foreign-sort predicate is unsatisfiable by an element
-/// of this sort). The result is exact for `alg`'s sort.
+/// Project an [`AnyPred`] onto a single sort's algebra `alg`, evaluating the
+/// boolean structure inside it. `leaf` extracts the inner predicate for `alg`'s
+/// sort; leaves of any other sort project to `⊥`.
 fn fold_pred<A, F>(alg: &A, p: &AnyPred, leaf: &F) -> A::Predicate
 where
     A: BooleanAlgebra,
@@ -201,62 +220,53 @@ where
         AnyPred::And(a, b) => alg.and(&fold_pred(alg, a, leaf), &fold_pred(alg, b, leaf)),
         AnyPred::Or(a, b) => alg.or(&fold_pred(alg, a, leaf), &fold_pred(alg, b, leaf)),
         AnyPred::Not(x) => alg.not(&fold_pred(alg, x, leaf)),
-        // A leaf node: matched-sort → its inner predicate; foreign-sort → ⊥.
-        AnyPred::Int(_)
-        | AnyPred::Char(_)
-        | AnyPred::Bool(_)
-        | AnyPred::BigInt(_)
-        | AnyPred::BigRat(_)
-        | AnyPred::Fixed(_)
-        | AnyPred::Float(_) => leaf(p).unwrap_or_else(|| alg.false_pred()),
+        other if other.is_leaf() => leaf(other).unwrap_or_else(|| alg.false_pred()),
+        _ => unreachable!("all non-leaf cases handled above"),
     }
 }
 
 fn int_leaf(p: &AnyPred) -> Option<IntervalPred> {
-    match p {
-        AnyPred::Int(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::Int(x) = p { Some(x.clone()) } else { None }
 }
 fn char_leaf(p: &AnyPred) -> Option<CharClassPred> {
-    match p {
-        AnyPred::Char(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::Char(x) = p { Some(x.clone()) } else { None }
 }
 fn bool_leaf(p: &AnyPred) -> Option<BooleanTest> {
-    match p {
-        AnyPred::Bool(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::Bool(x) = p { Some(x.clone()) } else { None }
 }
 fn bigint_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigInt>> {
-    match p {
-        AnyPred::BigInt(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::BigInt(x) = p { Some(x.clone()) } else { None }
 }
 fn bigrat_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigRational>> {
-    match p {
-        AnyPred::BigRat(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::BigRat(x) = p { Some(x.clone()) } else { None }
 }
 fn fixed_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigRational>> {
-    match p {
-        AnyPred::Fixed(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::Fixed(x) = p { Some(x.clone()) } else { None }
 }
 fn float_leaf(p: &AnyPred) -> Option<OrderedFieldPred<OrderedF64>> {
-    match p {
-        AnyPred::Float(x) => Some(x.clone()),
-        _ => None,
-    }
+    if let AnyPred::Float(x) = p { Some(x.clone()) } else { None }
+}
+fn str_leaf(p: &AnyPred) -> Option<StrPred> {
+    if let AnyPred::Str(x) = p { Some(x.clone()) } else { None }
+}
+fn product_leaf(p: &AnyPred) -> Option<NaryProductPred<AnyPred>> {
+    if let AnyPred::Product(x) = p { Some((**x).clone()) } else { None }
+}
+fn sum_leaf(p: &AnyPred) -> Option<SumPred<AnyPred>> {
+    if let AnyPred::Sum(x) = p { Some((**x).clone()) } else { None }
+}
+fn list_leaf(p: &AnyPred) -> Option<RegexPred<AnyPred>> {
+    if let AnyPred::List(x) = p { Some((**x).clone()) } else { None }
+}
+fn bag_leaf(p: &AnyPred) -> Option<BagPred<AnyPred>> {
+    if let AnyPred::Bag(x) = p { Some((**x).clone()) } else { None }
+}
+fn tree_leaf(p: &AnyPred) -> Option<TreePred<AnyPred>> {
+    if let AnyPred::Tree(x) = p { Some((**x).clone()) } else { None }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AnyAlgebra — the per-sort effective Boolean algebra carrier
+// AnyAlgebra
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A single effective Boolean algebra, tagged by the sort it ranges over.
@@ -276,6 +286,18 @@ pub enum AnyAlgebra {
     Fixed(OrderedFieldAlgebra<BigRational>),
     /// Float algebra.
     Float(OrderedFieldAlgebra<OrderedF64>),
+    /// String algebra.
+    Str(StringAlgebra),
+    /// Tuple algebra.
+    Product(Box<NaryProductAlgebra<AnyAlgebra>>),
+    /// Variant algebra.
+    Sum(Box<SumAlgebra<AnyAlgebra>>),
+    /// Sequence algebra.
+    List(Box<RegexAlgebra<AnyAlgebra>>),
+    /// Multiset algebra.
+    Bag(Box<BagAlgebra<AnyAlgebra>>),
+    /// Tree algebra.
+    Tree(Box<TreeAlgebra<AnyAlgebra>>),
 }
 
 impl AnyAlgebra {
@@ -289,6 +311,12 @@ impl AnyAlgebra {
             AnyAlgebra::BigRat(_) => Sort::BigRat,
             AnyAlgebra::Fixed(_) => Sort::Fixed,
             AnyAlgebra::Float(_) => Sort::Float,
+            AnyAlgebra::Str(_) => Sort::Str,
+            AnyAlgebra::Product(_) => Sort::Product,
+            AnyAlgebra::Sum(_) => Sort::Sum,
+            AnyAlgebra::List(_) => Sort::List,
+            AnyAlgebra::Bag(_) => Sort::Bag,
+            AnyAlgebra::Tree(_) => Sort::Tree,
         }
     }
 }
@@ -309,8 +337,7 @@ impl BooleanAlgebra for AnyAlgebra {
         match (a, b) {
             (AnyPred::False, _) | (_, AnyPred::False) => AnyPred::False,
             (AnyPred::True, x) | (x, AnyPred::True) => x.clone(),
-            // Same-sort leaves: delegate to the inner algebra to keep the
-            // predicate normalized (exact, and identical to the bare algebra).
+            // Same-sort leaves: delegate to the inner algebra (normalized, exact).
             _ => match (self, a, b) {
                 (AnyAlgebra::Int(g), AnyPred::Int(x), AnyPred::Int(y)) => AnyPred::Int(g.and(x, y)),
                 (AnyAlgebra::Char(g), AnyPred::Char(x), AnyPred::Char(y)) => {
@@ -330,6 +357,22 @@ impl BooleanAlgebra for AnyAlgebra {
                 },
                 (AnyAlgebra::Float(g), AnyPred::Float(x), AnyPred::Float(y)) => {
                     AnyPred::Float(g.and(x, y))
+                },
+                (AnyAlgebra::Str(g), AnyPred::Str(x), AnyPred::Str(y)) => AnyPred::Str(g.and(x, y)),
+                (AnyAlgebra::Product(g), AnyPred::Product(x), AnyPred::Product(y)) => {
+                    AnyPred::Product(Box::new(g.and(x, y)))
+                },
+                (AnyAlgebra::Sum(g), AnyPred::Sum(x), AnyPred::Sum(y)) => {
+                    AnyPred::Sum(Box::new(g.and(x, y)))
+                },
+                (AnyAlgebra::List(g), AnyPred::List(x), AnyPred::List(y)) => {
+                    AnyPred::List(Box::new(g.and(x, y)))
+                },
+                (AnyAlgebra::Bag(g), AnyPred::Bag(x), AnyPred::Bag(y)) => {
+                    AnyPred::Bag(Box::new(g.and(x, y)))
+                },
+                (AnyAlgebra::Tree(g), AnyPred::Tree(x), AnyPred::Tree(y)) => {
+                    AnyPred::Tree(Box::new(g.and(x, y)))
                 },
                 _ => AnyPred::And(Box::new(a.clone()), Box::new(b.clone())),
             },
@@ -360,6 +403,22 @@ impl BooleanAlgebra for AnyAlgebra {
                 (AnyAlgebra::Float(g), AnyPred::Float(x), AnyPred::Float(y)) => {
                     AnyPred::Float(g.or(x, y))
                 },
+                (AnyAlgebra::Str(g), AnyPred::Str(x), AnyPred::Str(y)) => AnyPred::Str(g.or(x, y)),
+                (AnyAlgebra::Product(g), AnyPred::Product(x), AnyPred::Product(y)) => {
+                    AnyPred::Product(Box::new(g.or(x, y)))
+                },
+                (AnyAlgebra::Sum(g), AnyPred::Sum(x), AnyPred::Sum(y)) => {
+                    AnyPred::Sum(Box::new(g.or(x, y)))
+                },
+                (AnyAlgebra::List(g), AnyPred::List(x), AnyPred::List(y)) => {
+                    AnyPred::List(Box::new(g.or(x, y)))
+                },
+                (AnyAlgebra::Bag(g), AnyPred::Bag(x), AnyPred::Bag(y)) => {
+                    AnyPred::Bag(Box::new(g.or(x, y)))
+                },
+                (AnyAlgebra::Tree(g), AnyPred::Tree(x), AnyPred::Tree(y)) => {
+                    AnyPred::Tree(Box::new(g.or(x, y)))
+                },
                 _ => AnyPred::Or(Box::new(a.clone()), Box::new(b.clone())),
             },
         }
@@ -369,8 +428,6 @@ impl BooleanAlgebra for AnyAlgebra {
         match (self, a) {
             (_, AnyPred::True) => AnyPred::False,
             (_, AnyPred::False) => AnyPred::True,
-            // Double-negation elimination is sound: every leaf algebra is a
-            // classical Boolean algebra and the projection semantics is classical.
             (_, AnyPred::Not(inner)) => (**inner).clone(),
             (AnyAlgebra::Int(g), AnyPred::Int(x)) => AnyPred::Int(g.not(x)),
             (AnyAlgebra::Char(g), AnyPred::Char(x)) => AnyPred::Char(g.not(x)),
@@ -379,6 +436,12 @@ impl BooleanAlgebra for AnyAlgebra {
             (AnyAlgebra::BigRat(g), AnyPred::BigRat(x)) => AnyPred::BigRat(g.not(x)),
             (AnyAlgebra::Fixed(g), AnyPred::Fixed(x)) => AnyPred::Fixed(g.not(x)),
             (AnyAlgebra::Float(g), AnyPred::Float(x)) => AnyPred::Float(g.not(x)),
+            (AnyAlgebra::Str(g), AnyPred::Str(x)) => AnyPred::Str(g.not(x)),
+            (AnyAlgebra::Product(g), AnyPred::Product(x)) => AnyPred::Product(Box::new(g.not(x))),
+            (AnyAlgebra::Sum(g), AnyPred::Sum(x)) => AnyPred::Sum(Box::new(g.not(x))),
+            (AnyAlgebra::List(g), AnyPred::List(x)) => AnyPred::List(Box::new(g.not(x))),
+            (AnyAlgebra::Bag(g), AnyPred::Bag(x)) => AnyPred::Bag(Box::new(g.not(x))),
+            (AnyAlgebra::Tree(g), AnyPred::Tree(x)) => AnyPred::Tree(Box::new(g.not(x))),
             _ => AnyPred::Not(Box::new(a.clone())),
         }
     }
@@ -392,6 +455,12 @@ impl BooleanAlgebra for AnyAlgebra {
             AnyAlgebra::BigRat(g) => g.is_satisfiable(&fold_pred(g, a, &bigrat_leaf)),
             AnyAlgebra::Fixed(g) => g.is_satisfiable(&fold_pred(g, a, &fixed_leaf)),
             AnyAlgebra::Float(g) => g.is_satisfiable(&fold_pred(g, a, &float_leaf)),
+            AnyAlgebra::Str(g) => g.is_satisfiable(&fold_pred(g, a, &str_leaf)),
+            AnyAlgebra::Product(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &product_leaf)),
+            AnyAlgebra::Sum(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &sum_leaf)),
+            AnyAlgebra::List(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &list_leaf)),
+            AnyAlgebra::Bag(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &bag_leaf)),
+            AnyAlgebra::Tree(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &tree_leaf)),
         }
     }
 
@@ -408,6 +477,22 @@ impl BooleanAlgebra for AnyAlgebra {
             },
             AnyAlgebra::Fixed(g) => g.witness(&fold_pred(g, a, &fixed_leaf)).map(AnyDomain::Fixed),
             AnyAlgebra::Float(g) => g.witness(&fold_pred(g, a, &float_leaf)).map(AnyDomain::Float),
+            AnyAlgebra::Str(g) => g.witness(&fold_pred(g, a, &str_leaf)).map(AnyDomain::Str),
+            AnyAlgebra::Product(g) => {
+                g.witness(&fold_pred(g.as_ref(), a, &product_leaf)).map(AnyDomain::Product)
+            },
+            AnyAlgebra::Sum(g) => {
+                g.witness(&fold_pred(g.as_ref(), a, &sum_leaf)).map(|v| AnyDomain::Sum(Box::new(v)))
+            },
+            AnyAlgebra::List(g) => {
+                g.witness(&fold_pred(g.as_ref(), a, &list_leaf)).map(AnyDomain::List)
+            },
+            AnyAlgebra::Bag(g) => {
+                g.witness(&fold_pred(g.as_ref(), a, &bag_leaf)).map(AnyDomain::Bag)
+            },
+            AnyAlgebra::Tree(g) => {
+                g.witness(&fold_pred(g.as_ref(), a, &tree_leaf)).map(|v| AnyDomain::Tree(Box::new(v)))
+            },
         }
     }
 
@@ -432,7 +517,23 @@ impl BooleanAlgebra for AnyAlgebra {
             (AnyAlgebra::Float(g), AnyDomain::Float(v)) => {
                 g.evaluate(&fold_pred(g, pred, &float_leaf), v)
             },
-            // The element is not of this algebra's sort.
+            (AnyAlgebra::Str(g), AnyDomain::Str(v)) => g.evaluate(&fold_pred(g, pred, &str_leaf), v),
+            (AnyAlgebra::Product(g), AnyDomain::Product(v)) => {
+                g.evaluate(&fold_pred(g.as_ref(), pred, &product_leaf), v)
+            },
+            (AnyAlgebra::Sum(g), AnyDomain::Sum(v)) => {
+                g.evaluate(&fold_pred(g.as_ref(), pred, &sum_leaf), v)
+            },
+            (AnyAlgebra::List(g), AnyDomain::List(v)) => {
+                g.evaluate(&fold_pred(g.as_ref(), pred, &list_leaf), v)
+            },
+            (AnyAlgebra::Bag(g), AnyDomain::Bag(v)) => {
+                g.evaluate(&fold_pred(g.as_ref(), pred, &bag_leaf), v)
+            },
+            (AnyAlgebra::Tree(g), AnyDomain::Tree(v)) => {
+                g.evaluate(&fold_pred(g.as_ref(), pred, &tree_leaf), v)
+            },
+            // Element not of this algebra's sort.
             _ => false,
         }
     }
@@ -442,9 +543,8 @@ impl BooleanAlgebra for AnyAlgebra {
 // SortRegistry — sort → algebra lookup table
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Maps each active [`Sort`] to the [`AnyAlgebra`] that decides it. This is the
-/// table the structured combinators (`Product`/`Sum`/`Collection`/`Tree`)
-/// consult to fetch the algebra for a child sort.
+/// Maps each active scalar [`Sort`] to the [`AnyAlgebra`] that decides it (the
+/// table structured combinators consult for child sorts).
 #[derive(Clone, Debug, Default)]
 pub struct SortRegistry {
     algebras: HashMap<Sort, AnyAlgebra>,
@@ -455,208 +555,193 @@ impl SortRegistry {
     pub fn new() -> Self {
         SortRegistry { algebras: HashMap::new() }
     }
-
-    /// Register (or replace) the algebra for `sort`.
+    /// Register the algebra for `sort`.
     pub fn insert(&mut self, sort: Sort, algebra: AnyAlgebra) {
         self.algebras.insert(sort, algebra);
     }
-
-    /// The algebra registered for `sort`, if any.
+    /// The algebra for `sort`, if any.
     pub fn get(&self, sort: Sort) -> Option<&AnyAlgebra> {
         self.algebras.get(&sort)
     }
-
-    /// Whether `sort` is active in this registry.
+    /// Whether `sort` is active.
     pub fn contains(&self, sort: Sort) -> bool {
         self.algebras.contains_key(&sort)
     }
-
-    /// The active sorts.
+    /// Active sorts.
     pub fn sorts(&self) -> impl Iterator<Item = Sort> + '_ {
         self.algebras.keys().copied()
     }
-
     /// Number of active sorts.
     pub fn len(&self) -> usize {
         self.algebras.len()
     }
-
-    /// Whether the registry is empty.
+    /// Whether empty.
     pub fn is_empty(&self) -> bool {
         self.algebras.is_empty()
     }
-
-    /// The default scalar registry: every scalar sort with its algebra. `Int`
-    /// uses the bounded universe `[int_lo, int_hi)`; `Bool` uses `bool_atoms`;
-    /// the unbounded numeric leaves and `Char` are parameter-free.
+    /// The default scalar registry (all seven scalar sorts).
     pub fn scalars(int_lo: i64, int_hi: i64, bool_atoms: Vec<String>) -> Self {
-        let mut registry = SortRegistry::new();
-        registry.insert(Sort::Int, AnyAlgebra::Int(IntervalAlgebra::new(int_lo, int_hi)));
-        registry.insert(Sort::Char, AnyAlgebra::Char(CharClassAlgebra::new()));
-        registry.insert(Sort::Bool, AnyAlgebra::Bool(KatBooleanAlgebra::new(bool_atoms)));
-        registry.insert(Sort::BigInt, AnyAlgebra::BigInt(OrderedFieldAlgebra::new()));
-        registry.insert(Sort::BigRat, AnyAlgebra::BigRat(OrderedFieldAlgebra::new()));
-        registry.insert(Sort::Fixed, AnyAlgebra::Fixed(OrderedFieldAlgebra::new()));
-        registry.insert(Sort::Float, AnyAlgebra::Float(OrderedFieldAlgebra::new()));
-        registry
+        let mut r = SortRegistry::new();
+        r.insert(Sort::Int, AnyAlgebra::Int(IntervalAlgebra::new(int_lo, int_hi)));
+        r.insert(Sort::Char, AnyAlgebra::Char(CharClassAlgebra::new()));
+        r.insert(Sort::Bool, AnyAlgebra::Bool(KatBooleanAlgebra::new(bool_atoms)));
+        r.insert(Sort::BigInt, AnyAlgebra::BigInt(OrderedFieldAlgebra::new()));
+        r.insert(Sort::BigRat, AnyAlgebra::BigRat(OrderedFieldAlgebra::new()));
+        r.insert(Sort::Fixed, AnyAlgebra::Fixed(OrderedFieldAlgebra::new()));
+        r.insert(Sort::Float, AnyAlgebra::Float(OrderedFieldAlgebra::new()));
+        r.insert(Sort::Str, AnyAlgebra::Str(StringAlgebra::new()));
+        r
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collection_algebra::BagAlgebra;
+    use crate::product_nary::{NaryProductAlgebra, NaryProductPred, SumAlgebra, SumPred};
+    use crate::regex_sfa::RegexAlgebra;
+    use crate::string_algebra::StrPred;
+    use crate::sym_tree::{SymTerm, TreeAlgebra, TreePred};
 
     fn bi(n: i64) -> BigInt {
         BigInt::from(n)
     }
-    fn rat(n: i64, d: i64) -> BigRational {
-        BigRational::new(BigInt::from(n), BigInt::from(d))
-    }
 
-    /// The `AnyAlgebra::Int` wrapper answers identically to the bare
-    /// `IntervalAlgebra` for `Int` formulas.
     #[test]
-    fn wrapper_matches_interval_suite() {
+    fn scalar_wrappers_match_bare() {
         let bare = IntervalAlgebra::new(0, 100);
         let any = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
-        let preds = [
-            IntervalPred::True,
-            IntervalPred::False,
-            IntervalPred::Range(10, 20),
-            IntervalPred::Union(vec![(0, 5), (30, 40)]),
-            IntervalPred::Not(Box::new(IntervalPred::Range(10, 20))),
-        ];
-        for p in &preds {
-            let wrapped = AnyPred::Int(p.clone());
-            assert_eq!(bare.is_satisfiable(p), any.is_satisfiable(&wrapped));
-            assert_eq!(
-                bare.witness(p),
-                match any.witness(&wrapped) {
-                    Some(AnyDomain::Int(v)) => Some(v),
-                    None => None,
-                    other => panic!("expected Int witness, got {other:?}"),
-                },
-            );
-            for v in [0i64, 12, 35, 99] {
-                assert_eq!(bare.evaluate(p, &v), any.evaluate(&wrapped, &AnyDomain::Int(v)));
-            }
-        }
-    }
-
-    /// The `AnyAlgebra::Bool` wrapper answers identically to the bare
-    /// `KatBooleanAlgebra` for `Bool` formulas.
-    #[test]
-    fn wrapper_matches_kat_suite() {
-        let atoms = vec!["p".to_string(), "q".to_string()];
-        let bare = KatBooleanAlgebra::new(atoms.clone());
-        let any = AnyAlgebra::Bool(KatBooleanAlgebra::new(atoms));
-        let p = BooleanTest::Atom("p".to_string());
-        let q = BooleanTest::Atom("q".to_string());
-        let preds = [
-            BooleanTest::True,
-            BooleanTest::False,
-            p.clone(),
-            BooleanTest::And(Box::new(p.clone()), Box::new(q.clone())),
-            BooleanTest::And(Box::new(p.clone()), Box::new(BooleanTest::Not(Box::new(p.clone())))),
-        ];
-        for pred in &preds {
-            let wrapped = AnyPred::Bool(pred.clone());
-            assert_eq!(bare.is_satisfiable(pred), any.is_satisfiable(&wrapped));
-            assert_eq!(bare.witness(pred).is_some(), any.witness(&wrapped).is_some());
-        }
-    }
-
-    /// The `AnyAlgebra::BigInt` wrapper answers identically to the bare
-    /// `OrderedFieldAlgebra<BigInt>`.
-    #[test]
-    fn wrapper_matches_bigint_suite() {
-        let bare = OrderedFieldAlgebra::<BigInt>::new();
-        let any = AnyAlgebra::BigInt(OrderedFieldAlgebra::<BigInt>::new());
-        let p = OrderedFieldPred::closed(bi(0), bi(10));
-        let wrapped = AnyPred::BigInt(p.clone());
+        let p = IntervalPred::Range(10, 20);
+        let wrapped = AnyPred::Int(p.clone());
         assert_eq!(bare.is_satisfiable(&p), any.is_satisfiable(&wrapped));
-        assert!(any.evaluate(&wrapped, &AnyDomain::BigInt(bi(5))));
-        assert!(!any.evaluate(&wrapped, &AnyDomain::BigInt(bi(11))));
-        // not / and / or delegate exactly.
-        let comp = any.not(&wrapped);
-        assert!(any.evaluate(&comp, &AnyDomain::BigInt(bi(11))));
-        assert!(!any.is_satisfiable(&any.and(&wrapped, &comp)));
-    }
-
-    /// `Fixed` and `BigRat` are distinct sorts even though they share the
-    /// rational carrier: a `BigRat` predicate is foreign to the `Fixed` algebra.
-    #[test]
-    fn fixed_and_bigrat_are_distinct_sorts() {
-        let fixed = AnyAlgebra::Fixed(OrderedFieldAlgebra::<BigRational>::new());
-        let bigrat_pred = AnyPred::BigRat(OrderedFieldPred::closed(rat(0, 1), rat(1, 1)));
-        // The Fixed algebra treats a BigRat leaf as foreign → ⊥.
-        assert!(!fixed.is_satisfiable(&bigrat_pred));
-        // Its own Fixed predicate is satisfiable.
-        let fixed_pred = AnyPred::Fixed(OrderedFieldPred::closed(rat(0, 1), rat(1, 1)));
-        assert!(fixed.is_satisfiable(&fixed_pred));
-        assert!(fixed.evaluate(&fixed_pred, &AnyDomain::Fixed(rat(1, 2))));
+        assert!(any.evaluate(&wrapped, &AnyDomain::Int(15)));
+        assert!(!any.evaluate(&wrapped, &AnyDomain::Int(25)));
     }
 
     #[test]
-    fn float_wrapper_works() {
-        let any = AnyAlgebra::Float(OrderedFieldAlgebra::<OrderedF64>::new());
-        let p = AnyPred::Float(OrderedFieldPred::half_open(OrderedF64(0.0), OrderedF64(1.0)));
+    fn str_leaf_in_any() {
+        let any = AnyAlgebra::Str(StringAlgebra::new());
+        let p = AnyPred::Str(StrPred::Literal("ab".to_string()));
+        assert!(any.evaluate(&p, &AnyDomain::Str("ab".to_string())));
+        assert!(!any.evaluate(&p, &AnyDomain::Str("ac".to_string())));
         assert!(any.is_satisfiable(&p));
-        assert!(any.evaluate(&p, &AnyDomain::Float(OrderedF64(0.5))));
-        assert!(!any.evaluate(&p, &AnyDomain::Float(OrderedF64(1.0))));
     }
 
-    /// A cross-sort conjunction is unsatisfiable in every sort.
+    /// A tuple of (Int, Str) carried by the uniform carrier.
+    #[test]
+    fn product_combinator_in_any() {
+        let prod = NaryProductAlgebra::new(vec![
+            AnyAlgebra::Int(IntervalAlgebra::new(0, 100)),
+            AnyAlgebra::Str(StringAlgebra::new()),
+        ]);
+        let any = AnyAlgebra::Product(Box::new(prod));
+        // field 0 (Int) in [10,20) AND field 1 (Str) = "x"
+        let p = AnyPred::Product(Box::new(NaryProductPred::And(
+            Box::new(NaryProductPred::Field(0, AnyPred::Int(IntervalPred::Range(10, 20)))),
+            Box::new(NaryProductPred::Field(1, AnyPred::Str(StrPred::Literal("x".to_string())))),
+        )));
+        let good = AnyDomain::Product(vec![AnyDomain::Int(15), AnyDomain::Str("x".to_string())]);
+        let bad = AnyDomain::Product(vec![AnyDomain::Int(15), AnyDomain::Str("y".to_string())]);
+        assert!(any.evaluate(&p, &good));
+        assert!(!any.evaluate(&p, &bad));
+        assert!(any.is_satisfiable(&p));
+        let w = any.witness(&p).expect("nonempty");
+        assert!(any.evaluate(&p, &w));
+    }
+
+    /// A variant (Int | Str) carried by the uniform carrier.
+    #[test]
+    fn sum_combinator_in_any() {
+        let sum = SumAlgebra::new(vec![
+            AnyAlgebra::Int(IntervalAlgebra::new(0, 100)),
+            AnyAlgebra::Str(StringAlgebra::new()),
+        ]);
+        let any = AnyAlgebra::Sum(Box::new(sum));
+        let p = AnyPred::Sum(Box::new(SumPred::InVariant(
+            0,
+            AnyPred::Int(IntervalPred::Range(0, 10)),
+        )));
+        assert!(
+            any.evaluate(&p, &AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: AnyDomain::Int(5) })))
+        );
+        assert!(!any
+            .evaluate(&p, &AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: AnyDomain::Int(50) }))));
+        assert!(!any.evaluate(
+            &p,
+            &AnyDomain::Sum(Box::new(SumValue { tag: 1, payload: AnyDomain::Str("x".to_string()) }))
+        ));
+        assert!(any.is_satisfiable(&p));
+    }
+
+    /// A list of BigInts carried by the uniform carrier.
+    #[test]
+    fn list_combinator_in_any() {
+        let list = RegexAlgebra::new(AnyAlgebra::BigInt(OrderedFieldAlgebra::new()));
+        let all_pos = list.all(AnyPred::BigInt(OrderedFieldPred::at_least(bi(1))));
+        let any = AnyAlgebra::List(Box::new(list));
+        let p = AnyPred::List(Box::new(all_pos));
+        assert!(any.evaluate(
+            &p,
+            &AnyDomain::List(vec![AnyDomain::BigInt(bi(1)), AnyDomain::BigInt(bi(5))])
+        ));
+        assert!(!any.evaluate(
+            &p,
+            &AnyDomain::List(vec![AnyDomain::BigInt(bi(1)), AnyDomain::BigInt(bi(0))])
+        ));
+        assert!(any.is_satisfiable(&p));
+    }
+
+    /// A bag of ints carried by the uniform carrier.
+    #[test]
+    fn bag_combinator_in_any() {
+        let bag = BagAlgebra::new(AnyAlgebra::Int(IntervalAlgebra::new(0, 100)));
+        let some_big = bag.any_elem(AnyPred::Int(IntervalPred::Range(50, 100)));
+        let any = AnyAlgebra::Bag(Box::new(bag));
+        let p = AnyPred::Bag(Box::new(some_big));
+        assert!(any.evaluate(&p, &AnyDomain::Bag(vec![AnyDomain::Int(1), AnyDomain::Int(60)])));
+        assert!(!any.evaluate(&p, &AnyDomain::Bag(vec![AnyDomain::Int(1), AnyDomain::Int(2)])));
+        assert!(any.is_satisfiable(&p));
+    }
+
+    /// A tree with scalar payloads carried by the uniform carrier.
+    #[test]
+    fn tree_combinator_in_any() {
+        let arities: HashMap<String, usize> =
+            [("Lit".to_string(), 0usize), ("Pair".to_string(), 2usize)].into_iter().collect();
+        let payloaded: std::collections::HashSet<String> = ["Lit".to_string()].into_iter().collect();
+        let tree =
+            TreeAlgebra::new(AnyAlgebra::Int(IntervalAlgebra::new(0, 100)), arities, payloaded);
+        let any = AnyAlgebra::Tree(Box::new(tree));
+        // Pattern: Lit with payload in [0,10)
+        let p = AnyPred::Tree(Box::new(TreePred::Node {
+            constructor: "Lit".to_string(),
+            payload_guard: Some(AnyPred::Int(IntervalPred::Range(0, 10))),
+            children: vec![],
+        }));
+        let small = AnyDomain::Tree(Box::new(SymTerm::leaf("Lit", AnyDomain::Int(5))));
+        let big = AnyDomain::Tree(Box::new(SymTerm::leaf("Lit", AnyDomain::Int(50))));
+        assert!(any.evaluate(&p, &small));
+        assert!(!any.evaluate(&p, &big));
+        assert!(any.is_satisfiable(&p));
+        assert!(any.evaluate(&p, &any.witness(&p).unwrap()));
+    }
+
     #[test]
     fn cross_sort_and_is_unsat() {
         let any_int = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
         let pred = any_int.and(&AnyPred::Int(IntervalPred::True), &AnyPred::Char(CharClassPred::True));
         assert!(!any_int.is_satisfiable(&pred));
-        let any_char = AnyAlgebra::Char(CharClassAlgebra::new());
-        assert!(!any_char.is_satisfiable(&pred));
     }
 
-    /// A cross-sort disjunction is satisfiable in a given sort only through that
-    /// sort's disjunct.
     #[test]
-    fn cross_sort_or_projects_per_sort() {
-        let int_unsat = AnyPred::Int(IntervalPred::False);
-        let bigint_sat = AnyPred::BigInt(OrderedFieldPred::at_least(bi(0)));
-        let any_int = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
-        let or = any_int.or(&int_unsat, &bigint_sat);
-        assert!(!any_int.is_satisfiable(&or));
-        let any_big = AnyAlgebra::BigInt(OrderedFieldAlgebra::<BigInt>::new());
-        assert!(any_big.is_satisfiable(&or));
-    }
-
-    /// Negating a foreign-sort leaf is `⊤` within this sort.
-    #[test]
-    fn not_of_foreign_leaf_is_top_in_this_sort() {
-        let any_int = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
-        let not_char = any_int.not(&AnyPred::Char(CharClassPred::True));
-        assert!(any_int.is_satisfiable(&not_char));
-        assert!(any_int.evaluate(&not_char, &AnyDomain::Int(42)));
-    }
-
-    /// `evaluate` returns `false` for a foreign-sort element.
-    #[test]
-    fn evaluate_rejects_foreign_sort_element() {
-        let any_int = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
-        let pred = AnyPred::Int(IntervalPred::True);
-        assert!(any_int.evaluate(&pred, &AnyDomain::Int(1)));
-        assert!(!any_int.evaluate(&pred, &AnyDomain::Char('a')));
-        assert!(!any_int.evaluate(&pred, &AnyDomain::BigInt(bi(1))));
-    }
-
-    /// The scalar registry exposes all seven scalar sorts.
-    #[test]
-    fn scalar_registry_has_all_scalar_sorts() {
-        let registry = SortRegistry::scalars(0, 256, vec!["p".to_string()]);
-        assert_eq!(registry.len(), 7);
-        for s in [Sort::Int, Sort::Char, Sort::Bool, Sort::BigInt, Sort::BigRat, Sort::Fixed, Sort::Float]
-        {
-            assert!(registry.contains(s), "missing sort {s:?}");
-            assert_eq!(registry.get(s).map(AnyAlgebra::sort), Some(s));
+    fn scalar_registry_has_eight_scalar_sorts() {
+        let r = SortRegistry::scalars(0, 256, vec!["p".to_string()]);
+        assert_eq!(r.len(), 8);
+        for s in [
+            Sort::Int, Sort::Char, Sort::Bool, Sort::BigInt, Sort::BigRat, Sort::Fixed, Sort::Float,
+            Sort::Str,
+        ] {
+            assert!(r.contains(s), "missing {s:?}");
         }
     }
 }
