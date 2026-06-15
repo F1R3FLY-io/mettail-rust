@@ -15,6 +15,8 @@ use syn::{Ident, LitStr};
 
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 
+pub(crate) mod ac;
+
 fn to_snake(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
     for (i, ch) in s.chars().enumerate() {
@@ -76,10 +78,8 @@ fn ac_bag_lowering(
             for __elem in __bag.iter_elements() {
                 __children.push(#element_add(eg, __elem));
             }
-            __children.sort_by(|__a, __b| {
-                eg.canonical_class_key(*__a)
-                    .cmp(&eg.canonical_class_key(*__b))
-            });
+            // Canonical (sorted) bag order; cache each key (one computation each).
+            __children.sort_by_cached_key(|__c| eg.canonical_class_key(*__c));
             eg.add(::dovetail::egraph::ENode::new(#label.to_string(), __children))
         }
     }
@@ -331,8 +331,12 @@ fn pattern_to_dovetail(
 ) -> Result<TokenStream, String> {
     match pattern {
         AstPattern::Term(term) => pattern_term_to_dovetail(language, term),
+        // A collection directly under a constructor is lowered to an AC bag in
+        // the `PatternTerm::Apply` arm (which supplies the operator label). A
+        // bare/nested collection with no enclosing constructor has no operator and
+        // is not produced by the current grammar — fail closed.
         AstPattern::Collection { .. } => {
-            Err("collection metapatterns require AC/collection lowering".into())
+            Err("a collection metapattern must be the argument of a constructor (AC bag); a bare collection has no operator".into())
         },
         AstPattern::Map { .. } => {
             Err("map metapatterns require collection-comprehension lowering".into())
@@ -361,6 +365,13 @@ fn pattern_term_to_dovetail(
         PatternTerm::Apply { constructor, args } => {
             let label = constructor_label(language, constructor)?;
             let label = lit(&label);
+            // A constructor whose SOLE argument is a collection metapattern
+            // `{ ... }` (e.g. Ambient `(PPar { P, Q, ...rest })`) lowers to an AC
+            // bag pattern, with the constructor label as the AC operator. The
+            // collection has no constructor of its own (see `Pattern::Collection`).
+            if let [AstPattern::Collection { .. }] = args.as_slice() {
+                return ac::lower_ac_collection(language, &label, &args[0]);
+            }
             let args = args
                 .iter()
                 .map(|arg| pattern_to_dovetail(language, arg))
@@ -721,5 +732,72 @@ mod tests {
         let tokens = generate_dovetail_report(&language).to_string();
         assert!(tokens.contains("dovetail_report_for"));
         assert!(tokens.contains("lambda patterns require binder lowering"));
+    }
+
+    #[test]
+    fn generated_report_lowers_ac_bag_rewrite_to_pattern_ac() {
+        // An Ambient-shaped fragment: a HashBag `PPar` and an OpenRule AC redex.
+        // The rewrite must lower to `Pattern::ac` (NOT be rejected as
+        // unsupported), with the constructor label as the AC operator.
+        let language = parse(
+            r#"
+                name: AcSmoke,
+                types { Proc Name }
+                terms {
+                    PZero . Proc ::= "0" ;
+                    POpen . Proc ::= "open(" Name "," Proc ")" ;
+                    PAmb . Proc ::= Name "[" Proc "]" ;
+                    PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+                }
+                equations {}
+                rewrites {
+                    OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                        ~> (PPar {P, Q, ...rest}) ;
+                }
+            "#,
+        );
+
+        let (_, unsupported) = rule_block(&language);
+        assert!(
+            unsupported.is_empty(),
+            "AC bag rewrite must lower, not be rejected: {unsupported:?}"
+        );
+
+        let tokens = generate_dovetail_report(&language).to_string();
+        // The lowered rule uses the AC pattern constructor with the PPar label.
+        // (`::` inside a string literal is not token-spaced; the surrounding
+        // path `Pattern::ac` IS spaced by the token stringifier.)
+        assert!(tokens.contains("Pattern :: ac"), "AC bag pattern emitted");
+        assert!(
+            tokens.contains("AcSmoke::Proc::PPar"),
+            "PPar is the AC operator label: {tokens}"
+        );
+        // The fixed sub-patterns (POpen / PAmb apps) and the `rest` remainder
+        // are present.
+        assert!(tokens.contains("AcSmoke::Proc::POpen"));
+        assert!(tokens.contains("AcSmoke::Proc::PAmb"));
+        assert!(tokens.contains("\"rest\""), "rest remainder variable bound");
+    }
+
+    #[test]
+    fn premise_supported_is_exhaustive_and_only_congruence() {
+        use mettail_ast::language::{FreshnessCondition, FreshnessTarget};
+        use proc_macro2::Span;
+        use syn::Ident;
+        let id = |s: &str| Ident::new(s, Span::call_site());
+        // Congruence is the ONLY supported premise; every other variant fails
+        // closed (exhaustive match — no catch-all).
+        assert!(premise_supported(&Premise::Congruence {
+            source: id("S"),
+            target: id("T")
+        }));
+        assert!(!premise_supported(&Premise::Freshness(FreshnessCondition {
+            var: id("x"),
+            term: FreshnessTarget::Var(id("P")),
+        })));
+        assert!(!premise_supported(&Premise::RelationQuery {
+            relation: id("rel"),
+            args: vec![id("a")],
+        }));
     }
 }

@@ -24,6 +24,11 @@ Section GeneratedReportCompiler.
   Inductive GeneratedPatternClass : Type :=
     | GPatStructuralVar
     | GPatStructuralApply
+    (* The LOWERED associative-commutative bag apply (Ambient PPar's HashBag,
+       lowered to a canonical n-ary ENode). Its identity is an exact content key,
+       like any structural apply — distinct from the UNLOWERED collection
+       metasyntax `GPatCollectionMeta`, which still fails closed. *)
+    | GPatAcStructuralApply
     | GPatCollectionMeta
     | GPatMapMeta
     | GPatZipMeta
@@ -36,6 +41,7 @@ Section GeneratedReportCompiler.
     match p with
     | GPatStructuralVar => true
     | GPatStructuralApply => true
+    | GPatAcStructuralApply => true
     | GPatCollectionMeta => false
     | GPatMapMeta => false
     | GPatZipMeta => false
@@ -50,6 +56,7 @@ Section GeneratedReportCompiler.
     match p with
     | GPatStructuralVar => [ReqExactContentKey]
     | GPatStructuralApply => [ReqExactContentKey]
+    | GPatAcStructuralApply => [ReqExactContentKey]
     | GPatCollectionMeta => [ReqCollectionPattern]
     | GPatMapMeta => [ReqMapPattern]
     | GPatZipMeta => [ReqZipPattern]
@@ -388,6 +395,31 @@ Section GeneratedReportCompiler.
       all_premises_supported.
     simpl. destruct (pattern_supported lhs);
       destruct (pattern_supported rhs); reflexivity.
+  Qed.
+
+  (* The LOWERED AC bag apply on the LHS is SUPPORTED: a directional rewrite whose
+     LHS is `GPatAcStructuralApply`, with a supported (structural-apply) RHS and a
+     non-congruence-but-empty premise set, classifies as a lowered Dovetail rule.
+     This is the Ambient OpenRule shape (PPar AC redex ~> positional PPar). *)
+  Theorem ac_structural_lhs_is_lowered :
+    forall kind,
+      classify_rule
+        {| generated_rule_kind := kind;
+           generated_lhs := GPatAcStructuralApply;
+           generated_rhs := GPatAcStructuralApply;
+           generated_premises := [];
+           generated_is_pure_congruence := false |} =
+      LoweredAsDovetailRule.
+  Proof. intro kind. reflexivity. Qed.
+
+  (* And the AC bag apply carries ONLY the exact-content-key requirement (its
+     identity is exact, like any structural apply — no collection/binder/subst
+     requirement leaks in). *)
+  Theorem ac_structural_requirements_are_exact_key : forall r,
+    In r (pattern_requirements GPatAcStructuralApply) ->
+    r = ReqExactContentKey.
+  Proof.
+    intros r Hin. simpl in Hin. destruct Hin as [<- | []]. reflexivity.
   Qed.
 
 End GeneratedReportCompiler.

@@ -150,30 +150,53 @@ with a `Pattern::ac(op, fixed, rest)` builder.
 `try_add_with_budget`. (For `OpenRule` the RHS is the *positional* `PPar {P, Q,
 ...rest}`, so the RHS uses `AcApp` with `fixed = [P, Q]`, `rest = Some("rest")`.)
 
-Laziness: `lazy_ac_select` returns an `Iterator`; selections are pulled on demand.
-Permutation enumeration over `|fixed|` positions is bounded by `|fixed|!` which is
-tiny (2 for OpenRule). Budget gating on the fresh complement node keeps growth
-honest.
+Laziness: `lazy_ac_select` returns an `Iterator` (`LazyAcSelect`) holding only the
+current `k`-combination of indices and advancing ONE index per `next()`
+(lexicographic next-combination, O(k); never a `Vec` of all selections —
+`lazy_ac_select_is_lazy_partial_consumption` pulls 3 of C(40,5)≈658k without
+materializing the rest). Permutation enumeration over `|fixed|` positions is
+bounded by `|fixed|!` which is tiny (2 for OpenRule). Budget gating on the fresh
+complement node keeps growth honest (`NodeLimit` reported, never silent).
+
+`search` takes `&mut self` because AC matching materializes a fresh canonical
+n-ary `op` node per `rest` complement (`add_canonical_bag`, budget-gated) — an
+honest, bounded e-graph growth; positional matching adds nothing. The complement
+node is only created when a pairing survives (`paired.is_empty()` ⇒ skip). The
+node-iterating arms snapshot the class's nodes (clone children) before the
+`&mut self` recursion to avoid a borrow conflict.
 
 ### Macro (`macros/src/gen/runtime/dovetail_report.rs`)
 
 New submodule `dovetail_report/ac.rs` (`pub(crate) mod ac;`) with
-`lower_ac_collection(language, coll_pattern) -> Result<TokenStream, String>`
-emitting a `Pattern::ac(op, fixed, rest)` from an `AstPattern::Collection`:
+`lower_ac_collection(language, op_label, coll_pattern) -> Result<TokenStream,
+String>` emitting a `Pattern::ac(op, fixed, rest)` from an
+`AstPattern::Collection`:
 
-- `op` = the enclosing constructor's label (resolved by the caller, which knows
-  the constructor; the collection pattern itself carries no constructor — see the
-  `Pattern::Collection` doc).
-- `fixed` = each non-rest element lowered via `pattern_to_dovetail`.
+- `op` = the enclosing constructor's resolved Dovetail label (passed in by the
+  caller, which knows the constructor; the collection pattern itself carries no
+  constructor — see the `Pattern::Collection` doc).
+- `fixed` = each element lowered via `super::pattern_to_dovetail`.
 - `rest` = `coll.rest.map(|id| id.to_string())`.
+- Only `HashBag` (or the inferred `None`) is accepted; an explicit non-`HashBag`
+  type returns `Err` (fail closed — matches the engine's HashBag-only AC support).
 
-`pattern_to_dovetail` dispatches `AstPattern::Collection` to `ac::lower_ac_collection`
-(replacing the `Err`). `Map` / `Zip` STAY `Err`.
+Dispatch is in `pattern_term_to_dovetail`'s `Apply` arm: a constructor whose SOLE
+argument is a `Collection` (`[AstPattern::Collection { .. }]`) emits the `AcApp`
+with `op = constructor label` via `ac::lower_ac_collection`, rather than wrapping
+a positional `App`. `pattern_to_dovetail`'s bare-`Collection` arm stays an `Err`
+(a collection with no enclosing constructor has no operator and the grammar does
+not produce one). `Map` / `Zip` STAY `Err`.
 
-Because a `Collection` only appears as the sole argument of a `PatternTerm::Apply`
-(the enclosing constructor), `pattern_term_to_dovetail`'s `Apply` arm special-cases
-"single `Collection` argument": it emits the `AcApp` with `op = constructor label`
-directly, rather than wrapping a positional `App` around a child pattern.
+**Generalization beyond OpenRule (the principled solution).** Because the dispatch
+fires for ANY constructor-with-a-collection-argument, ALL Ambient `PPar`
+collections lower to `AcApp` uniformly — including the NESTED `PPar`s of `InRule`
+/ `OutRule` (e.g. `PAmb N (PPar { ... })` lowers to a `PAmb` app whose second
+child is itself an `AcApp`). The engine's recursive matcher handles nested
+`AcApp` (the `collect_matches` AcApp arm recurses through `pair_fixed`), so the
+lowering need not special-case OpenRule. The Step-2 TEST scope is OpenRule, but
+the lowering + engine are general. `ScopeExtrusion` (an equation with a freshness
+premise) is still rejected by `premise_supported`; the congruence rules
+(`ParCong`/`NewCong`/`AmbCong`) are still supplied by e-graph congruence closure.
 
 ### Proof additions (`CollectionAcLowering.v`)
 

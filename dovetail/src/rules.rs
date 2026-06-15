@@ -10,14 +10,30 @@
 use std::collections::HashMap;
 
 use crate::egraph::{EClassId, EGraph, ENode};
+use crate::key::SemanticHash;
 
 /// A pattern over operator labels `L` with named pattern variables.
 #[derive(Clone, Debug)]
 pub enum Pattern<L> {
     /// A pattern variable, binding to an e-class.
     Var(String),
-    /// An operator applied to argument patterns.
+    /// An operator applied to argument patterns (POSITIONAL).
     App { op: L, args: Vec<Pattern<L>> },
+    /// An associative-commutative (AC) operator applied to a multiset of
+    /// children: the `fixed` patterns match a SUB-MULTISET of an `op`-bag node's
+    /// children (in any pairing), and `rest`, if present, binds to the multiset
+    /// COMPLEMENT (a fresh canonical n-ary `op` node).
+    ///
+    /// On the LHS this matches every distinct sub-multiset selection + pairing as
+    /// a DISTINCT alternative; the non-linear `Var` re-bind check prunes pairings
+    /// whose shared variables disagree (by evidence). On the RHS it builds the
+    /// result bag: each `fixed` pattern instantiated, unioned with the bound
+    /// `rest` complement.
+    AcApp {
+        op: L,
+        fixed: Vec<Pattern<L>>,
+        rest: Option<String>,
+    },
 }
 
 impl<L> Pattern<L> {
@@ -30,10 +46,108 @@ impl<L> Pattern<L> {
     pub fn app(op: L, args: Vec<Pattern<L>>) -> Self {
         Pattern::App { op, args }
     }
+    /// An AC (associative-commutative) bag pattern: `fixed` patterns match a
+    /// sub-multiset of an `op`-bag; `rest` (if any) binds the complement.
+    pub fn ac(op: L, fixed: Vec<Pattern<L>>, rest: Option<String>) -> Self {
+        Pattern::AcApp { op, fixed, rest }
+    }
 }
 
 /// A substitution from pattern-variable name to e-class.
 pub type Subst = HashMap<String, EClassId>;
+
+/// A LAZY iterator over size-`k` sub-multiset selections (by position) of a bag
+/// of e-class children, paired with the multiset COMPLEMENT.
+///
+/// AC selection is exponential, so selections are materialized ON DEMAND (mandate
+/// 2 — laziness): the iterator holds only the current `k`-combination of indices
+/// and advances ONE index at a time (lexicographic next-combination, mirroring
+/// `enum_vectors`'s single-coordinate advance in
+/// `EnumerationCompleteness.v`/`CollectionAcLowering.v`). It never builds a `Vec`
+/// of all selections.
+///
+/// Each `next()` yields `(selection, complement)`: `selection` is the chosen
+/// positions' classes (in position order), `complement` the unchosen positions'
+/// classes. Together they partition the bag (no element lost or duplicated) — the
+/// `is_split` / `ac_select` contract proven in `CollectionAcLowering.v`.
+pub struct LazyAcSelect {
+    bag: Vec<EClassId>,
+    k: usize,
+    /// The current `k`-combination of indices into `bag` (strictly increasing),
+    /// or `None` once exhausted.
+    combo: Option<Vec<usize>>,
+}
+
+impl LazyAcSelect {
+    fn new(bag: &[EClassId], k: usize) -> Self {
+        let n = bag.len();
+        let combo = if k <= n {
+            // The first combination is [0, 1, ..., k-1].
+            Some((0..k).collect())
+        } else {
+            None // k > n: no size-k selection exists.
+        };
+        LazyAcSelect { bag: bag.to_vec(), k, combo }
+    }
+
+    /// Advance `self.combo` to the lexicographically-next strictly-increasing
+    /// `k`-combination of `[0, n)`, or set it to `None` when exhausted. O(k).
+    fn advance(&mut self) {
+        let n = self.bag.len();
+        let Some(combo) = self.combo.as_mut() else { return };
+        if self.k == 0 {
+            // The single empty selection has no successor.
+            self.combo = None;
+            return;
+        }
+        // Find the rightmost index that can be incremented: position `i` whose
+        // value is below its ceiling `n - k + i`.
+        let mut i = self.k;
+        loop {
+            if i == 0 {
+                self.combo = None;
+                return;
+            }
+            i -= 1;
+            if combo[i] < n - self.k + i {
+                combo[i] += 1;
+                // Reset every position to the right to be contiguous.
+                for j in (i + 1)..self.k {
+                    combo[j] = combo[j - 1] + 1;
+                }
+                return;
+            }
+        }
+    }
+}
+
+impl Iterator for LazyAcSelect {
+    type Item = (Vec<EClassId>, Vec<EClassId>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let combo = self.combo.clone()?;
+        // Build (selection, complement) from the current index combination.
+        let mut selection = Vec::with_capacity(self.k);
+        let mut complement = Vec::with_capacity(self.bag.len() - self.k);
+        let mut ci = 0usize;
+        for (idx, &child) in self.bag.iter().enumerate() {
+            if ci < combo.len() && combo[ci] == idx {
+                selection.push(child);
+                ci += 1;
+            } else {
+                complement.push(child);
+            }
+        }
+        self.advance();
+        Some((selection, complement))
+    }
+}
+
+/// Construct the lazy size-`k` sub-multiset selection iterator over `bag`. See
+/// [`LazyAcSelect`].
+pub fn lazy_ac_select(bag: &[EClassId], k: usize) -> LazyAcSelect {
+    LazyAcSelect::new(bag, k)
+}
 
 /// A rewrite rule `lhs -> rhs` (rules ARE data). RHS variables must be a subset
 /// of LHS variables (every RHS var is bound by the match).
@@ -78,18 +192,24 @@ impl SatReport {
     }
 }
 
-impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
+impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// All `(root e-class, substitution)` matches of `pattern` across the graph.
-    pub fn search(&self, pattern: &Pattern<L>) -> Vec<(EClassId, Subst)> {
+    ///
+    /// Takes `&mut self` because AC (`AcApp`) matching materializes a fresh
+    /// canonical n-ary `op` node for each `rest` complement — an honest,
+    /// budget-gated e-graph growth (the only mutation; positional matching adds
+    /// nothing). Pulling AC selections is on-demand and lazy ([`lazy_ac_select`]).
+    pub fn search(&mut self, pattern: &Pattern<L>) -> Vec<(EClassId, Subst)> {
         let mut out = Vec::new();
-        for q in self.classes() {
+        let classes: Vec<EClassId> = self.classes().collect();
+        for q in classes {
             self.collect_matches(pattern, q, &Subst::new(), &mut out);
         }
         out
     }
 
     fn collect_matches(
-        &self,
+        &mut self,
         pattern: &Pattern<L>,
         class: EClassId,
         subst: &Subst,
@@ -107,17 +227,26 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                 },
             },
             Pattern::App { op, args } => {
-                for enode in self.nodes(class) {
-                    if enode.op == *op && enode.children.len() == args.len() {
-                        self.match_children(args, &enode.children, subst, class, out);
-                    }
+                // Snapshot the class's nodes so the `&mut self` recursion below
+                // does not conflict with the node borrow.
+                let candidates: Vec<Vec<EClassId>> = self
+                    .nodes(class)
+                    .iter()
+                    .filter(|n| n.op == *op && n.children.len() == args.len())
+                    .map(|n| n.children.clone())
+                    .collect();
+                for children in candidates {
+                    self.match_children(args, &children, subst, class, out);
                 }
+            },
+            Pattern::AcApp { op, fixed, rest } => {
+                self.collect_ac_matches(op, fixed, rest, class, subst, out);
             },
         }
     }
 
     fn match_children(
-        &self,
+        &mut self,
         patterns: &[Pattern<L>],
         children: &[EClassId],
         subst: &Subst,
@@ -135,10 +264,137 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         }
     }
 
+    /// Match an AC (`AcApp`) pattern against `class`: find each `op`-bag node with
+    /// at least `|fixed|` children, LAZILY enumerate size-`|fixed|` sub-multiset
+    /// selections of its children, pair each selection against the `fixed`
+    /// patterns over ALL permutations (the non-linear `Var` re-bind check in
+    /// [`collect_matches`] prunes disagreeing shared-variable pairings BY
+    /// EVIDENCE), and bind `rest` (if any) to a fresh canonical n-ary `op` node
+    /// over the multiset COMPLEMENT (budget-gated). Each surviving `(class,
+    /// subst)` is a DISTINCT alternative.
+    fn collect_ac_matches(
+        &mut self,
+        op: &L,
+        fixed: &[Pattern<L>],
+        rest: &Option<String>,
+        class: EClassId,
+        subst: &Subst,
+        out: &mut Vec<(EClassId, Subst)>,
+    ) {
+        let k = fixed.len();
+        // Snapshot the matching bag nodes (canonicalized children) so the
+        // `&mut self` recursion / complement materialization below does not
+        // conflict with the node borrow.
+        let bags: Vec<Vec<EClassId>> = self
+            .nodes(class)
+            .iter()
+            .filter(|n| n.op == *op && n.children.len() >= k)
+            .map(|n| n.children.iter().map(|&c| self.find(c)).collect())
+            .collect();
+
+        for bag in bags {
+            // Lazily enumerate (selection, complement) splits of size k.
+            for (selection, complement) in lazy_ac_select(&bag, k) {
+                // Pair the `fixed` patterns to the `selection` over ALL
+                // permutations. `pair_fixed` recurses `collect_matches` per
+                // position; the non-linear Var check prunes by evidence.
+                let mut paired: Vec<Subst> = Vec::new();
+                self.pair_fixed(fixed, &selection, subst, &mut paired);
+                if paired.is_empty() {
+                    continue;
+                }
+                // Bind `rest` to a fresh canonical n-ary `op` node over the
+                // complement (budget-gated). If the budget refuses the node, the
+                // whole match is dropped honestly (NodeLimit is reported by the
+                // caller via `node_limit_reached`).
+                let rest_binding = match rest {
+                    Some(_) => match self.add_canonical_bag(op.clone(), &complement) {
+                        Some(id) => Some(id),
+                        None => continue, // budget refused the complement node
+                    },
+                    None => None,
+                };
+                for s in paired {
+                    let mut s = s;
+                    if let (Some(name), Some(id)) = (rest.as_ref(), rest_binding) {
+                        s.insert(name.clone(), id);
+                    }
+                    out.push((class, s));
+                }
+            }
+        }
+    }
+
+    /// Pair `fixed` patterns to `selection` children over every permutation,
+    /// recursing [`collect_matches`] per position. Produces one [`Subst`] per
+    /// surviving pairing (the non-linear `Var` re-bind check inside
+    /// `collect_matches` prunes pairings whose shared variables disagree).
+    ///
+    /// `selection` and `fixed` have equal length `k` (guaranteed by the caller).
+    /// Permutations are enumerated by picking, for `fixed[0]`, each not-yet-used
+    /// `selection` index, then recursing on the rest — `k!` orderings, tiny for
+    /// the rules in scope (`k = 2` for OpenRule).
+    fn pair_fixed(
+        &mut self,
+        fixed: &[Pattern<L>],
+        selection: &[EClassId],
+        subst: &Subst,
+        out: &mut Vec<Subst>,
+    ) {
+        // Recurse with an explicit "used selection index" mask.
+        let mut used = vec![false; selection.len()];
+        self.pair_fixed_rec(fixed, selection, &mut used, subst, out);
+    }
+
+    fn pair_fixed_rec(
+        &mut self,
+        fixed: &[Pattern<L>],
+        selection: &[EClassId],
+        used: &mut [bool],
+        subst: &Subst,
+        out: &mut Vec<Subst>,
+    ) {
+        if fixed.is_empty() {
+            out.push(subst.clone());
+            return;
+        }
+        for i in 0..selection.len() {
+            if used[i] {
+                continue;
+            }
+            let mut child_matches = Vec::new();
+            self.collect_matches(&fixed[0], selection[i], subst, &mut child_matches);
+            if child_matches.is_empty() {
+                continue;
+            }
+            used[i] = true;
+            for (_, cs) in child_matches {
+                self.pair_fixed_rec(&fixed[1..], selection, used, &cs, out);
+            }
+            used[i] = false;
+        }
+    }
+
+    /// Add a fresh canonical n-ary `op` node over `children` (sorted by canonical
+    /// class key — the same canonical bag order the lowering produces), within
+    /// the node budget. `None` (with [`node_limit_reached`](EGraph::node_limit_reached)
+    /// set) if a fresh node would overflow the budget.
+    fn add_canonical_bag(&mut self, op: L, children: &[EClassId]) -> Option<EClassId> {
+        let mut sorted: Vec<EClassId> = children.iter().map(|&c| self.find(c)).collect();
+        // `sort_by_cached_key` computes each (non-trivial) canonical key ONCE,
+        // rather than twice per comparison.
+        sorted.sort_by_cached_key(|&c| self.canonical_class_key(c));
+        self.try_add_with_budget(ENode::new(op, sorted))
+    }
+
     fn rhs_vars_bound(pattern: &Pattern<L>, subst: &Subst) -> bool {
         match pattern {
             Pattern::Var(name) => subst.contains_key(name),
             Pattern::App { args, .. } => args.iter().all(|arg| Self::rhs_vars_bound(arg, subst)),
+            Pattern::AcApp { fixed, rest, .. } => {
+                fixed.iter().all(|arg| Self::rhs_vars_bound(arg, subst))
+                    && rest.as_ref().is_none_or(|name| subst.contains_key(name))
+            },
         }
     }
 
@@ -154,6 +410,29 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
                     children.push(self.instantiate(a, subst)?);
                 }
                 self.try_add_with_budget(ENode::new(op.clone(), children))
+            },
+            Pattern::AcApp { op, fixed, rest } => {
+                // Build the result bag: each `fixed` pattern instantiated, then
+                // the bound `rest` complement's elements FLATTENED in (so the
+                // result is one bag, not a bag-of-bags). The children are sorted
+                // by canonical key (the canonical bag order) by add_canonical_bag.
+                let mut children = Vec::with_capacity(fixed.len());
+                for f in fixed {
+                    children.push(self.instantiate(f, subst)?);
+                }
+                if let Some(name) = rest {
+                    let comp_id = self.find(*subst.get(name)?);
+                    // The complement was bound to an `op`-bag node during
+                    // matching; splice in its (current canonical) children.
+                    let comp_children: Vec<EClassId> = self
+                        .nodes(comp_id)
+                        .iter()
+                        .find(|n| n.op == *op)
+                        .map(|n| n.children.iter().map(|&c| self.find(c)).collect())
+                        .unwrap_or_default();
+                    children.extend(comp_children);
+                }
+                self.add_canonical_bag(op.clone(), &children)
             },
         }
     }
@@ -574,5 +853,157 @@ mod tests {
             before,
             "unbound RHS variable must reject before adding partial RHS nodes"
         );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  AC (associative-commutative) matching
+    // ════════════════════════════════════════════════════════════════════════
+
+    use crate::egraph::EClassId;
+
+    fn ids(xs: &[u32]) -> Vec<EClassId> {
+        xs.iter().map(|&x| EClassId(x)).collect()
+    }
+
+    #[test]
+    fn lazy_ac_select_enumerates_every_size_k_split_once() {
+        // bag = [10,11,12], k=2 ⇒ C(3,2)=3 splits, complements correct.
+        let bag = ids(&[10, 11, 12]);
+        let got: Vec<(Vec<EClassId>, Vec<EClassId>)> = lazy_ac_select(&bag, 2).collect();
+        assert_eq!(got.len(), 3, "C(3,2) = 3 size-2 selections");
+        let expected = vec![
+            (ids(&[10, 11]), ids(&[12])),
+            (ids(&[10, 12]), ids(&[11])),
+            (ids(&[11, 12]), ids(&[10])),
+        ];
+        assert_eq!(got, expected, "lexicographic combinations + exact complements");
+    }
+
+    #[test]
+    fn lazy_ac_select_edge_cases() {
+        let bag = ids(&[1, 2, 3]);
+        // k = 0: one empty selection, whole bag as complement.
+        let k0: Vec<_> = lazy_ac_select(&bag, 0).collect();
+        assert_eq!(k0, vec![(ids(&[]), ids(&[1, 2, 3]))]);
+        // k = n: one full selection, empty complement.
+        let kn: Vec<_> = lazy_ac_select(&bag, 3).collect();
+        assert_eq!(kn, vec![(ids(&[1, 2, 3]), ids(&[]))]);
+        // k > n: no selections.
+        let kbig: Vec<_> = lazy_ac_select(&bag, 4).collect();
+        assert!(kbig.is_empty(), "k > n ⇒ no size-k selection");
+        // empty bag, k = 0: one empty split.
+        let empty: Vec<_> = lazy_ac_select(&[], 0).collect();
+        assert_eq!(empty, vec![(ids(&[]), ids(&[]))]);
+    }
+
+    #[test]
+    fn lazy_ac_select_is_lazy_partial_consumption() {
+        // A large bag where the full combination count is astronomical; pulling a
+        // few items must be cheap (no eager Vec of all selections). C(40,5) ≈ 658k
+        // — we pull only 3. This terminates instantly iff the iterator is lazy.
+        let bag: Vec<EClassId> = (0..40).map(EClassId).collect();
+        let mut it = lazy_ac_select(&bag, 5);
+        let first = it.next().expect("at least one");
+        assert_eq!(first.0, ids(&[0, 1, 2, 3, 4]));
+        assert_eq!(first.0.len() + first.1.len(), 40, "split partitions the bag");
+        let _second = it.next().expect("second");
+        let _third = it.next().expect("third");
+        // (We never collect the ~658k total — the point is it didn't try to.)
+    }
+
+    #[test]
+    fn ac_open_rule_single_pairing_reduces() {
+        // PPar { open(n,A), n[B] } ~> PPar { A, B }  (no rest).
+        // Bag node "par" over [open, amb]; open = open(n, A), amb = amb(n, B).
+        // The shared name n is the non-linear constraint (here trivially shared).
+        let mut eg = EGraph::<String>::new();
+        let n = eg.add(ENode::leaf("n".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![n, vb]));
+        // canonical bag for the par node
+        let mut bag = vec![open, amb];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+
+        // OpenRule: par{ open(N,P), amb(N,Q), ...rest } ~> par{ P, Q, ...rest }.
+        let rule = RewriteRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                ],
+                Some("rest".into()),
+            ),
+            rhs: Pattern::ac(
+                "par".into(),
+                vec![Pattern::var("P"), Pattern::var("Q")],
+                Some("rest".into()),
+            ),
+            label: Some("OpenRule".into()),
+        };
+        let rep = eg.saturate(&[rule], 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged, "reaches a fixpoint");
+
+        // The result bag par{A, B} must exist and be equivalent to the redex.
+        let mut result_bag = vec![eg.find(va), eg.find(vb)];
+        result_bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let expected = eg.add(ENode::new("par".into(), result_bag));
+        assert!(eg.equiv(par, expected), "open(n,A) | n[B] ~> A | B");
+    }
+
+    #[test]
+    fn ac_open_rule_shared_name_constraint_prunes_mismatch() {
+        // par { open(n, A), m[B] } with n ≠ m: the shared-name N constraint is
+        // UNSATISFIABLE (open's name n must equal amb's name, but the only ambient
+        // has name m). No reduction must fire.
+        let mut eg = EGraph::<String>::new();
+        let n = eg.add(ENode::leaf("n".into()));
+        let m = eg.add(ENode::leaf("m".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![m, vb]));
+        let mut bag = vec![open, amb];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+        let before = eg.node_count();
+
+        let rule = RewriteRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                ],
+                Some("rest".into()),
+            ),
+            rhs: Pattern::ac(
+                "par".into(),
+                vec![Pattern::var("P"), Pattern::var("Q")],
+                Some("rest".into()),
+            ),
+            label: Some("OpenRule".into()),
+        };
+        let rep = eg.saturate(&[rule], 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        // par{A,B} must NOT have been produced (the name constraint refutes the
+        // only candidate pairing).
+        let expected_children = {
+            let mut c = vec![eg.find(va), eg.find(vb)];
+            c.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+            c
+        };
+        // node_count must be unchanged (no complement/result nodes added) and the
+        // would-be result is not equivalent to the redex.
+        assert_eq!(eg.node_count(), before, "no AC reduction fired for n ≠ m");
+        // (Adding the would-be result now is a fresh node, so it cannot be
+        // equivalent to `par` unless the rule had fired.)
+        let expected = eg.add(ENode::new("par".into(), expected_children));
+        assert!(!eg.equiv(par, expected), "n ≠ m: open|amb must not reduce");
     }
 }
