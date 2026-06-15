@@ -2,18 +2,16 @@
 //! backend without making the generated language crate depend on
 //! `mettail-rho-runtime`.
 
-use std::any::Any;
-use std::sync::OnceLock;
-
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::{
     Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
 use mettail_rho_codegen::{
-    plan_call_by_need_thunk_with_spec, plan_rho_default_backend, CallByNeedBudget,
-    CallByNeedInitialState, CallByNeedThunkSpec, RhoAstLiteral, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    lower_language_def, plan_call_by_need_thunk_with_spec, plan_rho_default_backend,
+    reconstruct_language_def, CallByNeedBudget, CallByNeedInitialState, CallByNeedThunkSpec,
+    RhoAstLiteral, RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    RhoRejectedRuleDisposition, RhoRejectedRuleDispositionKind,
 };
 use mettail_rho_runtime::{
     build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
@@ -22,95 +20,83 @@ use mettail_rho_runtime::{
     RhoRuntimeBackedLanguageError,
 };
 use mettail_runtime::{
-    AscentResults, Language, LanguageMetadata, RuntimeBackend, RuntimeBackendArtifact,
-    RuntimeBackendOutput, RuntimeDovetailCompleteness, RuntimeDovetailRunReport,
-    RuntimeDovetailTermRecord, RuntimeObservationValue, SeedFacts, Term, TermType, VarTypeInfo,
+    Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendOutput,
+    RuntimeDovetailCompleteness, RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
+    RuntimeObservationValue, SeedFacts, Term,
 };
 
-const CALC_RUN_FRAGMENT: &str = r#"
-    name: Calculator,
-    types {
-        Proc
-        ![i64] as Int
-        ![bool] as Bool
-        ![str] as Str
-    }
-    terms {
-        AddInt . a:Int, b:Int |- a "+" b : Int ;
-        SubInt . a:Int, b:Int |- a "-" b : Int ;
-        MulInt . a:Int, b:Int |- a "*" b : Int ;
-        DivInt . a:Int, b:Int |- a "/" b : Int ;
-        ModInt . a:Int, b:Int |- a "%" b : Int ;
-        EqInt . a:Int, b:Int |- a "==" b : Bool ;
-        NeInt . a:Int, b:Int |- a "!=" b : Bool ;
-        LtInt . a:Int, b:Int |- a "<" b : Bool ;
-        GtInt . a:Int, b:Int |- a ">" b : Bool ;
-        LtEqInt . a:Int, b:Int |- a "<=" b : Bool ;
-        GtEqInt . a:Int, b:Int |- a ">=" b : Bool ;
-        EqBool . a:Bool, b:Bool |- a "==" b : Bool ;
-        NeBool . a:Bool, b:Bool |- a "!=" b : Bool ;
-        LtBool . a:Bool, b:Bool |- a "<" b : Bool ;
-        GtBool . a:Bool, b:Bool |- a ">" b : Bool ;
-        LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ;
-        GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ;
-        EqStr . a:Str, b:Str |- a "==" b : Bool ;
-        NeStr . a:Str, b:Str |- a "!=" b : Bool ;
-        LtStr . a:Str, b:Str |- a "<" b : Bool ;
-        GtStr . a:Str, b:Str |- a ">" b : Bool ;
-        LtEqStr . a:Str, b:Str |- a "<=" b : Bool ;
-        GtEqStr . a:Str, b:Str |- a ">=" b : Bool ;
-        And . a:Bool, b:Bool |- a "and" b : Bool ;
-        Or . a:Bool, b:Bool |- a "or" b : Bool ;
-        Not . a:Bool |- "not" a : Bool ;
-        Concat . a:Str, b:Str |- a "++" b : Str ;
-        AddStr . a:Str, b:Str |- a "+" b : Str ;
-    }
-"#;
+// `complete_dovetail_report_for` / `bounded_dovetail_report_for` /
+// `malformed_dovetail_report_for` remain as hand-rolled Dovetail report stubs
+// used by the bad-stage tests; `generated_calculator_dovetail_report_for` is
+// the real generated report used by the acceptance/execution tests.
 
-fn passing_requirements() -> RhoDefaultBackendRequirements {
+/// Reconstruct the REAL `CalculatorLanguage` augmented `LanguageDef` from the
+/// generated metadata's `definition_source()`. This is the exact macro-time
+/// def (composition + auto-injection) the generated `definition_fingerprint()`
+/// was computed over — no fingerprint-spoofing fragment shim.
+fn calculator_def() -> LanguageDef {
+    let source = CalculatorLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated CalculatorLanguage must expose its definition_source");
+    reconstruct_language_def(source)
+        .expect("CalculatorLanguage definition_source must reconstruct as a LanguageDef")
+}
+
+/// Map a lowering's rejected-rule labels to exactly-once native-handler
+/// dispositions. The lowering may list the same label more than once (e.g.
+/// `Err` appears in several categories); `RhoCoverageEvidence` compares covered
+/// rules as a set but forbids duplicate dispositions, so the labels are
+/// de-duplicated (deterministically, via `BTreeSet`) before mapping.
+fn native_handler_dispositions_for(def: &LanguageDef) -> Vec<RhoRejectedRuleDisposition> {
+    let lowering = lower_language_def(def);
+    lowering
+        .rejected
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .map(|label| {
+            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
+        })
+        .collect()
+}
+
+/// Coverage requirements for the REAL Calculator: every rule that the scalar
+/// lowering family records as `rejected` is dispatched through a verified
+/// native-handler boundary (the generated `rho_scalar_contract_invocation_*`
+/// path), so the default-backend gate sees exact coverage.
+fn calculator_requirements() -> RhoDefaultBackendRequirements {
     RhoDefaultBackendRequirements {
-        coverage: RhoCoverageEvidence::AllRulesLowered,
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(native_handler_dispositions_for(
+            &calculator_def(),
+        )),
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 
-fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
-    let def = syn::parse_str::<LanguageDef>(fragment).expect("calculator fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_requirements())
-        .expect("calculator Int scalar ops must pass the Rho-default gate");
-    assert_eq!(
-        plan.lowering.lowered,
-        vec![
-            "AddInt", "SubInt", "MulInt", "DivInt", "ModInt", "EqInt", "NeInt", "LtInt", "GtInt",
-            "LtEqInt", "GtEqInt", "EqBool", "NeBool", "LtBool", "GtBool", "LtEqBool", "GtEqBool",
-            "EqStr", "NeStr", "LtStr", "GtStr", "LtEqStr", "GtEqStr", "And", "Or", "Not", "Concat",
-            "AddStr",
-        ],
-        "all binary Int, Bool, and Str scalar ops in this fragment must lower"
-    );
-    assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
-    PlannedRhoBackend::from_plan(plan)
-}
-
+/// Build the Rho-default backend plan from the REAL `CalculatorLanguage`
+/// augmented definition. The plan's `definition_fingerprint()` therefore equals
+/// `CalculatorLanguage.metadata().definition_fingerprint()`, so it installs on
+/// the real `CalculatorLanguage` (no shim).
 fn calculator_backend() -> PlannedRhoBackend {
-    let backend = backend_from_fragment(CALC_RUN_FRAGMENT);
+    let def = calculator_def();
+    let plan = plan_rho_default_backend(&def, calculator_requirements())
+        .expect("real Calculator def must pass the Rho-default gate with native-handler coverage");
     assert_eq!(
-        backend.plan().language_name(),
+        plan.language_name(),
         "Calculator",
-        "wrapper-installed Calculator plan must preserve its source LanguageDef name"
+        "real Calculator plan must preserve its source LanguageDef name"
     );
-    backend
-}
-
-fn calc_run_definition_fingerprint() -> &'static str {
-    static FINGERPRINT: OnceLock<String> = OnceLock::new();
-    FINGERPRINT
-        .get_or_init(|| {
-            let def = syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT)
-                .expect("calculator fragment must parse");
-            language_definition_fingerprint(&def)
-        })
-        .as_str()
+    assert_eq!(
+        plan.definition_fingerprint(),
+        CalculatorLanguage
+            .metadata()
+            .definition_fingerprint()
+            .expect("generated Calculator must expose its definition fingerprint"),
+        "plan fingerprint built from definition_source() must equal the generated fingerprint"
+    );
+    PlannedRhoBackend::from_plan(plan)
 }
 
 fn stage_fingerprint(backend: &PlannedRhoBackend) -> String {
@@ -119,174 +105,6 @@ fn stage_fingerprint(backend: &PlannedRhoBackend) -> String {
 
 fn invocation_stage<F>(backend: &PlannedRhoBackend, compiler: F) -> RhoInvocationCompilerStage<F> {
     RhoInvocationCompilerStage::new(stage_fingerprint(backend), compiler)
-}
-
-struct FragmentMatchedCalculatorLanguage;
-
-struct FragmentMatchedCalculatorMetadata;
-
-static FRAGMENT_MATCHED_CALCULATOR_METADATA: FragmentMatchedCalculatorMetadata =
-    FragmentMatchedCalculatorMetadata;
-
-impl LanguageMetadata for FragmentMatchedCalculatorMetadata {
-    fn name(&self) -> &'static str {
-        CalculatorLanguage.metadata().name()
-    }
-
-    fn definition_fingerprint(&self) -> Option<&'static str> {
-        Some(calc_run_definition_fingerprint())
-    }
-
-    fn types(&self) -> &'static [mettail_runtime::TypeDef] {
-        CalculatorLanguage.metadata().types()
-    }
-
-    fn terms(&self) -> &'static [mettail_runtime::TermDef] {
-        CalculatorLanguage.metadata().terms()
-    }
-
-    fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
-        CalculatorLanguage.metadata().equations()
-    }
-
-    fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
-        CalculatorLanguage.metadata().rewrites()
-    }
-
-    fn runtime_backends(&self) -> &'static [mettail_runtime::BackendCapabilityDef] {
-        CalculatorLanguage.metadata().runtime_backends()
-    }
-
-    fn logic_relations(&self) -> &'static [mettail_runtime::LogicRelationDef] {
-        CalculatorLanguage.metadata().logic_relations()
-    }
-
-    fn logic_rules(&self) -> &'static [mettail_runtime::LogicRuleDef] {
-        CalculatorLanguage.metadata().logic_rules()
-    }
-
-    fn builtin_predicates(&self) -> &'static [mettail_runtime::BuiltinPredicateDef] {
-        CalculatorLanguage.metadata().builtin_predicates()
-    }
-
-    fn theories(&self) -> &'static [mettail_runtime::TheoryDef] {
-        CalculatorLanguage.metadata().theories()
-    }
-
-    fn channels(&self) -> &'static [mettail_runtime::ChannelDef] {
-        CalculatorLanguage.metadata().channels()
-    }
-
-    fn join_patterns(&self) -> &'static [mettail_runtime::JoinPatternDef] {
-        CalculatorLanguage.metadata().join_patterns()
-    }
-
-    fn connectives(&self) -> &'static [mettail_runtime::ConnectiveDef] {
-        CalculatorLanguage.metadata().connectives()
-    }
-}
-
-impl Language for FragmentMatchedCalculatorLanguage {
-    fn name(&self) -> &'static str {
-        CalculatorLanguage.name()
-    }
-
-    fn metadata(&self) -> &'static dyn LanguageMetadata {
-        &FRAGMENT_MATCHED_CALCULATOR_METADATA
-    }
-
-    fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
-        CalculatorLanguage.parse_term(input)
-    }
-
-    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
-        CalculatorLanguage.parse_term_for_env(input)
-    }
-
-    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
-        CalculatorLanguage.run_ascent(term)
-    }
-
-    fn run_ascent_with_facts(
-        &self,
-        term: &dyn Term,
-        facts: &SeedFacts,
-    ) -> Result<AscentResults, String> {
-        CalculatorLanguage.run_ascent_with_facts(term, facts)
-    }
-
-    fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
-        CalculatorLanguage.try_direct_eval(term)
-    }
-
-    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
-        CalculatorLanguage.normalize_term(term)
-    }
-
-    fn format_term(&self, term: &dyn Term) -> String {
-        CalculatorLanguage.format_term(term)
-    }
-
-    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
-        CalculatorLanguage.create_env()
-    }
-
-    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
-        CalculatorLanguage.add_to_env(env, name, term)
-    }
-
-    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
-        CalculatorLanguage.remove_from_env(env, name)
-    }
-
-    fn clear_env(&self, env: &mut dyn Any) {
-        CalculatorLanguage.clear_env(env)
-    }
-
-    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
-        CalculatorLanguage.substitute_env(term, env)
-    }
-
-    fn substitute_env_preserve_structure(
-        &self,
-        term: &dyn Term,
-        env: &dyn Any,
-    ) -> Result<Box<dyn Term>, String> {
-        CalculatorLanguage.substitute_env_preserve_structure(term, env)
-    }
-
-    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
-        CalculatorLanguage.list_env(env)
-    }
-
-    fn set_env_comment(
-        &self,
-        env: &mut dyn Any,
-        name: &str,
-        comment: String,
-    ) -> Result<(), String> {
-        CalculatorLanguage.set_env_comment(env, name, comment)
-    }
-
-    fn is_env_empty(&self, env: &dyn Any) -> bool {
-        CalculatorLanguage.is_env_empty(env)
-    }
-
-    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
-        CalculatorLanguage.get_env_term(env, name)
-    }
-
-    fn infer_term_type(&self, term: &dyn Term) -> TermType {
-        CalculatorLanguage.infer_term_type(term)
-    }
-
-    fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
-        CalculatorLanguage.infer_var_types(term)
-    }
-
-    fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
-        CalculatorLanguage.infer_var_type(term, var_name)
-    }
 }
 
 fn complete_dovetail_report_for(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
@@ -836,7 +654,7 @@ fn call_by_need_plans_match_ascent_golden_for_supported_scalar_families() {
 fn rho_runtime_installer_derives_invocation_fingerprint_from_plan() {
     let backend = calculator_backend();
     let language = install_rho_runtime_backend(
-        FragmentMatchedCalculatorLanguage,
+        CalculatorLanguage,
         backend,
         calculator_invocation,
     )
@@ -863,7 +681,7 @@ fn rho_runtime_backed_language_dispatches_default_report() {
     let backend = calculator_backend();
     let invocation = invocation_stage(&backend, calculator_invocation);
     let language =
-        RhoRuntimeBackedLanguage::new(FragmentMatchedCalculatorLanguage, backend, invocation)
+        RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation)
             .expect("Calculator plan should install on CalculatorLanguage");
     let term = language.parse_term("2 + 3").expect("calculator parse");
 
@@ -980,7 +798,7 @@ fn rho_runtime_backed_language_dispatches_default_report() {
 #[test]
 fn dovetail_rho_runtime_installer_derives_stage_fingerprints_from_plan() {
     let language = install_dovetail_rho_runtime_backend(
-        FragmentMatchedCalculatorLanguage,
+        CalculatorLanguage,
         calculator_backend(),
         generated_calculator_dovetail_report_for,
         calculator_invocation_from_dovetail,
@@ -1027,7 +845,7 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
     let backend = calculator_backend();
     let fingerprint = stage_fingerprint(&backend);
     let language = DovetailRhoRuntimeBackedLanguage::new(
-        FragmentMatchedCalculatorLanguage,
+        CalculatorLanguage,
         backend,
         DovetailCompilerStage::new(fingerprint.clone(), generated_calculator_dovetail_report_for),
         RhoInvocationCompilerStage::new(fingerprint, calculator_invocation_from_dovetail),
@@ -1090,41 +908,50 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
 }
 
 #[test]
-fn dovetail_rho_runtime_installer_rejects_plan_for_different_generated_definition() {
-    let result = install_dovetail_rho_runtime_backend(
+fn dovetail_rho_runtime_installer_accepts_real_plan_on_full_calculator() {
+    // The plan is now built from the REAL `CalculatorLanguage` augmented
+    // `LanguageDef` (reconstructed from `definition_source()`), so its
+    // fingerprint equals the generated Calculator's. The installer therefore
+    // accepts it on the real `CalculatorLanguage` — no fingerprint-spoofing
+    // shim is required.
+    let language = install_dovetail_rho_runtime_backend(
         CalculatorLanguage,
         calculator_backend(),
-        complete_dovetail_report_for,
+        generated_calculator_dovetail_report_for,
         calculator_invocation_from_dovetail,
-    );
-    let err = match result {
-        Ok(_) => panic!("fragment Rho plan must not install on the full generated Calculator"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(err, RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch { .. }),
-        "{err}"
-    );
+    )
+    .expect("real Calculator plan must install on the full generated CalculatorLanguage");
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("installer-built real-Calculator wrapper must execute Rho after checked Dovetail");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
 }
 
 #[test]
-fn dovetail_rho_runtime_backed_language_rejects_fragment_plan_for_full_calculator() {
+fn dovetail_rho_runtime_backed_language_accepts_real_plan_on_full_calculator() {
     let backend = calculator_backend();
     let fingerprint = stage_fingerprint(&backend);
-    let result = DovetailRhoRuntimeBackedLanguage::new(
+    let language = DovetailRhoRuntimeBackedLanguage::new(
         CalculatorLanguage,
         backend,
-        DovetailCompilerStage::new(fingerprint.clone(), complete_dovetail_report_for),
+        DovetailCompilerStage::new(fingerprint.clone(), generated_calculator_dovetail_report_for),
         RhoInvocationCompilerStage::new(fingerprint, calculator_invocation_from_dovetail),
-    );
-    let err = match result {
-        Ok(_) => panic!("fragment Rho plan must not install on the full generated Calculator"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(err, RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch { .. }),
-        "{err}"
-    );
+    )
+    .expect("real Calculator plan must install on the full generated CalculatorLanguage");
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("real-Calculator Dovetail+Rho wrapper must execute Rho after checked Dovetail");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
 }
 
 #[test]
@@ -1132,7 +959,7 @@ fn dovetail_rho_runtime_backed_language_rejects_bad_dovetail_stage() {
     let bounded_backend = calculator_backend();
     let bounded_fingerprint = stage_fingerprint(&bounded_backend);
     let bounded_language = DovetailRhoRuntimeBackedLanguage::new(
-        FragmentMatchedCalculatorLanguage,
+        CalculatorLanguage,
         bounded_backend,
         DovetailCompilerStage::new(bounded_fingerprint.clone(), bounded_dovetail_report_for),
         RhoInvocationCompilerStage::new(bounded_fingerprint, calculator_invocation_from_dovetail),
@@ -1160,7 +987,7 @@ fn dovetail_rho_runtime_backed_language_rejects_bad_dovetail_stage() {
     let malformed_backend = calculator_backend();
     let malformed_fingerprint = stage_fingerprint(&malformed_backend);
     let malformed_language = DovetailRhoRuntimeBackedLanguage::new(
-        FragmentMatchedCalculatorLanguage,
+        CalculatorLanguage,
         malformed_backend,
         DovetailCompilerStage::new(malformed_fingerprint.clone(), malformed_dovetail_report_for),
         RhoInvocationCompilerStage::new(malformed_fingerprint, calculator_invocation_from_dovetail),
@@ -1178,7 +1005,7 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
     let backend = calculator_backend();
     let invocation = invocation_stage(&backend, calculator_call_by_need_invocation);
     let language =
-        RhoRuntimeBackedLanguage::new(FragmentMatchedCalculatorLanguage, backend, invocation)
+        RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation)
             .expect("Calculator plan should install on CalculatorLanguage");
 
     let cases = [
@@ -1221,25 +1048,30 @@ fn rho_runtime_backed_language_dispatches_call_by_need_thunk_report() {
 }
 
 #[test]
-fn rho_runtime_backed_language_rejects_fragment_plan_for_full_calculator() {
+fn rho_runtime_backed_language_accepts_real_plan_on_full_calculator() {
+    // Built from the REAL Calculator augmented def: the plan fingerprint equals
+    // the generated Calculator's, so it installs and executes on the real
+    // `CalculatorLanguage`.
     let backend = calculator_backend();
     let invocation = invocation_stage(&backend, calculator_invocation);
-    let result = RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation);
-    let err = match result {
-        Ok(_) => panic!("fragment Rho plan must not install on the full generated Calculator"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(err, RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch { .. }),
-        "{err}"
-    );
+    let language = RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation)
+        .expect("real Calculator plan must install on the full generated CalculatorLanguage");
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("real-Calculator Rho wrapper must execute the planned backend");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
 }
 
 #[test]
 fn rho_runtime_backed_language_rejects_mismatched_invocation_stage() {
     let backend = calculator_backend();
     let result = RhoRuntimeBackedLanguage::new(
-        FragmentMatchedCalculatorLanguage,
+        CalculatorLanguage,
         backend,
         RhoInvocationCompilerStage::new("different-definition", calculator_invocation),
     );
@@ -1256,9 +1088,28 @@ fn rho_runtime_backed_language_rejects_mismatched_invocation_stage() {
 
 #[test]
 fn rho_runtime_backed_language_rejects_cross_language_plan_installation() {
-    let mismatched_fragment =
-        CALC_RUN_FRAGMENT.replacen("name: Calculator", "name: NotCalculator", 1);
-    let backend = backend_from_fragment(&mismatched_fragment);
+    // Reconstruct the REAL Calculator def but rename it to `NotCalculator`, so
+    // the plan's `language_name()` no longer matches `CalculatorLanguage`. The
+    // install must fail with `LanguagePlanMismatch` (name-level guard), proving
+    // the real-plan path still rejects a foreign-language plan.
+    let source = CalculatorLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated CalculatorLanguage must expose its definition_source");
+    let renamed_source = source.replacen("name: Calculator", "name: NotCalculator", 1);
+    assert_ne!(
+        renamed_source, source,
+        "rename must take effect; the macro body must contain `name: Calculator`"
+    );
+    let def = reconstruct_language_def(&renamed_source)
+        .expect("renamed Calculator source must reconstruct as a LanguageDef");
+    let requirements = RhoDefaultBackendRequirements {
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(native_handler_dispositions_for(&def)),
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+    };
+    let plan = plan_rho_default_backend(&def, requirements)
+        .expect("renamed Calculator def must still pass the Rho-default gate");
+    let backend = PlannedRhoBackend::from_plan(plan);
     let invocation = invocation_stage(&backend, calculator_invocation);
     let result = RhoRuntimeBackedLanguage::new(CalculatorLanguage, backend, invocation);
     assert!(result.is_err(), "a NotCalculator plan must not install on CalculatorLanguage");
@@ -1277,5 +1128,28 @@ fn rho_runtime_backed_language_rejects_cross_language_plan_installation() {
         err.to_string()
             .contains("cannot be installed on generated language Calculator"),
         "{err}"
+    );
+}
+
+/// THE FINGERPRINT GUARANTEE (Step 5): reconstructing the real
+/// `CalculatorLanguage` augmented `LanguageDef` from its
+/// `definition_source()` and fingerprinting it reproduces — exactly — the
+/// generated `definition_fingerprint()`. This is what lets a Rho/Dovetail plan
+/// be installed on the REAL `CalculatorLanguage` without a fingerprint-spoofing
+/// shim.
+#[test]
+fn reconstructed_definition_source_fingerprint_matches_generated_fingerprint() {
+    let source = CalculatorLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated CalculatorLanguage must expose its definition_source");
+    let reconstructed = reconstruct_language_def(source)
+        .expect("CalculatorLanguage definition_source must reconstruct as a LanguageDef");
+    assert_eq!(
+        language_definition_fingerprint(&reconstructed),
+        CalculatorLanguage
+            .metadata()
+            .definition_fingerprint()
+            .expect("generated CalculatorLanguage must expose its definition fingerprint"),
     );
 }

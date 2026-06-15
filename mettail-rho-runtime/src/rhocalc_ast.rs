@@ -7,7 +7,6 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::OnceLock;
 
 use mettail_languages::rhocalc::{
     Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
@@ -29,21 +28,27 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 
 type BoundEnv = HashMap<FreeVar<String>, usize>;
 
-/// Minimal `language!` fragment accepted by the dynamic RhoCalc AST runtime
-/// plan.
+/// Reconstruct the REAL `RhoCalcLanguage` augmented `LanguageDef` from the
+/// generated metadata's `definition_source()`.
 ///
-/// The generated `RhoCalcLanguage` remains the parser and AST model. The Rho
-/// backend plan for native process execution is intentionally smaller: it
-/// declares the `Proc` type and no scalar rewrite contracts because execution
-/// is supplied by the dynamic rhocalc-to-`rhoapi::Par` invocation mapper below.
-/// This fragment is parsed and fingerprinted with the same `LanguageDef`
-/// identity function used by generated languages, so the runtime wrapper still
-/// rejects plans for any other language identity.
-pub const RHOCALC_AST_RUNTIME_PLAN_FRAGMENT: &str = r#"
-    name: RhoCalc,
-    types { Proc }
-    terms {}
-"#;
+/// The generated `RhoCalcLanguage` is both the parser/AST model AND the source
+/// of identity here: the dynamic Rho backend plan is built from this exact
+/// augmented definition (composition + auto-injection), so its
+/// `definition_fingerprint()` equals `RhoCalcLanguage.metadata().definition_fingerprint()`.
+/// The runtime wrapper therefore installs on the real RhoCalc identity and
+/// still rejects plans for any other language — without the prior
+/// fingerprint-spoofing minimal fragment.
+///
+/// RhoCalc is a standalone language (no `extends`/`includes`/`mixins`), so the
+/// reconstruction is exact (see [`reconstruct_language_def`]).
+pub fn rhocalc_ast_runtime_def() -> mettail_ast::language::LanguageDef {
+    let source = RhoCalcLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated RhoCalcLanguage must expose its definition_source");
+    mettail_rho_codegen::reconstruct_language_def(source)
+        .expect("RhoCalcLanguage definition_source must reconstruct as a LanguageDef")
+}
 
 /// Invocation mapper used by the RhoCalc runtime-backed wrapper helpers.
 pub type RhocalcInvocationMapper =
@@ -69,88 +74,17 @@ pub enum RhocalcAstLowerError {
     InputArityMismatch { names: usize, binders: usize },
 }
 
-fn rhocalc_ast_runtime_fingerprint() -> &'static str {
-    static FINGERPRINT: OnceLock<String> = OnceLock::new();
-    FINGERPRINT
-        .get_or_init(|| {
-            let def: mettail_ast::language::LanguageDef =
-                syn::parse_str(RHOCALC_AST_RUNTIME_PLAN_FRAGMENT)
-                    .expect("RhoCalc AST runtime fragment must parse");
-            mettail_ast::identity::language_definition_fingerprint(&def)
-        })
-        .as_str()
-}
-
 /// RhoCalc language adapter for the AST-first Rho machine runtime path.
 ///
 /// This adapter delegates parsing, formatting, normalization, environment
-/// handling, and type inference to the generated `RhoCalcLanguage`, but exposes
-/// the dynamic AST-runtime fragment identity above. It does not forward the
+/// handling, type inference, AND metadata (including the definition
+/// fingerprint) to the generated `RhoCalcLanguage`. It exposes the real RhoCalc
+/// identity — the dynamic Rho backend plan is built from the reconstructed real
+/// `LanguageDef` ([`rhocalc_ast_runtime_def`]), so installation matches on the
+/// genuine fingerprint rather than a reduced fragment. It does not forward the
 /// generated Ascent oracle; raw `run_ascent` remains fail-closed and reference
 /// comparison stays behind explicit oracle features.
 pub struct RhocalcAstRuntimeLanguage;
-
-struct RhocalcAstRuntimeMetadata;
-
-static RHOCALC_AST_RUNTIME_METADATA: RhocalcAstRuntimeMetadata = RhocalcAstRuntimeMetadata;
-
-impl LanguageMetadata for RhocalcAstRuntimeMetadata {
-    fn name(&self) -> &'static str {
-        RhoCalcLanguage.metadata().name()
-    }
-
-    fn definition_fingerprint(&self) -> Option<&'static str> {
-        Some(rhocalc_ast_runtime_fingerprint())
-    }
-
-    fn types(&self) -> &'static [mettail_runtime::TypeDef] {
-        RhoCalcLanguage.metadata().types()
-    }
-
-    fn terms(&self) -> &'static [mettail_runtime::TermDef] {
-        RhoCalcLanguage.metadata().terms()
-    }
-
-    fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
-        RhoCalcLanguage.metadata().equations()
-    }
-
-    fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
-        RhoCalcLanguage.metadata().rewrites()
-    }
-
-    fn runtime_backends(&self) -> &'static [mettail_runtime::BackendCapabilityDef] {
-        RhoCalcLanguage.metadata().runtime_backends()
-    }
-
-    fn logic_relations(&self) -> &'static [mettail_runtime::LogicRelationDef] {
-        RhoCalcLanguage.metadata().logic_relations()
-    }
-
-    fn logic_rules(&self) -> &'static [mettail_runtime::LogicRuleDef] {
-        RhoCalcLanguage.metadata().logic_rules()
-    }
-
-    fn builtin_predicates(&self) -> &'static [mettail_runtime::BuiltinPredicateDef] {
-        RhoCalcLanguage.metadata().builtin_predicates()
-    }
-
-    fn theories(&self) -> &'static [mettail_runtime::TheoryDef] {
-        RhoCalcLanguage.metadata().theories()
-    }
-
-    fn channels(&self) -> &'static [mettail_runtime::ChannelDef] {
-        RhoCalcLanguage.metadata().channels()
-    }
-
-    fn join_patterns(&self) -> &'static [mettail_runtime::JoinPatternDef] {
-        RhoCalcLanguage.metadata().join_patterns()
-    }
-
-    fn connectives(&self) -> &'static [mettail_runtime::ConnectiveDef] {
-        RhoCalcLanguage.metadata().connectives()
-    }
-}
 
 impl Language for RhocalcAstRuntimeLanguage {
     fn name(&self) -> &'static str {
@@ -158,7 +92,11 @@ impl Language for RhocalcAstRuntimeLanguage {
     }
 
     fn metadata(&self) -> &'static dyn LanguageMetadata {
-        &RHOCALC_AST_RUNTIME_METADATA
+        // Real generated RhoCalc metadata — including the real
+        // `definition_fingerprint()` and `definition_source()`. No spoofing
+        // shim: the dynamic backend plan is built from the reconstructed real
+        // definition, so the fingerprints match by construction.
+        RhoCalcLanguage.metadata()
     }
 
     fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {

@@ -11,14 +11,15 @@ use mettail_languages::rhocalc::{
     Bag, Int, List, Map, Name, Proc, RhoCalcTerm, RhoCalcTermInner, Str,
 };
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence,
+    lower_language_def, plan_rho_default_backend, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoRejectedRuleDisposition,
+    RhoRejectedRuleDispositionKind,
 };
 use mettail_rho_runtime::{
     lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_strings,
-    rho_runtime_backed_rhocalc_values, run_normalized_par_for_oracle,
+    rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, run_normalized_par_for_oracle,
     run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
-    RHOCALC_AST_RUNTIME_PLAN_FRAGMENT, RHOCALC_BAG_ABI_TAG,
+    RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::{
     clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
@@ -36,40 +37,60 @@ fn parse_lower(source: &str) -> Par {
         .unwrap_or_else(|err| panic!("rhocalc AST lowering failed for {source:?}: {err:?}"))
 }
 
-fn passing_dynamic_requirements() -> RhoDefaultBackendRequirements {
+/// Coverage requirements that route every rejected rule through a verified
+/// native-handler boundary. RhoCalc's dynamic backend executes EVERY process
+/// via the `lower_rhocalc_term` AST→`rhoapi::Par` mapper (a native handler), so
+/// covering its rejected rules this way is the honest disposition. Labels are
+/// de-duplicated (deterministically) because the same label can appear in
+/// several categories and `RhoCoverageEvidence` forbids duplicate dispositions.
+fn native_handler_requirements(def: &LanguageDef) -> RhoDefaultBackendRequirements {
+    let lowering = lower_language_def(def);
+    let dispositions: Vec<RhoRejectedRuleDisposition> = lowering
+        .rejected
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .map(|label| {
+            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
+        })
+        .collect();
     RhoDefaultBackendRequirements {
-        coverage: RhoCoverageEvidence::AllRulesLowered,
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 
 fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
-    let def = syn::parse_str::<LanguageDef>(RHOCALC_AST_RUNTIME_PLAN_FRAGMENT)
-        .expect("dynamic rhocalc runtime fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_dynamic_requirements())
-        .expect("empty dynamic-call Rho backend plan must pass the Rho-default gate");
-    assert!(
-        plan.lowering.lowered.is_empty(),
-        "dynamic RhoCalc plan should not need static scalar contracts"
-    );
-    assert!(
-        plan.lowering.rejected.is_empty(),
-        "dynamic RhoCalc plan should not hide rejected static rules"
+    // Build the dynamic Rho backend from the REAL reconstructed RhoCalc
+    // augmented definition, so its fingerprint equals the generated
+    // `RhoCalcLanguage` fingerprint and installs on the real identity.
+    let def = rhocalc_ast_runtime_def();
+    let plan = plan_rho_default_backend(&def, native_handler_requirements(&def))
+        .expect("real RhoCalc def must pass the Rho-default gate with native-handler coverage");
+    assert_eq!(
+        plan.language_name(),
+        "RhoCalc",
+        "the dynamic RhoCalc plan must carry the real RhoCalc identity"
     );
     PlannedRhoBackend::from_plan(plan)
 }
 
 fn wrong_name_dynamic_backend() -> PlannedRhoBackend {
-    let def = syn::parse_str::<LanguageDef>(
-        r#"
-            name: NotRhoCalc,
-            types { Proc }
-            terms {}
-        "#,
-    )
-    .expect("wrong-name dynamic runtime fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_dynamic_requirements())
-        .expect("empty wrong-name Rho backend plan must pass the Rho-default gate");
+    // Reconstruct the real RhoCalc source but rename it so the plan's
+    // `language_name()` no longer matches `RhocalcAstRuntimeLanguage`. The
+    // install must then fail with a name-level `LanguagePlanMismatch`.
+    use mettail_languages::rhocalc::RhoCalcLanguage;
+    let source = RhoCalcLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated RhoCalcLanguage must expose its definition_source");
+    let renamed = source.replacen("name: RhoCalc", "name: NotRhoCalc", 1);
+    assert_ne!(renamed, source, "rename must take effect; body must contain `name: RhoCalc`");
+    let def = mettail_rho_codegen::reconstruct_language_def(&renamed)
+        .expect("renamed RhoCalc source must reconstruct as a LanguageDef");
+    let plan = plan_rho_default_backend(&def, native_handler_requirements(&def))
+        .expect("renamed RhoCalc def must still pass the Rho-default gate");
     PlannedRhoBackend::from_plan(plan)
 }
 

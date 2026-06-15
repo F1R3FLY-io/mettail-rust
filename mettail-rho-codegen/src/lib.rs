@@ -54,6 +54,16 @@
 /// so codegen and runtime observation decode the same nominal bag ABI.
 pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 
+/// Reconstruct a generated language's exact macro-time augmented `LanguageDef`
+/// from its `LanguageMetadata::definition_source()`.
+///
+/// Re-exported from `mettail_ast` so backend-planning callers can rebuild the
+/// real augmented definition (composition + auto-injection) that a generated
+/// language's `definition_fingerprint()` was computed over — instead of
+/// fingerprint-spoofing fragment shims. See
+/// [`mettail_ast::auto_inject::reconstruct_language_def`] for exactness scope.
+pub use mettail_ast::auto_inject::reconstruct_language_def;
+
 pub mod ast;
 pub mod backend;
 pub mod deadlock;
