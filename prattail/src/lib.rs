@@ -395,6 +395,10 @@ pub mod string_algebra;
 /// combinators, generic over the element algebra.
 pub mod product_nary;
 
+/// Order-insensitive collection algebras: `BagAlgebra` (multisets, minterm-count
+/// feasibility) and `MapAlgebra` (key→value), generic over the element algebra.
+pub mod collection_algebra;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
