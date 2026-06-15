@@ -1593,6 +1593,12 @@ mod tests {
     use super::*;
 
     #[cfg(feature = "runtime-report")]
+    use mettail_runtime::{
+        LanguageMetadata, RuntimeBackendOutput, RuntimeDovetailCompleteness,
+        RuntimeDovetailTermRecord,
+    };
+
+    #[cfg(feature = "runtime-report")]
     fn binary_abi(
         label: &str,
         left: RhoScalarType,
@@ -1614,6 +1620,260 @@ mod tests {
             },
             _ => None,
         }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    const MINI_RHO_FRAGMENT: &str = r#"
+        name: MiniDefaultRho,
+        types {
+            ![i64] as Int
+        }
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ;
+        }
+    "#;
+
+    #[cfg(feature = "runtime-report")]
+    static MINI_TYPES: &[mettail_runtime::TypeDef] = &[mettail_runtime::TypeDef {
+        name: "Int",
+        native_type: Some("i64"),
+        is_primary: true,
+    }];
+
+    #[cfg(feature = "runtime-report")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct MiniTerm {
+        left: i64,
+        right: i64,
+    }
+
+    #[cfg(feature = "runtime-report")]
+    impl fmt::Display for MiniTerm {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{} + {}", self.left, self.right)
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    impl Term for MiniTerm {
+        fn clone_box(&self) -> Box<dyn Term> {
+            Box::new(self.clone())
+        }
+
+        fn term_id(&self) -> u64 {
+            ((self.left as u64) << 32) ^ (self.right as u64)
+        }
+
+        fn term_eq(&self, other: &dyn Term) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<MiniTerm>()
+                .is_some_and(|other| other == self)
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    struct MiniMetadata;
+
+    #[cfg(feature = "runtime-report")]
+    static MINI_METADATA: MiniMetadata = MiniMetadata;
+
+    #[cfg(feature = "runtime-report")]
+    impl LanguageMetadata for MiniMetadata {
+        fn name(&self) -> &'static str {
+            "MiniDefaultRho"
+        }
+
+        fn definition_fingerprint(&self) -> Option<&'static str> {
+            static FINGERPRINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            Some(
+                FINGERPRINT
+                    .get_or_init(|| {
+                        let def = mini_language_def();
+                        mettail_ast::identity::language_definition_fingerprint(&def)
+                    })
+                    .as_str(),
+            )
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            MINI_TYPES
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    struct MiniLanguage;
+
+    #[cfg(feature = "runtime-report")]
+    impl Language for MiniLanguage {
+        fn name(&self) -> &'static str {
+            "MiniDefaultRho"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &MINI_METADATA
+        }
+
+        fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            match input.trim() {
+                "2 + 3" => Ok(Box::new(MiniTerm { left: 2, right: 3 })),
+                other => {
+                    Err(format!("MiniDefaultRho test parser only accepts `2 + 3`, got {other:?}"))
+                },
+            }
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::base("Int")
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn mini_language_def() -> mettail_ast::language::LanguageDef {
+        syn::parse_str(MINI_RHO_FRAGMENT).expect("MiniDefaultRho fragment must parse")
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn mini_requirements() -> mettail_rho_codegen::RhoDefaultBackendRequirements {
+        mettail_rho_codegen::RhoDefaultBackendRequirements {
+            coverage: mettail_rho_codegen::RhoCoverageEvidence::AllRulesLowered,
+            guard_coverage: mettail_rho_codegen::RhoGuardCoverageEvidence::NoGuardObligations,
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn mini_backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
+        let def: mettail_ast::language::LanguageDef =
+            syn::parse_str(fragment).expect("MiniDefaultRho test fragment must parse");
+        let plan = mettail_rho_codegen::plan_rho_default_backend(&def, mini_requirements())
+            .expect("MiniDefaultRho scalar AddInt rule must pass the Rho-default gate");
+        assert_eq!(plan.lowering.lowered, vec!["AddInt"]);
+        assert!(plan.lowering.rejected.is_empty());
+        PlannedRhoBackend::from_plan(plan)
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn mini_backend() -> PlannedRhoBackend {
+        mini_backend_from_fragment(MINI_RHO_FRAGMENT)
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn complete_mini_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        let key = format!("mini:{term}").into_bytes();
+        Ok(RuntimeDovetailRunReport {
+            roots: vec![key.clone()],
+            root_ordinals: vec![0],
+            terms: vec![RuntimeDovetailTermRecord {
+                ordinal: 0,
+                class_id: 0,
+                key,
+                op_display: term.to_string(),
+                weight_display: "0".to_string(),
+                is_root: true,
+            }],
+            derivation_edges: Vec::new(),
+            completeness: RuntimeDovetailCompleteness::Complete,
+        })
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn bounded_mini_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        let mut report = complete_mini_dovetail_report(term)?;
+        report.completeness = RuntimeDovetailCompleteness::BoundedByCycleCut;
+        Ok(report)
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn mini_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
+        let term = term
+            .as_any()
+            .downcast_ref::<MiniTerm>()
+            .ok_or_else(|| format!("expected MiniTerm, got {term:?}"))?;
+        build_scalar_contract_invocation(
+            &binary_abi("AddInt", RhoScalarType::Int, RhoScalarType::Int, RhoScalarType::Int),
+            vec![RhoAstLiteral::Int(term.left), RhoAstLiteral::Int(term.right)],
+            "OUT",
+        )
+        .map_err(|err| err.to_string())
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn mini_invocation_from_dovetail(
+        term: &dyn Term,
+        report: &RuntimeDovetailRunReport,
+    ) -> Result<RhoBackendInvocation, String> {
+        report.assert_complete().map_err(|status| {
+            format!("MiniDefaultRho invocation requires a complete Dovetail report, got {status}")
+        })?;
+        mini_invocation(term)
     }
 
     #[test]
@@ -1668,6 +1928,125 @@ mod tests {
                 (RuntimeObservationValue::Int(1), 1_usize),
                 (RuntimeObservationValue::Int(3), 2_usize),
             ])
+        );
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn default_surface_installs_dovetail_rho_wrapper_without_oracle_ascent() {
+        let language = install_dovetail_rho_runtime_backend(
+            MiniLanguage,
+            mini_backend(),
+            complete_mini_dovetail_report,
+            mini_invocation_from_dovetail,
+        )
+        .expect("default runtime-report surface should install the Dovetail+Rho wrapper");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
+        assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+        assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+        let capabilities = language.runtime_backend_capabilities();
+        assert_eq!(capabilities.len(), 2);
+        assert_eq!(capabilities[0].backend, RuntimeBackend::RhoMachine);
+        assert!(capabilities[0].is_default);
+        assert_eq!(capabilities[1].backend, RuntimeBackend::Dovetail);
+        assert!(!capabilities[1].is_default);
+
+        let dovetail_report = language
+            .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+            .expect("wrapper should expose checked Dovetail intermediate");
+        assert_eq!(dovetail_report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(dovetail_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+        let RuntimeBackendOutput::Dovetail(dovetail_output) = dovetail_report.into_output() else {
+            panic!("Dovetail backend must return a Dovetail report");
+        };
+        assert!(dovetail_output.is_complete());
+        assert_eq!(dovetail_output.root_count(), 1);
+
+        let rho_report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("wrapper should execute Rho after the checked Dovetail report");
+        assert_eq!(rho_report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(rho_report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+        let out = rho_report
+            .observations_for_channel("OUT")
+            .expect("Rho report must expose OUT observations");
+        assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
+
+        let ascent_err = language
+            .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
+            .expect_err("production Dovetail+Rho wrapper must reject Ascent");
+        assert!(ascent_err.contains("legacy Ascent runtime is not exposed"), "{ascent_err}");
+
+        let mut facts = SeedFacts::new();
+        facts.insert("seed".to_string(), vec![vec!["2 + 3".to_string()]]);
+        let seeded_err = language
+            .run_default_backend_report_with_facts(term.as_ref(), &facts)
+            .expect_err("production Dovetail+Rho wrapper must reject Ascent-shaped facts");
+        assert!(
+            seeded_err.contains("does not accept Ascent-shaped seeded facts"),
+            "{seeded_err}"
+        );
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn default_surface_checks_dovetail_completeness_before_rho_invocation() {
+        let language = install_dovetail_rho_runtime_backend(
+            MiniLanguage,
+            mini_backend(),
+            bounded_mini_dovetail_report,
+            |_term, _report| Err("invocation should not run after incomplete Dovetail".to_string()),
+        )
+        .expect("capability installation is separate from per-term Dovetail completeness");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let err = language
+            .run_default_backend_report(term.as_ref())
+            .expect_err("bounded Dovetail reports must block Rho execution");
+        assert!(err.contains("produced incomplete report: BoundedByCycleCut"), "{err}");
+        assert!(!err.contains("invocation should not run"), "{err}");
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn default_surface_rejects_cross_definition_installs() {
+        let other_backend = mini_backend_from_fragment(&MINI_RHO_FRAGMENT.replacen(
+            "name: MiniDefaultRho",
+            "name: OtherMiniDefaultRho",
+            1,
+        ));
+        let err = match install_dovetail_rho_runtime_backend(
+            MiniLanguage,
+            other_backend,
+            complete_mini_dovetail_report,
+            mini_invocation_from_dovetail,
+        ) {
+            Ok(_) => panic!("cross-language Rho plan must not install on MiniDefaultRho"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, RhoRuntimeBackedLanguageError::LanguagePlanMismatch { .. }),
+            "{err}"
+        );
+
+        let backend = mini_backend();
+        let fingerprint = backend.plan().definition_fingerprint().to_string();
+        let err = match DovetailRhoRuntimeBackedLanguage::new(
+            MiniLanguage,
+            backend,
+            DovetailCompilerStage::new("wrong-definition", complete_mini_dovetail_report),
+            RhoInvocationCompilerStage::new(fingerprint, mini_invocation_from_dovetail),
+        ) {
+            Ok(_) => panic!("mismatched Dovetail compiler must not install"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, RhoRuntimeBackedLanguageError::DovetailCompilerDefinitionMismatch { .. }),
+            "{err}"
         );
     }
 

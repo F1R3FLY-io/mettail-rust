@@ -35,9 +35,13 @@
 //! validated `rhoapi::Par` artifacts. Ascent oracle evidence remains available
 //! for per-language flip comparison until a language's coverage,
 //! artifact-validation, and deadlock gates pass. The
-//! `rhocalc-runtime` feature exposes the AST-first RhoCalc wrapper; the
-//! compatibility `oracle-rhocalc` feature name is retained only as an alias for
-//! existing differential tests.
+//! default `runtime-report` feature exposes the generic `Language`
+//! report-adapter and Dovetail+Rho installer surface. Generated language
+//! fixtures, the Ascent comparison oracle, the RhoCalc generated-language
+//! wrapper, and source-text oracle helpers remain opt-in through
+//! `oracle-ascent`, `rhocalc-runtime`, and `source-oracle`; the compatibility
+//! `oracle-rhocalc` feature name is retained only as an alias for existing
+//! differential tests.
 
 #![forbid(unsafe_code)]
 
