@@ -122,7 +122,9 @@ reference/oracle method for verification and transition evidence, and
 `RuntimeBackendOutput::Ascent` remains the report shape for that reference data.
 The production dispatcher does not select Ascent as a default backend and does
 not execute `RuntimeBackend::Ascent` through `run_backend_report` or seeded
-report dispatch.
+report dispatch. The `Language::run_ascent` trait hook itself has a fail-closed
+default; generated languages and tests override it only when they intentionally
+install explicit oracle evidence.
 The REPL follows the same rule: session state caches a `RuntimeBackendReport`
 for the current term, and graph navigation moves the current cursor while
 preserving that report envelope. It projects an Ascent-shaped graph only when

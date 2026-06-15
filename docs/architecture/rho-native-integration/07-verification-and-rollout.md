@@ -189,6 +189,9 @@ projection from a Dovetail or Rho report.
 Runtime query execution follows that same model: production callers query a
 `RuntimeBackendReport` with `run_query_report`, while raw `AscentResults`
 queries use the explicitly named `run_ascent_oracle_query` reference entry.
+The raw `Language::run_ascent` trait hook also fails closed by default; only a
+generated oracle feature or explicit reference wrapper makes that oracle
+callable.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
 lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,

@@ -2,18 +2,19 @@
 //!
 //! Binds the `mettail-rho-codegen` output to f1r3node-rust's process-wide
 //! `RhoRuntime` / `DebruijnInterpreter` (+ a `Vec<Definition>` of native system
-//! handlers), and hosts the **differential oracle** against the Ascent backend.
+//! handlers), and hosts explicit **differential oracle** checks against
+//! Ascent-shaped reference evidence.
 //!
 //! **Threading/scheduling are OWNED BY f1r3node** — `eval_par` (`tokio::spawn`
 //! per `P|Q`) + RSpace disjoint-channel COMMs on the work-stealing runtime.
 //! MeTTaIL's eval job collapses to "emit `Par` (independent redexes = parallel
 //! members) + channel-keying for disjointness" — emit `Par`, never fork.
 //!
-//! The differential oracle compares the rho-backend normal forms against
-//! `Language::run_ascent(term)?.normal_forms()` (the existing baseline the
-//! `gen_calculator_op` suite uses), under **weight-erasure + eqrel-quotient**,
-//! keyed by `dovetail::key::ContentKey` (exact bytes — never a 64-bit hash),
-//! honoring "miss nothing": weights order, never prune; refute only at `0̄`.
+//! The differential oracle compares Rho observations against an explicitly
+//! installed `Language::run_ascent(term)?.normal_forms()` reference, under
+//! **weight-erasure + eqrel-quotient**, keyed by `dovetail::key::ContentKey`
+//! (exact bytes — never a 64-bit hash), honoring "miss nothing": weights order,
+//! never prune; refute only at `0̄`.
 //!
 //! ## Dependency direction (STRICTLY one-way)
 //! Depends ONE-WAY on f1r3node-rust; never the reverse (proven in
@@ -27,12 +28,13 @@
 //! helpers for oracle/debug code, exposes `PlannedCallByNeedThunk` as the
 //! M-RHO.2 need-specific planned execution boundary, keeps source-text evaluation only for
 //! hand-authored host oracle tests, reads public resting data for oracle checks,
-//! runs lowered calculator contracts against the Ascent baseline, and hosts the
-//! M-RHO.1 transport-pure COMM oracle. Hand-authored Rholang source evaluation
-//! helpers are available only behind the `source-oracle` feature; generated
-//! backend execution is always AST-first and enters through validated
-//! `rhoapi::Par` artifacts. Ascent remains the per-language flip baseline until
-//! a language's coverage, artifact-validation, and deadlock gates pass. The
+//! runs lowered calculator contracts against an explicit Ascent oracle baseline,
+//! and hosts the M-RHO.1 transport-pure COMM oracle. Hand-authored Rholang
+//! source evaluation helpers are available only behind the `source-oracle`
+//! feature; generated backend execution is always AST-first and enters through
+//! validated `rhoapi::Par` artifacts. Ascent oracle evidence remains available
+//! for per-language flip comparison until a language's coverage,
+//! artifact-validation, and deadlock gates pass. The
 //! `rhocalc-runtime` feature exposes the AST-first RhoCalc wrapper; the
 //! compatibility `oracle-rhocalc` feature name is retained only as an alias for
 //! existing differential tests.

@@ -19,7 +19,7 @@ rustc-hash = "2.0"
 indexmap = "2"
 syn = { workspace = true }
 proc-macro2 = { workspace = true }
-# Feature-branch: runtime needs prattail for CESK/WFST runtime support.
+# Runtime re-exports PraTTaIL predicate parser/behavioral-predicate helpers.
 mettail-prattail = { path = "../prattail" }
 # Main-branch numeric types (BigInt, BigRat, FixedPoint).
 num-bigint = "0.4"

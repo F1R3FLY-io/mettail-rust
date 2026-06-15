@@ -1,8 +1,9 @@
 //! M-RHO.0.4: the differential oracle, executed against BOTH real backends.
 //!
 //! For each calculator Int operation this runs:
-//!   - the ASCENT backend: `CalculatorLanguage::run_ascent(parse_term(input))` →
-//!     its normal-form display strings, and
+//!   - the explicit ASCENT oracle:
+//!     `CalculatorLanguage::run_ascent(parse_term(input))` → its normal-form
+//!     display strings, and
 //!   - the RHO backend: the lowered Rholang contract (mettail-rho-codegen) on a
 //!     real in-memory f1r3node RhoRuntime (mettail-rho-runtime),
 //!
@@ -59,7 +60,7 @@ fn calculator_backend() -> PlannedRhoBackend {
     PlannedRhoBackend::from_plan(plan)
 }
 
-/// The Ascent backend's normal-form display strings for `input`.
+/// The explicit Ascent oracle's normal-form display strings for `input`.
 fn ascent_normal_forms(lang: &CalculatorLanguage, input: &str) -> Vec<String> {
     let parsed = lang.parse_term(input).expect("calculator parse");
     let results = lang.run_ascent(parsed.as_ref()).expect("ascent eval");

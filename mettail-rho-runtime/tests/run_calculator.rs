@@ -6,9 +6,9 @@
 //! that validated artifact directly, sends a concrete AST call process, and
 //! reads the result back from a fixed output channel. The asserted values are
 //! the calculator's defined Int, Bool, and Str scalar semantics — i.e. exactly
-//! what the Ascent backend computes — so this is the per-op differential oracle
-//! (rho-backend ≡ Ascent) executed end-to-end without routing generated code
-//! through source text.
+//! what the explicit Ascent oracle computes — so this is the per-op
+//! differential oracle (rho-backend ≡ Ascent oracle) executed end-to-end
+//! without routing generated code through source text.
 
 use mettail_ast::language::LanguageDef;
 use mettail_rho_codegen::{

@@ -156,6 +156,59 @@ Section RuntimeBackendDispatch.
       (raw_generated_language_state oracle_generated_build).
   Proof. reflexivity. Qed.
 
+  Record LanguageTraitOracleSurface : Type := {
+    ascent_oracle_overridden : bool
+  }.
+
+  Definition can_call_ascent_reference_oracle
+      (surface : LanguageTraitOracleSurface) : bool :=
+    ascent_oracle_overridden surface.
+
+  Definition default_language_trait_oracle_surface :
+      LanguageTraitOracleSurface :=
+    {| ascent_oracle_overridden := false |}.
+
+  Definition explicit_language_trait_oracle_surface :
+      LanguageTraitOracleSurface :=
+    {| ascent_oracle_overridden := true |}.
+
+  Theorem default_language_trait_oracle_fails_closed :
+    can_call_ascent_reference_oracle
+      default_language_trait_oracle_surface = false.
+  Proof. reflexivity. Qed.
+
+  Theorem explicit_language_trait_oracle_is_callable :
+    can_call_ascent_reference_oracle
+      explicit_language_trait_oracle_surface = true.
+  Proof. reflexivity. Qed.
+
+  Definition can_run_default_backend_report_with_trait_oracle
+      (state : BackendState)
+      (_surface : LanguageTraitOracleSurface) : bool :=
+    can_run_default_backend_report state.
+
+  Theorem production_report_dispatch_independent_of_trait_oracle :
+    forall state surface_a surface_b,
+      can_run_default_backend_report_with_trait_oracle state surface_a =
+      can_run_default_backend_report_with_trait_oracle state surface_b.
+  Proof. intros state surface_a surface_b. reflexivity. Qed.
+
+  Theorem trait_oracle_cannot_make_ascent_a_report_backend :
+    forall state surface,
+      default_backend state = Ascent ->
+      can_run_default_backend_report_with_trait_oracle state surface = false.
+  Proof.
+    intros [ascent dovetail rho selected backend shape] surface Hbackend.
+    simpl in Hbackend.
+    subst backend.
+    unfold can_run_default_backend_report_with_trait_oracle.
+    unfold can_run_default_backend_report.
+    unfold can_select_default_backend.
+    unfold can_request_backend_report.
+    simpl.
+    destruct selected; reflexivity.
+  Qed.
+
   Definition empty_metadata_state : BackendState :=
     {|
       ascent_installed := false;

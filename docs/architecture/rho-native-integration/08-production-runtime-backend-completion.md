@@ -450,6 +450,10 @@ Ascent structs, `ascent_source!` source-inspection exports, the crate-root
 `Language::run_ascent*` methods return an oracle-disabled error and the
 parser/AST/Rho-codegen crate surface has no normal dependency on `ascent` or
 `ascent-byods-rels`.
+The base `Language` trait mirrors that generated behavior: its `run_ascent`
+hook has a fail-closed default, so parse-only, Dovetail-backed, and Rho-backed
+language values do not have to provide an Ascent oracle implementation merely
+to satisfy the trait.
 Graph-shaped test utilities follow the same runtime-view rule. When a property
 such as an LTL execution-model check needs rewrite-graph evidence, it prefers
 an installed `Dovetail` report over the selected default report: a selected

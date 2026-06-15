@@ -56,7 +56,7 @@ two-way-transducer = []
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
-# to runtime/ to break the cycle (runtime → prattail for CEK/CESK re-exports).
+# to runtime/ to keep parser/predicate helpers on the runtime → prattail edge.
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
@@ -64,7 +64,7 @@ syn = { workspace = true }
 # walker can produce predicates without crossing the dependency cycle.
 # `BehavioralPred` impls `moniker::BoundTerm<String>` as a no-op leaf.
 moniker = { workspace = true }
-# Feature-branch (WFST/CESK/presburger) deps — always-on in this branch.
+# Feature-branch parser/automata/presburger deps — always-on in this branch.
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 proptest = { version = "1" }

@@ -933,8 +933,21 @@ pub trait Language: Send + Sync {
         Ok((term, seeds))
     }
 
-    /// Run Ascent on a term and return results
-    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String>;
+    /// Run the explicit Ascent reference oracle on a term and return results.
+    ///
+    /// Production runtime execution uses [`Language::run_backend_report`] and
+    /// [`Language::run_default_backend_report`]. The default oracle hook fails
+    /// closed so parse-only, Dovetail-backed, and Rho-backed language values do
+    /// not have to provide an Ascent implementation merely to satisfy the
+    /// trait. Generated or test languages that intentionally expose reference
+    /// evidence override this method explicitly.
+    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
+        let _ = term;
+        Err(format!(
+            "Ascent oracle for language {} is not installed; use a generated oracle feature or an explicit reference wrapper",
+            self.name()
+        ))
+    }
 
     /// Backend used by user-facing evaluation when no backend is requested
     /// explicitly.
@@ -1027,7 +1040,8 @@ pub trait Language: Send + Sync {
     ///    `if { evaluate_pred_with_bindings(...) }` guard can check
     ///    per-instance predicates
     ///
-    /// Default: delegates to `run_ascent` (ignores facts).
+    /// Default: delegates to `run_ascent` (ignores facts), which fails closed
+    /// unless an explicit Ascent oracle implementation is installed.
     fn run_ascent_with_facts(
         &self,
         term: &dyn Term,
@@ -1963,10 +1977,6 @@ mod tests {
             self.parse_term(input)
         }
 
-        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
-            Ok(AscentResults::empty())
-        }
-
         fn create_env(&self) -> Box<dyn Any + Send + Sync> {
             Box::new(())
         }
@@ -2390,6 +2400,14 @@ mod tests {
         assert_eq!(language.selected_default_runtime_backend(), None);
         assert_eq!(language.default_runtime_backend(), None);
         assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+        let ascent_oracle_err = language
+            .run_ascent(&term)
+            .expect_err("languages without an explicit oracle must fail closed");
+        assert!(
+            ascent_oracle_err.contains("Ascent oracle for language NoDefault is not installed"),
+            "{ascent_oracle_err}"
+        );
 
         let report_err = language
             .run_default_backend_report(&term)
