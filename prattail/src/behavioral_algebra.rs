@@ -685,6 +685,88 @@ impl<H: HostTerm> HeytingAlgebra for BehavioralAlgebra<H> {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// CTL temporal operators (sugar over the mu-calculus modal fragment)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// The modal mu-calculus (Diamond/BoxAll/Mu/Nu) is strictly more expressive than
+// CTL and LTL on finite transition systems, so the standard branching-time
+// temporal operators are *derived* — each desugars to a fixpoint formula that
+// the model checker (`denote`) already decides exactly. A single fixpoint
+// variable name is reused throughout: nesting is handled by `denote`'s lexical
+// shadowing (an inner fixpoint rebinds the variable for its own body), and CTL
+// sugar is always closed, so no free occurrence ever escapes a constructor.
+//
+// Deadlock convention: maximal-run semantics. A state with no successors is the
+// end of its run; the encodings include `⟨-⟩⊤` / `[-]⊥` guards so that, e.g.,
+// `AF φ` is false at a φ-free deadlock and `AG φ`/`EG φ` are correct there.
+//
+// (Linear-time LTL with fairness — e.g. `GF p` — is the one fragment the
+// branching mu-calculus cannot express; those properties route through the
+// existing Büchi engine, `crate::buchi` / `crate::ltl`.)
+
+const CTL_VAR: &str = "__ctl";
+
+fn diamond_any(f: BehavioralFormula) -> BehavioralFormula {
+    BehavioralFormula::Diamond(ActionPattern::Any, Box::new(f))
+}
+fn box_any(f: BehavioralFormula) -> BehavioralFormula {
+    BehavioralFormula::BoxAll(ActionPattern::Any, Box::new(f))
+}
+fn fixvar() -> BehavioralFormula {
+    BehavioralFormula::FixVar(CTL_VAR.to_string())
+}
+fn mu(body: BehavioralFormula) -> BehavioralFormula {
+    BehavioralFormula::Mu(CTL_VAR.to_string(), Box::new(body))
+}
+fn nu(body: BehavioralFormula) -> BehavioralFormula {
+    BehavioralFormula::Nu(CTL_VAR.to_string(), Box::new(body))
+}
+fn and(a: BehavioralFormula, b: BehavioralFormula) -> BehavioralFormula {
+    BehavioralFormula::And(Box::new(a), Box::new(b))
+}
+fn or(a: BehavioralFormula, b: BehavioralFormula) -> BehavioralFormula {
+    BehavioralFormula::Or(Box::new(a), Box::new(b))
+}
+/// `⟨-⟩⊤` — the state has at least one successor (is not a deadlock).
+fn can_progress() -> BehavioralFormula {
+    diamond_any(BehavioralFormula::Top)
+}
+
+/// `AX φ` — all successors satisfy `φ` (vacuously true at a deadlock).
+pub fn ax(phi: BehavioralFormula) -> BehavioralFormula {
+    box_any(phi)
+}
+/// `EX φ` — some successor satisfies `φ`.
+pub fn ex(phi: BehavioralFormula) -> BehavioralFormula {
+    diamond_any(phi)
+}
+/// `EF φ` — `φ` is reachable on some run.
+pub fn ef(phi: BehavioralFormula) -> BehavioralFormula {
+    mu(or(phi, diamond_any(fixvar())))
+}
+/// `AG φ` — `φ` holds on all states of all runs (safety/invariance).
+pub fn ag(phi: BehavioralFormula) -> BehavioralFormula {
+    nu(and(phi, box_any(fixvar())))
+}
+/// `AF φ` — `φ` holds eventually on every maximal run (false at a φ-free deadlock).
+pub fn af(phi: BehavioralFormula) -> BehavioralFormula {
+    mu(or(phi, and(box_any(fixvar()), can_progress())))
+}
+/// `EG φ` — some maximal run keeps `φ` true throughout.
+pub fn eg(phi: BehavioralFormula) -> BehavioralFormula {
+    // φ ∧ (⟨-⟩X ∨ deadlock); deadlock = [-]⊥.
+    nu(and(phi, or(diamond_any(fixvar()), box_any(BehavioralFormula::Bot))))
+}
+/// `A(φ U ψ)` — on every maximal run, `φ` holds until `ψ`.
+pub fn au(phi: BehavioralFormula, psi: BehavioralFormula) -> BehavioralFormula {
+    mu(or(psi, and(phi, and(box_any(fixvar()), can_progress()))))
+}
+/// `E(φ U ψ)` — some run has `φ` until `ψ`.
+pub fn eu(phi: BehavioralFormula, psi: BehavioralFormula) -> BehavioralFormula {
+    mu(or(psi, and(phi, diamond_any(fixvar()))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -903,5 +985,32 @@ mod tests {
             )),
         );
         assert!(!alg.evaluate(&always_done, &BehavioralWorld::new(TestProc(0))));
+    }
+
+    #[test]
+    fn ctl_temporal_operators() {
+        let alg = BehavioralAlgebra::<TestProc>::new(FactBase::new());
+        let done = || BehavioralFormula::Atom("done".into());
+        let s0 = || BehavioralWorld::new(TestProc(0));
+        let s2 = || BehavioralWorld::new(TestProc(2));
+
+        // EF done — done is reachable.
+        assert!(alg.evaluate(&ef(done()), &s0()));
+        // AF done — every (here, the single) maximal run reaches done.
+        assert!(alg.evaluate(&af(done()), &s0()));
+        // AG done — false (states 0,1 are not done) but holds at the done state.
+        assert!(!alg.evaluate(&ag(done()), &s0()));
+        assert!(alg.evaluate(&ag(done()), &s2()));
+        // AG ¬bad — safety with no 'bad' states → true.
+        let no_bad =
+            ag(BehavioralFormula::Not(Box::new(BehavioralFormula::Atom("bad".into()))));
+        assert!(alg.evaluate(&no_bad, &s0()));
+        // E(¬done U done) — some run stays ¬done until done.
+        let until = eu(BehavioralFormula::Not(Box::new(done())), done());
+        assert!(alg.evaluate(&until, &s0()));
+        // AX over a terminal: AX ⊥ is vacuously true at the deadlock state 2.
+        assert!(alg.evaluate(&ax(BehavioralFormula::Bot), &s2()));
+        // EX (¬done) from state 0 — successor (state 1) is ¬done.
+        assert!(alg.evaluate(&ex(BehavioralFormula::Not(Box::new(done()))), &s0()));
     }
 }
