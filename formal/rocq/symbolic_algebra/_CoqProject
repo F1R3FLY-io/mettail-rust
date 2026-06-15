@@ -11,3 +11,4 @@
 theories/EffectiveBooleanAlgebra.v
 theories/ProductAlgebraClosure.v
 theories/SumAlgebraClosure.v
+theories/CollectionAlgebraClosure.v
