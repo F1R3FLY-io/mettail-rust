@@ -204,7 +204,11 @@ impl RhoGuardCoverageEvidence {
     }
 }
 
-fn guard_disposition_covers(
+/// Whether a disposition mechanism is compatible with an obligation kind — the
+/// coverage compatibility matrix consumed by the fail-closed evidence gate.
+/// Exposed so the predicate substrate ([`crate::guard_quality`]) can verify the
+/// dispositions it emits are gate-compatible before lowering.
+pub fn guard_disposition_covers(
     obligation_kind: RhoGuardObligationKind,
     disposition_kind: RhoGuardDispositionKind,
 ) -> bool {

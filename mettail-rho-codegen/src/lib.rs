@@ -58,6 +58,7 @@ pub mod ast;
 pub mod backend;
 pub mod deadlock;
 pub mod flip;
+pub mod guard_quality;
 pub mod invocation;
 pub mod lower;
 pub mod need;
