@@ -548,7 +548,7 @@ The key distinction is that there are two pipelines:
 
 and:
 
-`code snippet → parser → typed AST → DovetailRunReport → rhoapi::Par → RuntimeBackendReport`
+`source snippet → WPDA parser → typed AST → DovetailRunReport → rhoapi::Par → RuntimeBackendReport`
 
 The first pipeline is static: it happens when the language is parsed,
 validated, and compiled. The second pipeline is dynamic: it happens when a
