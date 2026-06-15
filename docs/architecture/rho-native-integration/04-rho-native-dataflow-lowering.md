@@ -508,10 +508,13 @@ not determine scalar eligibility: renamed native categories lower identically,
 and scalar-looking structural categories are rejected. The Rust lowerer exposes
 that same generated inventory as `RhoLowering::scalar_contract_abi`; generated
 invocation code consumes those ABI records rather than maintaining a parallel
-hard-coded operator list. At runtime,
-`mettail_rho_runtime::build_scalar_contract_invocation` checks the ABI against
-the extracted scalar literals and emits the normalized dynamic `rhoapi::Par`
-call directly.
+hard-coded operator list. `mettail_rho_codegen::plan_scalar_invocations` then
+cross-checks that ABI against the macro-expanded term constructors: it records
+the constructor label, operand field positions, parameter names, source
+categories, and native scalar families required by generated extractor code. At
+runtime, `mettail_rho_runtime::build_scalar_contract_invocation` checks the ABI
+against the extracted scalar literals and emits the normalized dynamic
+`rhoapi::Par` call directly.
 
 Input binders use f1r3node's de Bruijn convention:
 

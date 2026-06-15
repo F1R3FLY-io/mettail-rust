@@ -58,6 +58,7 @@ pub mod ast;
 pub mod backend;
 pub mod deadlock;
 pub mod flip;
+pub mod invocation;
 pub mod lower;
 pub mod need;
 pub mod validate;
@@ -76,6 +77,10 @@ pub use deadlock::{
     ContractFlow,
 };
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
+pub use invocation::{
+    plan_scalar_invocations, RhoScalarInvocationOperand, RhoScalarInvocationPlan,
+    RhoScalarInvocationPlanError,
+};
 pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,
     RhoProgram, RhoScalarContractAbi, RhoScalarContractShape, RhoScalarType,

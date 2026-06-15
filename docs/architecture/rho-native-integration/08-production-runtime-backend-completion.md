@@ -182,7 +182,13 @@ return channel at position `2`, unary contracts receive one operand plus a
 return channel at position `1`, and no ABI entry exists for rejected rules. The
 Rust lowering exposes that data as `RhoLowering::scalar_contract_abi` in exact
 `RhoLowering::lowered` order, making it the source of truth for generated
-invocation dispatch. The runtime helper
+invocation dispatch. `mettail_rho_codegen::plan_scalar_invocations` consumes
+that inventory with the same `LanguageDef` and derives the constructor-level
+dispatch plan used by generated extractor code: every plan entry preserves the
+rule label, operand field order, parameter names, source categories, native
+scalar families, result category, and ABI result family. It fails closed if a
+stale or mismatched ABI is paired with the wrong generated definition. The
+runtime helper
 `mettail_rho_runtime::build_scalar_contract_invocation` is the checked dynamic
 call boundary for this inventory: it validates operand arity and scalar payload
 families against `RhoScalarContractAbi`, emits a normalized `rhoapi::Par`
@@ -191,6 +197,9 @@ the ABI result family. The proof
 `formal/rocq/rho_bridge/theories/RhoAstSendBoundary.v` models the same checked
 invocation boundary: accepted calls preserve `arguments ++ [return]`, arity
 mismatches reject, and result observations follow the ABI result type. The
+proof `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` also proves
+that an invocation plan derived from a successful scalar ABI preserves the typed
+operand order and result family. The
 executable regressions
 `mettail-rho-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
 `mettail-rho-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and

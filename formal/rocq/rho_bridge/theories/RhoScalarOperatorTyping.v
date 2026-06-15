@@ -13,6 +13,10 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
+From Stdlib Require Import List.
+
+Import ListNotations.
+
 Section RhoScalarOperatorTyping.
 
   Inductive ScalarTy : Type :=
@@ -119,6 +123,32 @@ Section RhoScalarOperatorTyping.
        abi_shape := AbiBinaryInfix lhs rhs result;
        abi_formal_count := 3;
        abi_return_channel_position := 2 |}.
+
+  Definition scalar_contract_operand_types
+      (shape : ScalarContractShape) : list ScalarTy :=
+    match shape with
+    | AbiUnaryPrefix arg _ => [arg]
+    | AbiBinaryInfix lhs rhs _ => [lhs; rhs]
+    end.
+
+  Definition scalar_contract_result_type
+      (shape : ScalarContractShape) : ScalarTy :=
+    match shape with
+    | AbiUnaryPrefix _ result => result
+    | AbiBinaryInfix _ _ result => result
+    end.
+
+  Record ScalarInvocationPlan : Type := {
+    plan_label_id : nat;
+    plan_operand_types : list ScalarTy;
+    plan_result_type : ScalarTy
+  }.
+
+  Definition invocation_plan_from_abi
+      (abi : ScalarContractAbi) : ScalarInvocationPlan :=
+    {| plan_label_id := abi_label_id abi;
+       plan_operand_types := scalar_contract_operand_types (abi_shape abi);
+       plan_result_type := scalar_contract_result_type (abi_shape abi) |}.
 
   Definition typed_binop
       (op : SurfaceBinOp)
@@ -282,6 +312,48 @@ Section RhoScalarOperatorTyping.
       abi_formal_count (unary_contract_abi label arg result) = 2 /\
       abi_return_channel_position (unary_contract_abi label arg result) = 1.
   Proof. repeat split; reflexivity. Qed.
+
+  Theorem invocation_plan_from_binary_abi_preserves_signature :
+    forall label lhs rhs result,
+      invocation_plan_from_abi (binary_contract_abi label lhs rhs result) =
+      {| plan_label_id := label;
+         plan_operand_types := [lhs; rhs];
+         plan_result_type := result |}.
+  Proof. reflexivity. Qed.
+
+  Theorem invocation_plan_from_unary_abi_preserves_signature :
+    forall label arg result,
+      invocation_plan_from_abi (unary_contract_abi label arg result) =
+      {| plan_label_id := label;
+         plan_operand_types := [arg];
+         plan_result_type := result |}.
+  Proof. reflexivity. Qed.
+
+  Theorem typed_binop_invocation_plan_preserves_typed_signature :
+    forall label op lhs rhs result abi,
+      typed_binop_abi label op lhs rhs result = Some abi ->
+      invocation_plan_from_abi abi =
+      {| plan_label_id := label;
+         plan_operand_types := [lhs; rhs];
+         plan_result_type := result |}.
+  Proof.
+    intros label op lhs rhs result abi Habi.
+    apply typed_binop_abi_success_matches_typed_operator in Habi.
+    destruct Habi as [Habi _]. subst abi. reflexivity.
+  Qed.
+
+  Theorem typed_unop_invocation_plan_preserves_typed_signature :
+    forall label op arg result abi,
+      typed_unop_abi label op arg result = Some abi ->
+      invocation_plan_from_abi abi =
+      {| plan_label_id := label;
+         plan_operand_types := [arg];
+         plan_result_type := result |}.
+  Proof.
+    intros label op arg result abi Habi.
+    apply typed_unop_abi_success_matches_typed_operator in Habi.
+    destruct Habi as [Habi _]. subst abi. reflexivity.
+  Qed.
 
   Theorem unsupported_native_kinds_are_not_scalars :
     native_kind_scalar NUInt32 = None /\

@@ -398,7 +398,10 @@ fn rho_unop(terminal: &str, arg: RhoScalarType, result: RhoScalarType) -> Option
 /// Lowering therefore follows the macro-expanded `LanguageDef` inventory and
 /// maps only native Rust payload families that the Rho AST boundary can carry
 /// exactly.
-fn category_rho_native_scalar(def: &LanguageDef, category: &syn::Ident) -> Option<RhoScalarType> {
+pub(crate) fn category_rho_native_scalar(
+    def: &LanguageDef,
+    category: &syn::Ident,
+) -> Option<RhoScalarType> {
     let lang_type = def.get_type(category)?;
     let native_type = lang_type.native_type.as_ref()?;
     match NativeKind::from_syn_type(native_type) {
@@ -412,7 +415,7 @@ fn category_rho_native_scalar(def: &LanguageDef, category: &syn::Ident) -> Optio
 }
 
 /// The Rholang-native scalar corresponding to a MeTTaIL type.
-fn rho_native_scalar_type(def: &LanguageDef, ty: &TypeExpr) -> Option<RhoScalarType> {
+pub(crate) fn rho_native_scalar_type(def: &LanguageDef, ty: &TypeExpr) -> Option<RhoScalarType> {
     match ty {
         TypeExpr::Base(id) => category_rho_native_scalar(def, id),
         _ => None,
