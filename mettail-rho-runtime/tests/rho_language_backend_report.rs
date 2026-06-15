@@ -3,6 +3,7 @@
 //! `mettail-rho-runtime`.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use mettail_ast::identity::language_definition_fingerprint;
@@ -12,13 +13,14 @@ use mettail_languages::calculator::{
 };
 use mettail_rho_codegen::{
     plan_call_by_need_thunk_with_spec, plan_rho_default_backend, CallByNeedBudget,
-    CallByNeedInitialState, CallByNeedThunkSpec, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    CallByNeedInitialState, CallByNeedThunkSpec, RhoAstLiteral, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoScalarContractAbi,
 };
 use mettail_rho_runtime::{
-    install_dovetail_rho_runtime_backend, install_rho_runtime_backend, DovetailCompilerStage,
-    DovetailRhoRuntimeBackedLanguage, PlannedRhoBackend, RhoBackendInvocation,
-    RhoInvocationCompilerStage, RhoRuntimeBackedLanguage, RhoRuntimeBackedLanguageError,
+    build_scalar_contract_invocation, install_dovetail_rho_runtime_backend,
+    install_rho_runtime_backend, DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage,
+    PlannedRhoBackend, RhoBackendInvocation, RhoInvocationCompilerStage, RhoRuntimeBackedLanguage,
+    RhoRuntimeBackedLanguageError,
 };
 use mettail_runtime::{
     AscentResults, Language, LanguageMetadata, RuntimeBackend, RuntimeBackendArtifact,
@@ -89,6 +91,32 @@ fn backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
     );
     assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
     PlannedRhoBackend::from_plan(plan)
+}
+
+fn calc_scalar_abi(label: &str) -> Result<&'static RhoScalarContractAbi, String> {
+    static ABI: OnceLock<BTreeMap<String, RhoScalarContractAbi>> = OnceLock::new();
+    let inventory = ABI.get_or_init(|| {
+        let def = syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT)
+            .expect("calculator fragment must parse");
+        let plan = plan_rho_default_backend(&def, passing_requirements())
+            .expect("calculator scalar fragment must pass the Rho-default gate");
+        plan.lowering
+            .scalar_contract_abi
+            .into_iter()
+            .map(|abi| (abi.rule_label.clone(), abi))
+            .collect()
+    });
+    inventory
+        .get(label)
+        .ok_or_else(|| format!("calculator Rho scalar ABI has no contract for {label}"))
+}
+
+fn calc_scalar_invocation(
+    label: &str,
+    arguments: Vec<RhoAstLiteral>,
+) -> Result<RhoBackendInvocation, String> {
+    build_scalar_contract_invocation(calc_scalar_abi(label)?, arguments, "OUT")
+        .map_err(|err| format!("failed to build ABI-checked Rho AST call for {label}: {err}"))
 }
 
 fn calculator_backend() -> PlannedRhoBackend {
@@ -328,21 +356,13 @@ fn int_literal(term: &Int) -> Result<i64, String> {
 fn binary_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvocation, String> {
     let left = int_literal(left)?;
     let right = int_literal(right)?;
-    let call = RhoAstSend::binary_int_call(op, left, right, "OUT")
-        .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
-        .par()
-        .clone();
-    Ok(RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel: "OUT".to_string() })
+    calc_scalar_invocation(op, vec![RhoAstLiteral::Int(left), RhoAstLiteral::Int(right)])
 }
 
 fn binary_bool_call(op: &str, left: &Int, right: &Int) -> Result<RhoBackendInvocation, String> {
     let left = int_literal(left)?;
     let right = int_literal(right)?;
-    let call = RhoAstSend::binary_int_call(op, left, right, "OUT")
-        .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
-        .par()
-        .clone();
-    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+    calc_scalar_invocation(op, vec![RhoAstLiteral::Int(left), RhoAstLiteral::Int(right)])
 }
 
 fn bool_literal(term: &Bool) -> Result<bool, String> {
@@ -359,24 +379,12 @@ fn binary_bool_payload_call(
 ) -> Result<RhoBackendInvocation, String> {
     let left = bool_literal(left)?;
     let right = bool_literal(right)?;
-    let call = RhoAstSend::contract_call(
-        op,
-        vec![RhoAstLiteral::Bool(left), RhoAstLiteral::Bool(right)],
-        "OUT",
-    )
-    .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
-    .par()
-    .clone();
-    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+    calc_scalar_invocation(op, vec![RhoAstLiteral::Bool(left), RhoAstLiteral::Bool(right)])
 }
 
 fn unary_bool_payload_call(op: &str, value: &Bool) -> Result<RhoBackendInvocation, String> {
     let value = bool_literal(value)?;
-    let call = RhoAstSend::contract_call(op, vec![RhoAstLiteral::Bool(value)], "OUT")
-        .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
-        .par()
-        .clone();
-    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+    calc_scalar_invocation(op, vec![RhoAstLiteral::Bool(value)])
 }
 
 fn string_literal(term: &Str) -> Result<String, String> {
@@ -389,15 +397,7 @@ fn string_literal(term: &Str) -> Result<String, String> {
 fn binary_string_call(op: &str, left: &Str, right: &Str) -> Result<RhoBackendInvocation, String> {
     let left = string_literal(left)?;
     let right = string_literal(right)?;
-    let call = RhoAstSend::contract_call(
-        op,
-        vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)],
-        "OUT",
-    )
-    .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
-    .par()
-    .clone();
-    Ok(RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel: "OUT".to_string() })
+    calc_scalar_invocation(op, vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)])
 }
 
 fn binary_string_bool_call(
@@ -407,15 +407,7 @@ fn binary_string_bool_call(
 ) -> Result<RhoBackendInvocation, String> {
     let left = string_literal(left)?;
     let right = string_literal(right)?;
-    let call = RhoAstSend::contract_call(
-        op,
-        vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)],
-        "OUT",
-    )
-    .map_err(|err| format!("failed to build Rho AST call for {op}: {err:?}"))?
-    .par()
-    .clone();
-    Ok(RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel: "OUT".to_string() })
+    calc_scalar_invocation(op, vec![RhoAstLiteral::String(left), RhoAstLiteral::String(right)])
 }
 
 fn calculator_int(term: &dyn Term) -> Result<&Int, String> {

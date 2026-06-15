@@ -36,9 +36,25 @@ Section RhoAstSendBoundary.
     | LitBag : list (AstLiteral * nat) -> AstLiteral
     | LitQuotedChannel : Atom -> AstLiteral.
 
+  Inductive ScalarTy : Type :=
+    | TInt
+    | TBool
+    | TStr.
+
+  Inductive ScalarObservation : Type :=
+    | ObserveInts
+    | ObserveBools
+    | ObserveStrings.
+
   Record AstSend : Type := {
     send_channel : Atom;
     send_payloads : list AstLiteral
+  }.
+
+  Record ScalarCallAbi : Type := {
+    scalar_abi_label : Atom;
+    scalar_abi_operands : list ScalarTy;
+    scalar_abi_result : ScalarTy
   }.
 
   Inductive DynamicInputArtifact : Type :=
@@ -67,6 +83,67 @@ Section RhoAstSendBoundary.
       send_channel := operation;
       send_payloads := arguments ++ [LitQuotedChannel return_channel]
     |}.
+
+  Definition scalar_observation_for (ty : ScalarTy) : ScalarObservation :=
+    match ty with
+    | TInt => ObserveInts
+    | TBool => ObserveBools
+    | TStr => ObserveStrings
+    end.
+
+  Definition scalar_ty_eqb (lhs rhs : ScalarTy) : bool :=
+    match lhs, rhs with
+    | TInt, TInt | TBool, TBool | TStr, TStr => true
+    | _, _ => false
+    end.
+
+  Definition literal_scalar_type (literal : AstLiteral) : option ScalarTy :=
+    match literal with
+    | LitInt _ => Some TInt
+    | LitBool _ => Some TBool
+    | LitString _ => Some TStr
+    | LitBytes _
+    | LitPrivateName _
+    | LitList _
+    | LitTuple _
+    | LitSet _
+    | LitMap _
+    | LitBag _
+    | LitQuotedChannel _ => None
+    end.
+
+  Definition scalar_literal_matches
+      (literal : AstLiteral)
+      (expected : ScalarTy) : bool :=
+    match literal_scalar_type literal with
+    | Some actual => scalar_ty_eqb actual expected
+    | None => false
+    end.
+
+  Fixpoint scalar_literals_match
+      (arguments : list AstLiteral)
+      (expected : list ScalarTy) : bool :=
+    match arguments, expected with
+    | [], [] => true
+    | argument :: arguments', expected_ty :: expected' =>
+        scalar_literal_matches argument expected_ty
+        && scalar_literals_match arguments' expected'
+    | _, _ => false
+    end.
+
+  Definition checked_scalar_contract_invocation
+      (abi : ScalarCallAbi)
+      (arguments : list AstLiteral)
+      (return_channel : Atom)
+      : option (DynamicInputArtifact * ScalarObservation) :=
+    if Nat.eqb (length arguments) (length (scalar_abi_operands abi))
+    then
+      if scalar_literals_match arguments (scalar_abi_operands abi)
+      then Some
+        (contract_call (scalar_abi_label abi) return_channel arguments,
+         scalar_observation_for (scalar_abi_result abi))
+      else None
+    else None.
 
   Definition ambiguity_witness
       (witness_channel key payload : Atom) : DynamicInputArtifact :=
@@ -117,6 +194,75 @@ Section RhoAstSendBoundary.
       send_payloads_of (contract_call operation return_channel arguments) =
         Some (arguments ++ [LitQuotedChannel return_channel]).
   Proof. intros operation return_channel arguments. reflexivity. Qed.
+
+  Theorem scalar_ty_eqb_refl :
+    forall ty, scalar_ty_eqb ty ty = true.
+  Proof. intros []; reflexivity. Qed.
+
+  Theorem scalar_string_literal_does_not_match_int : forall atom,
+    scalar_literal_matches (LitString atom) TInt = false.
+  Proof. intros atom. reflexivity. Qed.
+
+  Theorem non_scalar_literal_does_not_match_scalar : forall values ty,
+    scalar_literal_matches (LitList values) ty = false.
+  Proof. intros values ty. destruct ty; reflexivity. Qed.
+
+  Theorem checked_scalar_invocation_preserves_payloads :
+    forall abi arguments return_channel artifact observation,
+      checked_scalar_contract_invocation abi arguments return_channel =
+        Some (artifact, observation) ->
+      send_payloads_of artifact =
+        Some (arguments ++ [LitQuotedChannel return_channel]).
+  Proof.
+    intros abi arguments return_channel artifact observation Hchecked.
+    unfold checked_scalar_contract_invocation in Hchecked.
+    destruct (Nat.eqb (length arguments) (length (scalar_abi_operands abi)));
+      try discriminate.
+    destruct (scalar_literals_match arguments (scalar_abi_operands abi));
+      try discriminate.
+    inversion Hchecked; subst. reflexivity.
+  Qed.
+
+  Theorem checked_scalar_invocation_observation_follows_result :
+    forall abi arguments return_channel artifact observation,
+      checked_scalar_contract_invocation abi arguments return_channel =
+        Some (artifact, observation) ->
+      observation = scalar_observation_for (scalar_abi_result abi).
+  Proof.
+    intros abi arguments return_channel artifact observation Hchecked.
+    unfold checked_scalar_contract_invocation in Hchecked.
+    destruct (Nat.eqb (length arguments) (length (scalar_abi_operands abi)));
+      try discriminate.
+    destruct (scalar_literals_match arguments (scalar_abi_operands abi));
+      try discriminate.
+    inversion Hchecked; subst. reflexivity.
+  Qed.
+
+  Theorem checked_scalar_invocation_rejects_arity_mismatch :
+    forall abi arguments return_channel,
+      length arguments <> length (scalar_abi_operands abi) ->
+      checked_scalar_contract_invocation abi arguments return_channel = None.
+  Proof.
+    intros abi arguments return_channel Hneq.
+    unfold checked_scalar_contract_invocation.
+    apply Nat.eqb_neq in Hneq. rewrite Hneq. reflexivity.
+  Qed.
+
+  Theorem checked_string_result_invocation_observes_strings :
+    forall label arguments return_channel artifact observation,
+      checked_scalar_contract_invocation
+        {| scalar_abi_label := label;
+           scalar_abi_operands := [TStr; TStr];
+           scalar_abi_result := TStr |}
+        arguments
+        return_channel =
+        Some (artifact, observation) ->
+      observation = ObserveStrings.
+  Proof.
+    intros label arguments return_channel artifact observation Hchecked.
+    apply checked_scalar_invocation_observation_follows_result in Hchecked.
+    exact Hchecked.
+  Qed.
 
   Theorem structured_contract_call_preserves_list_payload :
     forall operation return_channel payloads,

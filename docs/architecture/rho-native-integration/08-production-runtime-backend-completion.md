@@ -182,7 +182,16 @@ return channel at position `2`, unary contracts receive one operand plus a
 return channel at position `1`, and no ABI entry exists for rejected rules. The
 Rust lowering exposes that data as `RhoLowering::scalar_contract_abi` in exact
 `RhoLowering::lowered` order, making it the source of truth for generated
-invocation dispatch. The executable regressions
+invocation dispatch. The runtime helper
+`mettail_rho_runtime::build_scalar_contract_invocation` is the checked dynamic
+call boundary for this inventory: it validates operand arity and scalar payload
+families against `RhoScalarContractAbi`, emits a normalized `rhoapi::Par`
+contract call, and selects integer, boolean, or string observation reports from
+the ABI result family. The proof
+`formal/rocq/rho_bridge/theories/RhoAstSendBoundary.v` models the same checked
+invocation boundary: accepted calls preserve `arguments ++ [return]`, arity
+mismatches reject, and result observations follow the ABI result type. The
+executable regressions
 `mettail-rho-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
 `mettail-rho-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and
 `mettail-rho-codegen::string_plus_lowers_to_rholang_concat_not_integer_plus`

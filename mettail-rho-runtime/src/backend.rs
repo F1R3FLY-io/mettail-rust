@@ -18,6 +18,11 @@ use mettail_rho_codegen::{
     CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram,
 };
 #[cfg(feature = "runtime-report")]
+use mettail_rho_codegen::{
+    RhoAstBuildError, RhoAstLiteral, RhoAstSend, RhoScalarContractAbi, RhoScalarContractShape,
+    RhoScalarType,
+};
+#[cfg(feature = "runtime-report")]
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendCapability,
     RuntimeBackendReport, RuntimeChannelObservation, RuntimeDovetailRunReport,
@@ -530,6 +535,147 @@ pub enum RhoBackendInvocation {
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
     RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
+}
+
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhoScalarInvocationLiteralType {
+    Int,
+    Bool,
+    Str,
+    NonScalar,
+}
+
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoScalarInvocationError {
+    ArityMismatch {
+        rule_label: String,
+        expected: usize,
+        actual: usize,
+    },
+    ArgumentTypeMismatch {
+        rule_label: String,
+        position: usize,
+        expected: RhoScalarType,
+        actual: RhoScalarInvocationLiteralType,
+    },
+    AstBuild(RhoAstBuildError),
+}
+
+#[cfg(feature = "runtime-report")]
+impl fmt::Display for RhoScalarInvocationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ArityMismatch { rule_label, expected, actual } => write!(
+                f,
+                "Rho scalar contract {rule_label} expected {expected} operand(s), got {actual}"
+            ),
+            Self::ArgumentTypeMismatch { rule_label, position, expected, actual } => write!(
+                f,
+                "Rho scalar contract {rule_label} expected {expected:?} at operand {position}, got {actual:?}"
+            ),
+            Self::AstBuild(err) => write!(f, "failed to build Rho scalar contract AST call: {err:?}"),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl std::error::Error for RhoScalarInvocationError {}
+
+#[cfg(feature = "runtime-report")]
+impl From<RhoAstBuildError> for RhoScalarInvocationError {
+    fn from(value: RhoAstBuildError) -> Self {
+        Self::AstBuild(value)
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+fn scalar_literal_type(literal: &RhoAstLiteral) -> RhoScalarInvocationLiteralType {
+    match literal {
+        RhoAstLiteral::Int(_) => RhoScalarInvocationLiteralType::Int,
+        RhoAstLiteral::Bool(_) => RhoScalarInvocationLiteralType::Bool,
+        RhoAstLiteral::String(_) => RhoScalarInvocationLiteralType::Str,
+        _ => RhoScalarInvocationLiteralType::NonScalar,
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+fn scalar_literal_matches(literal: &RhoAstLiteral, expected: RhoScalarType) -> bool {
+    matches!(
+        (scalar_literal_type(literal), expected),
+        (RhoScalarInvocationLiteralType::Int, RhoScalarType::Int)
+            | (RhoScalarInvocationLiteralType::Bool, RhoScalarType::Bool)
+            | (RhoScalarInvocationLiteralType::Str, RhoScalarType::Str)
+    )
+}
+
+#[cfg(feature = "runtime-report")]
+fn check_scalar_arguments(
+    abi: &RhoScalarContractAbi,
+    arguments: &[RhoAstLiteral],
+) -> Result<(), RhoScalarInvocationError> {
+    if arguments.len() != abi.operand_count() {
+        return Err(RhoScalarInvocationError::ArityMismatch {
+            rule_label: abi.rule_label.clone(),
+            expected: abi.operand_count(),
+            actual: arguments.len(),
+        });
+    }
+
+    match abi.shape {
+        RhoScalarContractShape::UnaryPrefix { argument, .. } => {
+            if !scalar_literal_matches(&arguments[0], argument) {
+                return Err(RhoScalarInvocationError::ArgumentTypeMismatch {
+                    rule_label: abi.rule_label.clone(),
+                    position: 0,
+                    expected: argument,
+                    actual: scalar_literal_type(&arguments[0]),
+                });
+            }
+        },
+        RhoScalarContractShape::BinaryInfix { left, right, .. } => {
+            for (position, expected) in [(0_usize, left), (1_usize, right)] {
+                if !scalar_literal_matches(&arguments[position], expected) {
+                    return Err(RhoScalarInvocationError::ArgumentTypeMismatch {
+                        rule_label: abi.rule_label.clone(),
+                        position,
+                        expected,
+                        actual: scalar_literal_type(&arguments[position]),
+                    });
+                }
+            }
+        },
+    }
+    Ok(())
+}
+
+/// Build a typed Rho backend invocation from a generated scalar-contract ABI.
+///
+/// Generated dispatch should use this helper after extracting scalar literal
+/// operands from a typed term. The helper checks the ABI arity and operand
+/// families, emits a normalized `rhoapi::Par` dynamic call, and chooses the
+/// observation report shape from the ABI result family.
+#[cfg(feature = "runtime-report")]
+pub fn build_scalar_contract_invocation(
+    abi: &RhoScalarContractAbi,
+    arguments: Vec<RhoAstLiteral>,
+    out_channel: impl Into<String>,
+) -> Result<RhoBackendInvocation, RhoScalarInvocationError> {
+    check_scalar_arguments(abi, &arguments)?;
+    let out_channel = out_channel.into();
+    let call = RhoAstSend::contract_call(abi.rule_label.clone(), arguments, out_channel.clone())?
+        .par()
+        .clone();
+    Ok(match abi.result_type() {
+        RhoScalarType::Int => RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel },
+        RhoScalarType::Bool => {
+            RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel }
+        },
+        RhoScalarType::Str => {
+            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel }
+        },
+    })
 }
 
 #[cfg(feature = "runtime-report")]
@@ -1433,6 +1579,30 @@ where
 mod tests {
     use super::*;
 
+    #[cfg(feature = "runtime-report")]
+    fn binary_abi(
+        label: &str,
+        left: RhoScalarType,
+        right: RhoScalarType,
+        result: RhoScalarType,
+    ) -> RhoScalarContractAbi {
+        RhoScalarContractAbi {
+            rule_label: label.to_string(),
+            shape: RhoScalarContractShape::BinaryInfix { left, right, result },
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    fn gstring(par: &Par) -> Option<&str> {
+        match par.exprs.as_slice() {
+            [expr] => match expr.expr_instance.as_ref()? {
+                models::rhoapi::expr::ExprInstance::GString(s) => Some(s.as_str()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     #[test]
     fn observation_report_fingerprint_is_membership_not_runtime_order() {
         let report = RhoObservationReport::planned(
@@ -1485,6 +1655,81 @@ mod tests {
                 (RuntimeObservationValue::Int(1), 1_usize),
                 (RuntimeObservationValue::Int(3), 2_usize),
             ])
+        );
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn scalar_contract_invocation_uses_generated_abi_shape() {
+        let abi = binary_abi("AddStr", RhoScalarType::Str, RhoScalarType::Str, RhoScalarType::Str);
+        let invocation = build_scalar_contract_invocation(
+            &abi,
+            vec![
+                RhoAstLiteral::String("rho".to_string()),
+                RhoAstLiteral::String("net".to_string()),
+            ],
+            "OUT",
+        )
+        .expect("valid ABI and arguments should produce a Rho invocation");
+
+        match invocation {
+            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel } => {
+                assert_eq!(out_channel, "OUT");
+                let send = call
+                    .sends
+                    .first()
+                    .expect("scalar invocation must be one send");
+                assert_eq!(
+                    send.chan.as_ref().and_then(gstring),
+                    Some("AddStr"),
+                    "dynamic call channel must be the ABI rule label"
+                );
+                assert_eq!(
+                    send.data.len(),
+                    3,
+                    "dynamic scalar call sends two operands plus return channel"
+                );
+            },
+            other => panic!("Str result ABI must select string observation, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn scalar_contract_invocation_rejects_bad_arity() {
+        let abi = binary_abi("AddInt", RhoScalarType::Int, RhoScalarType::Int, RhoScalarType::Int);
+        let err = build_scalar_contract_invocation(&abi, vec![RhoAstLiteral::Int(1)], "OUT")
+            .expect_err("binary ABI must reject a single argument");
+
+        assert_eq!(
+            err,
+            RhoScalarInvocationError::ArityMismatch {
+                rule_label: "AddInt".to_string(),
+                expected: 2,
+                actual: 1,
+            }
+        );
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn scalar_contract_invocation_rejects_type_mismatch() {
+        let abi = binary_abi("AddInt", RhoScalarType::Int, RhoScalarType::Int, RhoScalarType::Int);
+        let err = build_scalar_contract_invocation(
+            &abi,
+            vec![RhoAstLiteral::Int(1), RhoAstLiteral::Bool(true)],
+            "OUT",
+        )
+        .expect_err("Int ABI must reject a Bool argument");
+
+        assert_eq!(
+            err,
+            RhoScalarInvocationError::ArgumentTypeMismatch {
+                rule_label: "AddInt".to_string(),
+                position: 1,
+                expected: RhoScalarType::Int,
+                actual: RhoScalarInvocationLiteralType::Bool,
+            }
         );
     }
 }
