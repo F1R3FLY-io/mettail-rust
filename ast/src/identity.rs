@@ -37,8 +37,59 @@ fn push_ident(out: &mut String, ident: &Ident) {
     out.push_str(&ident.to_string());
 }
 
+/// Append a token stream's **spacing- and span-independent** canonical text to
+/// the fingerprint buffer.
+///
+/// This matters because the macro fingerprints `LanguageDef` values whose
+/// embedded Rust token streams (native types, literal `eval: ![{ … }]` bodies,
+/// theory types, logic content) are **`Span`-backed real-compiler tokens**,
+/// whereas the same definition reconstructed at runtime from
+/// `LanguageMetadata::definition_source()` re-parses those tokens with
+/// `syn`/`proc_macro2`, producing **synthetic tokens**. The two render with
+/// different inter-token spacing (`a::b(x, y)` vs `a :: b (x , y)`), and — worse
+/// — re-tokenizing inside a proc-macro yields real tokens again (tight), so a
+/// `from_str` round-trip is *not* a context-independent fixed point.
+///
+/// Whitespace between Rust tokens is not a meaningful language-identity
+/// distinction, so the fingerprint must be insensitive to it. This walks the
+/// token tree and emits each leaf token's own text (with explicit group
+/// delimiters), joined by a single space, ignoring `Spacing` and `Span`
+/// entirely. The result is identical whether the tokens are real (macro
+/// expansion) or synthetic (runtime reconstruction), while leaf tokens —
+/// including string/char literals whose text may contain spaces — are emitted
+/// verbatim and so are never merged or split. This is what makes
+/// `language_definition_fingerprint(reconstruct_language_def(definition_source()))`
+/// equal the generated `definition_fingerprint()` for standalone languages.
 fn push_tokens<T: ToTokens>(out: &mut String, value: &T) {
-    out.push_str(&value.to_token_stream().to_string());
+    push_token_stream_canonical(out, &value.to_token_stream());
+}
+
+/// Recursively emit a token stream in span/spacing-independent canonical form.
+/// See [`push_tokens`] for why this is necessary.
+fn push_token_stream_canonical(out: &mut String, stream: &proc_macro2::TokenStream) {
+    let mut first = true;
+    for tree in stream.clone() {
+        if !first {
+            out.push(' ');
+        }
+        first = false;
+        match tree {
+            proc_macro2::TokenTree::Group(group) => {
+                let (open, close) = match group.delimiter() {
+                    proc_macro2::Delimiter::Parenthesis => ("(", ")"),
+                    proc_macro2::Delimiter::Brace => ("{", "}"),
+                    proc_macro2::Delimiter::Bracket => ("[", "]"),
+                    proc_macro2::Delimiter::None => ("", ""),
+                };
+                out.push_str(open);
+                push_token_stream_canonical(out, &group.stream());
+                out.push_str(close);
+            },
+            proc_macro2::TokenTree::Ident(ident) => out.push_str(&ident.to_string()),
+            proc_macro2::TokenTree::Punct(punct) => out.push(punct.as_char()),
+            proc_macro2::TokenTree::Literal(literal) => out.push_str(&literal.to_string()),
+        }
+    }
 }
 
 fn push_ids(out: &mut String, ids: &[Ident]) {

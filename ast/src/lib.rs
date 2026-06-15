@@ -9,9 +9,11 @@
 //! The split exists because Cargo's `proc-macro = true` target type forbids
 //! non-proc-macro consumers from importing types from a proc-macro crate.
 
+pub mod auto_inject;
 pub mod compose;
 pub mod fragment;
 pub mod grammar;
+pub mod grammar_shapes;
 pub mod identity;
 pub mod language;
 pub mod merge;
