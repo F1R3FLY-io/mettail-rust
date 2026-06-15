@@ -9,3 +9,4 @@
 -Q theories SymbolicAlgebra
 
 theories/EffectiveBooleanAlgebra.v
+theories/ProductAlgebraClosure.v
