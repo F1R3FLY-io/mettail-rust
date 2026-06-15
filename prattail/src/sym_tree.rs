@@ -321,6 +321,344 @@ fn term_size<D>(t: &SymTerm<D>) -> usize {
     1 + t.children.iter().map(term_size).sum::<usize>()
 }
 
+/// All `n^k` index tuples (k-fold cartesian product of `0..n`).
+fn index_tuples(n: usize, k: usize) -> Vec<Vec<usize>> {
+    let mut out = vec![Vec::new()];
+    for _ in 0..k {
+        let mut next = Vec::with_capacity(out.len() * n);
+        for prefix in &out {
+            for i in 0..n {
+                let mut t = prefix.clone();
+                t.push(i);
+                next.push(t);
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// Cartesian product of per-slot choice lists.
+fn cartesian(slots: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut out = vec![Vec::new()];
+    for slot in slots {
+        let mut next = Vec::new();
+        for prefix in &out {
+            for &choice in slot {
+                let mut t = prefix.clone();
+                t.push(choice);
+                next.push(t);
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Determinization + complement (symbolic bottom-up subset construction)
+// ══════════════════════════════════════════════════════════════════════════════
+
+impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
+    /// Per-constructor payload minterms: `None` (a single structural "minterm")
+    /// for payload-less constructors, or the satisfiable minterms of the
+    /// constructor's payload guards for scalar constructors.
+    fn constructor_minterms(&self) -> HashMap<String, Vec<Option<A::Predicate>>> {
+        let mut map = HashMap::new();
+        for c in self.arities.keys() {
+            let trans_c: Vec<&TreeTrans<A::Predicate>> =
+                self.transitions.iter().filter(|t| &t.constructor == c).collect();
+            let scalar = trans_c.iter().any(|t| t.payload_guard.is_some());
+            let mts = if scalar {
+                let guards: Vec<A::Predicate> =
+                    trans_c.iter().filter_map(|t| t.payload_guard.clone()).collect();
+                crate::collection_algebra::minterms(&self.algebra, &guards)
+                    .into_iter()
+                    .map(Some)
+                    .collect()
+            } else {
+                vec![None]
+            };
+            map.insert(c.clone(), mts);
+        }
+        map
+    }
+
+    /// The determinized target state (set of original states) for a constructor
+    /// `c` under payload minterm `m` and determinized child-state sets.
+    fn det_target(
+        &self,
+        c: &str,
+        m: &Option<A::Predicate>,
+        child_dets: &[&std::collections::BTreeSet<usize>],
+    ) -> std::collections::BTreeSet<usize> {
+        let mut target = std::collections::BTreeSet::new();
+        for t in &self.transitions {
+            if t.constructor != c || t.child_states.len() != child_dets.len() {
+                continue;
+            }
+            let compat = match (m, &t.payload_guard) {
+                (None, None) => true,
+                (Some(mm), Some(g)) => self.algebra.is_satisfiable(&self.algebra.and(mm, g)),
+                _ => false,
+            };
+            if !compat {
+                continue;
+            }
+            if t.child_states.iter().zip(child_dets).all(|(q, d)| d.contains(q)) {
+                target.insert(t.target);
+            }
+        }
+        target
+    }
+
+    /// Determinize bottom-up (subset construction over payload minterms); if
+    /// `complement` is set, the accepting set is flipped (det-states that do NOT
+    /// meet an original accepting state).
+    fn determinize_with(&self, complement: bool) -> Self {
+        use std::collections::{BTreeSet, HashSet as Set};
+        let ctor_minterms = self.constructor_minterms();
+
+        // Phase 1 — discover all reachable determinized states (∅ = sink).
+        let mut discovered: Vec<BTreeSet<usize>> = vec![BTreeSet::new()];
+        let mut seen: Set<BTreeSet<usize>> = Set::new();
+        seen.insert(BTreeSet::new());
+        loop {
+            let snapshot = discovered.clone();
+            let before = discovered.len();
+            for (c, &k) in &self.arities {
+                let mts = &ctor_minterms[c];
+                for tup in index_tuples(snapshot.len(), k) {
+                    let child_dets: Vec<&BTreeSet<usize>> =
+                        tup.iter().map(|&i| &snapshot[i]).collect();
+                    for m in mts {
+                        let target = self.det_target(c, m, &child_dets);
+                        if seen.insert(target.clone()) {
+                            discovered.push(target);
+                        }
+                    }
+                }
+            }
+            if discovered.len() == before {
+                break;
+            }
+        }
+
+        // Phase 2 — build the deterministic, complete automaton.
+        let id_of: HashMap<BTreeSet<usize>, usize> =
+            discovered.iter().enumerate().map(|(i, d)| (d.clone(), i)).collect();
+        let mut result = SymbolicTreeAutomaton::new(self.algebra.clone());
+        result.num_states = discovered.len();
+        result.arities = self.arities.clone();
+        for (c, &k) in &self.arities {
+            let mts = &ctor_minterms[c];
+            for tup in index_tuples(discovered.len(), k) {
+                let child_dets: Vec<&BTreeSet<usize>> =
+                    tup.iter().map(|&i| &discovered[i]).collect();
+                for m in mts {
+                    let target = self.det_target(c, m, &child_dets);
+                    let tid = id_of[&target];
+                    result.transitions.push(TreeTrans {
+                        constructor: c.clone(),
+                        payload_guard: m.clone(),
+                        child_states: tup.clone(),
+                        target: tid,
+                    });
+                }
+            }
+        }
+        for (d, &id) in &id_of {
+            let intersects = d.iter().any(|s| self.accepting.contains(s));
+            if intersects != complement {
+                result.accepting.insert(id);
+            }
+        }
+        result
+    }
+
+    /// A deterministic, complete automaton accepting the same language.
+    pub fn determinize(&self) -> Self {
+        self.determinize_with(false)
+    }
+
+    /// The complement automaton (accepts exactly the well-formed terms over this
+    /// alphabet that `self` rejects).
+    pub fn complement(&self) -> Self {
+        self.determinize_with(true)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TreeAlgebra — effective Boolean algebra of symbolic tree patterns
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A symbolic tree predicate over element-predicate type `P`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TreePred<P> {
+    /// Matches every well-formed term.
+    True,
+    /// Matches no term.
+    False,
+    /// Matches any subtree (a pattern variable / wildcard).
+    Wild,
+    /// Matches `constructor(children...)` whose payload satisfies `payload_guard`
+    /// (`None` = structural) and whose children match the child patterns.
+    Node { constructor: String, payload_guard: Option<P>, children: Vec<TreePred<P>> },
+    /// Conjunction.
+    And(Box<TreePred<P>>, Box<TreePred<P>>),
+    /// Disjunction.
+    Or(Box<TreePred<P>>, Box<TreePred<P>>),
+    /// Negation (relative to the ranked-alphabet universe).
+    Not(Box<TreePred<P>>),
+}
+
+/// The effective Boolean algebra of symbolic tree predicates over a ranked
+/// alphabet, with scalar payloads decided by an element algebra `A`.
+#[derive(Clone, Debug)]
+pub struct TreeAlgebra<A: BooleanAlgebra> {
+    /// The element (payload) algebra.
+    pub elem: A,
+    /// Ranked alphabet: constructor → arity.
+    pub arities: HashMap<String, usize>,
+    /// Constructors that carry a scalar payload.
+    pub payloaded: HashSet<String>,
+}
+
+impl<A: BooleanAlgebra> TreeAlgebra<A> {
+    /// Construct a tree algebra over the given alphabet.
+    pub fn new(elem: A, arities: HashMap<String, usize>, payloaded: HashSet<String>) -> Self {
+        TreeAlgebra { elem, arities, payloaded }
+    }
+
+    /// The universal automaton accepting every well-formed term.
+    fn universal(&self) -> SymbolicTreeAutomaton<A> {
+        let mut a = SymbolicTreeAutomaton::new(self.elem.clone());
+        a.arities = self.arities.clone();
+        let u = a.add_state();
+        a.set_accepting(u);
+        for (c, &k) in &self.arities {
+            let pg = if self.payloaded.contains(c) { Some(self.elem.true_pred()) } else { None };
+            a.add_transition(TreeTrans {
+                constructor: c.clone(),
+                payload_guard: pg,
+                child_states: vec![u; k],
+                target: u,
+            });
+        }
+        a
+    }
+
+    /// The empty automaton (one non-accepting state).
+    fn empty_automaton(&self) -> SymbolicTreeAutomaton<A> {
+        let mut a = SymbolicTreeAutomaton::new(self.elem.clone());
+        a.arities = self.arities.clone();
+        a.add_state();
+        a
+    }
+
+    /// Compile a node pattern into an automaton accepting
+    /// `constructor(children...)` matching the child patterns.
+    fn compile_node(
+        &self,
+        constructor: &str,
+        payload_guard: &Option<A::Predicate>,
+        children: &[TreePred<A::Predicate>],
+    ) -> SymbolicTreeAutomaton<A> {
+        let child_autos: Vec<SymbolicTreeAutomaton<A>> =
+            children.iter().map(|ch| self.compile(ch)).collect();
+        let mut result = SymbolicTreeAutomaton::new(self.elem.clone());
+        result.arities = self.arities.clone();
+        let mut child_accepts: Vec<Vec<usize>> = Vec::with_capacity(child_autos.len());
+        for ca in &child_autos {
+            for (cc, &aa) in &ca.arities {
+                result.arities.insert(cc.clone(), aa);
+            }
+            let base = result.num_states;
+            result.num_states += ca.num_states;
+            for t in &ca.transitions {
+                result.transitions.push(TreeTrans {
+                    constructor: t.constructor.clone(),
+                    payload_guard: t.payload_guard.clone(),
+                    child_states: t.child_states.iter().map(|q| q + base).collect(),
+                    target: t.target + base,
+                });
+            }
+            child_accepts.push(ca.accepting.iter().map(|&q| q + base).collect());
+        }
+        let q = result.num_states;
+        result.num_states += 1;
+        result.set_accepting(q);
+        for combo in cartesian(&child_accepts) {
+            result.add_transition(TreeTrans {
+                constructor: constructor.to_string(),
+                payload_guard: payload_guard.clone(),
+                child_states: combo,
+                target: q,
+            });
+        }
+        result
+    }
+
+    /// Compile a tree predicate into a symbolic tree automaton.
+    fn compile(&self, p: &TreePred<A::Predicate>) -> SymbolicTreeAutomaton<A> {
+        match p {
+            TreePred::True | TreePred::Wild => self.universal(),
+            TreePred::False => self.empty_automaton(),
+            TreePred::Node { constructor, payload_guard, children } => {
+                self.compile_node(constructor, payload_guard, children)
+            },
+            TreePred::And(a, b) => self.compile(a).intersect(&self.compile(b)),
+            TreePred::Or(a, b) => self.compile(a).union(&self.compile(b)),
+            TreePred::Not(x) => self.compile(x).complement(),
+        }
+    }
+}
+
+impl<A: BooleanAlgebra> BooleanAlgebra for TreeAlgebra<A> {
+    type Predicate = TreePred<A::Predicate>;
+    type Domain = SymTerm<A::Domain>;
+
+    fn true_pred(&self) -> Self::Predicate {
+        TreePred::True
+    }
+
+    fn false_pred(&self) -> Self::Predicate {
+        TreePred::False
+    }
+
+    fn and(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
+        match (a, b) {
+            (TreePred::False, _) | (_, TreePred::False) => TreePred::False,
+            (TreePred::True, x) | (x, TreePred::True) => x.clone(),
+            _ => TreePred::And(Box::new(a.clone()), Box::new(b.clone())),
+        }
+    }
+
+    fn or(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
+        match (a, b) {
+            (TreePred::True, _) | (_, TreePred::True) => TreePred::True,
+            (TreePred::False, x) | (x, TreePred::False) => x.clone(),
+            _ => TreePred::Or(Box::new(a.clone()), Box::new(b.clone())),
+        }
+    }
+
+    fn not(&self, a: &Self::Predicate) -> Self::Predicate {
+        TreePred::Not(Box::new(a.clone()))
+    }
+
+    fn is_satisfiable(&self, a: &Self::Predicate) -> bool {
+        !self.compile(a).is_empty()
+    }
+
+    fn witness(&self, a: &Self::Predicate) -> Option<Self::Domain> {
+        self.compile(a).witness()
+    }
+
+    fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
+        self.compile(pred).accepts(elem)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +785,121 @@ mod tests {
         assert!(u.accepts(&pair(lit(3), lit(4)))); // from A
         assert!(u.accepts(&lit(95))); // from C
         assert!(!u.accepts(&lit(50))); // neither
+    }
+}
+
+#[cfg(test)]
+mod tree_algebra_tests {
+    use super::*;
+    use crate::symbolic::{IntervalAlgebra, IntervalPred};
+
+    fn lit(n: i64) -> SymTerm<i64> {
+        SymTerm::leaf("Lit", n)
+    }
+    fn pair(a: SymTerm<i64>, b: SymTerm<i64>) -> SymTerm<i64> {
+        SymTerm::node("Pair", vec![a, b])
+    }
+
+    // Term language: Lit[int] (scalar) and Pair(a, b).
+    fn tree_alg() -> TreeAlgebra<IntervalAlgebra> {
+        let arities: HashMap<String, usize> =
+            [("Lit".to_string(), 0usize), ("Pair".to_string(), 2usize)].into_iter().collect();
+        let payloaded: HashSet<String> = ["Lit".to_string()].into_iter().collect();
+        TreeAlgebra::new(IntervalAlgebra::new(0, 100), arities, payloaded)
+    }
+
+    fn small_lit() -> TreePred<IntervalPred> {
+        TreePred::Node {
+            constructor: "Lit".to_string(),
+            payload_guard: Some(IntervalPred::Range(0, 10)),
+            children: vec![],
+        }
+    }
+
+    #[test]
+    fn node_pattern_match() {
+        let alg = tree_alg();
+        let p = small_lit();
+        assert!(alg.evaluate(&p, &lit(5)));
+        assert!(!alg.evaluate(&p, &lit(50)));
+        assert!(!alg.evaluate(&p, &pair(lit(1), lit(2))));
+        assert!(alg.is_satisfiable(&p));
+        let w = alg.witness(&p).expect("nonempty");
+        assert!(alg.evaluate(&p, &w));
+    }
+
+    #[test]
+    fn nested_pattern_with_wildcard() {
+        let alg = tree_alg();
+        // Pair(small Lit, anything)
+        let p = TreePred::Node {
+            constructor: "Pair".to_string(),
+            payload_guard: None,
+            children: vec![small_lit(), TreePred::Wild],
+        };
+        assert!(alg.evaluate(&p, &pair(lit(3), lit(99))));
+        assert!(alg.evaluate(&p, &pair(lit(3), pair(lit(1), lit(2)))));
+        assert!(!alg.evaluate(&p, &pair(lit(50), lit(1)))); // first not small
+        assert!(!alg.evaluate(&p, &lit(3))); // not a Pair
+        assert!(alg.is_satisfiable(&p));
+        assert!(alg.evaluate(&p, &alg.witness(&p).unwrap()));
+    }
+
+    #[test]
+    fn complement_over_alphabet() {
+        let alg = tree_alg();
+        let not_small_lit = alg.not(&small_lit());
+        // A big Lit and any Pair are in the complement; a small Lit is not.
+        assert!(!alg.evaluate(&not_small_lit, &lit(5)));
+        assert!(alg.evaluate(&not_small_lit, &lit(50)));
+        assert!(alg.evaluate(&not_small_lit, &pair(lit(1), lit(2))));
+        assert!(alg.is_satisfiable(&not_small_lit));
+        // Double negation ≡ original (semantically): a∧¬a unsat, ¬¬a accepts a.
+        assert!(!alg.is_satisfiable(&alg.and(&small_lit(), &not_small_lit)));
+        let dn = alg.not(&not_small_lit);
+        assert!(alg.evaluate(&dn, &lit(5)));
+        assert!(!alg.evaluate(&dn, &lit(50)));
+    }
+
+    #[test]
+    fn and_or_combinations() {
+        let alg = tree_alg();
+        // Lit in [0,10) AND Lit in [5,100) = Lit in [5,10)
+        let mid = alg.and(
+            &small_lit(),
+            &TreePred::Node {
+                constructor: "Lit".to_string(),
+                payload_guard: Some(IntervalPred::Range(5, 100)),
+                children: vec![],
+            },
+        );
+        assert!(alg.evaluate(&mid, &lit(7)));
+        assert!(!alg.evaluate(&mid, &lit(3)));
+        assert!(!alg.evaluate(&mid, &lit(50)));
+
+        // small Lit OR any Pair
+        let either = alg.or(
+            &small_lit(),
+            &TreePred::Node {
+                constructor: "Pair".to_string(),
+                payload_guard: None,
+                children: vec![TreePred::Wild, TreePred::Wild],
+            },
+        );
+        assert!(alg.evaluate(&either, &lit(3)));
+        assert!(alg.evaluate(&either, &pair(lit(50), lit(50))));
+        assert!(!alg.evaluate(&either, &lit(50)));
+    }
+
+    #[test]
+    fn top_and_bottom() {
+        let alg = tree_alg();
+        assert!(alg.is_satisfiable(&alg.true_pred()));
+        assert!(!alg.is_satisfiable(&alg.false_pred()));
+        assert!(alg.evaluate(&alg.true_pred(), &pair(lit(1), lit(2))));
+        // ¬True = False over the alphabet.
+        assert!(!alg.is_satisfiable(&alg.not(&alg.true_pred())));
+        // ¬False = True.
+        assert!(alg.is_satisfiable(&alg.not(&alg.false_pred())));
     }
 }

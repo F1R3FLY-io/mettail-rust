@@ -37,7 +37,7 @@ use crate::symbolic::BooleanAlgebra;
 /// The satisfiable minterms of a set of element predicates: maximal satisfiable
 /// conjunctions of each predicate or its negation. Every domain element
 /// satisfies exactly one minterm.
-fn minterms<A: BooleanAlgebra>(elem: &A, classes: &[A::Predicate]) -> Vec<A::Predicate> {
+pub(crate) fn minterms<A: BooleanAlgebra>(elem: &A, classes: &[A::Predicate]) -> Vec<A::Predicate> {
     let mut ms = vec![elem.true_pred()];
     for c in classes {
         let nc = elem.not(c);
