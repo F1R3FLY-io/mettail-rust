@@ -860,7 +860,10 @@ mod tests {
 
     const ALL_LOWERED_FRAGMENT: &str = r#"
         name: CalcAllLowered,
-        types { Proc }
+        types {
+            Proc
+            ![i64] as Int
+        }
         terms {
             AddInt . a:Int, b:Int |- a "+" b : Int ;
             SubInt . a:Int, b:Int |- a "-" b : Int ;
@@ -870,7 +873,11 @@ mod tests {
 
     const PARTIAL_FRAGMENT: &str = r#"
         name: CalcPartial,
-        types { Proc }
+        types {
+            Proc
+            ![i64] as Int
+            ![mettail_runtime::CanonicalBigInt] as BigInt
+        }
         terms {
             AddInt . a:Int, b:Int |- a "+" b : Int ;
             PowInt . a:Int, b:Int |- a "^" b : Int ;
@@ -880,7 +887,10 @@ mod tests {
 
     const NATIVE_REJECTED_FRAGMENT: &str = r#"
         name: CalcNativeRejected,
-        types { Proc }
+        types {
+            Proc
+            ![i64] as Int
+        }
         terms {
             PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] fold;
             FactInt . a:Int |- a "!" : Int ![factorial(a)] step;

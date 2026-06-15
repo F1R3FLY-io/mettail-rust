@@ -765,7 +765,10 @@ mod tests {
 
     const FRAGMENT: &str = r#"
         name: ValidateScalar,
-        types { Proc }
+        types {
+            Proc
+            ![i64] as Int
+        }
         terms {
             AddInt . a:Int, b:Int |- a "+" b : Int ;
         }

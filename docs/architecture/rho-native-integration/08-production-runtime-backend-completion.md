@@ -149,10 +149,13 @@ and `RhoAstSend` emits structured dynamic send payloads for list, map, bag,
 URI, byte, and private-name values. Both paths execute on the host RhoRuntime
 and observe the corresponding recursive runtime values.
 
-Scalar operation coverage is type-sensitive. The generated Rho backend must not
-select Rholang operators from terminals alone because the same source token can
-have different meanings after MeTTaIL type checking. For the current scalar
-family:
+Scalar operation coverage is type-sensitive and inventory-derived. The generated
+Rho backend must not select Rholang operators from terminals alone or from
+category names because the same source token can have different meanings after
+MeTTaIL type checking, and a category may be renamed without changing its native
+payload. The classifier first maps each rule category through the
+macro-expanded `LanguageDef` native type inventory. For the current Rho-native
+scalar families:
 
 | Typed rule | Reader-facing source shape | Required Rho AST operator |
 |---|---|---|
@@ -163,9 +166,13 @@ family:
 | `Bool × Bool → Bool` logic | `and`, `or` | matching boolean body |
 
 The proof `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` captures
-this contract. The executable regression
+this contract, including the fact that renamed native categories lower
+identically while scalar-looking structural categories reject. The executable
+regressions
+`mettail-rho-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
+`mettail-rho-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and
 `mettail-rho-codegen::string_plus_lowers_to_rholang_concat_not_integer_plus`
-then inspects the generated AST and requires Calculator `AddStr` to use
+then inspect the generated AST and require Calculator `AddStr` to use
 `ExprInstance::EPlusPlusBody`. Runtime wrapper tests parse `"rho" + "net"` and
 observe `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end
 chain from source snippet through WPDA parsing, typed invocation mapping,

@@ -435,14 +435,21 @@ the same terminal at different semantic types. The canonical example is `+`:
 | `AddStr(a, b) → a + b` | `Str × Str` | `Str` | `ExprInstance::EPlusPlusBody` |
 | `Concat(a, b) → a ++ b` | `Str × Str` | `Str` | `ExprInstance::EPlusPlusBody` |
 
-Thus the lowering classifier is a partial function:
+Thus the lowering classifier is a partial function over native payload families
+derived from `LanguageDef`, not over category spellings:
 
-`classify_scalar_op : Terminal × Type × Type × Type ⇀ RhoOperator`
+`native_scalar : Category × LanguageDef ⇀ {Int, Bool, Str}`
 
-The classifier is defined only when the operand and result types match a
-Rholang-native operator. For example, `classify_scalar_op(+, Int, Int, Int) =
-EPlus`, while `classify_scalar_op(+, Str, Str, Str) = EPlusPlus`. Mixed operand
-types, boolean `+`, arithmetic returning `Bool`, and logical operations outside
+`classify_scalar_op : Terminal × NativeScalar × NativeScalar × NativeScalar ⇀ RhoOperator`
+
+The first function consults the macro-expanded `LanguageDef` type inventory:
+`![i32] as Number` and `![i32] as Int` both classify as `Int`, while a
+structural category literally named `Int` has no native scalar classification.
+The operator classifier is defined only when the operand and result native
+families match a Rholang-native operator. For example,
+`classify_scalar_op(+, Int, Int, Int) = EPlus`, while
+`classify_scalar_op(+, Str, Str, Str) = EPlusPlus`. Mixed operand types,
+boolean `+`, arithmetic returning `Bool`, and logical operations outside
 `Bool × Bool → Bool` are rejected with explicit lowering diagnostics.
 
 Literate classifier sketch:
@@ -452,29 +459,36 @@ Algorithm: Classify a scalar operator for Rho AST generation
 
 Given:
   terminal token τ
-  left operand scalar type α
-  right operand scalar type β
-  result scalar type γ
+  macro-expanded LanguageDef L
+  left operand category A
+  right operand category B
+  result category C
 
 Produce:
   a Rholang AST operator or an explicit rejection
 
 Steps:
-  1. If τ is `+`, α = Int, β = Int, and γ = Int, emit integer addition.
+  1. Look up A, B, and C in L.types.
 
-  2. If τ is `+` or `++`, α = Str, β = Str, and γ = Str, emit string
+  2. If any category has no supported native scalar payload family, reject.
+
+  3. Let α, β, and γ be the native scalar families of A, B, and C.
+
+  4. If τ is `+`, α = Int, β = Int, and γ = Int, emit integer addition.
+
+  5. If τ is `+` or `++`, α = Str, β = Str, and γ = Str, emit string
      concatenation.
 
-  3. If τ is one of `==`, `!=`, `<`, `>`, `<=`, or `>=`, α = β is one of
+  6. If τ is one of `==`, `!=`, `<`, `>`, `<=`, or `>=`, α = β is one of
      Int, Bool, or Str, and γ = Bool, emit the matching comparison.
 
-  4. If τ is `and` or `or`, α = Bool, β = Bool, and γ = Bool, emit the matching
+  7. If τ is `and` or `or`, α = Bool, β = Bool, and γ = Bool, emit the matching
      boolean operator.
 
-  5. If τ is `-`, `*`, `/`, or `%`, α = Int, β = Int, and γ = Int, emit the
+  8. If τ is `-`, `*`, `/`, or `%`, α = Int, β = Int, and γ = Int, emit the
      matching integer arithmetic operator.
 
-  6. Otherwise reject. Rejection is part of the coverage contract, not a
+  9. Otherwise reject. Rejection is part of the coverage contract, not a
      fallback to an untyped source-text operator.
 ```
 
@@ -483,7 +497,9 @@ Rocq model
 `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` proves that
 successful scalar lowerings use compatible operand/result types, that integer
 `+` lowers to integer addition, and that string `+` and `++` lower to string
-concatenation rather than integer addition.
+concatenation rather than integer addition. It also proves that category names
+do not determine scalar eligibility: renamed native categories lower
+identically, and scalar-looking structural categories are rejected.
 
 Input binders use f1r3node's de Bruijn convention:
 

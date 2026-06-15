@@ -20,6 +20,39 @@ Section RhoScalarOperatorTyping.
   | TBool
   | TStr.
 
+  Inductive NativeKind : Type :=
+  | NInt8
+  | NInt16
+  | NInt32
+  | NInt64
+  | NUInt32
+  | NFloat64
+  | NBool
+  | NStr
+  | NBigInt
+  | NBigRat
+  | NFixed
+  | NOther.
+
+  Record CategoryDecl : Type := {
+    category_name_id : nat;
+    category_native_kind : option NativeKind
+  }.
+
+  Definition native_kind_scalar (kind : NativeKind) : option ScalarTy :=
+    match kind with
+    | NInt8 | NInt16 | NInt32 | NInt64 => Some TInt
+    | NBool => Some TBool
+    | NStr => Some TStr
+    | NUInt32 | NFloat64 | NBigInt | NBigRat | NFixed | NOther => None
+    end.
+
+  Definition category_decl_scalar (decl : CategoryDecl) : option ScalarTy :=
+    match category_native_kind decl with
+    | Some kind => native_kind_scalar kind
+    | None => None
+    end.
+
   Inductive SurfaceBinOp : Type :=
   | SPlus
   | SMinus
@@ -97,6 +130,69 @@ Section RhoScalarOperatorTyping.
         end
     | _, _ => None
     end.
+
+  Definition typed_binop_from_categories
+      (op : SurfaceBinOp)
+      (lhs rhs result : CategoryDecl) : option RhoBinOp :=
+    match category_decl_scalar lhs,
+          category_decl_scalar rhs,
+          category_decl_scalar result with
+    | Some lhs_ty, Some rhs_ty, Some result_ty =>
+        typed_binop op lhs_ty rhs_ty result_ty
+    | _, _, _ => None
+    end.
+
+  Theorem category_name_does_not_affect_native_scalar : forall name1 name2 kind,
+    category_decl_scalar
+      {| category_name_id := name1; category_native_kind := Some kind |}
+    =
+    category_decl_scalar
+      {| category_name_id := name2; category_native_kind := Some kind |}.
+  Proof. reflexivity. Qed.
+
+  Theorem scalar_named_structural_category_rejected : forall name,
+    category_decl_scalar
+      {| category_name_id := name; category_native_kind := None |} = None.
+  Proof. reflexivity. Qed.
+
+  Theorem renamed_native_categories_lower_identically : forall op name1 name2 name3 name4 name5 name6 kind_l kind_r kind_result,
+    typed_binop_from_categories
+      op
+      {| category_name_id := name1; category_native_kind := Some kind_l |}
+      {| category_name_id := name2; category_native_kind := Some kind_r |}
+      {| category_name_id := name3; category_native_kind := Some kind_result |}
+    =
+    typed_binop_from_categories
+      op
+      {| category_name_id := name4; category_native_kind := Some kind_l |}
+      {| category_name_id := name5; category_native_kind := Some kind_r |}
+      {| category_name_id := name6; category_native_kind := Some kind_result |}.
+  Proof. reflexivity. Qed.
+
+  Theorem category_based_lowering_requires_native_payloads : forall op lhs rhs result rho,
+    typed_binop_from_categories op lhs rhs result = Some rho ->
+    exists lhs_ty rhs_ty result_ty,
+      category_decl_scalar lhs = Some lhs_ty /\
+      category_decl_scalar rhs = Some rhs_ty /\
+      category_decl_scalar result = Some result_ty /\
+      typed_binop op lhs_ty rhs_ty result_ty = Some rho.
+  Proof.
+    intros op lhs rhs result rho Hlower.
+    unfold typed_binop_from_categories in Hlower.
+    destruct (category_decl_scalar lhs) as [lhs_ty |] eqn:Hlhs; try discriminate.
+    destruct (category_decl_scalar rhs) as [rhs_ty |] eqn:Hrhs; try discriminate.
+    destruct (category_decl_scalar result) as [result_ty |] eqn:Hresult; try discriminate.
+    exists lhs_ty, rhs_ty, result_ty. repeat split; assumption.
+  Qed.
+
+  Theorem unsupported_native_kinds_are_not_scalars :
+    native_kind_scalar NUInt32 = None /\
+    native_kind_scalar NFloat64 = None /\
+    native_kind_scalar NBigInt = None /\
+    native_kind_scalar NBigRat = None /\
+    native_kind_scalar NFixed = None /\
+    native_kind_scalar NOther = None.
+  Proof. repeat split; reflexivity. Qed.
 
   Theorem int_plus_lowers_to_integer_add :
     typed_binop SPlus TInt TInt TInt = Some RAdd.

@@ -274,7 +274,7 @@ Section RhoCallByNeedObservation.
     need_force_admissions plan = [NeedForceAdmitted; NeedForceAdmitted].
   Proof.
     intros plan Haccepted.
-    destruct Haccepted as [_ [Hadmissions _]].
+    destruct Haccepted as [_ Hadmissions].
     exact Hadmissions.
   Qed.
 

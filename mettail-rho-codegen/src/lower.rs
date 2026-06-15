@@ -21,7 +21,7 @@
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::identity::language_definition_fingerprint;
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_ast::types::TypeExpr;
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
@@ -319,15 +319,30 @@ fn rho_unop(terminal: &str, arg: RhoScalarTy, result: RhoScalarTy) -> Option<Rho
     }
 }
 
-/// The Rholang-native scalar corresponding to a MeTTaIL type.
-fn rho_native_scalar_type(ty: &TypeExpr) -> Option<RhoScalarTy> {
-    match ty {
-        TypeExpr::Base(id) => match id.to_string().as_str() {
-            "Int" => Some(RhoScalarTy::Int),
-            "Bool" => Some(RhoScalarTy::Bool),
-            "Str" => Some(RhoScalarTy::Str),
-            _ => None,
+/// The Rholang-native scalar corresponding to a declared MeTTaIL category.
+///
+/// The category name itself is not semantic. A language may call an `i32`
+/// category `Number`, or may declare a structural category named `Int`.
+/// Lowering therefore follows the macro-expanded `LanguageDef` inventory and
+/// maps only native Rust payload families that the Rho AST boundary can carry
+/// exactly.
+fn category_rho_native_scalar(def: &LanguageDef, category: &syn::Ident) -> Option<RhoScalarTy> {
+    let lang_type = def.get_type(category)?;
+    let native_type = lang_type.native_type.as_ref()?;
+    match NativeKind::from_syn_type(native_type) {
+        NativeKind::Int8 | NativeKind::Int16 | NativeKind::Int32 | NativeKind::Int64 => {
+            Some(RhoScalarTy::Int)
         },
+        NativeKind::Bool => Some(RhoScalarTy::Bool),
+        NativeKind::Str => Some(RhoScalarTy::Str),
+        _ => None,
+    }
+}
+
+/// The Rholang-native scalar corresponding to a MeTTaIL type.
+fn rho_native_scalar_type(def: &LanguageDef, ty: &TypeExpr) -> Option<RhoScalarTy> {
+    match ty {
+        TypeExpr::Base(id) => category_rho_native_scalar(def, id),
         _ => None,
     }
 }
@@ -338,20 +353,15 @@ fn rho_native_scalar_type(ty: &TypeExpr) -> Option<RhoScalarTy> {
 /// (binder/guard/optional) parameter are NOT native — lowering their operators
 /// to Rholang scalar `Expr`s would be semantically wrong, so such rules are
 /// rejected and surfaced to the coverage gate.
-fn param_rho_native_scalar(p: &TermParam) -> Option<RhoScalarTy> {
+fn param_rho_native_scalar(def: &LanguageDef, p: &TermParam) -> Option<RhoScalarTy> {
     match p {
-        TermParam::Simple { ty, .. } => rho_native_scalar_type(ty),
+        TermParam::Simple { ty, .. } => rho_native_scalar_type(def, ty),
         _ => None,
     }
 }
 
-fn result_rho_native_scalar(rule: &GrammarRule) -> Option<RhoScalarTy> {
-    match rule.category.to_string().as_str() {
-        "Int" => Some(RhoScalarTy::Int),
-        "Bool" => Some(RhoScalarTy::Bool),
-        "Str" => Some(RhoScalarTy::Str),
-        _ => None,
-    }
+fn result_rho_native_scalar(def: &LanguageDef, rule: &GrammarRule) -> Option<RhoScalarTy> {
+    category_rho_native_scalar(def, &rule.category)
 }
 
 fn bitvec(indices: &[usize]) -> Vec<u8> {
@@ -418,7 +428,7 @@ fn contract_ast(
 
 /// Lower one rule to a normalized Rholang contract, or `None` if it is out of the supported
 /// scalar-operator subset (→ to be recorded as rejected, never dropped).
-fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
+fn lower_rule(def: &LanguageDef, rule: &GrammarRule) -> Option<LoweredRule> {
     let pattern = rule.syntax_pattern.as_ref()?;
     // Only lower rules whose operands and result have an exact Rholang scalar
     // interpretation. Keying on the terminal alone would mis-lower e.g.
@@ -427,7 +437,7 @@ fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
     if ctx.is_empty() {
         return None;
     }
-    let result_ty = result_rho_native_scalar(rule)?;
+    let result_ty = result_rho_native_scalar(def, rule)?;
     let label = rule.label.to_string();
     match pattern.as_slice() {
         // Binary infix: `a <op> b` → contract @"L"(@a, @b, ret) = { ret!(a <op> b) }
@@ -435,8 +445,8 @@ fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
             let [lhs_param, rhs_param] = ctx.as_slice() else {
                 return None;
             };
-            let lhs_ty = param_rho_native_scalar(lhs_param)?;
-            let rhs_ty = param_rho_native_scalar(rhs_param)?;
+            let lhs_ty = param_rho_native_scalar(def, lhs_param)?;
+            let rhs_ty = param_rho_native_scalar(def, rhs_param)?;
             let rop = rho_binop(op, lhs_ty, rhs_ty, result_ty)?;
             let formal_count = 3;
             let lhs = bound_formal(formal_count, 0);
@@ -453,7 +463,7 @@ fn lower_rule(rule: &GrammarRule) -> Option<LoweredRule> {
             let [arg_param] = ctx.as_slice() else {
                 return None;
             };
-            let arg_ty = param_rho_native_scalar(arg_param)?;
+            let arg_ty = param_rho_native_scalar(def, arg_param)?;
             let rop = rho_unop(op, arg_ty, result_ty)?;
             let formal_count = 2;
             let arg = bound_formal(formal_count, 0);
@@ -476,7 +486,7 @@ pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
     let mut annotations = Vec::new();
     let mut network = ChannelNetwork::new();
     for rule in &def.terms {
-        match lower_rule(rule) {
+        match lower_rule(def, rule) {
             Some(lowered_rule) => {
                 let label = rule.label.to_string();
                 lowered.push(label.clone());

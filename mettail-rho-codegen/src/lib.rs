@@ -109,7 +109,14 @@ mod tests {
     // never silently dropped.
     const CALC_SCALAR_FRAGMENT: &str = r#"
         name: CalcScalarFrag,
-        types { Proc }
+        types {
+            Proc
+            ![i32] as Int
+            ![bool] as Bool
+            ![str] as Str
+            ![f64] as Float
+            ![mettail_runtime::CanonicalBigInt] as BigInt
+        }
         terms {
             AddInt . a:Int, b:Int |- a "+" b : Int ;
             SubInt . a:Int, b:Int |- a "-" b : Int ;
@@ -145,6 +152,35 @@ mod tests {
             Fact . a:Int |- a "!" : Int ;
             AddFloat . a:Float, b:Float |- a "+" b : Float ;
             AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ;
+        }
+    "#;
+
+    const RENAMED_NATIVE_SCALAR_FRAGMENT: &str = r#"
+        name: RenamedScalarFrag,
+        types {
+            ![i32] as Number
+            ![bool] as Truth
+            ![str] as Text
+        }
+        terms {
+            AddNumber . a:Number, b:Number |- a "+" b : Number ;
+            EqNumber . a:Number, b:Number |- a "==" b : Truth ;
+            AndTruth . a:Truth, b:Truth |- a "and" b : Truth ;
+            AddText . a:Text, b:Text |- a "+" b : Text ;
+        }
+    "#;
+
+    const SCALAR_NAMED_STRUCTURAL_FRAGMENT: &str = r#"
+        name: ScalarNamedStructuralFrag,
+        types {
+            Int
+            Bool
+            Str
+        }
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ;
+            AndBool . a:Bool, b:Bool |- a "and" b : Bool ;
+            AddStr . a:Str, b:Str |- a "+" b : Str ;
         }
     "#;
 
@@ -194,6 +230,38 @@ mod tests {
             out.rejected,
             vec!["PowInt", "BitAndInt", "Fact", "AddFloat", "AddBigInt"],
             "out-of-subset rules must be rejected (surfaced), never silently dropped"
+        );
+    }
+
+    #[test]
+    fn scalar_lowering_uses_native_type_inventory_not_category_names() {
+        let def = syn::parse_str::<LanguageDef>(RENAMED_NATIVE_SCALAR_FRAGMENT)
+            .expect("renamed native scalar fragment must parse as a LanguageDef");
+        let out = lower_language_def(&def);
+        assert_eq!(
+            out.lowered,
+            vec!["AddNumber", "EqNumber", "AndTruth", "AddText"],
+            "native scalar categories should lower even when category names are domain-specific"
+        );
+        assert!(
+            out.rejected.is_empty(),
+            "renamed native scalar rules must not be rejected by a category-name whitelist"
+        );
+    }
+
+    #[test]
+    fn scalar_named_structural_categories_do_not_lower_as_native_scalars() {
+        let def = syn::parse_str::<LanguageDef>(SCALAR_NAMED_STRUCTURAL_FRAGMENT)
+            .expect("structural scalar-named fragment must parse as a LanguageDef");
+        let out = lower_language_def(&def);
+        assert!(
+            out.lowered.is_empty(),
+            "category names alone must not authorize Rho scalar lowering"
+        );
+        assert_eq!(
+            out.rejected,
+            vec!["AddInt", "AndBool", "AddStr"],
+            "structural categories named like scalars must be surfaced as rejected rules"
         );
     }
 
