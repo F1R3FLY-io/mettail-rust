@@ -158,6 +158,14 @@ stays one-way. A selected `RuntimeBackend::Dovetail` therefore returns a
 Dovetail-shaped runtime backend report, not an `AscentResults` graph and not
 Rho observations.
 
+The direct wrapper also checks implementation identity before it can become the
+selected runtime backend. `DovetailCompilerStage<F>` carries the
+macro-expanded `LanguageDef` fingerprint used to build the report producer, and
+`DovetailRuntimeBackedLanguage::new` rejects installation unless that
+fingerprint equals `Language::metadata().definition_fingerprint()`. This keeps a
+valid-looking report producer for one generated language from being installed
+on another language with the same display syntax or category names.
+
 ## Report Family
 
 "Report" is a family name for typed artifacts at Dovetail phase boundaries. The

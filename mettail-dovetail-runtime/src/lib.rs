@@ -79,19 +79,99 @@ where
 /// closed instead of being advertised as production results.
 pub struct DovetailRuntimeBackedLanguage<L, F> {
     inner: L,
-    runner: F,
+    runner: DovetailCompilerStage<F>,
 }
+
+/// Language-specific Dovetail compiler stage derived from a generated
+/// `LanguageDef`.
+///
+/// This is implementation identity data, not a proof artifact. It lets the
+/// runtime adapter reject a Dovetail report producer that was built from a
+/// different macro-expanded language definition than the generated language
+/// being wrapped.
+pub struct DovetailCompilerStage<F> {
+    definition_fingerprint: String,
+    compiler: F,
+}
+
+impl<F> DovetailCompilerStage<F> {
+    pub fn new(definition_fingerprint: impl Into<String>, compiler: F) -> Self {
+        Self {
+            definition_fingerprint: definition_fingerprint.into(),
+            compiler,
+        }
+    }
+
+    pub fn definition_fingerprint(&self) -> &str {
+        &self.definition_fingerprint
+    }
+}
+
+/// Failure installing a Dovetail backend runner on a generated language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DovetailRuntimeBackedLanguageError {
+    /// The generated language metadata did not expose the macro-derived
+    /// definition fingerprint required for production Dovetail installation.
+    MissingLanguageDefinitionFingerprint { language_name: String },
+    /// The Dovetail compiler stage was derived from a different generated
+    /// definition than the wrapped language.
+    CompilerDefinitionMismatch {
+        language_name: String,
+        language_definition_fingerprint: String,
+        compiler_definition_fingerprint: String,
+    },
+}
+
+impl fmt::Display for DovetailRuntimeBackedLanguageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingLanguageDefinitionFingerprint { language_name } => write!(
+                f,
+                "Dovetail production backend for language {language_name} requires generated LanguageDef fingerprint metadata"
+            ),
+            Self::CompilerDefinitionMismatch {
+                language_name,
+                language_definition_fingerprint,
+                compiler_definition_fingerprint,
+            } => write!(
+                f,
+                "Dovetail compiler fingerprint {compiler_definition_fingerprint} cannot be installed on generated language {language_name} fingerprint {language_definition_fingerprint}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DovetailRuntimeBackedLanguageError {}
 
 impl<L, F> DovetailRuntimeBackedLanguage<L, F>
 where
-    F: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    L: Language,
+    F: for<'a> Fn(&'a dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
 {
     /// Install a checked Dovetail report runner as the runtime default.
     ///
     /// Formal models: `DovetailLanguageBackendWrapper.v` and
     /// `dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v`.
-    pub fn new(inner: L, runner: F) -> Self {
-        Self { inner, runner }
+    pub fn new(
+        inner: L,
+        runner: DovetailCompilerStage<F>,
+    ) -> Result<Self, DovetailRuntimeBackedLanguageError> {
+        let language_name = inner.name();
+        let language_definition_fingerprint =
+            inner.metadata().definition_fingerprint().ok_or_else(|| {
+                DovetailRuntimeBackedLanguageError::MissingLanguageDefinitionFingerprint {
+                    language_name: language_name.to_string(),
+                }
+            })?;
+        if language_definition_fingerprint != runner.definition_fingerprint() {
+            return Err(DovetailRuntimeBackedLanguageError::CompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.to_string(),
+                compiler_definition_fingerprint: runner.definition_fingerprint().to_string(),
+            });
+        }
+
+        Ok(Self { inner, runner })
     }
 
     pub fn inner(&self) -> &L {
@@ -102,7 +182,7 @@ where
 impl<L, F> Language for DovetailRuntimeBackedLanguage<L, F>
 where
     L: Language,
-    F: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    F: for<'a> Fn(&'a dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
 {
     fn name(&self) -> &'static str {
         self.inner.name()
@@ -183,7 +263,7 @@ where
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
             RuntimeBackend::Dovetail => {
-                let report = (self.runner)(term).map_err(|err| {
+                let report = (self.runner.compiler)(term).map_err(|err| {
                     format!(
                         "Dovetail backend for language {} could not build a checked report: {err}",
                         self.name()
@@ -375,6 +455,10 @@ mod tests {
             "DovetailDummy"
         }
 
+        fn definition_fingerprint(&self) -> Option<&'static str> {
+            Some("dovetail-dummy-definition")
+        }
+
         fn types(&self) -> &'static [mettail_runtime::TypeDef] {
             TYPE_DEFS
         }
@@ -507,6 +591,17 @@ mod tests {
         report
     }
 
+    fn compiler_stage<F>(compiler: F) -> DovetailCompilerStage<F>
+    where
+        F: for<'a> Fn(&'a dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    {
+        DovetailCompilerStage::new("dovetail-dummy-definition", compiler)
+    }
+
+    fn complete_report_runner(_term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        Ok(complete_runtime_report())
+    }
+
     #[test]
     fn projection_preserves_report_identity_and_completeness() {
         let projected = complete_runtime_report();
@@ -526,11 +621,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_installs_complete_report_backend() {
-        let language =
-            DovetailRuntimeBackedLanguage::new(
-                DummyLanguage,
-                |_term| Ok(complete_runtime_report()),
-            );
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            compiler_stage(|_term| Ok(complete_runtime_report())),
+        )
+        .expect("matching Dovetail compiler should install");
         let term = language.parse_term("pair(x,y)").expect("parse");
 
         assert_eq!(language.default_runtime_backend(), RuntimeBackend::Dovetail);
@@ -566,8 +661,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_rejects_bounded_reports_and_ascent_facts() {
-        let language =
-            DovetailRuntimeBackedLanguage::new(DummyLanguage, |_term| Ok(bounded_runtime_report()));
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            compiler_stage(|_term| Ok(bounded_runtime_report())),
+        )
+        .expect("matching Dovetail compiler should install");
         let term = language.parse_term("cycle").expect("parse");
 
         let err = language
@@ -588,9 +686,11 @@ mod tests {
 
     #[test]
     fn dovetail_wrapper_rejects_malformed_complete_reports() {
-        let language = DovetailRuntimeBackedLanguage::new(DummyLanguage, |_term| {
-            Ok(malformed_complete_runtime_report())
-        });
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            compiler_stage(|_term| Ok(malformed_complete_runtime_report())),
+        )
+        .expect("matching Dovetail compiler should install");
         let term = language.parse_term("bad-report").expect("parse");
 
         let err = language
@@ -602,11 +702,11 @@ mod tests {
 
     #[test]
     fn production_wrapper_rejects_explicit_ascent_runtime() {
-        let language =
-            DovetailRuntimeBackedLanguage::new(
-                DummyLanguage,
-                |_term| Ok(complete_runtime_report()),
-            );
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            compiler_stage(|_term| Ok(complete_runtime_report())),
+        )
+        .expect("matching Dovetail compiler should install");
         let term = language.parse_term("x").expect("parse");
         let report_err = language
             .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
@@ -621,15 +721,32 @@ mod tests {
 
     #[test]
     fn wrapper_passes_empty_fact_set_to_default_dovetail_report() {
-        let language =
-            DovetailRuntimeBackedLanguage::new(
-                DummyLanguage,
-                |_term| Ok(complete_runtime_report()),
-            );
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            compiler_stage(|_term| Ok(complete_runtime_report())),
+        )
+        .expect("matching Dovetail compiler should install");
         let term = language.parse_term("x").expect("parse");
         let report = language
             .run_default_backend_report_with_facts(term.as_ref(), &HashMap::new())
             .expect("empty fact set matches default Dovetail execution");
         assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+    }
+
+    #[test]
+    fn dovetail_wrapper_rejects_mismatched_compiler_definition() {
+        let err = match DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            DovetailCompilerStage::new("different-definition", complete_report_runner),
+        ) {
+            Ok(_) => panic!("mismatched Dovetail compiler must not install"),
+            Err(err) => err,
+        };
+
+        assert!(
+            matches!(err, DovetailRuntimeBackedLanguageError::CompilerDefinitionMismatch { .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("different-definition"), "{err}");
     }
 }
