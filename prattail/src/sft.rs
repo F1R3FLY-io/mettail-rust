@@ -1306,7 +1306,192 @@ pub fn analyze_from_bundle(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// §8  Tests
+// §8  OutputTerm — first-class, analyzable output-function algebra
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A *first-class* output function: a finite term built from analyzable
+/// generators, replacing the opaque `OutputFunction::Map`/`FlatMap` closures
+/// wherever the output is structural. Because every node is inspectable, SFT
+/// composition over `OutputTerm`s is a **precise symbolic term** (`then`) rather
+/// than the black-box `FlatMap` over-approximation the conservative path at the
+/// `Map`/`FlatMap` arm of [`SymbolicFiniteTransducer::compose`] must fall back
+/// to.
+///
+/// Algebraically `OutputTerm` carries two compatible structures, both verified
+/// in `formal/rocq/sft/theories/OutputTermAlgebra.v`:
+///   * a **monoid** `(Concat, Eps)` — output concatenation, associative with
+///     unit `Eps`;
+///   * a **category** `(then, Id)` — sequential composition `A→B then B→C`,
+///     associative with unit `Id`.
+/// plus the β/η compose-correctness law
+/// `(self.then(next)).apply(i) = next.apply_all(self.apply(i))`.
+///
+/// `Eps`/`Const` ignore the input; `Id` passes the consumed element through (the
+/// `Id ∘ Id` case relies on the same `A::Domain: Into<B::Domain>` coherence the
+/// existing `OutputFunction` chains already assume); `Concat` is the new
+/// expressive power beyond `Epsilon`/`Constant`/`Identity`.
+pub enum OutputTerm<A: BooleanAlgebra, B: BooleanAlgebra> {
+    /// ε — produce nothing (monoid unit of `Concat`).
+    Eps,
+    /// Identity — pass the consumed input element through (category unit).
+    Id,
+    /// Constant output, independent of the input.
+    Const(Vec<B::Domain>),
+    /// Monoid product — emit the concatenation of the two sub-terms' outputs.
+    Concat(Box<OutputTerm<A, B>>, Box<OutputTerm<A, B>>),
+    /// Marker tying the (otherwise output-only) term to its input algebra `A`.
+    /// Never constructed; lets `A` appear in the type without a field.
+    #[doc(hidden)]
+    _Input(std::convert::Infallible, std::marker::PhantomData<fn(A)>),
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Clone for OutputTerm<A, B> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Eps => Self::Eps,
+            Self::Id => Self::Id,
+            Self::Const(v) => Self::Const(v.clone()),
+            Self::Concat(x, y) => Self::Concat(x.clone(), y.clone()),
+            Self::_Input(never, _) => match *never {},
+        }
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> fmt::Debug for OutputTerm<A, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Eps => write!(f, "Eps"),
+            Self::Id => write!(f, "Id"),
+            Self::Const(v) => write!(f, "Const({:?})", v),
+            Self::Concat(x, y) => write!(f, "Concat({:?}, {:?})", x, y),
+            Self::_Input(never, _) => match *never {},
+        }
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> PartialEq for OutputTerm<A, B>
+where
+    B::Domain: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Eps, Self::Eps) | (Self::Id, Self::Id) => true,
+            (Self::Const(a), Self::Const(b)) => a == b,
+            (Self::Concat(x1, y1), Self::Concat(x2, y2)) => x1 == x2 && y1 == y2,
+            _ => false,
+        }
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> Eq for OutputTerm<A, B> where B::Domain: Eq {}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> OutputTerm<A, B> {
+    /// Apply this output term to one input element, yielding the output sequence.
+    /// This is the term's denotation `⟦·⟧ : A::Domain → B::Domain*`.
+    pub fn apply(&self, input: &A::Domain) -> Vec<B::Domain>
+    where
+        A::Domain: Clone + Into<B::Domain>,
+    {
+        match self {
+            Self::Eps => Vec::new(),
+            Self::Id => vec![input.clone().into()],
+            Self::Const(v) => v.clone(),
+            Self::Concat(x, y) => {
+                let mut out = x.apply(input);
+                out.extend(y.apply(input));
+                out
+            },
+            Self::_Input(never, _) => match *never {},
+        }
+    }
+
+    /// Apply to a whole input sequence, concatenating the per-element outputs
+    /// (the `FlatMap`-style lift of `apply`).
+    pub fn apply_all(&self, inputs: &[A::Domain]) -> Vec<B::Domain>
+    where
+        A::Domain: Clone + Into<B::Domain>,
+    {
+        let mut out = Vec::new();
+        for input in inputs {
+            out.extend(self.apply(input));
+        }
+        out
+    }
+
+    /// Re-index the *input* algebra of an output-only term. Sound because every
+    /// generator either ignores the input (`Eps`/`Const`) or is a structural
+    /// marker (`Id`/`Concat`); used by `then` for the `Id ∘ next` case.
+    fn retype_input<A2: BooleanAlgebra>(&self) -> OutputTerm<A2, B> {
+        match self {
+            Self::Eps => OutputTerm::Eps,
+            Self::Id => OutputTerm::Id,
+            Self::Const(v) => OutputTerm::Const(v.clone()),
+            Self::Concat(x, y) => {
+                OutputTerm::Concat(Box::new(x.retype_input()), Box::new(y.retype_input()))
+            },
+            Self::_Input(never, _) => match *never {},
+        }
+    }
+
+    /// Precise sequential composition: `self : A→B*` followed by `next : B→C*`,
+    /// yielding `A→C*`. Satisfies the compose-correctness law
+    /// `(self.then(next)).apply(i) = next.apply_all(self.apply(i))`
+    /// (`OutputTermAlgebra.v: then_correct`). No opaque closure is produced.
+    pub fn then<C: BooleanAlgebra>(&self, next: &OutputTerm<B, C>) -> OutputTerm<A, C>
+    where
+        B::Domain: Clone + Into<C::Domain>,
+    {
+        match self {
+            Self::Eps => OutputTerm::Eps,
+            Self::Const(bs) => OutputTerm::Const(next.apply_all(bs)),
+            Self::Id => next.retype_input::<A>(),
+            Self::Concat(x, y) => {
+                OutputTerm::Concat(Box::new(x.then(next)), Box::new(y.then(next)))
+            },
+            Self::_Input(never, _) => match *never {},
+        }
+    }
+
+    /// Smart `Concat` that absorbs the `Eps` unit (monoid normalization).
+    pub fn concat(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Eps, t) | (t, Self::Eps) => t,
+            (a, b) => Self::Concat(Box::new(a), Box::new(b)),
+        }
+    }
+
+    /// Whether this is the `Eps` (no-output) generator.
+    pub fn is_eps(&self) -> bool {
+        matches!(self, Self::Eps)
+    }
+
+    /// Whether this is the `Id` generator.
+    pub fn is_id(&self) -> bool {
+        matches!(self, Self::Id)
+    }
+}
+
+impl<A: BooleanAlgebra, B: BooleanAlgebra> From<OutputTerm<A, B>> for OutputFunction<A, B>
+where
+    A::Domain: Clone + Into<B::Domain> + Send + Sync + 'static,
+    B::Domain: Clone + Send + Sync + 'static,
+{
+    /// Lower an analyzable term to the runtime `OutputFunction`. `Eps`/`Id`/a
+    /// single `Const` map to their direct counterparts; richer terms (`Concat`)
+    /// lower to a `FlatMap` evaluating the term — the term stays the source of
+    /// truth for static analysis and composition.
+    fn from(term: OutputTerm<A, B>) -> Self {
+        match term {
+            OutputTerm::Eps => OutputFunction::Epsilon,
+            OutputTerm::Id => OutputFunction::Identity,
+            OutputTerm::Const(v) => OutputFunction::Constant(v),
+            other => OutputFunction::FlatMap(Arc::new(move |input: &A::Domain| other.apply(input))),
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §9  Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -1809,5 +1994,70 @@ mod tests {
         let analysis = analyze_from_bundle(&[], &categories);
         assert_eq!(analysis.num_transducers, 1);
         assert_eq!(analysis.functional_count, 1);
+    }
+
+    // ── OutputTerm: the analyzable output-function algebra (§8) ──────────────
+
+    type OT = OutputTerm<IntervalAlgebra, IntervalAlgebra>;
+
+    #[test]
+    fn output_term_apply_generators() {
+        assert_eq!(OT::Eps.apply(&7), Vec::<i64>::new());
+        assert_eq!(OT::Id.apply(&7), vec![7]);
+        assert_eq!(OT::Const(vec![1, 2]).apply(&7), vec![1, 2]);
+        let cat = OT::Concat(Box::new(OT::Id), Box::new(OT::Const(vec![9])));
+        assert_eq!(cat.apply(&7), vec![7, 9]);
+    }
+
+    #[test]
+    fn output_term_concat_monoid_unit() {
+        // Eps is the left/right unit of Concat (smart `concat` absorbs it).
+        assert_eq!(OT::Eps.concat(OT::Id), OT::Id);
+        assert_eq!(OT::Id.concat(OT::Eps), OT::Id);
+    }
+
+    #[test]
+    fn output_term_then_correct() {
+        // Compose-correctness: (self.then(next)).apply(i) = next.apply_all(self.apply(i)).
+        let self_t: OT = OutputTerm::Concat(Box::new(OT::Id), Box::new(OT::Const(vec![5])));
+        let next: OT = OutputTerm::Concat(Box::new(OT::Id), Box::new(OT::Const(vec![0])));
+        for i in [3, 7, 42] {
+            let lhs = self_t.then(&next).apply(&i);
+            let rhs = next.apply_all(&self_t.apply(&i));
+            assert_eq!(lhs, rhs, "then-correctness failed at {i}");
+        }
+    }
+
+    #[test]
+    fn output_term_category_units() {
+        // Id is the left/right unit of `then`.
+        let t: OT = OutputTerm::Concat(Box::new(OT::Id), Box::new(OT::Const(vec![2, 3])));
+        for i in [1, 4, 9] {
+            assert_eq!(OT::Id.then(&t).apply(&i), t.apply(&i));
+            assert_eq!(t.then(&OT::Id).apply(&i), t.apply(&i));
+        }
+    }
+
+    #[test]
+    fn output_term_then_eps_const_precise() {
+        // Eps ∘ anything = Eps; Const ∘ next = Const(next.apply_all(vals)) — both
+        // precise symbolic terms, no opaque closure.
+        let next: OT = OutputTerm::Const(vec![100]);
+        assert!(OT::Eps.then(&next).is_eps());
+        match OT::Const(vec![1, 2]).then(&next) {
+            OutputTerm::Const(v) => assert_eq!(v, vec![100, 100]),
+            other => panic!("expected precise Const, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn output_term_lowers_to_output_function() {
+        let f: OutputFunction<IntervalAlgebra, IntervalAlgebra> = OT::Id.into();
+        assert!(f.is_identity());
+        let g: OutputFunction<IntervalAlgebra, IntervalAlgebra> = OT::Const(vec![5]).into();
+        assert!(g.is_constant());
+        let cat: OT = OutputTerm::Concat(Box::new(OT::Id), Box::new(OT::Const(vec![9])));
+        let h: OutputFunction<IntervalAlgebra, IntervalAlgebra> = cat.into();
+        assert_eq!(h.apply(&7), vec![7, 9]);
     }
 }
