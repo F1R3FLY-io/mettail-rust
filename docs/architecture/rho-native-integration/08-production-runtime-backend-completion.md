@@ -419,6 +419,16 @@ The runtime integration tests construct `RhoDefaultBackendPlan` values through
 the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
 and does not accept raw source text as the generated-backend boundary.
+Generated installers should then call
+`mettail_rho_runtime::install_dovetail_rho_runtime_backend` for the production
+replacement path, or `mettail_rho_runtime::install_rho_runtime_backend` for
+Rho-only integration tests and dynamic-call fixtures. Those helpers derive the
+Dovetail and Rho invocation compiler-stage identities from the accepted
+`RhoDefaultBackendPlan`, so the wrapped generated language is checked against
+one plan-derived definition identity instead of hand-wired fingerprint strings.
+The actual language-specific inputs remain the Dovetail report compiler and the
+AST-first Rho invocation compiler; neither helper accepts Rholang source text as
+an executable artifact.
 
 The wrapper has two capability surfaces, and the distinction is operationally
 important:

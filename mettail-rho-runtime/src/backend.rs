@@ -728,6 +728,71 @@ impl<F> RhoInvocationCompilerStage<F> {
     }
 }
 
+/// Install a generated language as a Rho-default runtime by deriving the
+/// invocation-stage identity from the accepted [`PlannedRhoBackend`].
+///
+/// This is the production-shaped entry point that generated installers should
+/// target. Callers supply only the generated language value, the flip-gated Rho
+/// plan, and the language-specific AST invocation compiler. The stage
+/// fingerprint is copied from the accepted plan, so the only remaining identity
+/// check is whether that plan belongs to the wrapped generated language.
+///
+/// Formal model: `GeneratedLanguageInstallation.v`, especially the
+/// plan-derived stage lemmas. Source text is not an execution boundary here;
+/// `compiler` must produce a [`RhoBackendInvocation`] carrying `rhoapi::Par`
+/// values or planned bytecode-ready artifacts.
+#[cfg(feature = "runtime-report")]
+pub fn install_rho_runtime_backend<L, F>(
+    inner: L,
+    backend: PlannedRhoBackend,
+    compiler: F,
+) -> Result<RhoRuntimeBackedLanguage<L, F>, RhoRuntimeBackedLanguageError>
+where
+    L: Language,
+    F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
+{
+    let definition_fingerprint = backend.plan().definition_fingerprint().to_string();
+    let invocation = RhoInvocationCompilerStage::new(definition_fingerprint, compiler);
+    RhoRuntimeBackedLanguage::new(inner, backend, invocation)
+}
+
+/// Install a generated language as the production replacement runtime:
+///
+/// ```text
+/// parsed term -> checked Dovetail report -> Rho AST invocation -> RSpace observations
+/// ```
+///
+/// The installer derives both compiler-stage identities from the accepted
+/// [`PlannedRhoBackend`]. That makes the stage identities a function of the
+/// same flip-gated `LanguageDef` plan and prevents generated installers from
+/// accidentally wiring a Dovetail compiler for one definition to a Rho
+/// invocation compiler for another. The wrapper constructor still verifies that
+/// the plan-derived identity matches the wrapped generated language metadata.
+///
+/// Formal model: `GeneratedLanguageInstallation.v`. The implementation also
+/// relies on `DovetailRhoLanguageBackendWrapper.v` for the runtime surface:
+/// `RhoMachine` is default, `Dovetail` is the checked intermediate, and legacy
+/// Ascent is not exposed through the wrapped value.
+#[cfg(feature = "runtime-report")]
+pub fn install_dovetail_rho_runtime_backend<L, D, F>(
+    inner: L,
+    backend: PlannedRhoBackend,
+    dovetail: D,
+    invocation: F,
+) -> Result<DovetailRhoRuntimeBackedLanguage<L, D, F>, RhoRuntimeBackedLanguageError>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
+        + Send
+        + Sync,
+{
+    let definition_fingerprint = backend.plan().definition_fingerprint().to_string();
+    let dovetail = DovetailCompilerStage::new(definition_fingerprint.clone(), dovetail);
+    let invocation = RhoInvocationCompilerStage::new(definition_fingerprint, invocation);
+    DovetailRhoRuntimeBackedLanguage::new(inner, backend, dovetail, invocation)
+}
+
 /// Failure installing a flip-gated Rho backend plan on a generated language.
 #[cfg(feature = "runtime-report")]
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -80,6 +80,37 @@ Section GeneratedLanguageInstallation.
     installed_invocation_compiler : InvocationCompiler
   }.
 
+  Definition plan_derived_dovetail_compiler
+      (plan : RhoPlan)
+      (available well_formed : bool)
+      (completeness : ExtractionCompleteness) : DovetailCompiler :=
+    {| dovetail_compiler_definition_id := rho_plan_definition_id plan;
+       dovetail_report_available := available;
+       dovetail_report_well_formed := well_formed;
+       dovetail_report_completeness := completeness |}.
+
+  Definition plan_derived_invocation_compiler
+      (plan : RhoPlan)
+      (total : bool)
+      (artifact : ArtifactBoundary) : InvocationCompiler :=
+    {| invocation_compiler_definition_id := rho_plan_definition_id plan;
+       invocation_total := total;
+       invocation_artifact_boundary := artifact |}.
+
+  Definition plan_derived_installation
+      (lang : GeneratedLanguage)
+      (plan : RhoPlan)
+      (available well_formed : bool)
+      (completeness : ExtractionCompleteness)
+      (total : bool)
+      (artifact : ArtifactBoundary) : ProductionInstallation :=
+    {| installed_language := lang;
+       installed_rho_plan := plan;
+       installed_dovetail_compiler :=
+         plan_derived_dovetail_compiler plan available well_formed completeness;
+       installed_invocation_compiler :=
+         plan_derived_invocation_compiler plan total artifact |}.
+
   Definition backend_eqb (left right : Backend) : bool :=
     match left, right with
     | Ascent, Ascent => true
@@ -184,6 +215,50 @@ Section GeneratedLanguageInstallation.
       | Ascent => None
       end
     else None.
+
+  Theorem plan_derived_dovetail_match_equals_plan_match :
+    forall lang plan available well_formed completeness total artifact,
+      dovetail_compiler_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact) =
+      rho_plan_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact).
+  Proof.
+    intros lang plan available well_formed completeness total artifact.
+    reflexivity.
+  Qed.
+
+  Theorem plan_derived_invocation_match_equals_plan_match :
+    forall lang plan available well_formed completeness total artifact,
+      invocation_compiler_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact) =
+      rho_plan_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact).
+  Proof.
+    intros lang plan available well_formed completeness total artifact.
+    reflexivity.
+  Qed.
+
+  Theorem plan_derived_stage_matches_follow_plan_match :
+    forall lang plan available well_formed completeness total artifact,
+      rho_plan_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact) = true ->
+      dovetail_compiler_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact) = true /\
+      invocation_compiler_matches_language
+        (plan_derived_installation
+           lang plan available well_formed completeness total artifact) = true.
+  Proof.
+    intros lang plan available well_formed completeness total artifact Hplan.
+    rewrite plan_derived_dovetail_match_equals_plan_match.
+    rewrite plan_derived_invocation_match_equals_plan_match.
+    split; exact Hplan.
+  Qed.
 
   Theorem ok_installation_exposes_rho_default : forall install,
     production_installation_ok install = true ->

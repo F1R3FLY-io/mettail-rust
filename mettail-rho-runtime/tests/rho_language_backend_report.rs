@@ -16,9 +16,9 @@ use mettail_rho_codegen::{
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rho_runtime::{
-    DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage, PlannedRhoBackend,
-    RhoBackendInvocation, RhoInvocationCompilerStage, RhoRuntimeBackedLanguage,
-    RhoRuntimeBackedLanguageError,
+    install_dovetail_rho_runtime_backend, install_rho_runtime_backend, DovetailCompilerStage,
+    DovetailRhoRuntimeBackedLanguage, PlannedRhoBackend, RhoBackendInvocation,
+    RhoInvocationCompilerStage, RhoRuntimeBackedLanguage, RhoRuntimeBackedLanguageError,
 };
 use mettail_runtime::{
     AscentResults, Language, LanguageMetadata, RuntimeBackend, RuntimeBackendArtifact,
@@ -975,6 +975,32 @@ fn call_by_need_plans_match_ascent_golden_for_supported_scalar_families() {
 }
 
 #[test]
+fn rho_runtime_installer_derives_invocation_fingerprint_from_plan() {
+    let backend = calculator_backend();
+    let language = install_rho_runtime_backend(
+        FragmentMatchedCalculatorLanguage,
+        backend,
+        calculator_invocation,
+    )
+    .expect("plan-derived Rho invocation stage should install on matching language");
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+
+    assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
+    assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+    assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("installer-built Rho wrapper must execute the planned backend");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
+}
+
+#[test]
 fn rho_runtime_backed_language_dispatches_default_report() {
     let backend = calculator_backend();
     let invocation = invocation_stage(&backend, calculator_invocation);
@@ -1094,6 +1120,39 @@ fn rho_runtime_backed_language_dispatches_default_report() {
 }
 
 #[test]
+fn dovetail_rho_runtime_installer_derives_stage_fingerprints_from_plan() {
+    let language = install_dovetail_rho_runtime_backend(
+        FragmentMatchedCalculatorLanguage,
+        calculator_backend(),
+        complete_dovetail_report_for,
+        calculator_invocation_from_dovetail,
+    )
+    .expect("plan-derived Dovetail and Rho stages should install on matching language");
+    let term = language.parse_term("2 + 3").expect("calculator parse");
+
+    assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
+    assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+    assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
+    assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+    let dovetail_report = language
+        .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+        .expect("installer-built wrapper must expose the checked Dovetail intermediate");
+    assert_eq!(dovetail_report.backend(), RuntimeBackend::Dovetail);
+    assert_eq!(dovetail_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+
+    let rho_report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("installer-built wrapper must execute Rho after checked Dovetail");
+    assert_eq!(rho_report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(rho_report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+    let out = rho_report
+        .observations_for_channel("OUT")
+        .expect("Rho report must expose OUT observations");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
+}
+
+#[test]
 fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
     let backend = calculator_backend();
     let fingerprint = stage_fingerprint(&backend);
@@ -1150,6 +1209,24 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
     assert!(
         seeded_err.contains("does not accept Ascent-shaped seeded facts"),
         "{seeded_err}"
+    );
+}
+
+#[test]
+fn dovetail_rho_runtime_installer_rejects_plan_for_different_generated_definition() {
+    let result = install_dovetail_rho_runtime_backend(
+        CalculatorLanguage,
+        calculator_backend(),
+        complete_dovetail_report_for,
+        calculator_invocation_from_dovetail,
+    );
+    let err = match result {
+        Ok(_) => panic!("fragment Rho plan must not install on the full generated Calculator"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, RhoRuntimeBackedLanguageError::LanguagePlanDefinitionMismatch { .. }),
+        "{err}"
     );
 }
 
