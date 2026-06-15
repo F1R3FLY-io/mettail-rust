@@ -12,5 +12,6 @@ theories/EffectiveBooleanAlgebra.v
 theories/ProductAlgebraClosure.v
 theories/SumAlgebraClosure.v
 theories/CollectionAlgebraClosure.v
+theories/TreeAlgebraClosure.v
 theories/TheoryCombination.v
 theories/HeytingAlgebra.v
