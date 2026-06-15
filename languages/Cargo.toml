@@ -7,7 +7,7 @@ edition = "2021"
 # Tests use separate test binaries.
 
 [features]
-default = ["all-languages"]
+default = ["all-languages", "rho-codegen"]
 all-languages = [
     "ambient",
     "calculator",
@@ -69,8 +69,9 @@ mimalloc = ["dep:mimalloc"]
 ## `cargo test --features walker-stats ...`.
 walker-stats = ["mettail-prattail/walker-stats"]
 ## Compile the macro-generated AST-first Rho scalar invocation descriptions.
-## The generated helper returns `mettail_rho_codegen::RhoScalarContractInvocation`
-## and does not link the generated language crate to the Rho runtime.
+## This is part of the default production surface: generated helpers return
+## `mettail_rho_codegen::RhoScalarContractInvocation` values for the
+## Dovetail/Rho installer, while still avoiding a dependency on the Rho runtime.
 rho-codegen = ["dep:mettail-rho-codegen"]
 
 [dependencies]

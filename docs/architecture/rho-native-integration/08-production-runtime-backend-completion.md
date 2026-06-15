@@ -192,8 +192,9 @@ dispatch plan used by generated extractor code: every plan entry preserves the
 rule label, operand field order, parameter names, source categories, native
 scalar families, result category, and ABI result family. It fails closed if a
 stale or mismatched ABI is paired with the wrong generated definition. The
-macro-generated `rho-codegen` helper turns a typed generated AST constructor
-into `mettail_rho_codegen::RhoScalarContractInvocation`, a runtime-independent
+macro-generated `rho-codegen` helper is compiled by default for generated
+language crates. It turns a typed generated AST constructor into
+`mettail_rho_codegen::RhoScalarContractInvocation`, a runtime-independent
 payload containing the ABI, constructor-field-order scalar literals, and output
 channel. This keeps generated language crates independent from
 `mettail-rho-runtime`; only runtime-facing adapters call
@@ -380,8 +381,13 @@ Steps:
 ## Generated-Language Runtime Wrapper
 
 Generated language crates remain substrate-neutral. They expose `Language`,
-metadata, parsing, environments, type inference, direct evaluation helpers, and
-the explicit transition oracle. The Rho runtime crate supplies a direct
+metadata, parsing, environments, type inference, direct evaluation helpers,
+AST-first Rho invocation descriptions, and the explicit transition oracle.
+`mettail-languages` enables `rho-codegen` by default so those invocation
+descriptions are present on the normal generated-language surface. The default
+still stops at `mettail-rho-codegen` payloads; it does not link generated
+language crates to `mettail-rho-runtime` and does not execute a Rho VM inside a
+generated crate. The Rho runtime crate supplies a direct
 `RhoRuntimeBackedLanguage<L, F>` wrapper for Rho-only plans and the composed
 production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
 has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. The
