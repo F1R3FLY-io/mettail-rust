@@ -924,6 +924,58 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
         true // No reachable accepting state → empty.
     }
 
+    /// A shortest concrete word accepted by the automaton, or `None` if the
+    /// language is empty.
+    ///
+    /// BFS from the initial states, materializing one concrete domain element
+    /// per edge via `algebra.witness` (which yields `Some` exactly when the
+    /// guard is satisfiable). The first accepting state reached gives a
+    /// length-minimal accepted word. Used as the `witness` for derived algebras
+    /// (e.g. the string algebra) whose predicates compile to an SFA.
+    pub fn shortest_accepted(&self) -> Option<Vec<A::Domain>> {
+        if self.initial_states.is_empty() || self.accepting_states.is_empty() {
+            return None;
+        }
+        // The empty word is accepted iff some initial state is accepting.
+        if self.initial_states.iter().any(|s| self.accepting_states.contains(s)) {
+            return Some(Vec::new());
+        }
+        let mut visited = vec![false; self.states.len()];
+        // pred[state] = (predecessor state, the element consumed on the edge)
+        let mut pred: Vec<Option<(usize, A::Domain)>> = (0..self.states.len()).map(|_| None).collect();
+        let mut queue = VecDeque::with_capacity(self.initial_states.len());
+        for &init in &self.initial_states {
+            if !visited[init] {
+                visited[init] = true;
+                queue.push_back(init);
+            }
+        }
+        while let Some(state) = queue.pop_front() {
+            for trans in &self.transitions {
+                if trans.from != state || visited[trans.to] {
+                    continue;
+                }
+                if let Some(elem) = self.algebra.witness(&trans.guard) {
+                    visited[trans.to] = true;
+                    pred[trans.to] = Some((state, elem));
+                    if self.accepting_states.contains(&trans.to) {
+                        // Reconstruct the path back to an initial state.
+                        let mut word = Vec::new();
+                        let mut cur = trans.to;
+                        while let Some((prev, elem)) = pred[cur].take() {
+                            word.push(elem);
+                            cur = prev;
+                        }
+                        word.reverse();
+                        return Some(word);
+                    }
+                    queue.push_back(trans.to);
+                }
+            }
+        }
+        None
+    }
+
     /// Simulate the automaton on a concrete word.
     ///
     /// Returns `true` iff the word is accepted (i.e., after consuming all

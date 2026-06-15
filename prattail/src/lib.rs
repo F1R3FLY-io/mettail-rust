@@ -382,6 +382,10 @@ pub mod any_algebra;
 /// with a single density-aware witness oracle (`OrderedPoint::witness_in`).
 pub mod ordered_field;
 
+/// `StringAlgebra`: effective Boolean algebra of symbolic regular languages over
+/// strings (symbolic regex AST compiled to `SymbolicAutomaton<CharClassAlgebra>`).
+pub mod string_algebra;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
