@@ -69,6 +69,51 @@ Record EBA_Laws (A : EBA) : Prop := {
   wit_total : forall p : Pred A, sat p = true -> exists d : Dom A, wit p = Some d;
 }.
 
+(* ===================================================================== *)
+(*  Reject-safe laws: the WEAK contract for semi-decidable algebras       *)
+(* ===================================================================== *)
+
+(** The weak law contract that the behavioral / Heyting leg satisfies. It
+    deliberately drops [sat_complete], the classical involutive [eval_neg], and
+    excluded middle. In their place, negation is only required to be a *sound
+    under-approximation* of the classical complement: whenever the (possibly
+    incomplete) complement accepts an element, that element is genuinely outside
+    the predicate. The converse may fail — that gap is precisely the
+    [Sat3::DontKnow] boundary of a semi-decidable predicate.
+
+    This record is what prevents a downstream proof from ever assuming classical
+    complement on a semi-decidable leg (the Dovetail session's caution,
+    discharged structurally): SFA/SFT machinery and the mixed
+    [ProductAlgebra<Structural, Behavioral>] are written against [RejectSafeLaws],
+    while operations needing classical complement demand the full [EBA_Laws].
+    It is the Coq mirror of the Rust trait [RejectSafeAlgebra] at the base of the
+    tower [BooleanAlgebra : HeytingAlgebra : RejectSafeAlgebra]. *)
+Record RejectSafeLaws (A : EBA) : Prop := {
+  rs_eval_conj : forall (p q : Pred A) (d : Dom A),
+    eval (conj p q) d = andb (eval p d) (eval q d);
+  rs_eval_disj : forall (p q : Pred A) (d : Dom A),
+    eval (disj p q) d = orb (eval p d) (eval q d);
+  rs_eval_neg_sound : forall (p : Pred A) (d : Dom A),
+    eval (neg p) d = true -> eval p d = false;
+  rs_sat_sound : forall p : Pred A, sat p = true -> exists d : Dom A, eval p d = true;
+  rs_wit_sound : forall (p : Pred A) (d : Dom A), wit p = Some d -> eval p d = true;
+}.
+
+(** Every classical EBA is reject-safe: the strong contract implies the weak one.
+    This is the base edge of the trait tower — a [BooleanAlgebra] is a fortiori a
+    [RejectSafeAlgebra], so existing decidable algebras drop straight into the
+    reject-safe-bounded machinery with no proof obligation of their own. *)
+Lemma eba_implies_reject_safe : forall (A : EBA), EBA_Laws A -> RejectSafeLaws A.
+Proof.
+  intros A L. constructor.
+  - exact (eval_conj A L).
+  - exact (eval_disj A L).
+  - intros p d Hneg. rewrite (eval_neg A L) in Hneg.
+    apply negb_true_iff in Hneg. exact Hneg.
+  - exact (sat_sound A L).
+  - exact (wit_sound A L).
+Qed.
+
 (** Semantic equivalence: two predicates denote the same set of domain elements.
     This is the relation the Boolean-algebra laws hold up to. *)
 Definition equiv (A : EBA) (p q : Pred A) : Prop :=
@@ -296,3 +341,4 @@ End Laws.
 (* Closure under the global context is verified by the (extended) zero-admission
    checker; an explicit assumption print is kept as cheap insurance. *)
 Print Assumptions equivalent_correct.
+Print Assumptions eba_implies_reject_safe.
