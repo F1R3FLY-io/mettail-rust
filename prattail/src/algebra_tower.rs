@@ -238,6 +238,122 @@ impl<A: BooleanAlgebra> HeytingAlgebra for Classical<A> {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// RejectSafeProduct<S, B> — the mixed structural × behavioral guard
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A mixed-product predicate: a DNF (disjunction of independent rectangles), each
+/// rectangle a structural guard paired with a behavioral guard. Mirrors the Coq
+/// `ProductAlgebraClosure.v` / `BehavioralNegation.v` rectangle DNF.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MixedPred<SP, BP>(pub Vec<(SP, BP)>);
+
+/// The unified guard algebra `ProductAlgebra<S, B>`: a structural leg `S` and a
+/// behavioral leg `B`, both in the reject-safe tower. The structural leg is
+/// typically a [`Classical`] wrapper (exact, involutive complement); the
+/// behavioral leg is genuinely reject-safe (e.g. a `BehavioralAlgebra`).
+///
+/// The product is **only** a [`RejectSafeAlgebra`] — never a classical
+/// `BooleanAlgebra` — so the structural-classical / behavioral-reject-safe
+/// asymmetry is preserved at the type level (classical complement is statically
+/// unavailable on it). Negation is the asymmetric De Morgan
+/// `¬(a∧b) = (¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)` with `¬a` exact (when `S = Classical`) and
+/// `¬b` reject-safe — proven a reject-safe over-approximation
+/// (`BehavioralNegation.mixed_negation_soundness`): if the complement fires, the
+/// product genuinely rejects, so a guarded receive never wrongly admits a Comm.
+#[derive(Clone, Debug)]
+pub struct RejectSafeProduct<S, B> {
+    /// The structural (typically classical) leg.
+    pub structural: S,
+    /// The behavioral (reject-safe) leg.
+    pub behavioral: B,
+}
+
+impl<S, B> RejectSafeProduct<S, B> {
+    /// Build a mixed structural × behavioral guard algebra.
+    pub fn new(structural: S, behavioral: B) -> Self {
+        Self { structural, behavioral }
+    }
+}
+
+impl<S, B> RejectSafeAlgebra for RejectSafeProduct<S, B>
+where
+    S: RejectSafeAlgebra,
+    B: RejectSafeAlgebra,
+{
+    type Predicate = MixedPred<S::Predicate, B::Predicate>;
+    type Domain = (S::Domain, B::Domain);
+
+    fn true_pred(&self) -> Self::Predicate {
+        MixedPred(vec![(self.structural.true_pred(), self.behavioral.true_pred())])
+    }
+
+    fn false_pred(&self) -> Self::Predicate {
+        MixedPred(Vec::new())
+    }
+
+    fn and(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
+        // (∨ᵢ Rᵢ) ∧ (∨ⱼ Sⱼ) = ∨ᵢⱼ (Rᵢ ∧ Sⱼ), componentwise rectangle meet.
+        let mut out = Vec::with_capacity(a.0.len() * b.0.len());
+        for (sa, ba) in &a.0 {
+            for (sb, bb) in &b.0 {
+                out.push((self.structural.and(sa, sb), self.behavioral.and(ba, bb)));
+            }
+        }
+        MixedPred(out)
+    }
+
+    fn or(&self, a: &Self::Predicate, b: &Self::Predicate) -> Self::Predicate {
+        let mut out = Vec::with_capacity(a.0.len() + b.0.len());
+        out.extend(a.0.iter().cloned());
+        out.extend(b.0.iter().cloned());
+        MixedPred(out)
+    }
+
+    fn pseudo_complement(&self, a: &Self::Predicate) -> Self::Predicate {
+        // ¬(∨ᵢ (aᵢ ∧ bᵢ)) = ∧ᵢ (¬aᵢ ∨ ¬bᵢ), each rectangle's complement a
+        // 2-rectangle DNF with ¬aᵢ exact (structural) and ¬bᵢ reject-safe.
+        let mut acc = self.true_pred();
+        for (sa, ba) in &a.0 {
+            let neg_rect = MixedPred(vec![
+                (self.structural.pseudo_complement(sa), self.behavioral.true_pred()),
+                (self.structural.true_pred(), self.behavioral.pseudo_complement(ba)),
+            ]);
+            acc = self.and(&acc, &neg_rect);
+        }
+        acc
+    }
+
+    fn is_satisfiable_3v(&self, a: &Self::Predicate) -> Sat3 {
+        // Kleene OR over rectangles of (structural SAT ∧ behavioral SAT). An
+        // empty DNF is Unsat; a DontKnow on either leg propagates.
+        let mut acc = Sat3::Unsat;
+        for (sa, ba) in &a.0 {
+            let rect =
+                self.structural.is_satisfiable_3v(sa).and(self.behavioral.is_satisfiable_3v(ba));
+            acc = acc.or(rect);
+        }
+        acc
+    }
+
+    fn evaluate(&self, pred: &Self::Predicate, elem: &Self::Domain) -> bool {
+        pred.0.iter().any(|(sa, ba)| {
+            self.structural.evaluate(sa, &elem.0) && self.behavioral.evaluate(ba, &elem.1)
+        })
+    }
+
+    fn witness(&self, a: &Self::Predicate) -> Option<Self::Domain> {
+        for (sa, ba) in &a.0 {
+            if let (Some(ds), Some(db)) =
+                (self.structural.witness(sa), self.behavioral.witness(ba))
+            {
+                return Some((ds, db));
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +482,126 @@ mod tests {
         assert_eq!(heyting_neg(&Chain3, &H3::Mid), H3::Bot);
         // `classical_complement(&Chain3, &H3::Mid)` would NOT compile:
         // `Chain3: BooleanAlgebra` is unsatisfied — the load-bearing guarantee.
+    }
+
+    // ── RejectSafeProduct: the mixed structural × behavioral guard ───────────
+
+    // An eval-reject-safe, genuinely non-classical behavioral algebra over a
+    // one-point domain: the Rust mirror of the Coq `BehavioralNegation.TriModel`.
+    // `Unknown` is the Sat3::DontKnow region — accepted by no element, and its
+    // pseudo_complement stays `Unknown` (never claims complement membership).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    enum Tri {
+        Sat,
+        Unsat,
+        Unknown,
+    }
+
+    #[derive(Clone, Debug)]
+    struct TriAlg;
+
+    impl RejectSafeAlgebra for TriAlg {
+        type Predicate = Tri;
+        type Domain = ();
+        fn true_pred(&self) -> Tri {
+            Tri::Sat
+        }
+        fn false_pred(&self) -> Tri {
+            Tri::Unsat
+        }
+        fn and(&self, a: &Tri, b: &Tri) -> Tri {
+            match (a, b) {
+                (Tri::Unsat, _) | (_, Tri::Unsat) => Tri::Unsat,
+                (Tri::Sat, Tri::Sat) => Tri::Sat,
+                _ => Tri::Unknown,
+            }
+        }
+        fn or(&self, a: &Tri, b: &Tri) -> Tri {
+            match (a, b) {
+                (Tri::Sat, _) | (_, Tri::Sat) => Tri::Sat,
+                (Tri::Unsat, Tri::Unsat) => Tri::Unsat,
+                _ => Tri::Unknown,
+            }
+        }
+        fn pseudo_complement(&self, a: &Tri) -> Tri {
+            match a {
+                Tri::Sat => Tri::Unsat,
+                Tri::Unsat => Tri::Sat,
+                Tri::Unknown => Tri::Unknown,
+            }
+        }
+        fn is_satisfiable_3v(&self, a: &Tri) -> Sat3 {
+            match a {
+                Tri::Sat => Sat3::Sat,
+                Tri::Unsat => Sat3::Unsat,
+                Tri::Unknown => Sat3::DontKnow,
+            }
+        }
+        fn evaluate(&self, pred: &Tri, _elem: &()) -> bool {
+            matches!(pred, Tri::Sat)
+        }
+    }
+
+    fn mixed() -> RejectSafeProduct<Classical<IntervalAlgebra>, TriAlg> {
+        RejectSafeProduct::new(Classical::new(IntervalAlgebra::new(0, 100)), TriAlg)
+    }
+
+    #[test]
+    fn mixed_product_eval_and_sat() {
+        let p = mixed();
+        // structural [0,50) ∧ behavioral Sat (single rectangle).
+        let g = MixedPred(vec![(IntervalPred::Range(0, 50), Tri::Sat)]);
+        assert!(p.evaluate(&g, &(25, ()))); // 25∈[0,50), behavioral Sat
+        assert!(!p.evaluate(&g, &(75, ()))); // 75∉[0,50)
+        assert_eq!(p.is_satisfiable_3v(&g), Sat3::Sat);
+        // A DontKnow behavioral leg propagates to the product (and never fires).
+        let g_dk = MixedPred(vec![(IntervalPred::Range(0, 50), Tri::Unknown)]);
+        assert_eq!(p.is_satisfiable_3v(&g_dk), Sat3::DontKnow);
+        assert!(!p.evaluate(&g_dk, &(25, ()))); // Unknown accepts nothing ⇒ no fire
+        // ⊥ (empty DNF) is everywhere-false and Unsat.
+        assert!(!p.evaluate(&p.false_pred(), &(10, ())));
+        assert_eq!(p.is_satisfiable_3v(&p.false_pred()), Sat3::Unsat);
+        // ⊤ is everywhere-true.
+        assert!(p.evaluate(&p.true_pred(), &(10, ())));
+    }
+
+    #[test]
+    fn mixed_product_and_or() {
+        let p = mixed();
+        let g1 = MixedPred(vec![(IntervalPred::Range(0, 50), Tri::Sat)]);
+        let g2 = MixedPred(vec![(IntervalPred::Range(40, 100), Tri::Sat)]);
+        // and = overlap [40,50); 45 in, 20 out (fails g2), 70 out (fails g1).
+        let g_and = p.and(&g1, &g2);
+        assert!(p.evaluate(&g_and, &(45, ())));
+        assert!(!p.evaluate(&g_and, &(20, ())));
+        assert!(!p.evaluate(&g_and, &(70, ())));
+        // or = union; 20 (g1) and 70 (g2) both accepted.
+        let g_or = p.or(&g1, &g2);
+        assert!(p.evaluate(&g_or, &(20, ())));
+        assert!(p.evaluate(&g_or, &(70, ())));
+    }
+
+    /// The load-bearing safety property (mixed_negation_soundness, Coq
+    /// BehavioralNegation.v): wherever the asymmetric complement fires, the
+    /// product guard genuinely rejects — so a guarded receive never wrongly
+    /// admits a Comm. Checked exhaustively over a sample grid, including the
+    /// behavioral DontKnow case.
+    #[test]
+    fn mixed_negation_is_reject_safe() {
+        let p = mixed();
+        for beh in [Tri::Sat, Tri::Unsat, Tri::Unknown] {
+            let g = MixedPred(vec![(IntervalPred::Range(10, 60), beh)]);
+            let pc = p.pseudo_complement(&g);
+            for x in [0i64, 5, 10, 30, 59, 60, 80, 99] {
+                let d = (x, ());
+                if p.evaluate(&pc, &d) {
+                    assert!(
+                        !p.evaluate(&g, &d),
+                        "complement fired at {d:?} (beh={beh:?}) but guard also \
+                         accepts — NOT reject-safe"
+                    );
+                }
+            }
+        }
     }
 }
