@@ -403,6 +403,10 @@ pub mod collection_algebra;
 /// structural-recursion core for algebraic/recursive data types.
 pub mod sym_tree;
 
+/// `SymbolicTreeTransducer<A,B>`: bottom-up tree transduction with per-node
+/// output builders (the tree generalization of the word transducer).
+pub mod sym_tree_transducer;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
