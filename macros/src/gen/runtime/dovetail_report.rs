@@ -8,6 +8,7 @@
 use mettail_ast::grammar::NonTerminalKind;
 use mettail_ast::language::{Equation, LanguageDef, Premise, RewriteRule};
 use mettail_ast::pattern::{Pattern as AstPattern, PatternTerm};
+use mettail_ast::types::CollectionType;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, LitStr};
@@ -50,6 +51,51 @@ fn opaque_leaf_expr(label: TokenStream, payload: TokenStream) -> TokenStream {
     }
 }
 
+/// Lower an associative-commutative bag (`HashBag<ElemCat>`) to an n-ary
+/// [`dovetail::egraph::ENode`] whose children are the lowered bag elements (each
+/// with multiplicity) SORTED by `canonical_class_key`.
+///
+/// Sorting yields the deterministic canonical (sorted) bag order; the stored
+/// order is only a HINT — the AC matcher recomputes the multiset key fresh from
+/// current union-find representatives at match time (R1), so a later `rebuild`
+/// re-canonicalization cannot lose AC matches.
+///
+/// `bag_expr` must evaluate to a value exposing `len()` and
+/// `iter_elements() -> impl Iterator<Item = &ElemCat>` (the `HashBag` API).
+/// `element_add` is the element category's `__mettail_dovetail_add_<cat>` fn.
+fn ac_bag_lowering(
+    label: &LitStr,
+    element_add: &Ident,
+    bag_expr: TokenStream,
+) -> TokenStream {
+    quote! {
+        {
+            let __bag = #bag_expr;
+            let mut __children: Vec<::dovetail::egraph::EClassId> =
+                ::std::vec::Vec::with_capacity(__bag.len());
+            for __elem in __bag.iter_elements() {
+                __children.push(#element_add(eg, __elem));
+            }
+            __children.sort_by(|__a, __b| {
+                eg.canonical_class_key(*__a)
+                    .cmp(&eg.canonical_class_key(*__b))
+            });
+            eg.add(::dovetail::egraph::ENode::new(#label.to_string(), __children))
+        }
+    }
+}
+
+/// Whether a collection type is an associative-commutative MULTISET that gets the
+/// n-ary canonical bag lowering. Only `HashBag` qualifies: it is the genuine AC
+/// multiset (commutative, with multiplicity), so sorting its lowered children by
+/// canonical key is sound. `Vec` (ordered, non-commutative), `HashSet` (a set),
+/// and `HashMap` (a keyed map) keep the prior opaque-leaf lowering — sorting
+/// would not respect their semantics, and the AC engine only consumes `HashBag`
+/// bag nodes today.
+fn coll_type_is_ac_bag(coll_type: Option<&CollectionType>) -> bool {
+    matches!(coll_type, Some(CollectionType::HashBag))
+}
+
 fn field_child_expr(
     owner_label: &str,
     field_index: usize,
@@ -77,6 +123,19 @@ fn field_child_expr(
             };
         }
         if field.is_collection {
+            if coll_type_is_ac_bag(field.coll_type.as_ref()) {
+                // Optional n-ary AC bag field (HashBag): lower the present bag
+                // to a sorted-by-canonical-key child list (mirrors the
+                // VariantKind::Collection lowering); a missing collection is a
+                // distinct nullary leaf.
+                let body = ac_bag_lowering(&collection_label, &child_fn, quote! { __values });
+                return quote! {
+                    match #field_var.as_ref() {
+                        Some(__values) => #body,
+                        None => eg.add(::dovetail::egraph::ENode::leaf(#none_label.to_string())),
+                    }
+                };
+            }
             let leaf = opaque_leaf_expr(quote! { #collection_label }, quote! { __values });
             return quote! {
                 match #field_var.as_ref() {
@@ -99,6 +158,11 @@ fn field_child_expr(
     }
 
     if field.is_collection {
+        if coll_type_is_ac_bag(field.coll_type.as_ref()) {
+            // Non-optional n-ary AC bag field (HashBag): lower to a
+            // sorted-by-canonical-key child list (same as VariantKind::Collection).
+            return ac_bag_lowering(&collection_label, &child_fn, quote! { #field_var });
+        }
         let leaf = opaque_leaf_expr(quote! { #collection_label }, quote! { #field_var });
         return quote! { #leaf };
     }
@@ -216,15 +280,27 @@ fn category_lowering(language: &LanguageDef, category: &Ident) -> TokenStream {
             VariantKind::Regular { label, fields } => {
                 regular_arm(language, category, &label, &fields)
             },
-            VariantKind::Collection { label, .. } => {
+            VariantKind::Collection { label, element_cat, coll_type } => {
                 let owner = lit(&format!("{}::{}::{}", language.name, category, label));
-                quote! {
-                    #category::#label(values) => {
-                        eg.add(::dovetail::egraph::ENode::leaf(format!(
-                            "{}::{:?}",
-                            #owner,
-                            values,
-                        )))
+                if coll_type_is_ac_bag(Some(&coll_type)) {
+                    // n-ary AC bag lowering (HashBag). See `ac_bag_lowering`.
+                    let element_add = category_lowering_fn(&element_cat);
+                    let body = ac_bag_lowering(&owner, &element_add, quote! { values });
+                    quote! {
+                        #category::#label(values) => #body
+                    }
+                } else {
+                    // Non-AC collection (Vec/HashSet/HashMap): opaque leaf
+                    // (unchanged prior behavior — the AC engine consumes only
+                    // HashBag bag nodes today).
+                    quote! {
+                        #category::#label(values) => {
+                            eg.add(::dovetail::egraph::ENode::leaf(format!(
+                                "{}::{:?}",
+                                #owner,
+                                values,
+                            )))
+                        }
                     }
                 }
             },
@@ -307,9 +383,18 @@ fn pattern_term_to_dovetail(
 }
 
 fn premise_supported(premise: &Premise) -> bool {
+    // EXHAUSTIVE over every `Premise` variant (no catch-all): only a congruence
+    // premise is supplied by the e-graph congruence closure; all side-condition
+    // premises (freshness, relation queries, universals, behavioral / synthetic
+    // guards) require evidence the structural saturation does not model, so they
+    // fail closed. Mirrors `GeneratedReportCompiler.premise_supported`.
     match premise {
         Premise::Congruence { .. } => true,
-        _ => false,
+        Premise::Freshness(_) => false,
+        Premise::RelationQuery { .. } => false,
+        Premise::ForAll { .. } => false,
+        Premise::BehavioralGuard(_) => false,
+        Premise::SyntheticInjGuard { .. } => false,
     }
 }
 

@@ -69,6 +69,38 @@ impl<L: SemanticHash> ENode<L> {
     }
 }
 
+impl<L: Clone + Eq + std::hash::Hash + SemanticHash> ENode<L> {
+    /// The exact AC (associative-commutative) content key of this e-node: the
+    /// label's content bytes followed by the SORTED vector of each child's
+    /// CANONICAL class key (each `write_framed`).
+    ///
+    /// Sorting the child keys makes this key invariant under child permutation —
+    /// the commutative identity AT THE KEY LEVEL — WITHOUT changing
+    /// [`ENode::content_key`] (which stays order-sensitive and is the hashcons
+    /// identity). The child keys are the *canonical* representative keys
+    /// (resolved through the union-find at call time via
+    /// [`EGraph::canonical_class_key`]), so the AC key reflects the current
+    /// equivalence classes, not the raw stored child ids.
+    ///
+    /// This is an EXACT byte key (not a 64-bit hash): two e-nodes share this key
+    /// iff they have the same operator and the same multiset of canonical child
+    /// classes. (Proven order-invariant by `CollectionAcLowering.canon_iff_permutation`.)
+    pub fn ac_content_key(&self, eg: &EGraph<L>) -> ContentKey {
+        let mut child_keys: Vec<ContentKey> = self
+            .children
+            .iter()
+            .map(|&c| eg.canonical_class_key(c))
+            .collect();
+        child_keys.sort_unstable();
+        let mut out = Vec::new();
+        self.op.write_content(&mut out);
+        for k in &child_keys {
+            write_framed(&mut out, k.as_bytes());
+        }
+        ContentKey::from_bytes(out)
+    }
+}
+
 /// Union-find with path compression and union by rank (over e-class ids).
 #[derive(Clone, Debug, Default)]
 struct UnionFind {
@@ -222,6 +254,43 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
             .get(&self.find(id))
             .map(|c| c.nodes.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// The exact content key of an e-class's canonical representative.
+    ///
+    /// The representative is chosen DETERMINISTICALLY as the live e-node of the
+    /// class (`nodes(find(class))`) whose own [`ENode::content_key`] is minimal
+    /// under the total [`ContentKey`] order. Ties are impossible: `rebuild`
+    /// deduplicates exact e-nodes within a class, so distinct nodes carry
+    /// distinct exact keys.
+    ///
+    /// This is the per-class key the AC layer ([`ENode::ac_content_key`]) folds
+    /// over a bag node's children. It is EXACT (collision-free), reflects the
+    /// current union-find equivalence (the class is resolved via [`find`]), and
+    /// does NOT participate in hashcons identity.
+    ///
+    /// For a class with no live nodes (never reached for a live class id; kept
+    /// total for robustness) the key is the framed canonical class id.
+    ///
+    /// [`find`]: Self::find
+    pub fn canonical_class_key(&self, class: EClassId) -> ContentKey
+    where
+        L: SemanticHash,
+    {
+        let canon = self.find(class);
+        match self
+            .nodes(canon)
+            .iter()
+            .map(|n| n.content_key())
+            .min()
+        {
+            Some(key) => key,
+            None => {
+                let mut out = Vec::new();
+                write_framed(&mut out, &canon.0.to_le_bytes());
+                ContentKey::from_bytes(out)
+            },
+        }
     }
 
     /// Add a hashconsed e-node; returns the e-class it belongs to.
@@ -526,5 +595,83 @@ mod tests {
         assert_eq!(n.content_key(), same.content_key());
         assert_ne!(n.content_key(), swapped.content_key(), "child order is identity");
         assert_ne!(n.content_key(), other_op.content_key(), "label is identity");
+    }
+
+    #[test]
+    fn canonical_class_key_picks_minimal_exact_key() {
+        // A class with three merged leaves a/b/c. The canonical key is the
+        // minimal content_key among the live nodes — deterministic, exact.
+        let mut eg = EGraph::<String>::new();
+        let a = leaf(&mut eg, "a");
+        let b = leaf(&mut eg, "b");
+        let c = leaf(&mut eg, "c");
+        eg.merge(a, b);
+        eg.merge(b, c);
+        eg.rebuild();
+        let q = eg.find(a);
+        let expected = eg
+            .nodes(q)
+            .iter()
+            .map(|n| n.content_key())
+            .min()
+            .expect("class has nodes");
+        assert_eq!(eg.canonical_class_key(a), expected);
+        // Invariant under which alias id we ask through (all resolve to `q`).
+        assert_eq!(eg.canonical_class_key(a), eg.canonical_class_key(b));
+        assert_eq!(eg.canonical_class_key(b), eg.canonical_class_key(c));
+    }
+
+    #[test]
+    fn ac_content_key_is_permutation_invariant_but_op_sensitive() {
+        // Build distinct leaf classes p, q, r, then n-ary "bag" nodes over them
+        // in different child orders. ac_content_key must agree across orders
+        // (commutative) but differ from a different operator and a different
+        // multiset.
+        let mut eg = EGraph::<String>::new();
+        let p = leaf(&mut eg, "p");
+        let q = leaf(&mut eg, "q");
+        let r = leaf(&mut eg, "r");
+        let bag_pqr = ENode::new("bag".to_string(), vec![p, q, r]);
+        let bag_rqp = ENode::new("bag".to_string(), vec![r, q, p]);
+        let bag_qpr = ENode::new("bag".to_string(), vec![q, p, r]);
+        assert_eq!(
+            bag_pqr.ac_content_key(&eg),
+            bag_rqp.ac_content_key(&eg),
+            "AC key is invariant under child permutation"
+        );
+        assert_eq!(bag_pqr.ac_content_key(&eg), bag_qpr.ac_content_key(&eg));
+        // order-sensitive content_key still distinguishes the orders.
+        assert_ne!(bag_pqr.content_key(), bag_rqp.content_key());
+        // Different multiset (drop r, duplicate p) ⟹ different AC key.
+        let bag_ppq = ENode::new("bag".to_string(), vec![p, p, q]);
+        assert_ne!(bag_pqr.ac_content_key(&eg), bag_ppq.ac_content_key(&eg));
+        // Different operator over the same multiset ⟹ different AC key.
+        let other_pqr = ENode::new("other".to_string(), vec![p, q, r]);
+        assert_ne!(bag_pqr.ac_content_key(&eg), other_pqr.ac_content_key(&eg));
+    }
+
+    #[test]
+    fn ac_content_key_follows_union_find_merges() {
+        // After merging p~q, a bag {p, r} and a bag {q, r} denote the same
+        // multiset of CLASSES, so their AC keys must coincide (the key resolves
+        // children through the union-find).
+        let mut eg = EGraph::<String>::new();
+        let p = leaf(&mut eg, "p");
+        let q = leaf(&mut eg, "q");
+        let r = leaf(&mut eg, "r");
+        let bag_pr = ENode::new("bag".to_string(), vec![p, r]);
+        let bag_qr = ENode::new("bag".to_string(), vec![q, r]);
+        assert_ne!(
+            bag_pr.ac_content_key(&eg),
+            bag_qr.ac_content_key(&eg),
+            "before merge p and q are distinct classes"
+        );
+        eg.merge(p, q);
+        eg.rebuild();
+        assert_eq!(
+            bag_pr.ac_content_key(&eg),
+            bag_qr.ac_content_key(&eg),
+            "after p~q the two bags are the same multiset of classes"
+        );
     }
 }
