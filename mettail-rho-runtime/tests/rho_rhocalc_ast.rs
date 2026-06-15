@@ -362,15 +362,6 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         .observations_for_channel("OUT")
         .expect("Rho-backed RhoCalc report must expose OUT observations");
     assert_eq!(out.values, vec![RuntimeObservationValue::Text("p".to_string())]);
-
-    let compat_err = language
-        .run_default_backend(term.as_ref())
-        .expect_err("Ascent-shaped compatibility API must reject Rho observations");
-    assert!(
-        compat_err
-            .contains("RhoMachine backend for language RhoCalc returned runtime observations"),
-        "{compat_err}"
-    );
 }
 
 #[test]

@@ -986,9 +986,6 @@ pub trait Language: Send + Sync {
     /// Run the selected backend and return a runtime-neutral report.
     ///
     /// This is the production backend surface for Dovetail/Rho integration.
-    /// `run_with_backend` remains as an Ascent-shaped compatibility wrapper and
-    /// rejects non-Ascent report shapes instead of pretending that Rho
-    /// observations are Ascent facts.
     fn run_backend_report(
         &self,
         backend: RuntimeBackend,
@@ -1009,38 +1006,6 @@ pub trait Language: Send + Sync {
             format!("language {} does not advertise a default runtime backend", self.name())
         })?;
         self.run_backend_report(backend, term)
-    }
-
-    /// Run the selected backend on a term and return results.
-    ///
-    /// `Ascent` remains available as an explicit reference/oracle backend. Other
-    /// backends must be wired by a language only after their proof and runtime
-    /// gates pass. This compatibility method is intentionally Ascent-shaped;
-    /// callers that may select Dovetail/Rho should use
-    /// [`Language::run_backend_report`] instead.
-    fn run_with_backend(
-        &self,
-        backend: RuntimeBackend,
-        term: &dyn Term,
-    ) -> Result<AscentResults, String> {
-        let report = self.run_backend_report(backend, term)?;
-        let output_kind = report.output().kind_name();
-        report.into_ascent_results().map_err(|report| {
-            format!(
-                "{} backend for language {} returned {}; use run_backend_report for this backend",
-                report.backend(),
-                self.name(),
-                output_kind
-            )
-        })
-    }
-
-    /// Run the language's selected default backend.
-    fn run_default_backend(&self, term: &dyn Term) -> Result<AscentResults, String> {
-        let backend = self.selected_default_runtime_backend().ok_or_else(|| {
-            format!("language {} does not advertise a default runtime backend", self.name())
-        })?;
-        self.run_with_backend(backend, term)
     }
 
     /// Run Ascent on a term with pre-seeded relation facts.
@@ -1083,42 +1048,6 @@ pub trait Language: Send + Sync {
                 self.name()
             )),
         }
-    }
-
-    /// Run the selected backend with pre-seeded relation facts.
-    ///
-    /// Relation facts are currently an Ascent-shaped compatibility surface.
-    /// Dovetail/Rho wrappers override this method and reject seeded facts
-    /// unless the selected backend explicitly supports them.
-    fn run_with_backend_with_facts(
-        &self,
-        backend: RuntimeBackend,
-        term: &dyn Term,
-        facts: &SeedFacts,
-    ) -> Result<AscentResults, String> {
-        let report = self.run_backend_report_with_facts(backend, term, facts)?;
-        let output_kind = report.output().kind_name();
-        report.into_ascent_results().map_err(|report| {
-            format!(
-                "{} backend with seeded facts for language {} returned {}; use run_backend_report_with_facts for this backend",
-                report.backend(),
-                self.name(),
-                output_kind
-            )
-        })
-    }
-
-    /// Run the language's selected default backend with pre-seeded relation
-    /// facts.
-    fn run_default_backend_with_facts(
-        &self,
-        term: &dyn Term,
-        facts: &SeedFacts,
-    ) -> Result<AscentResults, String> {
-        let backend = self.selected_default_runtime_backend().ok_or_else(|| {
-            format!("language {} does not advertise a default runtime backend", self.name())
-        })?;
-        self.run_with_backend_with_facts(backend, term, facts)
     }
 
     /// Run the language's selected default backend with pre-seeded relation
@@ -2414,10 +2343,10 @@ mod tests {
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
         assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
-        assert!(language.run_default_backend(&term).is_ok());
+        assert!(language.run_default_backend_report(&term).is_ok());
 
         let err = language
-            .run_with_backend(RuntimeBackend::Dovetail, &term)
+            .run_backend_report(RuntimeBackend::Dovetail, &term)
             .expect_err("absent Dovetail backend must not fall back to Ascent");
         assert!(err.contains("Dovetail backend is not installed for language Dispatch"));
     }
@@ -2438,14 +2367,6 @@ mod tests {
         assert!(
             report_err.contains("does not advertise a default runtime backend"),
             "{report_err}"
-        );
-
-        let compat_err = language
-            .run_default_backend(&term)
-            .expect_err("default Ascent compatibility execution must not fabricate Ascent");
-        assert!(
-            compat_err.contains("does not advertise a default runtime backend"),
-            "{compat_err}"
         );
 
         let seeded_err = language
@@ -2483,15 +2404,7 @@ mod tests {
             BTreeSet::from([RuntimeObservationValue::Text("rho-default".to_string())])
         );
 
-        let err = language
-            .run_default_backend(&term)
-            .expect_err("Ascent-shaped compatibility API must reject Rho observations");
-        assert!(
-            err.contains(
-                "RhoMachine backend for language RhoDispatch returned runtime observations"
-            ),
-            "{err}"
-        );
+        assert!(matches!(report.output(), RuntimeBackendOutput::Observations(_)));
     }
 
     #[test]

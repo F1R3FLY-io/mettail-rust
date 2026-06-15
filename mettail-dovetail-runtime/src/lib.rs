@@ -649,14 +649,10 @@ mod tests {
         assert!(dovetail_report.is_complete());
         assert_eq!(dovetail_report.root_count(), 1);
 
-        let compat_err = language
-            .run_default_backend(term.as_ref())
-            .expect_err("Ascent-shaped compatibility API must reject Dovetail reports");
-        assert!(
-            compat_err
-                .contains("Dovetail backend for language DovetailDummy returned DovetailRunReport"),
-            "{compat_err}"
-        );
+        assert!(language
+            .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
+            .expect_err("production Dovetail wrapper must reject explicit Ascent")
+            .contains("legacy Ascent runtime is not exposed"));
     }
 
     #[test]

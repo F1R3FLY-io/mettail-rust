@@ -1013,15 +1013,6 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         .expect_err("production Rho wrapper must not expose Ascent");
     assert!(ascent_err.contains("legacy Ascent runtime is not exposed"), "{ascent_err}");
 
-    let compat_err = language
-        .run_default_backend(term.as_ref())
-        .expect_err("Ascent-shaped compatibility API must reject Rho observations");
-    assert!(
-        compat_err
-            .contains("RhoMachine backend for language Calculator returned runtime observations"),
-        "{compat_err}"
-    );
-
     let mut facts = SeedFacts::new();
     facts.insert("certified".to_string(), vec![vec!["2 + 3".to_string()]]);
     let seeded_err = language
