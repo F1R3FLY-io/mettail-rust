@@ -261,6 +261,33 @@ pub struct MixedPred<SP, BP>(pub Vec<(SP, BP)>);
 /// `¬b` reject-safe — proven a reject-safe over-approximation
 /// (`BehavioralNegation.mixed_negation_soundness`): if the complement fires, the
 /// product genuinely rejects, so a guarded receive never wrongly admits a Comm.
+///
+/// # The load-bearing safety property (compile-fail)
+///
+/// A [`RejectSafeProduct`] is **only** a [`RejectSafeAlgebra`], never a classical
+/// [`BooleanAlgebra`](crate::symbolic::BooleanAlgebra). Any operation that needs a
+/// classical involutive complement (every SFA `complement`/`determinize`/exact
+/// `is_equivalent`) is bounded on `BooleanAlgebra` and is therefore *statically
+/// unavailable* on the mixed product — the semi-decidable behavioral leg can
+/// never be silently treated as classical. The following must fail to compile:
+///
+/// ```compile_fail
+/// use mettail_prattail::algebra_tower::{Classical, RejectSafeAlgebra, RejectSafeProduct};
+/// use mettail_prattail::symbolic::{BooleanAlgebra, IntervalAlgebra};
+///
+/// // A routine that demands the CLASSICAL tier (involutive complement):
+/// fn classical_complement<A: BooleanAlgebra>(a: &A, p: &A::Predicate) -> A::Predicate {
+///     a.not(p)
+/// }
+///
+/// let prod = RejectSafeProduct::new(
+///     Classical::new(IntervalAlgebra::new(0, 10)),
+///     Classical::new(IntervalAlgebra::new(0, 10)),
+/// );
+/// let p = prod.true_pred();
+/// // ERROR: `RejectSafeProduct<..>: BooleanAlgebra` is not satisfied.
+/// let _ = classical_complement(&prod, &p);
+/// ```
 #[derive(Clone, Debug)]
 pub struct RejectSafeProduct<S, B> {
     /// The structural (typically classical) leg.
