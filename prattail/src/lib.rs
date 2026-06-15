@@ -377,6 +377,11 @@ pub mod symbolic;
 /// automaton/transducer can guard predicates of any supported data type.
 pub mod any_algebra;
 
+/// `OrderedFieldAlgebra<P>`: unbounded interval-union effective Boolean algebra
+/// over any totally-ordered point type (BigInt/BigRational/OrderedF64/i128),
+/// with a single density-aware witness oracle (`OrderedPoint::witness_in`).
+pub mod ordered_field;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
