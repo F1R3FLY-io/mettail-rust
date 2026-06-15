@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
-use crate::collection_algebra::{BagAlgebra, BagPred};
+use crate::collection_algebra::{BagAlgebra, BagPred, MapAlgebra, MapPred, Singleton};
 use crate::kat::BooleanTest;
 use crate::ordered_field::{OrderedF64, OrderedFieldAlgebra, OrderedFieldPred};
 use crate::product_nary::{
@@ -74,6 +74,8 @@ pub enum Sort {
     Bag,
     /// Ranked terms (recursive ADTs).
     Tree,
+    /// Key→value maps.
+    Map,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -81,7 +83,7 @@ pub enum Sort {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A concrete element of one of the supported sorts.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnyDomain {
     /// Integer (`Sort::Int`).
     Int(i64),
@@ -109,6 +111,8 @@ pub enum AnyDomain {
     Bag(Vec<AnyDomain>),
     /// Ranked term (`Sort::Tree`). Boxed — `SymTerm` holds its payload inline.
     Tree(Box<SymTerm<AnyDomain>>),
+    /// Key→value map (`Sort::Map`).
+    Map(Vec<(AnyDomain, AnyDomain)>),
 }
 
 impl AnyDomain {
@@ -128,6 +132,7 @@ impl AnyDomain {
             AnyDomain::List(_) => Sort::List,
             AnyDomain::Bag(_) => Sort::Bag,
             AnyDomain::Tree(_) => Sort::Tree,
+            AnyDomain::Map(_) => Sort::Map,
         }
     }
 }
@@ -169,6 +174,8 @@ pub enum AnyPred {
     Bag(Box<BagPred<AnyPred>>),
     /// Tree predicate.
     Tree(Box<TreePred<AnyPred>>),
+    /// Map predicate.
+    Map(Box<MapPred<AnyPred, AnyPred>>),
     /// Conjunction.
     And(Box<AnyPred>, Box<AnyPred>),
     /// Disjunction.
@@ -194,6 +201,7 @@ impl AnyPred {
             AnyPred::List(_) => Some(Sort::List),
             AnyPred::Bag(_) => Some(Sort::Bag),
             AnyPred::Tree(_) => Some(Sort::Tree),
+            AnyPred::Map(_) => Some(Sort::Map),
             AnyPred::True | AnyPred::False | AnyPred::And(..) | AnyPred::Or(..) | AnyPred::Not(_) => {
                 None
             },
@@ -264,6 +272,9 @@ fn bag_leaf(p: &AnyPred) -> Option<BagPred<AnyPred>> {
 fn tree_leaf(p: &AnyPred) -> Option<TreePred<AnyPred>> {
     if let AnyPred::Tree(x) = p { Some((**x).clone()) } else { None }
 }
+fn map_leaf(p: &AnyPred) -> Option<MapPred<AnyPred, AnyPred>> {
+    if let AnyPred::Map(x) = p { Some((**x).clone()) } else { None }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AnyAlgebra
@@ -298,6 +309,8 @@ pub enum AnyAlgebra {
     Bag(Box<BagAlgebra<AnyAlgebra>>),
     /// Tree algebra.
     Tree(Box<TreeAlgebra<AnyAlgebra>>),
+    /// Map algebra (key algebra must support `Singleton`; `AnyAlgebra` does).
+    Map(Box<MapAlgebra<AnyAlgebra, AnyAlgebra>>),
 }
 
 impl AnyAlgebra {
@@ -317,6 +330,7 @@ impl AnyAlgebra {
             AnyAlgebra::List(_) => Sort::List,
             AnyAlgebra::Bag(_) => Sort::Bag,
             AnyAlgebra::Tree(_) => Sort::Tree,
+            AnyAlgebra::Map(_) => Sort::Map,
         }
     }
 }
@@ -374,6 +388,9 @@ impl BooleanAlgebra for AnyAlgebra {
                 (AnyAlgebra::Tree(g), AnyPred::Tree(x), AnyPred::Tree(y)) => {
                     AnyPred::Tree(Box::new(g.and(x, y)))
                 },
+                (AnyAlgebra::Map(g), AnyPred::Map(x), AnyPred::Map(y)) => {
+                    AnyPred::Map(Box::new(g.and(x, y)))
+                },
                 _ => AnyPred::And(Box::new(a.clone()), Box::new(b.clone())),
             },
         }
@@ -419,6 +436,9 @@ impl BooleanAlgebra for AnyAlgebra {
                 (AnyAlgebra::Tree(g), AnyPred::Tree(x), AnyPred::Tree(y)) => {
                     AnyPred::Tree(Box::new(g.or(x, y)))
                 },
+                (AnyAlgebra::Map(g), AnyPred::Map(x), AnyPred::Map(y)) => {
+                    AnyPred::Map(Box::new(g.or(x, y)))
+                },
                 _ => AnyPred::Or(Box::new(a.clone()), Box::new(b.clone())),
             },
         }
@@ -442,6 +462,7 @@ impl BooleanAlgebra for AnyAlgebra {
             (AnyAlgebra::List(g), AnyPred::List(x)) => AnyPred::List(Box::new(g.not(x))),
             (AnyAlgebra::Bag(g), AnyPred::Bag(x)) => AnyPred::Bag(Box::new(g.not(x))),
             (AnyAlgebra::Tree(g), AnyPred::Tree(x)) => AnyPred::Tree(Box::new(g.not(x))),
+            (AnyAlgebra::Map(g), AnyPred::Map(x)) => AnyPred::Map(Box::new(g.not(x))),
             _ => AnyPred::Not(Box::new(a.clone())),
         }
     }
@@ -461,6 +482,7 @@ impl BooleanAlgebra for AnyAlgebra {
             AnyAlgebra::List(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &list_leaf)),
             AnyAlgebra::Bag(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &bag_leaf)),
             AnyAlgebra::Tree(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &tree_leaf)),
+            AnyAlgebra::Map(g) => g.is_satisfiable(&fold_pred(g.as_ref(), a, &map_leaf)),
         }
     }
 
@@ -492,6 +514,9 @@ impl BooleanAlgebra for AnyAlgebra {
             },
             AnyAlgebra::Tree(g) => {
                 g.witness(&fold_pred(g.as_ref(), a, &tree_leaf)).map(|v| AnyDomain::Tree(Box::new(v)))
+            },
+            AnyAlgebra::Map(g) => {
+                g.witness(&fold_pred(g.as_ref(), a, &map_leaf)).map(AnyDomain::Map)
             },
         }
     }
@@ -533,8 +558,106 @@ impl BooleanAlgebra for AnyAlgebra {
             (AnyAlgebra::Tree(g), AnyDomain::Tree(v)) => {
                 g.evaluate(&fold_pred(g.as_ref(), pred, &tree_leaf), v)
             },
+            (AnyAlgebra::Map(g), AnyDomain::Map(v)) => {
+                g.evaluate(&fold_pred(g.as_ref(), pred, &map_leaf), v)
+            },
             // Element not of this algebra's sort.
             _ => false,
+        }
+    }
+}
+
+/// Exact-structure tree singleton: the pattern matched only by `term`.
+fn point_tree(elem: &AnyAlgebra, term: &SymTerm<AnyDomain>) -> TreePred<AnyPred> {
+    TreePred::Node {
+        constructor: term.constructor.clone(),
+        payload_guard: term.payload.as_ref().map(|p| elem.point(p)),
+        children: term.children.iter().map(|c| point_tree(elem, c)).collect(),
+    }
+}
+
+impl Singleton for AnyAlgebra {
+    fn point(&self, value: &AnyDomain) -> AnyPred {
+        match (self, value) {
+            (AnyAlgebra::Int(g), AnyDomain::Int(v)) => AnyPred::Int(g.point(v)),
+            (AnyAlgebra::Char(g), AnyDomain::Char(v)) => AnyPred::Char(g.point(v)),
+            (AnyAlgebra::Bool(g), AnyDomain::Bool(v)) => AnyPred::Bool(g.point(v)),
+            (AnyAlgebra::BigInt(g), AnyDomain::BigInt(v)) => AnyPred::BigInt(g.point(v)),
+            (AnyAlgebra::BigRat(g), AnyDomain::BigRat(v)) => AnyPred::BigRat(g.point(v)),
+            (AnyAlgebra::Fixed(g), AnyDomain::Fixed(v)) => AnyPred::Fixed(g.point(v)),
+            (AnyAlgebra::Float(g), AnyDomain::Float(v)) => AnyPred::Float(g.point(v)),
+            (AnyAlgebra::Str(g), AnyDomain::Str(v)) => AnyPred::Str(g.point(v)),
+            (AnyAlgebra::Product(g), AnyDomain::Product(vals)) if vals.len() == g.fields.len() => {
+                let mut acc = NaryProductPred::True;
+                for (i, v) in vals.iter().enumerate() {
+                    let atom = NaryProductPred::Field(i, g.fields[i].point(v));
+                    acc = match acc {
+                        NaryProductPred::True => atom,
+                        other => NaryProductPred::And(Box::new(other), Box::new(atom)),
+                    };
+                }
+                AnyPred::Product(Box::new(acc))
+            },
+            (AnyAlgebra::Sum(g), AnyDomain::Sum(v)) if v.tag < g.variants.len() => {
+                AnyPred::Sum(Box::new(SumPred::InVariant(
+                    v.tag,
+                    g.variants[v.tag].point(&v.payload),
+                )))
+            },
+            (AnyAlgebra::List(g), AnyDomain::List(vals)) => {
+                let mut acc = RegexPred::Epsilon;
+                for v in vals {
+                    acc = RegexPred::Concat(
+                        Box::new(acc),
+                        Box::new(RegexPred::Elem(g.elem.point(v))),
+                    );
+                }
+                AnyPred::List(Box::new(acc))
+            },
+            (AnyAlgebra::Tree(g), AnyDomain::Tree(term)) => {
+                AnyPred::Tree(Box::new(point_tree(&g.elem, term)))
+            },
+            (AnyAlgebra::Bag(g), AnyDomain::Bag(vals)) => {
+                // Group distinct elements (AnyDomain: Eq) with their multiplicities.
+                let mut groups: Vec<(&AnyDomain, u64)> = Vec::new();
+                for v in vals {
+                    if let Some(grp) = groups.iter_mut().find(|(d, _)| *d == v) {
+                        grp.1 += 1;
+                    } else {
+                        groups.push((v, 1));
+                    }
+                }
+                let mut acc = BagPred::Count {
+                    class: g.elem.true_pred(),
+                    lo: vals.len() as u64,
+                    hi: Some(vals.len() as u64),
+                };
+                for (d, count) in groups {
+                    let atom = BagPred::Count { class: g.elem.point(d), lo: count, hi: Some(count) };
+                    acc = BagPred::And(Box::new(acc), Box::new(atom));
+                }
+                AnyPred::Bag(Box::new(acc))
+            },
+            (AnyAlgebra::Map(g), AnyDomain::Map(entries)) => {
+                let mut acc = MapPred::CountEntries {
+                    key_class: g.key.true_pred(),
+                    val_class: g.val.true_pred(),
+                    lo: entries.len() as u64,
+                    hi: Some(entries.len() as u64),
+                };
+                for (k, v) in entries {
+                    let atom = MapPred::CountEntries {
+                        key_class: g.key.point(k),
+                        val_class: g.val.point(v),
+                        lo: 1,
+                        hi: Some(1),
+                    };
+                    acc = MapPred::And(Box::new(acc), Box::new(atom));
+                }
+                AnyPred::Map(Box::new(acc))
+            },
+            // Foreign-sort value (or malformed): no element of this sort equals it.
+            _ => AnyPred::False,
         }
     }
 }
@@ -597,7 +720,7 @@ impl SortRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection_algebra::BagAlgebra;
+    use crate::collection_algebra::{BagAlgebra, MapAlgebra, Singleton};
     use crate::product_nary::{NaryProductAlgebra, NaryProductPred, SumAlgebra, SumPred};
     use crate::regex_sfa::RegexAlgebra;
     use crate::string_algebra::StrPred;
@@ -731,6 +854,50 @@ mod tests {
         let any_int = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
         let pred = any_int.and(&AnyPred::Int(IntervalPred::True), &AnyPred::Char(CharClassPred::True));
         assert!(!any_int.is_satisfiable(&pred));
+    }
+
+    /// A map (Int → Str) carried by the uniform carrier (key=AnyAlgebra needs
+    /// Singleton, which AnyAlgebra implements).
+    #[test]
+    fn map_combinator_in_any() {
+        let map = MapAlgebra::new(
+            AnyAlgebra::Int(IntervalAlgebra::new(0, 1000)),
+            AnyAlgebra::Str(StringAlgebra::new()),
+        );
+        let p = map.entry(
+            AnyPred::Int(IntervalPred::Range(0, 10)),
+            AnyPred::Str(StrPred::Literal("x".to_string())),
+        );
+        let any = AnyAlgebra::Map(Box::new(map));
+        let pred = AnyPred::Map(Box::new(p));
+        let good = AnyDomain::Map(vec![(AnyDomain::Int(5), AnyDomain::Str("x".to_string()))]);
+        let bad = AnyDomain::Map(vec![(AnyDomain::Int(5), AnyDomain::Str("y".to_string()))]);
+        assert!(any.evaluate(&pred, &good));
+        assert!(!any.evaluate(&pred, &bad));
+        assert!(any.is_satisfiable(&pred));
+        let w = any.witness(&pred).expect("nonempty");
+        assert!(any.evaluate(&pred, &w));
+    }
+
+    /// `Singleton::point` over the carrier (scalars + a composite).
+    #[test]
+    fn singleton_points() {
+        let any = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
+        let pt = any.point(&AnyDomain::Int(42));
+        assert!(any.evaluate(&pt, &AnyDomain::Int(42)));
+        assert!(!any.evaluate(&pt, &AnyDomain::Int(43)));
+
+        let prod = AnyAlgebra::Product(Box::new(NaryProductAlgebra::new(vec![
+            AnyAlgebra::Int(IntervalAlgebra::new(0, 100)),
+            AnyAlgebra::Str(StringAlgebra::new()),
+        ])));
+        let v = AnyDomain::Product(vec![AnyDomain::Int(7), AnyDomain::Str("k".to_string())]);
+        let pt = prod.point(&v);
+        assert!(prod.evaluate(&pt, &v));
+        assert!(!prod.evaluate(
+            &pt,
+            &AnyDomain::Product(vec![AnyDomain::Int(8), AnyDomain::Str("k".to_string())])
+        ));
     }
 
     #[test]
