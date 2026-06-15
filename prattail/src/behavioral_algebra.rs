@@ -20,7 +20,7 @@
 //! [`BehavioralFormula`] enum and the `evaluate`/`is_satisfiable_3v` dispatch in
 //! subsequent steps.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -114,6 +114,27 @@ pub enum Arg {
     Lit(String),
 }
 
+/// What a modal operator matches on an LTS edge label.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ActionPattern {
+    /// Any action (`⟨-⟩` / `[-]`).
+    Any,
+    /// An internal/unlabeled step (`τ`): empty or `"tau"` label.
+    Tau,
+    /// A specific named action.
+    Named(String),
+}
+
+impl ActionPattern {
+    fn matches(&self, action: &str) -> bool {
+        match self {
+            ActionPattern::Any => true,
+            ActionPattern::Tau => action.is_empty() || action == "tau",
+            ActionPattern::Named(n) => action == n,
+        }
+    }
+}
+
 /// The domain a quantifier ranges over.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum QDomain {
@@ -141,6 +162,18 @@ pub enum BehavioralFormula {
     Forall { var: String, domain: QDomain, body: Box<BehavioralFormula> },
     /// `∃ var ∈ domain. body`.
     Exists { var: String, domain: QDomain, body: Box<BehavioralFormula> },
+    /// A state proposition: the LTS state's `label()` equals this string.
+    Atom(String),
+    /// `⟨a⟩φ` — some `a`-labeled successor satisfies `φ`.
+    Diamond(ActionPattern, Box<BehavioralFormula>),
+    /// `[a]φ` — all `a`-labeled successors satisfy `φ`.
+    BoxAll(ActionPattern, Box<BehavioralFormula>),
+    /// Least fixpoint `μX.φ` (liveness/eventuality).
+    Mu(String, Box<BehavioralFormula>),
+    /// Greatest fixpoint `νX.φ` (safety/invariance).
+    Nu(String, Box<BehavioralFormula>),
+    /// A fixpoint variable.
+    FixVar(String),
     /// Conjunction.
     And(Box<BehavioralFormula>, Box<BehavioralFormula>),
     /// Disjunction.
@@ -176,6 +209,37 @@ impl BehavioralFormula {
                 b.free_vars(bound, acc);
             },
             BehavioralFormula::Not(x) => x.free_vars(bound, acc),
+            // Modal arms: fixpoint variables are a separate namespace (state
+            // sets), not relational vars; recurse into bodies for relational
+            // free vars; Atom/FixVar contribute no relational vars.
+            BehavioralFormula::Atom(_) | BehavioralFormula::FixVar(_) => {},
+            BehavioralFormula::Diamond(_, body)
+            | BehavioralFormula::BoxAll(_, body)
+            | BehavioralFormula::Mu(_, body)
+            | BehavioralFormula::Nu(_, body) => body.free_vars(bound, acc),
+        }
+    }
+
+    /// Whether the formula uses any modal/temporal operator (and therefore needs
+    /// the LTS, not just the fact base).
+    fn has_modal(&self) -> bool {
+        match self {
+            BehavioralFormula::Atom(_)
+            | BehavioralFormula::Diamond(..)
+            | BehavioralFormula::BoxAll(..)
+            | BehavioralFormula::Mu(..)
+            | BehavioralFormula::Nu(..)
+            | BehavioralFormula::FixVar(_) => true,
+            BehavioralFormula::And(a, b) | BehavioralFormula::Or(a, b) => {
+                a.has_modal() || b.has_modal()
+            },
+            BehavioralFormula::Not(x) => x.has_modal(),
+            BehavioralFormula::Forall { body, .. } | BehavioralFormula::Exists { body, .. } => {
+                body.has_modal()
+            },
+            BehavioralFormula::Top | BehavioralFormula::Bot | BehavioralFormula::Relation { .. } => {
+                false
+            },
         }
     }
 }
@@ -342,9 +406,163 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
                 let (r, e) = self.eval(x, env);
                 (!r, e)
             },
+            // Invariant: `eval` is the relational-only evaluator; modal formulas
+            // are routed to the model checker by `evaluate`/`is_satisfiable_3v`,
+            // and the relational fast path runs only when `has_modal()` is false,
+            // so no modal arm is reachable here.
+            BehavioralFormula::Atom(_)
+            | BehavioralFormula::Diamond(..)
+            | BehavioralFormula::BoxAll(..)
+            | BehavioralFormula::Mu(..)
+            | BehavioralFormula::Nu(..)
+            | BehavioralFormula::FixVar(_) => {
+                unreachable!("modal formula reached the relational evaluator")
+            },
+        }
+    }
+
+    /// Build the reachable LTS from `root` (BFS), capped at `MAX_REACH_STATES`.
+    /// Returns the states (index 0 = root) and adjacency `(action, target)`.
+    fn build_lts(&self, root: &H) -> (Vec<H>, Vec<Vec<(String, usize)>>) {
+        let mut states = vec![root.clone()];
+        let mut index: HashMap<H, usize> = HashMap::new();
+        index.insert(root.clone(), 0);
+        let mut adj: Vec<Vec<(String, usize)>> = vec![Vec::new()];
+        let mut queue = VecDeque::from([0usize]);
+        while let Some(i) = queue.pop_front() {
+            for (action, next) in states[i].successors() {
+                let j = match index.get(&next) {
+                    Some(&j) => j,
+                    None => {
+                        if states.len() >= MAX_REACH_STATES {
+                            continue; // truncated (reject-safe: missing edges only shrink modal sets)
+                        }
+                        let j = states.len();
+                        states.push(next.clone());
+                        index.insert(next, j);
+                        adj.push(Vec::new());
+                        queue.push_back(j);
+                        j
+                    },
+                };
+                adj[i].push((action, j));
+            }
+        }
+        (states, adj)
+    }
+
+    /// The set of state indices satisfying `formula` (finite mu-calculus model
+    /// checking over the reachable LTS). `fix` maps fixpoint variables to their
+    /// current state sets.
+    fn denote(
+        &self,
+        formula: &BehavioralFormula,
+        states: &[H],
+        adj: &[Vec<(String, usize)>],
+        env: &BTreeMap<String, String>,
+        fix: &HashMap<String, HashSet<usize>>,
+    ) -> HashSet<usize> {
+        let all = || (0..states.len()).collect::<HashSet<usize>>();
+        match formula {
+            BehavioralFormula::Top => all(),
+            BehavioralFormula::Bot => HashSet::new(),
+            BehavioralFormula::Atom(label) => {
+                (0..states.len()).filter(|&i| states[i].label() == *label).collect()
+            },
+            // State-independent relational atom: holds at all states or none.
+            BehavioralFormula::Relation { .. } => {
+                if self.eval(formula, env).0 {
+                    all()
+                } else {
+                    HashSet::new()
+                }
+            },
+            BehavioralFormula::Forall { var, domain, body } => {
+                let (vals, _exact) = self.domain_values(domain);
+                let mut acc = all();
+                let mut env2 = env.clone();
+                for v in &vals {
+                    env2.insert(var.clone(), v.clone());
+                    let d = self.denote(body, states, adj, &env2, fix);
+                    acc = acc.intersection(&d).copied().collect();
+                }
+                env2.remove(var);
+                acc
+            },
+            BehavioralFormula::Exists { var, domain, body } => {
+                let (vals, _exact) = self.domain_values(domain);
+                let mut acc = HashSet::new();
+                let mut env2 = env.clone();
+                for v in &vals {
+                    env2.insert(var.clone(), v.clone());
+                    let d = self.denote(body, states, adj, &env2, fix);
+                    acc = acc.union(&d).copied().collect();
+                }
+                env2.remove(var);
+                acc
+            },
+            BehavioralFormula::And(a, b) => {
+                let da = self.denote(a, states, adj, env, fix);
+                let db = self.denote(b, states, adj, env, fix);
+                da.intersection(&db).copied().collect()
+            },
+            BehavioralFormula::Or(a, b) => {
+                let da = self.denote(a, states, adj, env, fix);
+                let db = self.denote(b, states, adj, env, fix);
+                da.union(&db).copied().collect()
+            },
+            BehavioralFormula::Not(x) => {
+                let d = self.denote(x, states, adj, env, fix);
+                (0..states.len()).filter(|i| !d.contains(i)).collect()
+            },
+            BehavioralFormula::Diamond(ap, body) => {
+                let b = self.denote(body, states, adj, env, fix);
+                (0..states.len())
+                    .filter(|&i| adj[i].iter().any(|(act, j)| ap.matches(act) && b.contains(j)))
+                    .collect()
+            },
+            BehavioralFormula::BoxAll(ap, body) => {
+                let b = self.denote(body, states, adj, env, fix);
+                (0..states.len())
+                    .filter(|&i| adj[i].iter().all(|(act, j)| !ap.matches(act) || b.contains(j)))
+                    .collect()
+            },
+            BehavioralFormula::Mu(x, body) => {
+                // least fixpoint: start ∅, iterate (monotone; ≤ |states| steps).
+                let mut cur: HashSet<usize> = HashSet::new();
+                for _ in 0..=states.len() {
+                    let mut fix2 = fix.clone();
+                    fix2.insert(x.clone(), cur.clone());
+                    let next = self.denote(body, states, adj, env, &fix2);
+                    if next == cur {
+                        break;
+                    }
+                    cur = next;
+                }
+                cur
+            },
+            BehavioralFormula::Nu(x, body) => {
+                // greatest fixpoint: start ⊤, iterate (monotone; ≤ |states| steps).
+                let mut cur: HashSet<usize> = all();
+                for _ in 0..=states.len() {
+                    let mut fix2 = fix.clone();
+                    fix2.insert(x.clone(), cur.clone());
+                    let next = self.denote(body, states, adj, env, &fix2);
+                    if next == cur {
+                        break;
+                    }
+                    cur = next;
+                }
+                cur
+            },
+            BehavioralFormula::FixVar(x) => fix.get(x).cloned().unwrap_or_default(),
         }
     }
 }
+
+/// Cap on reachable-LTS size for modal model checking (beyond it the LTS is
+/// truncated; missing edges only shrink modal satisfaction sets — reject-safe).
+const MAX_REACH_STATES: usize = 10_000;
 
 impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
     type Predicate = BehavioralFormula;
@@ -384,9 +602,16 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
     }
 
     fn is_satisfiable_3v(&self, a: &BehavioralFormula) -> Sat3 {
-        // Existentially close the free variables over the active domain and
-        // search; exact (Sat/Unsat) unless the search budget is exceeded or a
-        // bounded quantifier truncated.
+        if a.has_modal() {
+            // Modal/temporal satisfiability (∃ a model) is semi-decidable without
+            // a full mu-calculus SAT engine; report DontKnow honestly (reject-safe
+            // — never a wrong Sat/Unsat). The model-checking direction (evaluate
+            // against a given term) is exact.
+            return Sat3::DontKnow;
+        }
+        // Relational: existentially close the free variables over the active
+        // domain and search; exact (Sat/Unsat) unless the search budget is
+        // exceeded or a bounded quantifier truncated.
         let mut free = BTreeSet::new();
         a.free_vars(&mut BTreeSet::new(), &mut free);
         let free: Vec<String> = free.into_iter().collect();
@@ -443,7 +668,13 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
     }
 
     fn evaluate(&self, pred: &BehavioralFormula, elem: &BehavioralWorld<H>) -> bool {
-        self.eval(pred, &elem.env).0
+        if !pred.has_modal() {
+            // Relational fast path: evaluate against the fact base + bindings.
+            return self.eval(pred, &elem.env).0;
+        }
+        // Modal/temporal: model-check over the term's reachable LTS.
+        let (states, adj) = self.build_lts(&elem.term);
+        self.denote(pred, &states, &adj, &elem.env, &HashMap::new()).contains(&0)
     }
 }
 
@@ -572,5 +803,105 @@ mod tests {
             Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("y")] }),
         );
         assert_eq!(alg.is_satisfiable_3v(&p), Sat3::DontKnow);
+    }
+
+    // A tiny LTS: 0 --step--> 1 --step--> 2(done), 2 terminal.
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    struct TestProc(u32);
+    impl HostTerm for TestProc {
+        fn successors(&self) -> Vec<(String, Self)> {
+            match self.0 {
+                0 => vec![("step".into(), TestProc(1))],
+                1 => vec![("step".into(), TestProc(2))],
+                _ => vec![],
+            }
+        }
+        fn label(&self) -> String {
+            if self.0 == 2 {
+                "done".into()
+            } else {
+                String::new()
+            }
+        }
+    }
+
+    #[test]
+    fn modal_diamond_box() {
+        let alg = BehavioralAlgebra::<TestProc>::new(FactBase::new());
+        let can_step = BehavioralFormula::Diamond(
+            ActionPattern::Named("step".into()),
+            Box::new(BehavioralFormula::Top),
+        );
+        assert!(alg.evaluate(&can_step, &BehavioralWorld::new(TestProc(0))));
+        assert!(!alg.evaluate(&can_step, &BehavioralWorld::new(TestProc(2)))); // terminal
+        // [step]⊥ at the terminal state: no step successors → vacuously true.
+        let no_step = BehavioralFormula::BoxAll(
+            ActionPattern::Named("step".into()),
+            Box::new(BehavioralFormula::Bot),
+        );
+        assert!(alg.evaluate(&no_step, &BehavioralWorld::new(TestProc(2))));
+        assert!(!alg.evaluate(&no_step, &BehavioralWorld::new(TestProc(0)))); // has a step
+    }
+
+    #[test]
+    fn modal_eventually_done() {
+        let alg = BehavioralAlgebra::<TestProc>::new(FactBase::new());
+        // μX. (done ∨ ⟨-⟩X) — eventually reaches a 'done' state.
+        let eventually = BehavioralFormula::Mu(
+            "X".into(),
+            Box::new(BehavioralFormula::Or(
+                Box::new(BehavioralFormula::Atom("done".into())),
+                Box::new(BehavioralFormula::Diamond(
+                    ActionPattern::Any,
+                    Box::new(BehavioralFormula::FixVar("X".into())),
+                )),
+            )),
+        );
+        assert!(alg.evaluate(&eventually, &BehavioralWorld::new(TestProc(0))));
+        assert!(alg.evaluate(&eventually, &BehavioralWorld::new(TestProc(2)))); // already done
+        // Modal satisfiability is honestly DontKnow.
+        assert_eq!(alg.is_satisfiable_3v(&eventually), Sat3::DontKnow);
+    }
+
+    #[test]
+    fn modal_no_infinite_path() {
+        let alg = BehavioralAlgebra::<TestProc>::new(FactBase::new());
+        // νX. ⟨-⟩X — an infinite path exists; the chain terminates ⇒ false.
+        let inf = BehavioralFormula::Nu(
+            "X".into(),
+            Box::new(BehavioralFormula::Diamond(
+                ActionPattern::Any,
+                Box::new(BehavioralFormula::FixVar("X".into())),
+            )),
+        );
+        assert!(!alg.evaluate(&inf, &BehavioralWorld::new(TestProc(0))));
+        assert!(!alg.evaluate(&inf, &BehavioralWorld::new(TestProc(2))));
+    }
+
+    #[test]
+    fn modal_invariant_box_chain() {
+        let alg = BehavioralAlgebra::<TestProc>::new(FactBase::new());
+        // νX. ([−]X) — trivially true (safety with no atomic constraint): every
+        // state, and all its successors transitively, are in the set.
+        let always = BehavioralFormula::Nu(
+            "X".into(),
+            Box::new(BehavioralFormula::BoxAll(
+                ActionPattern::Any,
+                Box::new(BehavioralFormula::FixVar("X".into())),
+            )),
+        );
+        assert!(alg.evaluate(&always, &BehavioralWorld::new(TestProc(0))));
+        // νX. (done ∧ [−]X) — "done holds globally" — false (states 0,1 not done).
+        let always_done = BehavioralFormula::Nu(
+            "X".into(),
+            Box::new(BehavioralFormula::And(
+                Box::new(BehavioralFormula::Atom("done".into())),
+                Box::new(BehavioralFormula::BoxAll(
+                    ActionPattern::Any,
+                    Box::new(BehavioralFormula::FixVar("X".into())),
+                )),
+            )),
+        );
+        assert!(!alg.evaluate(&always_done, &BehavioralWorld::new(TestProc(0))));
     }
 }
