@@ -552,6 +552,7 @@ When a user runs exec:
   if the report is Dovetail-report-shaped:
     display backend, artifact, completeness, roots, terms, and edge counts
     store the report as the current runtime result
+    expose the derivation-dependency graph to graph navigation commands
     do not fabricate Ascent rewrite facts
   if the report is observation-shaped:
     display backend, artifact, channel, and observed values
@@ -559,19 +560,20 @@ When a user runs exec:
     do not fabricate Ascent rewrite facts
 
 When a user runs step, apply, equations, rewrites, normal-forms, or queries:
-  require an Ascent-shaped rewrite graph
-  reject non-Ascent selected backends before executing step
-  reject Dovetail-report-shaped and observation-shaped reports with an explicit message
+  accept Ascent-shaped reports as historical rewrite graphs
+  accept Dovetail-report-shaped reports as derivation-dependency graphs
+  reject observation-shaped reports for graph-navigation commands with an explicit message
   preserve the cached RuntimeBackendReport when graph cursor commands move
 ```
 
-This preserves old graph-navigation ergonomics while allowing Dovetail-default
-languages to return checked report evidence and Rho-default languages to return
-typed RSpace observations. The state API is report-native:
+This preserves old graph-navigation ergonomics without making Ascent the only
+graph authority: Dovetail-default languages expose checked derivation structure
+directly, while Rho-default languages return typed RSpace observations. The
+state API is report-native:
 `set_term(…, RuntimeBackendReport)` installs a checked backend report,
 `set_term_with_report(…, graph_id)` records an explicit graph/result cursor,
 and `set_term_preserving_report(…, graph_id)` moves within the current display
-or reference graph without changing the report envelope. The legacy
+or graph view without changing the report envelope. The legacy
 `AscentResults` projection is a read-only compatibility view over
 `RuntimeBackendReport::as_ascent_results()`, not the stored state type.
 The query command follows the same boundary: it calls

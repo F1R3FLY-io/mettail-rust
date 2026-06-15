@@ -6,12 +6,13 @@ use anyhow::Result;
 use colored::Colorize;
 use mettail_query::run_query_report as query_run_query_report;
 use mettail_runtime::{
-    AscentResults, Language, RuntimeBackend, RuntimeBackendOutput, RuntimeDovetailRunReport,
-    TermInfo,
+    Language, RelationData, RuntimeBackend, RuntimeBackendOutput, RuntimeBackendReport,
+    RuntimeDovetailRunReport,
 };
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// Extract the term portion from a REPL command line.
@@ -65,8 +66,10 @@ fn runtime_backend_summary(language: &dyn Language) -> String {
 mod tests {
     use super::*;
     use mettail_runtime::{
-        BackendCapabilityDef, LanguageMetadata, RuntimeBackendArtifact, RuntimeBackendReport,
-        RuntimeChannelObservation, RuntimeObservationValue, Term, TermType, VarTypeInfo,
+        AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackendArtifact,
+        RuntimeBackendReport, RuntimeChannelObservation, RuntimeDovetailCompleteness,
+        RuntimeDovetailDerivationEdge, RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
+        RuntimeObservationValue, Term, TermType, VarTypeInfo,
     };
     use std::fmt;
 
@@ -143,6 +146,41 @@ mod tests {
     }
 
     static RHO_DEFAULT_METADATA: RhoDefaultMetadata = RhoDefaultMetadata;
+
+    struct DovetailDefaultMetadata;
+
+    static DOVETAIL_DEFAULT_BACKENDS: &[BackendCapabilityDef] = &[BackendCapabilityDef {
+        backend: RuntimeBackend::Dovetail,
+        is_default: true,
+    }];
+
+    impl LanguageMetadata for DovetailDefaultMetadata {
+        fn name(&self) -> &'static str {
+            "DovetailProbe"
+        }
+
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
+
+        fn runtime_backends(&self) -> &'static [BackendCapabilityDef] {
+            DOVETAIL_DEFAULT_BACKENDS
+        }
+    }
+
+    static DOVETAIL_DEFAULT_METADATA: DovetailDefaultMetadata = DovetailDefaultMetadata;
 
     struct NoRuntimeMetadata;
 
@@ -349,6 +387,133 @@ mod tests {
         }
     }
 
+    fn dovetail_probe_report() -> RuntimeDovetailRunReport {
+        RuntimeDovetailRunReport {
+            roots: vec![b"root".to_vec()],
+            root_ordinals: vec![0],
+            terms: vec![
+                RuntimeDovetailTermRecord {
+                    ordinal: 0,
+                    class_id: 0,
+                    key: b"root".to_vec(),
+                    op_display: "root".to_string(),
+                    weight_display: "0".to_string(),
+                    is_root: true,
+                },
+                RuntimeDovetailTermRecord {
+                    ordinal: 1,
+                    class_id: 1,
+                    key: b"child".to_vec(),
+                    op_display: "child".to_string(),
+                    weight_display: "0".to_string(),
+                    is_root: false,
+                },
+            ],
+            derivation_edges: vec![RuntimeDovetailDerivationEdge {
+                ordinal: 0,
+                parent_key: b"root".to_vec(),
+                child_key: b"child".to_vec(),
+                child_index: 0,
+            }],
+            completeness: RuntimeDovetailCompleteness::Complete,
+        }
+    }
+
+    struct DovetailDefaultLanguage;
+
+    impl Language for DovetailDefaultLanguage {
+        fn name(&self) -> &'static str {
+            "DovetailProbe"
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            &DOVETAIL_DEFAULT_METADATA
+        }
+
+        fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            let display = match input {
+                "root" => "root",
+                "child" => "child",
+                _ => "parsed",
+            };
+            Ok(Box::new(TestTerm { display, id: 30 }))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            panic!("Dovetail-default REPL test language must not run Ascent")
+        }
+
+        fn run_backend_report(
+            &self,
+            backend: RuntimeBackend,
+            _term: &dyn Term,
+        ) -> Result<RuntimeBackendReport, String> {
+            match backend {
+                RuntimeBackend::Dovetail => {
+                    RuntimeBackendReport::try_dovetail(dovetail_probe_report())
+                        .map_err(|err| err.to_string())
+                },
+                other => Err(format!("unexpected backend: {other}")),
+            }
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            true
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
     #[test]
     fn exec_uses_selected_backend_report_instead_of_legacy_direct_eval() {
         let mut registry = LanguageRegistry::new();
@@ -421,6 +586,82 @@ mod tests {
     }
 
     #[test]
+    fn step_and_graph_commands_read_dovetail_derivation_reports() {
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(DovetailDefaultLanguage));
+        let mut repl = Repl::new(registry).expect("test REPL can be constructed");
+
+        repl.load_language("DovetailProbe")
+            .expect("test language is registered");
+        repl.cmd_step_term("input")
+            .expect("Dovetail step should start at the derivation root");
+
+        let report = repl
+            .state
+            .backend_report()
+            .expect("step stores the selected runtime backend report");
+        assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+        assert_eq!(repl.state.current_graph_id(), Some(0));
+
+        repl.cmd_rewrites()
+            .expect("Dovetail derivation dependencies should list as graph edges");
+        repl.cmd_relation(&["derivation_edges"])
+            .expect("Dovetail derivation edge relation should be visible");
+        repl.cmd_apply(&["0"])
+            .expect("Dovetail graph apply should move to the child derivation");
+        assert_eq!(repl.state.current_graph_id(), Some(1));
+        assert_eq!(format!("{}", repl.state.current_term().unwrap()), "child");
+
+        repl.cmd_normal_forms()
+            .expect("Dovetail extracted roots should be visible as graph normal forms");
+        repl.cmd_goto(&["0"])
+            .expect("Dovetail goto should navigate to the extracted root");
+        assert_eq!(repl.state.current_graph_id(), Some(0));
+    }
+
+    #[test]
+    fn dovetail_multi_root_graph_entry_is_not_a_report_root() {
+        let mut report = dovetail_probe_report();
+        report.roots.push(b"other_root".to_vec());
+        report.root_ordinals.push(2);
+        report.terms.push(RuntimeDovetailTermRecord {
+            ordinal: 2,
+            class_id: 2,
+            key: b"other_root".to_vec(),
+            op_display: "other_root".to_string(),
+            weight_display: "0".to_string(),
+            is_root: true,
+        });
+
+        let backend_report = RuntimeBackendReport::try_dovetail(report)
+            .expect("multi-root report should satisfy Dovetail shape validation");
+        let graph = runtime_graph_view(&backend_report)
+            .expect("multi-root Dovetail report should project to a graph");
+
+        assert_eq!(graph.entry_id, Some(DOVETAIL_SYNTHETIC_ROOT_ID));
+        let entry = graph.entry_term().expect("synthetic graph entry exists");
+        assert_eq!(entry.display, "DovetailRoots([root, other_root])");
+        assert!(!entry.is_root);
+        assert!(!entry.is_normal_form);
+
+        let roots: Vec<_> = graph
+            .terms
+            .iter()
+            .filter(|term| term.is_root)
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(roots, vec!["root", "other_root"]);
+
+        let normal_forms: Vec<_> = graph
+            .normal_forms()
+            .iter()
+            .map(|term| term.display.as_str())
+            .collect();
+        assert_eq!(normal_forms, vec!["root", "other_root"]);
+    }
+
+    #[test]
     fn query_command_reads_rho_runtime_report_observations() {
         let mut registry = LanguageRegistry::new();
         registry.register(Box::new(RhoDefaultLanguage));
@@ -469,6 +710,237 @@ impl mettail_runtime::Term for DisplayTerm {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+const DOVETAIL_SYNTHETIC_ROOT_ID: u64 = u64::MAX;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeGraphKind {
+    AscentRewriteGraph,
+    DovetailDerivationGraph,
+}
+
+impl RuntimeGraphKind {
+    fn edge_relation_name(self) -> &'static str {
+        match self {
+            RuntimeGraphKind::AscentRewriteGraph => "rewrites",
+            RuntimeGraphKind::DovetailDerivationGraph => "derivation_edges",
+        }
+    }
+
+    fn edge_label(self) -> &'static str {
+        match self {
+            RuntimeGraphKind::AscentRewriteGraph => "rewrite",
+            RuntimeGraphKind::DovetailDerivationGraph => "derivation dependency",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeGraphTerm {
+    id: u64,
+    display: String,
+    is_normal_form: bool,
+    is_root: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeGraphEdge {
+    from_id: u64,
+    to_id: u64,
+    label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeGraphEquivalence {
+    term_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeGraphRelation {
+    param_types: Vec<String>,
+    tuples: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeGraphView {
+    kind: RuntimeGraphKind,
+    entry_id: Option<u64>,
+    terms: Vec<RuntimeGraphTerm>,
+    edges: Vec<RuntimeGraphEdge>,
+    equivalences: Vec<RuntimeGraphEquivalence>,
+    custom_relations: HashMap<String, RuntimeGraphRelation>,
+}
+
+impl RuntimeGraphView {
+    fn term_by_id(&self, id: u64) -> Option<&RuntimeGraphTerm> {
+        self.terms.iter().find(|term| term.id == id)
+    }
+
+    fn entry_term(&self) -> Option<&RuntimeGraphTerm> {
+        self.entry_id.and_then(|id| self.term_by_id(id))
+    }
+
+    fn normal_forms(&self) -> Vec<&RuntimeGraphTerm> {
+        self.terms
+            .iter()
+            .filter(|term| term.is_normal_form)
+            .collect()
+    }
+}
+
+fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView> {
+    match report.output() {
+        RuntimeBackendOutput::Ascent(results) => {
+            let terms = results
+                .all_terms
+                .iter()
+                .map(|term| RuntimeGraphTerm {
+                    id: term.term_id,
+                    display: term.display.clone(),
+                    is_normal_form: term.is_normal_form,
+                    is_root: false,
+                })
+                .collect();
+            let edges = results
+                .rewrites
+                .iter()
+                .map(|rewrite| RuntimeGraphEdge {
+                    from_id: rewrite.from_id,
+                    to_id: rewrite.to_id,
+                    label: rewrite.rule_name.clone(),
+                })
+                .collect();
+            let equivalences = results
+                .equivalences
+                .iter()
+                .map(|equivalence| RuntimeGraphEquivalence {
+                    term_ids: equivalence.term_ids.clone(),
+                })
+                .collect();
+            let custom_relations = results
+                .custom_relations
+                .iter()
+                .map(|(name, relation)| {
+                    (name.clone(), runtime_graph_relation_from_ascent(relation))
+                })
+                .collect();
+
+            Ok(RuntimeGraphView {
+                kind: RuntimeGraphKind::AscentRewriteGraph,
+                entry_id: None,
+                terms,
+                edges,
+                equivalences,
+                custom_relations,
+            })
+        },
+        RuntimeBackendOutput::Dovetail(dovetail_report) => {
+            dovetail_report
+                .validate_shape()
+                .map_err(|err| anyhow::anyhow!("Dovetail report is malformed: {}", err))?;
+
+            let mut key_to_id = HashMap::with_capacity(dovetail_report.terms.len());
+            for term in &dovetail_report.terms {
+                key_to_id.insert(term.key.clone(), term.ordinal as u64);
+            }
+
+            let mut terms = Vec::with_capacity(
+                dovetail_report
+                    .terms
+                    .len()
+                    .saturating_add(usize::from(dovetail_report.root_ordinals.len() != 1)),
+            );
+            let mut edges = Vec::with_capacity(
+                dovetail_report
+                    .derivation_edges
+                    .len()
+                    .saturating_add(dovetail_report.root_ordinals.len().saturating_sub(1)),
+            );
+
+            let entry_id = match dovetail_report.root_ordinals.as_slice() {
+                [] => None,
+                [single] => Some(*single as u64),
+                roots => {
+                    let display = roots
+                        .iter()
+                        .filter_map(|ordinal| dovetail_report.terms.get(*ordinal))
+                        .map(|term| term.op_display.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    terms.push(RuntimeGraphTerm {
+                        id: DOVETAIL_SYNTHETIC_ROOT_ID,
+                        display: format!("DovetailRoots([{}])", display),
+                        is_normal_form: false,
+                        is_root: false,
+                    });
+                    for (index, ordinal) in roots.iter().copied().enumerate() {
+                        edges.push(RuntimeGraphEdge {
+                            from_id: DOVETAIL_SYNTHETIC_ROOT_ID,
+                            to_id: ordinal as u64,
+                            label: Some(format!("root[{index}]")),
+                        });
+                    }
+                    Some(DOVETAIL_SYNTHETIC_ROOT_ID)
+                },
+            };
+
+            terms.extend(dovetail_report.terms.iter().map(|term| RuntimeGraphTerm {
+                id: term.ordinal as u64,
+                display: term.op_display.clone(),
+                is_normal_form: term.is_root,
+                is_root: term.is_root,
+            }));
+
+            edges.extend(dovetail_report.derivation_edges.iter().filter_map(|edge| {
+                let from_id = key_to_id.get(&edge.parent_key)?;
+                let to_id = key_to_id.get(&edge.child_key)?;
+                Some(RuntimeGraphEdge {
+                    from_id: *from_id,
+                    to_id: *to_id,
+                    label: Some(format!("child[{}]", edge.child_index)),
+                })
+            }));
+
+            Ok(RuntimeGraphView {
+                kind: RuntimeGraphKind::DovetailDerivationGraph,
+                entry_id,
+                terms,
+                edges,
+                equivalences: Vec::new(),
+                custom_relations: HashMap::new(),
+            })
+        },
+        RuntimeBackendOutput::Observations(_) => Err(anyhow::anyhow!(
+            "Current {} backend report contains runtime observations; this command requires rewrite-graph or derivation-graph evidence.",
+            report.backend()
+        )),
+        _ => Err(anyhow::anyhow!(
+            "Current {} backend report contains {}; this command requires rewrite-graph or derivation-graph evidence.",
+            report.backend(),
+            report.output().kind_name()
+        )),
+    }
+}
+
+fn runtime_graph_relation_from_ascent(relation: &RelationData) -> RuntimeGraphRelation {
+    RuntimeGraphRelation {
+        param_types: relation.param_types.clone(),
+        tuples: relation.tuples.clone(),
+    }
+}
+
+fn term_from_display_or_fallback(
+    language: &dyn Language,
+    display: &str,
+    graph_id: u64,
+) -> Box<dyn mettail_runtime::Term> {
+    language.parse_term(display).unwrap_or_else(|_| {
+        Box::new(DisplayTerm {
+            display: display.to_string(),
+            id: graph_id,
+        })
+    })
 }
 
 fn dovetail_report_display(report: &RuntimeDovetailRunReport) -> String {
@@ -1543,9 +2015,9 @@ impl Repl {
                 language.name()
             )
         })?;
-        if step_mode && backend != RuntimeBackend::Ascent {
+        if step_mode && backend == RuntimeBackend::RhoMachine {
             anyhow::bail!(
-                "step mode requires an Ascent-shaped rewrite graph; the selected default backend is {}. Use 'exec' for runtime observations or select an explicit Ascent/reference step path.",
+                "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {}. Use 'exec' for runtime observations.",
                 backend
             );
         }
@@ -1672,7 +2144,7 @@ impl Repl {
             RuntimeBackendOutput::Observations(observations) => {
                 if step_mode {
                     anyhow::bail!(
-                        "step mode requires an Ascent-shaped rewrite graph; {} returned runtime observations",
+                        "step mode requires rewrite-graph or derivation-graph evidence; {} returned runtime observations",
                         backend
                     );
                 }
@@ -1736,13 +2208,6 @@ impl Repl {
                     .set_term_with_report(result_term, report.clone(), result_id)?;
             },
             RuntimeBackendOutput::Dovetail(dovetail_report) => {
-                if step_mode {
-                    anyhow::bail!(
-                        "step mode requires an Ascent-shaped rewrite graph; {} returned a Dovetail report",
-                        backend
-                    );
-                }
-
                 println!();
                 println!("Computed:");
                 println!("  - backend: {}", report.backend());
@@ -1754,7 +2219,7 @@ impl Repl {
                 println!();
 
                 let display = dovetail_report_display(dovetail_report);
-                let result_id = {
+                let summary_id = {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
@@ -1764,14 +2229,44 @@ impl Repl {
                     hasher.finish()
                 };
 
-                println!("{}", "Current term (result):".bold());
-                println!("{}", format_term_pretty(&display).cyan());
+                let graph = runtime_graph_view(&report)?;
+                let current = graph.entry_term().cloned().unwrap_or(RuntimeGraphTerm {
+                    id: summary_id,
+                    display,
+                    is_normal_form: true,
+                    is_root: false,
+                });
+
+                let heading = if step_mode {
+                    "Current derivation root:"
+                } else {
+                    "Current Dovetail result:"
+                };
+                println!("{}", heading.bold());
+                println!("{}", format_term_pretty(&current.display).cyan());
                 println!();
 
-                let result_term: Box<dyn mettail_runtime::Term> =
-                    Box::new(DisplayTerm { display, id: result_id });
+                let available = graph
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from_id == current.id)
+                    .count();
+                if step_mode {
+                    if available > 0 {
+                        println!(
+                            "  Use {} to inspect a derivation dependency ({} available).",
+                            "apply 0".cyan(),
+                            available
+                        );
+                    } else {
+                        println!("  No derivation dependencies from this node.");
+                    }
+                }
+
+                let result_term =
+                    term_from_display_or_fallback(language, &current.display, current.id);
                 self.state
-                    .set_term_with_report(result_term, report.clone(), result_id)?;
+                    .set_term_with_report(result_term, report.clone(), current.id)?;
             },
             _ => {
                 anyhow::bail!("{} backend returned an unsupported report shape", backend);
@@ -1782,41 +2277,27 @@ impl Repl {
         Ok(())
     }
 
-    fn get_results(&self) -> Result<&AscentResults> {
-        if let Some(results) = self.state.ascent_results() {
-            return Ok(results);
-        }
-
-        if let Some(report) = self.state.backend_report() {
-            anyhow::bail!(
-                "Current {} backend report contains {}; this command requires an Ascent-shaped rewrite graph. Use 'exec' for runtime observations or run an explicit Ascent/reference step.",
-                report.backend(),
-                report.output().kind_name()
-            );
-        }
-
-        anyhow::bail!("No term loaded. Use 'term: <expr>' first.")
+    fn get_graph_view(&self) -> Result<RuntimeGraphView> {
+        let report = self
+            .state
+            .backend_report()
+            .ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))?;
+        runtime_graph_view(report)
     }
 
     fn cmd_equations(&self) -> Result<()> {
-        let results = self.get_results()?;
+        let graph = self.get_graph_view()?;
 
-        let equivalences = results.equivalences.clone();
         println!();
         println!("{}", "Equivalence Classes:".bold());
-        for equ_class in equivalences {
+        if graph.equivalences.is_empty() {
+            println!("  {}", "No equivalence classes in the current graph-shaped report.".dimmed());
+        }
+        for equ_class in &graph.equivalences {
             let terms = equ_class
                 .term_ids
                 .iter()
-                .map(|id| {
-                    results
-                        .all_terms
-                        .iter()
-                        .find(|t| t.term_id == *id)
-                        .unwrap()
-                        .display
-                        .as_str()
-                })
+                .filter_map(|id| graph.term_by_id(*id).map(|term| term.display.as_str()))
                 .collect::<Vec<_>>();
             println!("  {}", terms.join(" == "));
         }
@@ -1825,53 +2306,59 @@ impl Repl {
     }
 
     fn cmd_rewrites_all(&self) -> Result<()> {
-        let results = self.get_results()?;
+        let graph = self.get_graph_view()?;
 
-        let rewrites = results.rewrites.clone();
         println!();
-        println!("{}", "Rewrites:".bold());
-        for rewrite in rewrites {
-            let from_info = self.term_by_id(rewrite.from_id)?;
-            let to_info = self.term_by_id(rewrite.to_id)?;
-            println!("  {} → {}", from_info.display, to_info.display);
+        println!("{}", graph.kind.edge_relation_name().bold());
+        for edge in &graph.edges {
+            let from_info = graph
+                .term_by_id(edge.from_id)
+                .ok_or_else(|| anyhow::anyhow!("Source term not found"))?;
+            let to_info = graph
+                .term_by_id(edge.to_id)
+                .ok_or_else(|| anyhow::anyhow!("Target term not found"))?;
+            if let Some(label) = &edge.label {
+                println!("  {} → {} ({})", from_info.display, to_info.display, label);
+            } else {
+                println!("  {} → {}", from_info.display, to_info.display);
+            }
         }
         println!();
         Ok(())
     }
 
     fn cmd_rewrites(&self) -> Result<()> {
-        let results = self.get_results()?;
+        let graph = self.get_graph_view()?;
 
         let current_id = self
             .state
             .current_graph_id()
             .ok_or_else(|| anyhow::anyhow!("No current term"))?;
 
-        // Find rewrites from the current term
-        let available_rewrites: Vec<_> = results
-            .rewrites
+        let available_edges: Vec<_> = graph
+            .edges
             .iter()
-            .filter(|r| r.from_id == current_id)
+            .filter(|edge| edge.from_id == current_id)
             .collect();
 
         println!();
-        if available_rewrites.is_empty() {
-            println!(
-                "{} No rewrites available from current term (it's a normal form).",
-                "✓".green()
-            );
+        if available_edges.is_empty() {
+            println!("{} No {} available from current term.", "✓".green(), graph.kind.edge_label());
         } else {
-            println!("{} available from current term:", "Rewrites".bold());
+            println!("{} available from current term:", graph.kind.edge_relation_name().bold());
             println!();
-            for (idx, rewrite) in available_rewrites.iter().enumerate() {
-                // Find the target term display
-                let target_info = self.term_by_id(rewrite.to_id)?;
+            for (idx, edge) in available_edges.iter().enumerate() {
+                let target_info = graph
+                    .term_by_id(edge.to_id)
+                    .ok_or_else(|| anyhow::anyhow!("Target term not found"))?;
                 let target_display = target_info.display.as_str();
 
-                // Pretty print the target
                 let formatted = format_term_pretty(target_display);
 
                 println!("  {}) {}", idx.to_string().cyan(), "→".yellow());
+                if let Some(label) = &edge.label {
+                    println!("     {}", label.dimmed());
+                }
                 // Indent each line of the formatted output
                 for line in formatted.lines() {
                     println!("     {}", line.green());
@@ -1883,19 +2370,10 @@ impl Repl {
         Ok(())
     }
 
-    fn term_by_id(&self, id: u64) -> Result<&TermInfo> {
-        let results = self.get_results()?;
-        results
-            .all_terms
-            .iter()
-            .find(|t| t.term_id == id)
-            .ok_or_else(|| anyhow::anyhow!("Term not found"))
-    }
-
     fn cmd_normal_forms(&self) -> Result<()> {
-        let results = self.get_results()?;
+        let graph = self.get_graph_view()?;
 
-        let normal_forms: Vec<_> = results.normal_forms_iter().collect();
+        let normal_forms = graph.normal_forms();
 
         println!();
         if normal_forms.is_empty() {
@@ -1917,7 +2395,7 @@ impl Repl {
     }
 
     fn cmd_relations(&self) -> Result<()> {
-        let results = self.get_results()?;
+        let graph = self.get_graph_view()?;
 
         println!();
         println!("{}", "Computed Relations:".bold());
@@ -1925,15 +2403,20 @@ impl Repl {
 
         // Built-in relations
         println!("{}", "  Built-in:".yellow());
-        println!("    {} ({} tuples)", "terms".cyan(), results.all_terms.len());
-        println!("    {} ({} tuples)", "rewrites".cyan(), results.rewrites.len());
-        println!("    {} ({} classes)", "equivalences".cyan(), results.equivalences.len());
+        println!("    {} ({} tuples)", "terms".cyan(), graph.terms.len());
+        println!("    {} ({} tuples)", graph.kind.edge_relation_name().cyan(), graph.edges.len());
+        println!(
+            "    {} ({} root terms)",
+            "roots".cyan(),
+            graph.terms.iter().filter(|term| term.is_root).count()
+        );
+        println!("    {} ({} classes)", "equivalences".cyan(), graph.equivalences.len());
 
         // Custom relations
-        if !results.custom_relations.is_empty() {
+        if !graph.custom_relations.is_empty() {
             println!();
             println!("{}", "  Custom:".yellow());
-            for (name, data) in &results.custom_relations {
+            for (name, data) in &graph.custom_relations {
                 let signature = format!("{}({})", name, data.param_types.join(", "));
                 println!("    {} ({} tuples)", signature.cyan(), data.tuples.len());
             }
@@ -1951,51 +2434,81 @@ impl Repl {
         }
 
         let name = args[0];
-        let results = self.get_results()?;
+        let graph = self.get_graph_view()?;
 
         // Check built-in relations first
         match name {
             "terms" => {
                 println!();
-                println!("{} ({} tuples):", "terms(Term)".bold(), results.all_terms.len());
-                for term_info in &results.all_terms {
-                    let nf_marker = if term_info.is_normal_form {
-                        " [NF]".dimmed()
+                println!("{} ({} tuples):", "terms(Term)".bold(), graph.terms.len());
+                for term_info in &graph.terms {
+                    let mut markers = Vec::new();
+                    if term_info.is_root {
+                        markers.push("root");
+                    }
+                    if term_info.is_normal_form {
+                        markers.push("NF");
+                    }
+                    let marker = if markers.is_empty() {
+                        String::new()
                     } else {
-                        "".into()
+                        format!(" [{}]", markers.join(", "))
                     };
-                    println!("  {}{}", term_info.display.green(), nf_marker);
+                    println!("  {}{}", term_info.display.green(), marker.dimmed());
                 }
                 println!();
                 return Ok(());
             },
-            "rewrites" => {
+            "rewrites" | "derivations" | "derivation_edges" => {
                 println!();
-                println!("{} ({} tuples):", "rewrites(Term, Term)".bold(), results.rewrites.len());
-                for rw in &results.rewrites {
-                    let from = results.all_terms.iter().find(|t| t.term_id == rw.from_id);
-                    let to = results.all_terms.iter().find(|t| t.term_id == rw.to_id);
+                println!(
+                    "{} ({} tuples):",
+                    graph.kind.edge_relation_name().bold(),
+                    graph.edges.len()
+                );
+                for edge in &graph.edges {
+                    let from = graph.term_by_id(edge.from_id);
+                    let to = graph.term_by_id(edge.to_id);
                     if let (Some(from), Some(to)) = (from, to) {
+                        let label = edge
+                            .label
+                            .as_ref()
+                            .map(|label| format!(" ({label})"))
+                            .unwrap_or_default();
                         println!(
-                            "  {} {} {}",
+                            "  {} {} {}{}",
                             from.display.green(),
                             "→".yellow(),
-                            to.display.green()
+                            to.display.green(),
+                            label.dimmed()
                         );
                     }
                 }
                 println!();
                 return Ok(());
             },
+            "roots" => {
+                println!();
+                let roots = graph
+                    .terms
+                    .iter()
+                    .filter(|term| term.is_root)
+                    .collect::<Vec<_>>();
+                println!("{} ({} tuples):", "roots(Term)".bold(), roots.len());
+                for root in roots {
+                    println!("  {}", root.display.green());
+                }
+                println!();
+                return Ok(());
+            },
             "equivalences" => {
                 println!();
-                println!("{} ({} classes):", "equivalences".bold(), results.equivalences.len());
-                for equiv in &results.equivalences {
+                println!("{} ({} classes):", "equivalences".bold(), graph.equivalences.len());
+                for equiv in &graph.equivalences {
                     let terms: Vec<_> = equiv
                         .term_ids
                         .iter()
-                        .filter_map(|id| results.all_terms.iter().find(|t| t.term_id == *id))
-                        .map(|t| t.display.as_str())
+                        .filter_map(|id| graph.term_by_id(*id).map(|term| term.display.as_str()))
                         .collect();
                     println!("  {}", terms.join(" == ").green());
                 }
@@ -2006,7 +2519,7 @@ impl Repl {
         }
 
         // Check custom relations
-        if let Some(data) = results.custom_relations.get(name) {
+        if let Some(data) = graph.custom_relations.get(name) {
             println!();
             let signature = format!("{}({})", name, data.param_types.join(", "));
             println!("{} ({} tuples):", signature.bold(), data.tuples.len());
@@ -2044,41 +2557,39 @@ impl Repl {
             .current_graph_id()
             .ok_or_else(|| anyhow::anyhow!("No current term"))?;
 
-        let (target_id, target_display) = {
-            let results = self.get_results()?;
+        let (target_id, target_display, edge_label) = {
+            let graph = self.get_graph_view()?;
 
-            // Find available rewrites
-            let available_rewrites: Vec<_> = results
-                .rewrites
+            let available_edges: Vec<_> = graph
+                .edges
                 .iter()
-                .filter(|r| r.from_id == current_id)
+                .filter(|edge| edge.from_id == current_id)
                 .collect();
 
-            if idx >= available_rewrites.len() {
+            if idx >= available_edges.len() {
                 anyhow::bail!(
-                    "Rewrite {} not found. Use 'rewrites' to see available rewrites.",
+                    "{} {} not found. Use 'rewrites' to see available graph edges.",
+                    graph.kind.edge_label(),
                     idx
                 );
             }
 
-            let rewrite = available_rewrites[idx];
+            let edge = available_edges[idx];
 
-            // Find the target term
-            let target_info = results
-                .all_terms
-                .iter()
-                .find(|t| t.term_id == rewrite.to_id)
+            let target_info = graph
+                .term_by_id(edge.to_id)
                 .ok_or_else(|| anyhow::anyhow!("Target term not found"))?;
-            (rewrite.to_id, target_info.display.clone())
+            (edge.to_id, target_info.display.clone(), edge.label.clone())
         };
 
-        // Parse the target term and update its ID to match what's in the graph
-        let target_term = language
-            .parse_term(&target_display)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let target_term = term_from_display_or_fallback(language, &target_display, target_id);
 
         println!();
-        println!("{}", "Applied rewrite →".yellow());
+        if let Some(label) = edge_label {
+            println!("{} {}", "Applied graph edge →".yellow(), label.dimmed());
+        } else {
+            println!("{}", "Applied graph edge →".yellow());
+        }
         let formatted = format_term_pretty(&target_display);
         for line in formatted.lines() {
             println!("  {}", line.green());
@@ -2109,21 +2620,19 @@ impl Repl {
         let language = self.registry.get(language_name)?;
 
         let (target_id, target_display) = {
-            let results = self.get_results()?;
+            let graph = self.get_graph_view()?;
+            let normal_forms = graph.normal_forms();
 
-            let target_info = results.normal_forms_iter().nth(idx).ok_or_else(|| {
+            let target_info = normal_forms.get(idx).ok_or_else(|| {
                 anyhow::anyhow!(
                     "Normal form {} not found. Use 'normal-forms' to see available normal forms.",
                     idx
                 )
             })?;
-            (target_info.term_id, target_info.display.clone())
+            (target_info.id, target_info.display.clone())
         };
 
-        // Parse the target term
-        let target_term = language
-            .parse_term(&target_display)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let target_term = term_from_display_or_fallback(language, &target_display, target_id);
 
         println!();
         println!("{}", "Navigated to normal form:".bold());

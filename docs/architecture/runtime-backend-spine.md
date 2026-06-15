@@ -127,10 +127,12 @@ default; generated languages and tests override it only when they intentionally
 install explicit oracle evidence.
 The REPL follows the same rule: session state caches a `RuntimeBackendReport`
 for the current term, and graph navigation moves the current cursor while
-preserving that report envelope. It projects an Ascent-shaped graph only when
-the cached report is explicitly Ascent-shaped reference evidence; the REPL
-crate itself does not carry the generated Ascent BYODS dependency or crate-root
-`eqrel` re-export.
+preserving that report envelope. Graph commands use a backend-neutral graph
+view: an Ascent-shaped reference report projects the historical rewrite graph,
+a Dovetail report projects its derivation-dependency graph, and Rho observation
+reports remain terminal observation results rather than fabricated graphs. The
+REPL crate itself does not carry the generated Ascent BYODS dependency or
+crate-root `eqrel` re-export.
 Runtime queries follow that report boundary as well: production query execution
 uses `mettail_query::run_query_report` over `RuntimeBackendReport`, while
 `run_ascent_oracle_query` is named as an explicit reference-oracle API for raw

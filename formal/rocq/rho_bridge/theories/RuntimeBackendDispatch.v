@@ -489,6 +489,24 @@ Section RuntimeBackendDispatch.
     | _, _ => false
     end.
 
+  Inductive ReplGraphKind : Type :=
+  | ReplRewriteGraph
+  | ReplDerivationGraph.
+
+  Definition repl_graph_view_kind
+      (state : ReplRuntimeState) : option ReplGraphKind :=
+    match repl_report_backend state, repl_report_shape state with
+    | Some Ascent, Some AscentResultsShape => Some ReplRewriteGraph
+    | Some Dovetail, Some DovetailReportShape => Some ReplDerivationGraph
+    | _, _ => None
+    end.
+
+  Definition repl_has_graph_view (state : ReplRuntimeState) : bool :=
+    match repl_graph_view_kind state with
+    | Some _ => true
+    | None => false
+    end.
+
   Theorem repl_empty_state_has_no_report :
     repl_report_backend repl_empty_state = None /\
     repl_report_shape repl_empty_state = None.
@@ -496,6 +514,10 @@ Section RuntimeBackendDispatch.
 
   Theorem repl_empty_state_projects_no_ascent_results :
     repl_project_ascent_results repl_empty_state = false.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_empty_state_has_no_graph_view :
+    repl_has_graph_view repl_empty_state = false.
   Proof. reflexivity. Qed.
 
   Theorem repl_rho_observation_report_is_valid :
@@ -508,6 +530,11 @@ Section RuntimeBackendDispatch.
       (repl_set_report RhoMachine ObservationReportShape) = false.
   Proof. reflexivity. Qed.
 
+  Theorem repl_rho_observation_report_has_no_graph_view :
+    repl_has_graph_view
+      (repl_set_report RhoMachine ObservationReportShape) = false.
+  Proof. reflexivity. Qed.
+
   Theorem repl_dovetail_report_is_valid :
     repl_report_shape_valid
       (repl_set_report Dovetail DovetailReportShape) = true.
@@ -516,6 +543,18 @@ Section RuntimeBackendDispatch.
   Theorem repl_dovetail_report_projects_no_ascent :
     repl_project_ascent_results
       (repl_set_report Dovetail DovetailReportShape) = false.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_ascent_report_has_rewrite_graph_view :
+    repl_graph_view_kind
+      (repl_set_report Ascent AscentResultsShape) =
+    Some ReplRewriteGraph.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_dovetail_report_has_derivation_graph_view :
+    repl_graph_view_kind
+      (repl_set_report Dovetail DovetailReportShape) =
+    Some ReplDerivationGraph.
   Proof. reflexivity. Qed.
 
   Theorem repl_cursor_move_preserves_report_backend : forall state,
@@ -533,6 +572,11 @@ Section RuntimeBackendDispatch.
     repl_project_ascent_results
       (repl_move_cursor_preserving_report state) = false.
   Proof. intros state Hno_ascent. destruct state. exact Hno_ascent. Qed.
+
+  Theorem repl_cursor_move_preserves_graph_view_kind : forall state,
+    repl_graph_view_kind (repl_move_cursor_preserving_report state) =
+    repl_graph_view_kind state.
+  Proof. intros state. destruct state. reflexivity. Qed.
 
   Theorem repl_ascent_projection_requires_ascent_report : forall state,
     repl_project_ascent_results state = true ->

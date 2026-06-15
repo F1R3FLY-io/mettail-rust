@@ -182,10 +182,13 @@ simulation runner, and testkit diagnostics fail closed in that case. No runtime
 query fabricates an `Ascent` default for a value that does not advertise one.
 The REPL state follows the same authority rule: `exec` stores the selected
 backend's `RuntimeBackendReport`, graph cursor commands preserve that cached
-report envelope, and Ascent rewrite facts are exposed only by projecting an
-explicitly Ascent-shaped reference report. `RuntimeBackendDispatch.v` models
-that state transition and proves cursor movement cannot fabricate an Ascent
-projection from a Dovetail or Rho report.
+report envelope, Ascent rewrite facts are exposed only by projecting an
+explicitly Ascent-shaped reference report, and Dovetail graph commands project
+the report's derivation-dependency graph without fabricating Ascent facts.
+`RuntimeBackendDispatch.v` models that state transition and proves cursor
+movement cannot fabricate an Ascent projection from a Dovetail or Rho report;
+it also proves that Ascent reports expose rewrite-graph views, Dovetail reports
+expose derivation-graph views, and Rho observation reports expose no graph view.
 Runtime query execution follows that same model: production callers query a
 `RuntimeBackendReport` with `run_query_report`, while raw `AscentResults`
 queries use the explicitly named `run_ascent_oracle_query` reference entry.
