@@ -2,8 +2,11 @@
 
 **Companion to:** [Why Automata Instead of Solvers](why-automata-instead-of-solvers.md)
 **See also:** [Symbolic Automata Research Analysis](symbolic-automata-research-analysis.md)
-**Status:** RESEARCH DIRECTION -- this document describes an **unimplemented**
-proposal.  No code exists for Heyting algebra backends.
+**Status:** IMPLEMENTED (2026-06-15) — the behavioral substrate described here is
+the live algebra tower and its zero-admission Coq backing. The theory below is
+realized in code; see the Implementation Map (§0) for the concept→code→proof
+cross-reference. Sections written as "research direction" / "potential" /
+"sketch" are retained for the derivation but are superseded by §0.
 
 ---
 
@@ -15,13 +18,39 @@ MeTTaIL use cases, and sketches a Rust implementation architecture.
 
 ---
 
-> **Status:** This entire section describes an **unimplemented research
-> direction**.  No code exists for Heyting algebra backends.
+## 0. Implementation Map (2026-06-15)
 
-The main document's §11 introduces Heyting algebras as a potential
-extension for predicated types over non-Boolean domains (graph reachability,
-topological closure, constructive properties).  This section provides the
-deeper formal treatment.
+The proposal is implemented as the **algebra tower** (reject-safe ⊃ Heyting ⊃
+classical Boolean) plus the **symbolic-predicate generalization** (EBA / SFT /
+tree-automata / behavioral-algebra family), each carrying a **zero-admission**
+Rocq proof. The earlier "unimplemented research direction" framing is superseded.
+
+| Concept (this doc) | Rust | Zero-admission Coq |
+|---|---|---|
+| Heyting algebra, adjunction `a∧c ≤ b ⟺ c ≤ a→b` | `algebra_tower::HeytingAlgebra` (`implies`/`heyting_not`) | `HeytingAlgebra.v` (record `HeytingAlgebra`, `imp_meet`) |
+| `¬¬` closure operator (§2: extensive/monotone/idempotent) | `algebra_tower::RejectSafeAlgebra::regularize` | `HeytingAlgebra.v` `dneg_extensive`/`dneg_mono`/`neg_triple`/`dneg_idempotent` |
+| §7 `SAT(¬¬φ)=false ⟹ SAT(φ)=false` (reject-safety) | `RejectSafeAlgebra` law / `Classical` | `HeytingAlgebra.v` `dneg_eq_bot_implies_bot` |
+| Regular elements `H_reg` form a Boolean algebra | the regular core (exact tier) | `HeytingAlgebra.v` `regular_meet`/`excluded_middle_reg`/`neg_involutive_on_regular` |
+| `BooleanApproximation<H>` (§9) ⊢ reject-safe, not classical | `algebra_tower::Classical<A>` bridge + the tower split | `EffectiveBooleanAlgebra.v` `RejectSafeLaws` + `eba_implies_reject_safe` |
+| `Sat3` trichotomy (Sat/Unsat/DontKnow) | `algebra_tower::Sat3` (Kleene and/or/not, `into_safe_bool`) | (boundary witnessed by) `BehavioralNegation.TriModel.excluded_middle_fails` |
+| `DecidabilityTier ↔ regularity` (§10.4 promotion) | `symbolic::DecidabilityTier`, macros `GuardTier`+`max_tier` | `GuardTierCertificate.v` `tier_max_*_hom` + `tier_regularity_{reg,boundary,closed}` |
+| Mixed structural×behavioral guard, asymmetric `¬` | `algebra_tower::RejectSafeProduct<S,B>` (`compile_fail` safety doctest) | `BehavioralNegation.v` `mixed_negation_soundness` |
+| Modal/temporal open/closed (can-do open, must-hold closed) | `behavioral_algebra` (Diamond/Box/Mu/Nu, CTL sugar) | — (decided by `parity_tree`/`ltl`/`buchi` engines) |
+| Bisimulation via partition refinement (§10.7) | `bisimulation::Lts::{bisimulation,is_bisimulation}` | (verifier-certified at compile time; runtime via Ascent `eqrel`) |
+| EBA closure (product/sum/collection/tree/theory-combination) | `product_nary`/`collection_algebra`/`sym_tree` + `RejectSafeProduct` | `{Product,Sum,Collection,Tree}AlgebraClosure.v`, `TheoryCombination.v` |
+| SFT/STFT composition + output-term algebra | `sft::OutputTerm` (precise `then`) | `OutputTermAlgebra.v`, `Stft{Composition,Functionality}.v` |
+| Guard quality (7-value docs §04 vocabulary) | `mettail_rho_codegen::guard_quality::RhoGuardQuality` | (gate composition) `RhoGuardedCommSoundness.v` |
+
+The reconciliation the Dovetail session required is discharged structurally: a
+behavioral / mixed algebra implements **`RejectSafeAlgebra` only** (never classical
+`BooleanAlgebra`), so classical complement is statically unavailable on a
+semi-decidable leg — proven by the `compile_fail` doctest and the Coq
+`RejectSafeLaws` ⊂ `EBA_Laws` split.
+
+The main document's §11 introduces Heyting algebras as an extension for predicated
+types over non-Boolean domains (graph reachability, topological closure,
+constructive properties). The sections below develop the deeper formal treatment;
+each "potential"/"sketch" claim now resolves to a row of §0.
 
 ## 1. Formal Foundations
 
