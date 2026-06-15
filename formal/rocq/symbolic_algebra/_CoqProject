@@ -13,3 +13,4 @@ theories/ProductAlgebraClosure.v
 theories/SumAlgebraClosure.v
 theories/CollectionAlgebraClosure.v
 theories/TheoryCombination.v
+theories/HeytingAlgebra.v
