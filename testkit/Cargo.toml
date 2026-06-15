@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 description = "Auto-generated test framework for MeTTaIL language! specifications"
 
+[features]
+default = []
+legacy-cesk-runtime = ["mettail-prattail/legacy-cesk-runtime"]
+
 [dependencies]
 mettail-runtime = { path = "../runtime" }
 mettail-prattail = { path = "../prattail" }

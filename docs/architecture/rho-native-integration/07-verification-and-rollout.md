@@ -682,9 +682,16 @@ The current production `Language` trait surface has already removed the old
 CEK decomposition hook. Generated `language!` implementations no longer emit
 `decompose_into_cek`, Rho/Dovetail runtime wrappers do not override such a hook,
 and `mettail-runtime` does not re-export CEK/CESK evaluator, store, or GC types
-as a runtime-backend API. Historical CEK/CESK proofs and prattail internals may
-remain as parser or archive evidence, but they are not a live runtime backend
-boundary for Dovetail/Rho.
+as a runtime-backend API.
+
+The remaining prattail/testkit CESK evaluator, store, garbage-collector, and
+green-thread scheduler modules are not part of the default runtime surface.
+They require the explicit `mettail-prattail/legacy-cesk-runtime` or
+`mettail-testkit/legacy-cesk-runtime` feature. Parser-side CEK/WPDA observer
+support remains available by default because the WPDA parser is the active
+front end, not the legacy runtime backend. `RuntimeBackendDispatch.v` records
+this as a feature-surface invariant: the default runtime feature surface exposes
+no legacy CESK runtime, and exposing it requires the explicit legacy feature.
 
 ## Formal Verification Commands
 

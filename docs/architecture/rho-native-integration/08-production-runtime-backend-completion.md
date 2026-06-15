@@ -54,7 +54,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
-| CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `mettail-runtime` CEK/CESK re-exports have been removed from the production runtime API | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook |
+| CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `mettail-runtime` CEK/CESK re-exports have been removed from the production runtime API; prattail/testkit CESK evaluator, store, GC, and green-thread scheduler modules require explicit `legacy-cesk-runtime` opt-in features | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook, and default prattail/testkit APIs expose no legacy CESK runtime surface |
 | WPDA parser | active parser/recognizer | retained; runtime-backend work must not weaken parser guarantees |
 
 ## AST Artifact Contract
@@ -454,6 +454,14 @@ The base `Language` trait mirrors that generated behavior: its `run_ascent`
 hook has a fail-closed default, so parse-only, Dovetail-backed, and Rho-backed
 language values do not have to provide an Ascent oracle implementation merely
 to satisfy the trait.
+The same production-surface rule applies to the legacy CESK runtime cluster.
+The parser-facing CEK/WPDA modules remain available because they support the
+active parser/recognizer path, but prattail evaluator/store/GC and green-thread
+scheduler modules require `mettail-prattail/legacy-cesk-runtime`; the matching
+testkit CESK and green-thread analytical modules require
+`mettail-testkit/legacy-cesk-runtime`. The default crates therefore preserve
+the parser while withholding the obsolete runtime backend from normal
+production APIs.
 Graph-shaped test utilities follow the same runtime-view rule. When a property
 such as an LTL execution-model check needs rewrite-graph evidence, it prefers
 an installed `Dovetail` report over the selected default report: a selected

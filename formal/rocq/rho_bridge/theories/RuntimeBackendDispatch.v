@@ -648,4 +648,31 @@ Section RuntimeBackendDispatch.
     split; reflexivity.
   Qed.
 
+  Record RuntimeFeatureSurface : Type := {
+    legacy_cesk_runtime_feature_enabled : bool
+  }.
+
+  Definition exposes_legacy_cesk_runtime
+      (surface : RuntimeFeatureSurface) : bool :=
+    legacy_cesk_runtime_feature_enabled surface.
+
+  Definition default_runtime_feature_surface : RuntimeFeatureSurface :=
+    {| legacy_cesk_runtime_feature_enabled := false |}.
+
+  Definition explicit_legacy_cesk_runtime_surface : RuntimeFeatureSurface :=
+    {| legacy_cesk_runtime_feature_enabled := true |}.
+
+  Theorem default_surface_exposes_no_legacy_cesk_runtime :
+    exposes_legacy_cesk_runtime default_runtime_feature_surface = false.
+  Proof. reflexivity. Qed.
+
+  Theorem legacy_cesk_runtime_requires_explicit_feature : forall surface,
+    exposes_legacy_cesk_runtime surface = true ->
+    legacy_cesk_runtime_feature_enabled surface = true.
+  Proof.
+    intros surface Hsurface.
+    destruct surface.
+    exact Hsurface.
+  Qed.
+
 End RuntimeBackendDispatch.
