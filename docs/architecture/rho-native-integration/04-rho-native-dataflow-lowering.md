@@ -488,7 +488,11 @@ Steps:
   8. If τ is `-`, `*`, `/`, or `%`, α = Int, β = Int, and γ = Int, emit the
      matching integer arithmetic operator.
 
-  9. Otherwise reject. Rejection is part of the coverage contract, not a
+  9. For a unary prefix rule, if τ is `not`, α = Bool, and γ = Bool, emit
+     boolean negation. If τ is unary `-`, α = Int, and γ = Int, emit integer
+     negation.
+
+  10. Otherwise reject. Rejection is part of the coverage contract, not a
      fallback to an untyped source-text operator.
 ```
 
@@ -497,9 +501,14 @@ Rocq model
 `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` proves that
 successful scalar lowerings use compatible operand/result types, that integer
 `+` lowers to integer addition, and that string `+` and `++` lower to string
-concatenation rather than integer addition. It also proves that category names
-do not determine scalar eligibility: renamed native categories lower
-identically, and scalar-looking structural categories are rejected.
+concatenation rather than integer addition. It also proves the unary `not` and
+unary integer-negation cases, and proves that every accepted scalar rule yields
+an ABI record whose operands precede a final return channel. Category names do
+not determine scalar eligibility: renamed native categories lower identically,
+and scalar-looking structural categories are rejected. The Rust lowerer exposes
+that same generated inventory as `RhoLowering::scalar_contract_abi`; generated
+invocation code consumes those ABI records rather than maintaining a parallel
+hard-coded operator list.
 
 Input binders use f1r3node's de Bruijn convention:
 

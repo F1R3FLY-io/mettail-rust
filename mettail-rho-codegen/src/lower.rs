@@ -133,15 +133,20 @@ pub enum RhoAstValidationProfile {
 }
 
 /// The result of lowering a `LanguageDef` to Rholang: the executable normalized
-/// `program`, the rule labels that were `lowered` to contracts, and the labels
-/// explicitly `rejected` (out of the supported scalar-operator subset). Every
-/// rule of `def.terms` appears in exactly one of `lowered` / `rejected`.
+/// `program`, the rule labels that were `lowered` to contracts, the generated
+/// scalar contract ABI for those lowered rules, and the labels explicitly
+/// `rejected` (out of the supported scalar-operator subset). Every rule of
+/// `def.terms` appears in exactly one of `lowered` / `rejected`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoLowering {
     pub language_name: String,
     pub definition_fingerprint: String,
     pub(crate) program: RhoProgram,
     pub lowered: Vec<String>,
+    /// Call signatures for generated scalar contracts, in the same order as
+    /// [`Self::lowered`]. Generated runtime installers consume this inventory
+    /// instead of re-creating a hand-maintained list of scalar operations.
+    pub scalar_contract_abi: Vec<RhoScalarContractAbi>,
     pub rejected: Vec<String>,
     pub deadlock_report: ChannelDeadlockReport,
 }
@@ -197,11 +202,77 @@ enum RhoBinaryOp {
     Concat,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RhoScalarTy {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RhoScalarType {
     Int,
     Bool,
     Str,
+}
+
+/// ABI shape of a generated Rho scalar contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RhoScalarContractShape {
+    UnaryPrefix {
+        argument: RhoScalarType,
+        result: RhoScalarType,
+    },
+    BinaryInfix {
+        left: RhoScalarType,
+        right: RhoScalarType,
+        result: RhoScalarType,
+    },
+}
+
+impl RhoScalarContractShape {
+    pub fn operand_count(self) -> usize {
+        match self {
+            Self::UnaryPrefix { .. } => 1,
+            Self::BinaryInfix { .. } => 2,
+        }
+    }
+
+    pub fn formal_count(self) -> usize {
+        self.operand_count() + 1
+    }
+
+    pub fn return_channel_position(self) -> usize {
+        self.operand_count()
+    }
+
+    pub fn result_type(self) -> RhoScalarType {
+        match self {
+            Self::UnaryPrefix { result, .. } | Self::BinaryInfix { result, .. } => result,
+        }
+    }
+}
+
+/// Generated call ABI for a lowered scalar contract.
+///
+/// Calls send all operands first and the return channel last to
+/// `@"rule_label"`. The generated contract body sends one value of
+/// `shape.result_type()` on that return channel.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RhoScalarContractAbi {
+    pub rule_label: String,
+    pub shape: RhoScalarContractShape,
+}
+
+impl RhoScalarContractAbi {
+    pub fn operand_count(&self) -> usize {
+        self.shape.operand_count()
+    }
+
+    pub fn formal_count(&self) -> usize {
+        self.shape.formal_count()
+    }
+
+    pub fn return_channel_position(&self) -> usize {
+        self.shape.return_channel_position()
+    }
+
+    pub fn result_type(&self) -> RhoScalarType {
+        self.shape.result_type()
+    }
 }
 
 impl RhoBinaryOp {
@@ -269,6 +340,7 @@ impl RhoUnaryOp {
 struct LoweredRule {
     contract: Par,
     text_annotation: String,
+    abi: RhoScalarContractAbi,
 }
 
 /// Map a typed infix scalar rule to its Rholang binary operator, if Rholang has
@@ -280,11 +352,11 @@ struct LoweredRule {
 /// `EPlus`.
 fn rho_binop(
     terminal: &str,
-    lhs: RhoScalarTy,
-    rhs: RhoScalarTy,
-    result: RhoScalarTy,
+    lhs: RhoScalarType,
+    rhs: RhoScalarType,
+    result: RhoScalarType,
 ) -> Option<RhoBinaryOp> {
-    use RhoScalarTy::{Bool, Int, Str};
+    use RhoScalarType::{Bool, Int, Str};
 
     if lhs != rhs {
         return None;
@@ -311,10 +383,10 @@ fn rho_binop(
 }
 
 /// Map a typed prefix scalar rule to its Rholang unary operator, if any.
-fn rho_unop(terminal: &str, arg: RhoScalarTy, result: RhoScalarTy) -> Option<RhoUnaryOp> {
+fn rho_unop(terminal: &str, arg: RhoScalarType, result: RhoScalarType) -> Option<RhoUnaryOp> {
     match (terminal, arg, result) {
-        ("not", RhoScalarTy::Bool, RhoScalarTy::Bool) => Some(RhoUnaryOp::Not),
-        ("-", RhoScalarTy::Int, RhoScalarTy::Int) => Some(RhoUnaryOp::Neg),
+        ("not", RhoScalarType::Bool, RhoScalarType::Bool) => Some(RhoUnaryOp::Not),
+        ("-", RhoScalarType::Int, RhoScalarType::Int) => Some(RhoUnaryOp::Neg),
         _ => None,
     }
 }
@@ -326,21 +398,21 @@ fn rho_unop(terminal: &str, arg: RhoScalarTy, result: RhoScalarTy) -> Option<Rho
 /// Lowering therefore follows the macro-expanded `LanguageDef` inventory and
 /// maps only native Rust payload families that the Rho AST boundary can carry
 /// exactly.
-fn category_rho_native_scalar(def: &LanguageDef, category: &syn::Ident) -> Option<RhoScalarTy> {
+fn category_rho_native_scalar(def: &LanguageDef, category: &syn::Ident) -> Option<RhoScalarType> {
     let lang_type = def.get_type(category)?;
     let native_type = lang_type.native_type.as_ref()?;
     match NativeKind::from_syn_type(native_type) {
         NativeKind::Int8 | NativeKind::Int16 | NativeKind::Int32 | NativeKind::Int64 => {
-            Some(RhoScalarTy::Int)
+            Some(RhoScalarType::Int)
         },
-        NativeKind::Bool => Some(RhoScalarTy::Bool),
-        NativeKind::Str => Some(RhoScalarTy::Str),
+        NativeKind::Bool => Some(RhoScalarType::Bool),
+        NativeKind::Str => Some(RhoScalarType::Str),
         _ => None,
     }
 }
 
 /// The Rholang-native scalar corresponding to a MeTTaIL type.
-fn rho_native_scalar_type(def: &LanguageDef, ty: &TypeExpr) -> Option<RhoScalarTy> {
+fn rho_native_scalar_type(def: &LanguageDef, ty: &TypeExpr) -> Option<RhoScalarType> {
     match ty {
         TypeExpr::Base(id) => category_rho_native_scalar(def, id),
         _ => None,
@@ -353,14 +425,14 @@ fn rho_native_scalar_type(def: &LanguageDef, ty: &TypeExpr) -> Option<RhoScalarT
 /// (binder/guard/optional) parameter are NOT native — lowering their operators
 /// to Rholang scalar `Expr`s would be semantically wrong, so such rules are
 /// rejected and surfaced to the coverage gate.
-fn param_rho_native_scalar(def: &LanguageDef, p: &TermParam) -> Option<RhoScalarTy> {
+fn param_rho_native_scalar(def: &LanguageDef, p: &TermParam) -> Option<RhoScalarType> {
     match p {
         TermParam::Simple { ty, .. } => rho_native_scalar_type(def, ty),
         _ => None,
     }
 }
 
-fn result_rho_native_scalar(def: &LanguageDef, rule: &GrammarRule) -> Option<RhoScalarTy> {
+fn result_rho_native_scalar(def: &LanguageDef, rule: &GrammarRule) -> Option<RhoScalarType> {
     category_rho_native_scalar(def, &rule.category)
 }
 
@@ -392,7 +464,9 @@ fn contract_ast(
     formal_count: usize,
     result_expr: Par,
     text_annotation: String,
+    abi: RhoScalarContractAbi,
 ) -> LoweredRule {
+    debug_assert_eq!(formal_count, abi.formal_count());
     let all_formals = binding_bitvec(formal_count);
     let body = new_send_par(
         bound_formal(formal_count, formal_count - 1),
@@ -423,6 +497,7 @@ fn contract_ast(
     LoweredRule {
         contract: Par::default().with_receives(vec![receive]),
         text_annotation,
+        abi,
     }
 }
 
@@ -449,6 +524,14 @@ fn lower_rule(def: &LanguageDef, rule: &GrammarRule) -> Option<LoweredRule> {
             let rhs_ty = param_rho_native_scalar(def, rhs_param)?;
             let rop = rho_binop(op, lhs_ty, rhs_ty, result_ty)?;
             let formal_count = 3;
+            let abi = RhoScalarContractAbi {
+                rule_label: label.clone(),
+                shape: RhoScalarContractShape::BinaryInfix {
+                    left: lhs_ty,
+                    right: rhs_ty,
+                    result: result_ty,
+                },
+            };
             let lhs = bound_formal(formal_count, 0);
             let rhs = bound_formal(formal_count, 1);
             let result_expr = expr_par(rop.expr(lhs, rhs), &[1, 2]);
@@ -456,7 +539,7 @@ fn lower_rule(def: &LanguageDef, rule: &GrammarRule) -> Option<LoweredRule> {
                 "contract @\"{label}\"(@{a}, @{b}, ret) = {{ ret!({a} {} {b}) }}",
                 rop.symbol()
             );
-            Some(contract_ast(&label, formal_count, result_expr, text_annotation))
+            Some(contract_ast(&label, formal_count, result_expr, text_annotation, abi))
         },
         // Unary prefix: `<op> a` → contract @"L"(@a, ret) = { ret!(<op> a) }
         [SyntaxExpr::Literal(op), SyntaxExpr::Param(a)] => {
@@ -466,11 +549,15 @@ fn lower_rule(def: &LanguageDef, rule: &GrammarRule) -> Option<LoweredRule> {
             let arg_ty = param_rho_native_scalar(def, arg_param)?;
             let rop = rho_unop(op, arg_ty, result_ty)?;
             let formal_count = 2;
+            let abi = RhoScalarContractAbi {
+                rule_label: label.clone(),
+                shape: RhoScalarContractShape::UnaryPrefix { argument: arg_ty, result: result_ty },
+            };
             let arg = bound_formal(formal_count, 0);
             let result_expr = expr_par(rop.expr(arg), &[1]);
             let text_annotation =
                 format!("contract @\"{label}\"(@{a}, ret) = {{ ret!({} {a}) }}", rop.symbol());
-            Some(contract_ast(&label, formal_count, result_expr, text_annotation))
+            Some(contract_ast(&label, formal_count, result_expr, text_annotation, abi))
         },
         _ => None,
     }
@@ -481,6 +568,7 @@ fn lower_rule(def: &LanguageDef, rule: &GrammarRule) -> Option<LoweredRule> {
 /// `rejected` (the "miss nothing" guarantee — nothing is silently dropped).
 pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
     let mut lowered = Vec::new();
+    let mut scalar_contract_abi = Vec::new();
     let mut rejected = Vec::new();
     let mut program = Par::default();
     let mut annotations = Vec::new();
@@ -490,6 +578,7 @@ pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
             Some(lowered_rule) => {
                 let label = rule.label.to_string();
                 lowered.push(label.clone());
+                scalar_contract_abi.push(lowered_rule.abi);
                 program = program.append(lowered_rule.contract);
                 annotations.push(lowered_rule.text_annotation);
                 network = network.with_external(label.clone()).with_contract(
@@ -512,6 +601,7 @@ pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
         definition_fingerprint: language_definition_fingerprint(def),
         program: RhoProgram::Ast(RhoAstProgram::new(program, text_annotation)),
         lowered,
+        scalar_contract_abi,
         rejected,
         deadlock_report,
     }

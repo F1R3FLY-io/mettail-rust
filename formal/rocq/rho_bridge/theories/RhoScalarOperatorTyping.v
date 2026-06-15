@@ -85,6 +85,41 @@ Section RhoScalarOperatorTyping.
   | ROr
   | RConcat.
 
+  Inductive SurfaceUnOp : Type :=
+  | SNot
+  | SNeg.
+
+  Inductive RhoUnOp : Type :=
+  | RNot
+  | RNeg.
+
+  Inductive ScalarContractShape : Type :=
+  | AbiUnaryPrefix : ScalarTy -> ScalarTy -> ScalarContractShape
+  | AbiBinaryInfix : ScalarTy -> ScalarTy -> ScalarTy -> ScalarContractShape.
+
+  Record ScalarContractAbi : Type := {
+    abi_label_id : nat;
+    abi_shape : ScalarContractShape;
+    abi_formal_count : nat;
+    abi_return_channel_position : nat
+  }.
+
+  Definition unary_contract_abi
+      (label : nat)
+      (arg result : ScalarTy) : ScalarContractAbi :=
+    {| abi_label_id := label;
+       abi_shape := AbiUnaryPrefix arg result;
+       abi_formal_count := 2;
+       abi_return_channel_position := 1 |}.
+
+  Definition binary_contract_abi
+      (label : nat)
+      (lhs rhs result : ScalarTy) : ScalarContractAbi :=
+    {| abi_label_id := label;
+       abi_shape := AbiBinaryInfix lhs rhs result;
+       abi_formal_count := 3;
+       abi_return_channel_position := 2 |}.
+
   Definition typed_binop
       (op : SurfaceBinOp)
       (lhs rhs result : ScalarTy) : option RhoBinOp :=
@@ -129,6 +164,33 @@ Section RhoScalarOperatorTyping.
         | _, _ => None
         end
     | _, _ => None
+    end.
+
+  Definition typed_unop
+      (op : SurfaceUnOp)
+      (arg result : ScalarTy) : option RhoUnOp :=
+    match op, arg, result with
+    | SNot, TBool, TBool => Some RNot
+    | SNeg, TInt, TInt => Some RNeg
+    | _, _, _ => None
+    end.
+
+  Definition typed_binop_abi
+      (label : nat)
+      (op : SurfaceBinOp)
+      (lhs rhs result : ScalarTy) : option ScalarContractAbi :=
+    match typed_binop op lhs rhs result with
+    | Some _ => Some (binary_contract_abi label lhs rhs result)
+    | None => None
+    end.
+
+  Definition typed_unop_abi
+      (label : nat)
+      (op : SurfaceUnOp)
+      (arg result : ScalarTy) : option ScalarContractAbi :=
+    match typed_unop op arg result with
+    | Some _ => Some (unary_contract_abi label arg result)
+    | None => None
     end.
 
   Definition typed_binop_from_categories
@@ -185,6 +247,42 @@ Section RhoScalarOperatorTyping.
     exists lhs_ty, rhs_ty, result_ty. repeat split; assumption.
   Qed.
 
+  Theorem typed_binop_abi_success_matches_typed_operator :
+    forall label op lhs rhs result abi,
+      typed_binop_abi label op lhs rhs result = Some abi ->
+      abi = binary_contract_abi label lhs rhs result /\
+      exists rho, typed_binop op lhs rhs result = Some rho.
+  Proof.
+    intros label op lhs rhs result abi Habi.
+    unfold typed_binop_abi in Habi.
+    destruct (typed_binop op lhs rhs result) as [rho |] eqn:Htyped; try discriminate.
+    inversion Habi; subst. split; [reflexivity | exists rho; reflexivity].
+  Qed.
+
+  Theorem typed_unop_abi_success_matches_typed_operator :
+    forall label op arg result abi,
+      typed_unop_abi label op arg result = Some abi ->
+      abi = unary_contract_abi label arg result /\
+      exists rho, typed_unop op arg result = Some rho.
+  Proof.
+    intros label op arg result abi Habi.
+    unfold typed_unop_abi in Habi.
+    destruct (typed_unop op arg result) as [rho |] eqn:Htyped; try discriminate.
+    inversion Habi; subst. split; [reflexivity | exists rho; reflexivity].
+  Qed.
+
+  Theorem binary_contract_abi_operands_first_return_last :
+    forall label lhs rhs result,
+      abi_formal_count (binary_contract_abi label lhs rhs result) = 3 /\
+      abi_return_channel_position (binary_contract_abi label lhs rhs result) = 2.
+  Proof. repeat split; reflexivity. Qed.
+
+  Theorem unary_contract_abi_operand_first_return_last :
+    forall label arg result,
+      abi_formal_count (unary_contract_abi label arg result) = 2 /\
+      abi_return_channel_position (unary_contract_abi label arg result) = 1.
+  Proof. repeat split; reflexivity. Qed.
+
   Theorem unsupported_native_kinds_are_not_scalars :
     native_kind_scalar NUInt32 = None /\
     native_kind_scalar NFloat64 = None /\
@@ -206,12 +304,46 @@ Section RhoScalarOperatorTyping.
     typed_binop SConcat TStr TStr TStr = Some RConcat.
   Proof. reflexivity. Qed.
 
+  Theorem string_plus_abi_records_string_signature :
+    forall label,
+      typed_binop_abi label SPlus TStr TStr TStr =
+      Some (binary_contract_abi label TStr TStr TStr).
+  Proof. reflexivity. Qed.
+
   Theorem string_plus_not_integer_add :
     typed_binop SPlus TStr TStr TStr <> Some RAdd.
   Proof. discriminate. Qed.
 
+  Theorem bool_not_lowers_to_not :
+    typed_unop SNot TBool TBool = Some RNot.
+  Proof. reflexivity. Qed.
+
+  Theorem int_neg_lowers_to_neg :
+    typed_unop SNeg TInt TInt = Some RNeg.
+  Proof. reflexivity. Qed.
+
+  Theorem bool_not_abi_records_bool_signature :
+    forall label,
+      typed_unop_abi label SNot TBool TBool =
+      Some (unary_contract_abi label TBool TBool).
+  Proof. reflexivity. Qed.
+
+  Theorem int_neg_abi_records_int_signature :
+    forall label,
+      typed_unop_abi label SNeg TInt TInt =
+      Some (unary_contract_abi label TInt TInt).
+  Proof. reflexivity. Qed.
+
   Theorem bool_plus_rejected :
     typed_binop SPlus TBool TBool TBool = None.
+  Proof. reflexivity. Qed.
+
+  Theorem bool_neg_rejected :
+    typed_unop SNeg TBool TBool = None.
+  Proof. reflexivity. Qed.
+
+  Theorem int_not_rejected :
+    typed_unop SNot TInt TInt = None.
   Proof. reflexivity. Qed.
 
   Theorem mixed_operand_types_rejected :

@@ -78,7 +78,7 @@ pub use deadlock::{
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,
-    RhoProgram,
+    RhoProgram, RhoScalarContractAbi, RhoScalarContractShape, RhoScalarType,
 };
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
@@ -189,6 +189,29 @@ mod tests {
             .expect("calculator scalar fragment must parse as a LanguageDef")
     }
 
+    fn binary_abi(
+        label: &str,
+        left: RhoScalarType,
+        right: RhoScalarType,
+        result: RhoScalarType,
+    ) -> RhoScalarContractAbi {
+        RhoScalarContractAbi {
+            rule_label: label.to_string(),
+            shape: RhoScalarContractShape::BinaryInfix { left, right, result },
+        }
+    }
+
+    fn unary_abi(
+        label: &str,
+        argument: RhoScalarType,
+        result: RhoScalarType,
+    ) -> RhoScalarContractAbi {
+        RhoScalarContractAbi {
+            rule_label: label.to_string(),
+            shape: RhoScalarContractShape::UnaryPrefix { argument, result },
+        }
+    }
+
     fn gstring(par: &Par) -> Option<&str> {
         match par.exprs.as_slice() {
             [expr] => match expr.expr_instance.as_ref()? {
@@ -234,7 +257,75 @@ mod tests {
     }
 
     #[test]
+    fn scalar_lowering_reports_generated_contract_abi_inventory() {
+        use RhoScalarType::{Bool, Int, Str};
+
+        let def = parse_fragment();
+        let out = lower_language_def(&def);
+        let abi_labels: Vec<_> = out
+            .scalar_contract_abi
+            .iter()
+            .map(|abi| abi.rule_label.as_str())
+            .collect();
+        let lowered_labels: Vec<_> = out.lowered.iter().map(String::as_str).collect();
+
+        assert_eq!(
+            abi_labels, lowered_labels,
+            "ABI inventory must stay in exact lowered-contract order"
+        );
+        assert_eq!(
+            out.scalar_contract_abi,
+            vec![
+                binary_abi("AddInt", Int, Int, Int),
+                binary_abi("SubInt", Int, Int, Int),
+                binary_abi("MulInt", Int, Int, Int),
+                binary_abi("DivInt", Int, Int, Int),
+                binary_abi("ModInt", Int, Int, Int),
+                unary_abi("Neg", Int, Int),
+                binary_abi("EqInt", Int, Int, Bool),
+                binary_abi("NeInt", Int, Int, Bool),
+                binary_abi("LtInt", Int, Int, Bool),
+                binary_abi("GtInt", Int, Int, Bool),
+                binary_abi("LtEqInt", Int, Int, Bool),
+                binary_abi("GtEqInt", Int, Int, Bool),
+                binary_abi("EqBool", Bool, Bool, Bool),
+                binary_abi("NeBool", Bool, Bool, Bool),
+                binary_abi("LtBool", Bool, Bool, Bool),
+                binary_abi("GtBool", Bool, Bool, Bool),
+                binary_abi("LtEqBool", Bool, Bool, Bool),
+                binary_abi("GtEqBool", Bool, Bool, Bool),
+                binary_abi("EqStr", Str, Str, Bool),
+                binary_abi("NeStr", Str, Str, Bool),
+                binary_abi("LtStr", Str, Str, Bool),
+                binary_abi("GtStr", Str, Str, Bool),
+                binary_abi("LtEqStr", Str, Str, Bool),
+                binary_abi("GtEqStr", Str, Str, Bool),
+                binary_abi("And", Bool, Bool, Bool),
+                binary_abi("Or", Bool, Bool, Bool),
+                unary_abi("Not", Bool, Bool),
+                binary_abi("Concat", Str, Str, Str),
+                binary_abi("AddStr", Str, Str, Str),
+            ],
+            "contract ABI must be generated from typed lowering, including Str + Str -> Str"
+        );
+        for abi in &out.scalar_contract_abi {
+            assert_eq!(
+                abi.return_channel_position(),
+                abi.operand_count(),
+                "return channel must be last in the generated scalar-contract ABI"
+            );
+            assert_eq!(
+                abi.formal_count(),
+                abi.operand_count() + 1,
+                "generated scalar contracts receive operands plus one return channel"
+            );
+        }
+    }
+
+    #[test]
     fn scalar_lowering_uses_native_type_inventory_not_category_names() {
+        use RhoScalarType::{Bool, Int, Str};
+
         let def = syn::parse_str::<LanguageDef>(RENAMED_NATIVE_SCALAR_FRAGMENT)
             .expect("renamed native scalar fragment must parse as a LanguageDef");
         let out = lower_language_def(&def);
@@ -246,6 +337,16 @@ mod tests {
         assert!(
             out.rejected.is_empty(),
             "renamed native scalar rules must not be rejected by a category-name whitelist"
+        );
+        assert_eq!(
+            out.scalar_contract_abi,
+            vec![
+                binary_abi("AddNumber", Int, Int, Int),
+                binary_abi("EqNumber", Int, Int, Bool),
+                binary_abi("AndTruth", Bool, Bool, Bool),
+                binary_abi("AddText", Str, Str, Str),
+            ],
+            "ABI inventory must also follow native payload families, not category names"
         );
     }
 
@@ -262,6 +363,10 @@ mod tests {
             out.rejected,
             vec!["AddInt", "AndBool", "AddStr"],
             "structural categories named like scalars must be surfaced as rejected rules"
+        );
+        assert!(
+            out.scalar_contract_abi.is_empty(),
+            "rejected structural scalar-looking rules must not receive callable Rho ABI entries"
         );
     }
 

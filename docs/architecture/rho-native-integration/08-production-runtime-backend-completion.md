@@ -171,19 +171,28 @@ scalar families:
 | `Str × Str → Str` concatenation via `++` | `a ++ b` | `EPlusPlus` |
 | `τ × τ → Bool` comparisons for `τ ∈ {Int, Bool, Str}` | `==`, `!=`, `<`, `>`, `<=`, `>=` | matching comparison body |
 | `Bool × Bool → Bool` logic | `and`, `or` | matching boolean body |
+| `Bool → Bool` negation | `not a` | `ENot` |
+| `Int → Int` negation | `-a` | `ENeg` |
 
 The proof `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v` captures
 this contract, including the fact that renamed native categories lower
-identically while scalar-looking structural categories reject. The executable
-regressions
+identically while scalar-looking structural categories reject. It also models
+the generated scalar contract ABI: binary contracts receive two operands plus a
+return channel at position `2`, unary contracts receive one operand plus a
+return channel at position `1`, and no ABI entry exists for rejected rules. The
+Rust lowering exposes that data as `RhoLowering::scalar_contract_abi` in exact
+`RhoLowering::lowered` order, making it the source of truth for generated
+invocation dispatch. The executable regressions
 `mettail-rho-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
 `mettail-rho-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and
 `mettail-rho-codegen::string_plus_lowers_to_rholang_concat_not_integer_plus`
-then inspect the generated AST and require Calculator `AddStr` to use
-`ExprInstance::EPlusPlusBody`. Runtime wrapper tests parse `"rho" + "net"` and
-observe `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end
-chain from source snippet through WPDA parsing, typed invocation mapping,
-validated `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
+then inspect the generated AST and ABI inventory, require Calculator `AddStr`
+to use `ExprInstance::EPlusPlusBody` with `Str × Str → Str` ABI, and require
+renamed native categories to keep the same native scalar ABI. Runtime wrapper
+tests parse `"rho" + "net"` and observe
+`RuntimeObservationValue::Text("rhonet")`, completing the end-to-end chain from
+source snippet through WPDA parsing, typed invocation mapping, validated
+`rhoapi::Par`, RhoRuntime execution, and generic runtime report.
 The call-by-need wrapper test covers the same value domain in two layers:
 cheap planning assertions generate a scalar case matrix for every currently
 supported `Int`, `Bool`, and `Str` arithmetic, predicate, logical, and string
