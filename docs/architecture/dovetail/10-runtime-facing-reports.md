@@ -233,6 +233,15 @@ making this feature optional; runtime wrappers decide whether to install the
 result as a direct Dovetail backend or as the Dovetail half of a Dovetail/Rho
 backend.
 
+The formal classification model is
+[`GeneratedReportCompiler.v`](../../../dovetail/formal/rocq/theories/Lowering/GeneratedReportCompiler.v).
+It proves that the generated compiler model partitions every rule into exactly
+one of three dispositions: lowered as a Dovetail rule, supplied by e-graph
+congruence closure, or rejected. It also proves that lowered rules contain only
+equation/rewrite, exact-key, and congruence requirements, and that the modeled
+collection, binder, substitution, and side-condition cases reject instead of
+being reported complete.
+
 ## Report Family
 
 "Report" is a family name for typed artifacts at Dovetail phase boundaries. The

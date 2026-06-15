@@ -474,8 +474,9 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
             /// source-language text is not parsed or reverse-engineered here.
             ///
             /// Formal models:
-            /// - `formal/rocq/dovetail/theories/RustModelBridge.v`
-            /// - `formal/rocq/dovetail/theories/Requirements/MeTTaILRewriteCoverage.v`
+            /// - `dovetail/formal/rocq/theories/Lowering/GeneratedReportCompiler.v`
+            /// - `dovetail/formal/rocq/theories/Refinement/RustModelBridge.v`
+            /// - `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v`
             pub fn dovetail_report_for(
                 term: &dyn mettail_runtime::Term,
                 max_iters: usize,

@@ -109,6 +109,16 @@ when the flip gate can prove:
 and every unsupported generated family has been discharged into one of those
 sets with checkable evidence.
 
+The proof
+[`GeneratedReportCompiler.v`](../../../dovetail/formal/rocq/theories/Lowering/GeneratedReportCompiler.v)
+models this generated boundary. It proves exact classification of generated
+rules into lowered, e-graph-congruence-supplied, or rejected dispositions; proves
+the partition does not drop or fabricate rules; and proves lowered generated
+rules carry only equation/rewrite, exact-key, and congruence requirements. The
+proof intentionally does not claim that rejected families are implemented. Those
+families remain production obligations until they are lowered or covered by
+RhoNet, native-handler, or external-contract evidence.
+
 ## AST Artifact Contract
 
 Generated runtime artifacts are `models::rhoapi::Par` values from the

@@ -1,0 +1,393 @@
+(*
+ * GeneratedReportCompiler: formal model of the macro-generated
+ * LanguageDef -> Dovetail report compiler boundary.
+ *
+ * This file models the supported fragment implemented by
+ * `macros/src/gen/runtime/dovetail_report.rs`:
+ *   - structural variables/leaves and constructor applications,
+ *   - premise-free equations and rewrites,
+ *   - congruence premises supplied by e-graph congruence closure,
+ *   - fail-closed rejection for collection/map/zip, binder, substitution,
+ *     non-congruence side conditions, and non-converged saturation.
+ *
+ * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+ *)
+
+From Stdlib Require Import Bool List Lia.
+
+From Dovetail.Requirements Require Import MeTTaILRewriteCoverage.
+
+Import ListNotations.
+
+Section GeneratedReportCompiler.
+
+  Inductive GeneratedPatternClass : Type :=
+    | GPatStructuralVar
+    | GPatStructuralApply
+    | GPatCollectionMeta
+    | GPatMapMeta
+    | GPatZipMeta
+    | GPatLambdaMeta
+    | GPatMultiLambdaMeta
+    | GPatSubstMeta
+    | GPatMultiSubstMeta.
+
+  Definition pattern_supported (p : GeneratedPatternClass) : bool :=
+    match p with
+    | GPatStructuralVar => true
+    | GPatStructuralApply => true
+    | GPatCollectionMeta => false
+    | GPatMapMeta => false
+    | GPatZipMeta => false
+    | GPatLambdaMeta => false
+    | GPatMultiLambdaMeta => false
+    | GPatSubstMeta => false
+    | GPatMultiSubstMeta => false
+    end.
+
+  Definition pattern_requirements
+      (p : GeneratedPatternClass) : list RewriteRequirement :=
+    match p with
+    | GPatStructuralVar => [ReqExactContentKey]
+    | GPatStructuralApply => [ReqExactContentKey]
+    | GPatCollectionMeta => [ReqCollectionPattern]
+    | GPatMapMeta => [ReqMapPattern]
+    | GPatZipMeta => [ReqZipPattern]
+    | GPatLambdaMeta => [ReqBinderPattern]
+    | GPatMultiLambdaMeta => [ReqBinderPattern]
+    | GPatSubstMeta => [ReqSubstitutionPattern]
+    | GPatMultiSubstMeta => [ReqSubstitutionPattern]
+    end.
+
+  Theorem supported_patterns_have_only_exact_key_requirement : forall p r,
+    pattern_supported p = true ->
+    In r (pattern_requirements p) ->
+    r = ReqExactContentKey.
+  Proof.
+    intros p r Hsupported Hin.
+    destruct p; simpl in Hsupported, Hin; try discriminate Hsupported;
+      destruct Hin as [<- | []]; reflexivity.
+  Qed.
+
+  Inductive GeneratedPremiseClass : Type :=
+    | GPremCongruence
+    | GPremFreshness
+    | GPremRelation
+    | GPremForAll
+    | GPremBehavioralGuard
+    | GPremSyntheticInjectionGuard.
+
+  Definition premise_supported (p : GeneratedPremiseClass) : bool :=
+    match p with
+    | GPremCongruence => true
+    | GPremFreshness => false
+    | GPremRelation => false
+    | GPremForAll => false
+    | GPremBehavioralGuard => false
+    | GPremSyntheticInjectionGuard => false
+    end.
+
+  Definition premise_requirements
+      (p : GeneratedPremiseClass) : list RewriteRequirement :=
+    match p with
+    | GPremCongruence => [ReqCongruencePremise]
+    | GPremFreshness => [ReqFreshnessPremise]
+    | GPremRelation => [ReqEnvRelationPremise]
+    | GPremForAll => [ReqForAllPremise]
+    | GPremBehavioralGuard => [ReqBehavioralGuard]
+    | GPremSyntheticInjectionGuard => [ReqSyntheticInjectionGuard]
+    end.
+
+  Theorem supported_premises_are_only_congruence : forall p r,
+    premise_supported p = true ->
+    In r (premise_requirements p) ->
+    r = ReqCongruencePremise.
+  Proof.
+    intros p r Hsupported Hin.
+    destruct p; simpl in Hsupported, Hin; try discriminate Hsupported;
+      destruct Hin as [<- | []]; reflexivity.
+  Qed.
+
+  Inductive GeneratedRuleKind : Type :=
+    | GEquation
+    | GRewrite.
+
+  Inductive GeneratedRuleDisposition : Type :=
+    | LoweredAsDovetailRule
+    | SuppliedByEGraphCongruence
+    | RejectedByGeneratedCompiler.
+
+  Record GeneratedRule : Type := {
+    generated_rule_kind : GeneratedRuleKind;
+    generated_lhs : GeneratedPatternClass;
+    generated_rhs : GeneratedPatternClass;
+    generated_premises : list GeneratedPremiseClass;
+    generated_is_pure_congruence : bool
+  }.
+
+  Definition all_premises_supported
+      (rule : GeneratedRule) : bool :=
+    forallb premise_supported (generated_premises rule).
+
+  Definition rule_structurally_supported
+      (rule : GeneratedRule) : bool :=
+    pattern_supported (generated_lhs rule) &&
+    pattern_supported (generated_rhs rule) &&
+    all_premises_supported rule.
+
+  Definition classify_rule
+      (rule : GeneratedRule) : GeneratedRuleDisposition :=
+    if rule_structurally_supported rule then
+      if generated_is_pure_congruence rule
+      then SuppliedByEGraphCongruence
+      else LoweredAsDovetailRule
+    else RejectedByGeneratedCompiler.
+
+  Definition disposition_is_lowered
+      (d : GeneratedRuleDisposition) : bool :=
+    match d with
+    | LoweredAsDovetailRule => true
+    | _ => false
+    end.
+
+  Definition disposition_is_congruence
+      (d : GeneratedRuleDisposition) : bool :=
+    match d with
+    | SuppliedByEGraphCongruence => true
+    | _ => false
+    end.
+
+  Definition disposition_is_rejected
+      (d : GeneratedRuleDisposition) : bool :=
+    match d with
+    | RejectedByGeneratedCompiler => true
+    | _ => false
+    end.
+
+  Definition lowered_rules (rules : list GeneratedRule) : list GeneratedRule :=
+    filter (fun rule => disposition_is_lowered (classify_rule rule)) rules.
+
+  Definition congruence_rules
+      (rules : list GeneratedRule) : list GeneratedRule :=
+    filter (fun rule => disposition_is_congruence (classify_rule rule)) rules.
+
+  Definition rejected_rules (rules : list GeneratedRule) : list GeneratedRule :=
+    filter (fun rule => disposition_is_rejected (classify_rule rule)) rules.
+
+  Definition generated_rule_requirements
+      (rule : GeneratedRule) : list RewriteRequirement :=
+    (match generated_rule_kind rule with
+     | GEquation => ReqEquation
+     | GRewrite => ReqDirectionalRewrite
+     end)
+    :: pattern_requirements (generated_lhs rule)
+    ++ pattern_requirements (generated_rhs rule)
+    ++ flat_map premise_requirements (generated_premises rule).
+
+  Theorem rule_classification_total : forall rule,
+    classify_rule rule = LoweredAsDovetailRule \/
+    classify_rule rule = SuppliedByEGraphCongruence \/
+    classify_rule rule = RejectedByGeneratedCompiler.
+  Proof.
+    intros rule. unfold classify_rule.
+    destruct (rule_structurally_supported rule);
+      destruct (generated_is_pure_congruence rule);
+      auto.
+  Qed.
+
+  Theorem lowered_rule_requires_structural_support : forall rule,
+    classify_rule rule = LoweredAsDovetailRule ->
+    rule_structurally_supported rule = true /\
+    generated_is_pure_congruence rule = false.
+  Proof.
+    intros rule Hclass.
+    unfold classify_rule in Hclass.
+    destruct (rule_structurally_supported rule) eqn:Hsupported.
+    - destruct (generated_is_pure_congruence rule) eqn:Hcong.
+      + discriminate Hclass.
+      + split.
+        * reflexivity.
+        * reflexivity.
+    - discriminate Hclass.
+  Qed.
+
+  Theorem congruence_rule_requires_structural_support : forall rule,
+    classify_rule rule = SuppliedByEGraphCongruence ->
+    rule_structurally_supported rule = true /\
+    generated_is_pure_congruence rule = true.
+  Proof.
+    intros rule Hclass.
+    unfold classify_rule in Hclass.
+    destruct (rule_structurally_supported rule) eqn:Hsupported.
+    - destruct (generated_is_pure_congruence rule) eqn:Hcong.
+      + split.
+        * reflexivity.
+        * reflexivity.
+      + discriminate Hclass.
+    - discriminate Hclass.
+  Qed.
+
+  Theorem unsupported_rule_rejects : forall rule,
+    rule_structurally_supported rule = false ->
+    classify_rule rule = RejectedByGeneratedCompiler.
+  Proof.
+    intros rule Hunsupported.
+    unfold classify_rule. rewrite Hunsupported. reflexivity.
+  Qed.
+
+  Theorem classification_count_exact : forall rules,
+    length (lowered_rules rules) +
+    length (congruence_rules rules) +
+    length (rejected_rules rules) =
+    length rules.
+  Proof.
+    induction rules as [| rule rest IH].
+    - reflexivity.
+    - unfold lowered_rules, congruence_rules, rejected_rules in *.
+      simpl.
+      destruct (classify_rule rule); simpl; lia.
+  Qed.
+
+  Theorem lowered_rules_are_from_input : forall rules rule,
+    In rule (lowered_rules rules) -> In rule rules.
+  Proof.
+    intros rules rule Hin.
+    unfold lowered_rules in Hin.
+    apply filter_In in Hin. exact (proj1 Hin).
+  Qed.
+
+  Theorem congruence_rules_are_from_input : forall rules rule,
+    In rule (congruence_rules rules) -> In rule rules.
+  Proof.
+    intros rules rule Hin.
+    unfold congruence_rules in Hin.
+    apply filter_In in Hin. exact (proj1 Hin).
+  Qed.
+
+  Theorem rejected_rules_are_from_input : forall rules rule,
+    In rule (rejected_rules rules) -> In rule rules.
+  Proof.
+    intros rules rule Hin.
+    unfold rejected_rules in Hin.
+    apply filter_In in Hin. exact (proj1 Hin).
+  Qed.
+
+  Theorem input_rule_is_classified : forall rules rule,
+    In rule rules ->
+    In rule (lowered_rules rules) \/
+    In rule (congruence_rules rules) \/
+    In rule (rejected_rules rules).
+  Proof.
+    intros rules rule Hin.
+    unfold lowered_rules, congruence_rules, rejected_rules.
+    destruct (classify_rule rule) eqn:Hclass.
+    - left. apply filter_In. split.
+      + exact Hin.
+      + rewrite Hclass. reflexivity.
+    - right. left. apply filter_In. split.
+      + exact Hin.
+      + rewrite Hclass. reflexivity.
+    - right. right. apply filter_In. split.
+      + exact Hin.
+      + rewrite Hclass. reflexivity.
+  Qed.
+
+  Theorem lowered_rule_has_no_unsupported_requirements : forall rule req,
+    classify_rule rule = LoweredAsDovetailRule ->
+    In req (generated_rule_requirements rule) ->
+    req = ReqEquation \/
+    req = ReqDirectionalRewrite \/
+    req = ReqExactContentKey \/
+    req = ReqCongruencePremise.
+  Proof.
+    intros rule req Hclass Hin.
+    apply lowered_rule_requires_structural_support in Hclass
+      as [Hstructural _].
+    unfold rule_structurally_supported in Hstructural.
+    repeat rewrite andb_true_iff in Hstructural.
+    destruct Hstructural as [[Hlhs Hrhs] Hpremises].
+    unfold generated_rule_requirements in Hin.
+    simpl in Hin.
+    destruct Hin as [Hkind | Hin].
+    - subst req. destruct (generated_rule_kind rule);
+        [left | right; left]; reflexivity.
+    - apply in_app_iff in Hin as [Hlhs_req | Hin].
+      + right. right. left.
+        eapply supported_patterns_have_only_exact_key_requirement.
+        * exact Hlhs.
+        * exact Hlhs_req.
+      + apply in_app_iff in Hin as [Hrhs_req | Hprem_req].
+        * right. right. left.
+          eapply supported_patterns_have_only_exact_key_requirement.
+          -- exact Hrhs.
+          -- exact Hrhs_req.
+        * apply in_flat_map in Hprem_req as
+            [premise [Hpremise_in Hreq_in]].
+          apply forallb_forall with (x := premise) in Hpremises;
+            [| exact Hpremise_in].
+          right. right. right.
+          eapply supported_premises_are_only_congruence.
+          -- exact Hpremises.
+          -- exact Hreq_in.
+  Qed.
+
+  Theorem lowered_rule_requirements_covered : forall rule req,
+    classify_rule rule = LoweredAsDovetailRule ->
+    In req (generated_rule_requirements rule) ->
+    requirement_covered req.
+  Proof.
+    intros rule req Hclass Hin.
+    apply every_requirement_constructor_is_covered.
+  Qed.
+
+  Theorem collection_lhs_is_rejected :
+    forall kind rhs premises pure,
+      classify_rule
+        {| generated_rule_kind := kind;
+           generated_lhs := GPatCollectionMeta;
+           generated_rhs := rhs;
+           generated_premises := premises;
+           generated_is_pure_congruence := pure |} =
+      RejectedByGeneratedCompiler.
+  Proof. reflexivity. Qed.
+
+  Theorem binder_lhs_is_rejected :
+    forall kind rhs premises pure,
+      classify_rule
+        {| generated_rule_kind := kind;
+           generated_lhs := GPatLambdaMeta;
+           generated_rhs := rhs;
+           generated_premises := premises;
+           generated_is_pure_congruence := pure |} =
+      RejectedByGeneratedCompiler.
+  Proof. reflexivity. Qed.
+
+  Theorem substitution_lhs_is_rejected :
+    forall kind rhs premises pure,
+      classify_rule
+        {| generated_rule_kind := kind;
+           generated_lhs := GPatSubstMeta;
+           generated_rhs := rhs;
+           generated_premises := premises;
+           generated_is_pure_congruence := pure |} =
+      RejectedByGeneratedCompiler.
+  Proof. reflexivity. Qed.
+
+  Theorem side_condition_premise_is_rejected :
+    forall kind lhs rhs premises pure,
+      classify_rule
+        {| generated_rule_kind := kind;
+           generated_lhs := lhs;
+           generated_rhs := rhs;
+           generated_premises := GPremBehavioralGuard :: premises;
+           generated_is_pure_congruence := pure |} =
+      RejectedByGeneratedCompiler.
+  Proof.
+    intros kind lhs rhs premises pure.
+    unfold classify_rule, rule_structurally_supported,
+      all_premises_supported.
+    simpl. destruct (pattern_supported lhs);
+      destruct (pattern_supported rhs); reflexivity.
+  Qed.
+
+End GeneratedReportCompiler.
