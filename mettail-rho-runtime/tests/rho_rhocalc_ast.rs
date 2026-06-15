@@ -349,7 +349,7 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
 
-    assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
 
     let report = language

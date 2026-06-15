@@ -19,7 +19,7 @@ fn generated_language_runtime_backends_are_metadata_driven() {
         .expect("generated languages must advertise a default backend");
     let runtime_capabilities = language.runtime_backend_capabilities();
 
-    assert_eq!(language.default_runtime_backend(), metadata_default);
+    assert_eq!(language.default_runtime_backend(), Some(metadata_default));
     assert_eq!(runtime_capabilities.len(), 1);
     assert_eq!(runtime_capabilities[0].backend, RuntimeBackend::Ascent);
     assert!(runtime_capabilities[0].is_default);

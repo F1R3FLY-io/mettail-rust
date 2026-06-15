@@ -378,11 +378,12 @@ identity across generated metadata, Dovetail compilation, and Rho invocation
 compilation.
 Default execution is selected from the concrete runtime-capability view, not
 from a display/default metadata fallback. Production callers must ask
-`selected_default_runtime_backend()` and fail closed when it returns `None`.
+`selected_default_runtime_backend()` or `default_runtime_backend()` and fail
+closed when they return `None`.
 This is the rule implemented by `run_default_*`, the REPL, the simulation
-runner, and testkit helpers. The older `default_runtime_backend()` method is
-therefore only a transition-era metadata query; it is not an authority for
-executing Ascent, Dovetail, or Rho.
+runner, and testkit helpers. No default-backend query is allowed to report
+`Ascent` unless the concrete runtime capability view actually advertises an
+Ascent default.
 Graph-shaped test utilities follow the same runtime-view rule. When a property
 such as an LTL execution-model check needs rewrite-graph evidence, it prefers
 an installed `Dovetail` report over the selected default report: a selected
@@ -413,7 +414,8 @@ wrapped with a flip-gated `PlannedRhoBackend`, the production runtime view
 starts with `RuntimeBackendCapability { backend: RhoMachine, is_default: true,
 … }` and strips the legacy Ascent runtime from the wrapped value. This is the
 reason `language.metadata().runtime_backends()` can remain Ascent-only during
-transition while `language.default_runtime_backend()` reports `RhoMachine`,
+transition while `language.default_runtime_backend()` reports
+`Some(RhoMachine)`,
 `language.supports_runtime_backend(RuntimeBackend::Ascent)` reports `false`,
 and `language.run_default_backend_report(…)` uses the production Rho surface for
 that wrapped value. The Rocq model

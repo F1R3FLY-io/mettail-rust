@@ -175,13 +175,11 @@ and Rho compiler stages. Display strings, pretty-printed snippets, and
 `text_annotation` fields are evidence for readers and test diagnostics only;
 they are not parsed to reconstruct language metadata.
 Executable callers must use the selected runtime-capability view as their
-authority. `Language::selected_default_runtime_backend()` returns `None` when a
-concrete language value advertises no executable default, and `run_default_*`,
-the REPL, the simulation runner, and testkit diagnostics fail closed in that
-case. `Language::default_runtime_backend()` is retained only as a legacy
-metadata/display query during the transition; it must not be used to choose an
-execution path because its compatibility fallback can name `Ascent` even when no
-Ascent backend is executable.
+authority. `Language::selected_default_runtime_backend()` and
+`Language::default_runtime_backend()` return `None` when a concrete language
+value advertises no executable default, and `run_default_*`, the REPL, the
+simulation runner, and testkit diagnostics fail closed in that case. No runtime
+query fabricates an `Ascent` default for a value that does not advertise one.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
 lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,

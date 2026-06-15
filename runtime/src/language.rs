@@ -950,15 +950,15 @@ pub trait Language: Send + Sync {
             .map(|capability| capability.backend)
     }
 
-    /// Legacy display/query view of the default backend.
+    /// Display/query view of the default backend.
     ///
     /// Runtime execution uses [`Language::selected_default_runtime_backend`]
     /// and fails closed when no default was explicitly advertised. This method
-    /// keeps older metadata-only callers source-compatible while avoiding an
-    /// accidental Ascent execution fallback in `run_default_*`.
-    fn default_runtime_backend(&self) -> RuntimeBackend {
+    /// mirrors that absence for metadata-only callers; it must not fabricate an
+    /// Ascent default for a concrete language value that advertises no selected
+    /// runtime backend.
+    fn default_runtime_backend(&self) -> Option<RuntimeBackend> {
         self.selected_default_runtime_backend()
-            .unwrap_or(RuntimeBackend::Ascent)
     }
 
     /// Runtime backends executable for this concrete language value.
@@ -2437,7 +2437,7 @@ mod tests {
 
         assert_eq!(language.metadata().runtime_backends(), DISPATCH_BACKENDS);
         assert_eq!(language.selected_default_runtime_backend(), Some(RuntimeBackend::Ascent));
-        assert_eq!(language.default_runtime_backend(), RuntimeBackend::Ascent);
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::Ascent));
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
         assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
@@ -2456,11 +2456,7 @@ mod tests {
 
         assert!(language.runtime_backend_capabilities().is_empty());
         assert_eq!(language.selected_default_runtime_backend(), None);
-        assert_eq!(
-            language.default_runtime_backend(),
-            RuntimeBackend::Ascent,
-            "legacy query remains source-compatible, but execution must use selected_default_runtime_backend"
-        );
+        assert_eq!(language.default_runtime_backend(), None);
         assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
 
         let report_err = language
@@ -2495,7 +2491,7 @@ mod tests {
 
         assert_eq!(language.metadata().runtime_backends(), RHO_DISPATCH_BACKENDS);
         assert_eq!(language.selected_default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
-        assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
         assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));

@@ -988,7 +988,7 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         "Rho runtime wrapper must not expose the legacy CEK/CESK decomposition path"
     );
 
-    assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
@@ -1124,7 +1124,7 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
         "Dovetail+Rho production wrapper must not expose the legacy CEK/CESK decomposition path"
     );
 
-    assert_eq!(language.default_runtime_backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
     assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));

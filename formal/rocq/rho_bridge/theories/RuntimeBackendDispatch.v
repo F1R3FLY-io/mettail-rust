@@ -2,11 +2,13 @@
  * RuntimeBackendDispatch: fail-closed backend selection for generated
  * MeTTaIL languages.
  *
- * The Rust trait `mettail_runtime::Language` exposes an explicit
- * `RuntimeBackend` selector.  Generated languages inherit `Ascent` as the
- * default until a Dovetail/Rho flip gate installs a different backend.  The
- * selector must not silently fall back to Ascent when a requested backend is
- * absent.
+ * The Rust trait `mettail_runtime::Language` exposes an optional selected
+ * `RuntimeBackend` query. Generated languages may advertise `Ascent` as the
+ * transition oracle default until a Dovetail/Rho flip gate installs a
+ * different backend, but a concrete language value with no selected default
+ * returns `None` and must not silently fabricate an Ascent fallback.
+ * Requested backend selection must also fail closed when the requested backend
+ * is absent.
  * A selected non-Ascent backend may run through the report API while still
  * being rejected by the legacy AscentResults compatibility surface.
  *
@@ -42,6 +44,11 @@ Section RuntimeBackendDispatch.
     | Dovetail => dovetail_installed state
     | RhoMachine => rho_machine_installed state
     end.
+
+  Definition selected_default_backend (state : BackendState) : option Backend :=
+    if default_selected state
+    then Some (default_backend state)
+    else None.
 
   Definition can_run_with_backend (state : BackendState) (backend : Backend) : bool :=
     backend_installed state backend.
@@ -91,6 +98,35 @@ Section RuntimeBackendDispatch.
   Theorem generated_legacy_default_ascent_compat_runs :
     can_run_default_ascent_compat generated_legacy_state = true.
   Proof. reflexivity. Qed.
+
+  Theorem selected_default_query_returns_backend : forall state,
+    default_selected state = true ->
+    selected_default_backend state = Some (default_backend state).
+  Proof.
+    intros state Hselected.
+    unfold selected_default_backend.
+    rewrite Hselected.
+    reflexivity.
+  Qed.
+
+  Theorem unselected_default_query_returns_none : forall state,
+    default_selected state = false ->
+    selected_default_backend state = None.
+  Proof.
+    intros state Hunselected.
+    unfold selected_default_backend.
+    rewrite Hunselected.
+    reflexivity.
+  Qed.
+
+  Theorem unselected_default_does_not_fabricate_ascent : forall state,
+    default_selected state = false ->
+    selected_default_backend state <> Some Ascent.
+  Proof.
+    intros state Hunselected Hfabricated.
+    rewrite (unselected_default_query_returns_none state Hunselected) in Hfabricated.
+    discriminate Hfabricated.
+  Qed.
 
   Theorem requested_dovetail_absent_blocks : forall state,
     dovetail_installed state = false ->

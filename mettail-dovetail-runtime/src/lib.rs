@@ -222,8 +222,8 @@ where
         ))
     }
 
-    fn default_runtime_backend(&self) -> RuntimeBackend {
-        RuntimeBackend::Dovetail
+    fn default_runtime_backend(&self) -> Option<RuntimeBackend> {
+        Some(RuntimeBackend::Dovetail)
     }
 
     fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
@@ -628,7 +628,7 @@ mod tests {
         .expect("matching Dovetail compiler should install");
         let term = language.parse_term("pair(x,y)").expect("parse");
 
-        assert_eq!(language.default_runtime_backend(), RuntimeBackend::Dovetail);
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::Dovetail));
         assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));

@@ -975,8 +975,8 @@ where
         ))
     }
 
-    fn default_runtime_backend(&self) -> RuntimeBackend {
-        RuntimeBackend::RhoMachine
+    fn default_runtime_backend(&self) -> Option<RuntimeBackend> {
+        Some(RuntimeBackend::RhoMachine)
     }
 
     fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
@@ -1196,8 +1196,8 @@ where
         ))
     }
 
-    fn default_runtime_backend(&self) -> RuntimeBackend {
-        RuntimeBackend::RhoMachine
+    fn default_runtime_backend(&self) -> Option<RuntimeBackend> {
+        Some(RuntimeBackend::RhoMachine)
     }
 
     fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
