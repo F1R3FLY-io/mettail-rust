@@ -857,6 +857,48 @@ mod tests {
         assert_eq!(classify_guard_tier(&pred), GuardTier::T4Assert);
     }
 
+    fn make_ac_match() -> BehavioralPred {
+        // A structural (AC/multiset) match — tier T2 (finite enumeration).
+        BehavioralPred::AcMatch {
+            bag: quote::format_ident!("b"),
+            elements: vec![quote::format_ident!("e")],
+            rest: None,
+        }
+    }
+
+    /// M6: a mixed structural ∧ behavioral guard combines its legs' tiers via
+    /// `max_tier`. AcMatch (structural, T2) ∧ RelationQuery (behavioral, T2) → T2.
+    #[test]
+    fn mixed_structural_behavioral_max_tier_t2() {
+        let structural = make_ac_match();
+        let behavioral = make_rel_query("positive", false);
+        let pred = BehavioralPred::And(Box::new(structural), Box::new(behavioral));
+        assert_eq!(classify_guard_tier(&pred), GuardTier::T2Decidable);
+    }
+
+    /// M6: the weaker behavioral leg dominates — AcMatch (T2) ∧ an unbounded
+    /// nested quantifier (T4) → T4 (max_tier degrades to the weakest leg).
+    #[test]
+    fn mixed_structural_behavioral_max_tier_t4() {
+        let structural = make_ac_match();
+        let inner = BehavioralPred::Quantified {
+            quantifier: mettail_ast::language::Quantifier::Exists,
+            var: quote::format_ident!("z"),
+            domain: None,
+            bound: None,
+            body: Box::new(make_rel_query("connected", false)),
+        };
+        let behavioral = BehavioralPred::Quantified {
+            quantifier: mettail_ast::language::Quantifier::ForAll,
+            var: quote::format_ident!("y"),
+            domain: None,
+            bound: None,
+            body: Box::new(inner),
+        };
+        let pred = BehavioralPred::And(Box::new(structural), Box::new(behavioral));
+        assert_eq!(classify_guard_tier(&pred), GuardTier::T4Assert);
+    }
+
     #[test]
     fn can_compile_simple_relation() {
         let pred = make_rel_query("positive", false);
