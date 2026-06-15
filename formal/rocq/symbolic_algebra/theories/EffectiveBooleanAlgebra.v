@@ -114,6 +114,18 @@ Proof.
   - exact (wit_sound A L).
 Qed.
 
+(** An unsatisfiable predicate has no witness — the contrapositive of
+    wit_sound composed with sat_complete. Reused by the closure family's
+    [wit_total] proofs (sum/collection/tree) to discharge the "fall through to
+    the next component" case. *)
+Lemma wit_none_of_unsat :
+  forall (A : EBA), EBA_Laws A -> forall p : Pred A, sat p = false -> wit p = None.
+Proof.
+  intros A L p H. destruct (wit p) as [d|] eqn:W; [|reflexivity].
+  apply (wit_sound A L) in W. apply (sat_complete A L) in W.
+  rewrite W in H. discriminate.
+Qed.
+
 (** Semantic equivalence: two predicates denote the same set of domain elements.
     This is the relation the Boolean-algebra laws hold up to. *)
 Definition equiv (A : EBA) (p q : Pred A) : Prop :=

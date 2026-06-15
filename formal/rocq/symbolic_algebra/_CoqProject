@@ -10,3 +10,4 @@
 
 theories/EffectiveBooleanAlgebra.v
 theories/ProductAlgebraClosure.v
+theories/SumAlgebraClosure.v
