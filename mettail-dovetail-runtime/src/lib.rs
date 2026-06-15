@@ -668,6 +668,18 @@ mod tests {
         .expect("matching Dovetail compiler should install");
         let term = language.parse_term("cycle").expect("parse");
 
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::Dovetail));
+        assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+        assert!(
+            language
+                .runtime_backend_capabilities()
+                .iter()
+                .any(|capability| capability.backend == RuntimeBackend::Dovetail
+                    && capability.is_default),
+            "capability exposure is an installation property"
+        );
+
         let err = language
             .run_default_backend_report(term.as_ref())
             .expect_err("bounded report must not be advertised as complete");
@@ -682,6 +694,27 @@ mod tests {
             seeded_err.contains("does not accept Ascent-shaped seeded facts"),
             "{seeded_err}"
         );
+    }
+
+    #[test]
+    fn dovetail_wrapper_keeps_capability_when_report_producer_fails() {
+        let language = DovetailRuntimeBackedLanguage::new(
+            DummyLanguage,
+            compiler_stage(|_term| {
+                Err::<RuntimeDovetailRunReport, String>("report unavailable".to_string())
+            }),
+        )
+        .expect("matching Dovetail compiler should install before per-term report execution");
+        let term = language.parse_term("unavailable").expect("parse");
+
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::Dovetail));
+        assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+        let err = language
+            .run_default_backend_report(term.as_ref())
+            .expect_err("unavailable report must fail during report execution");
+        assert!(err.contains("could not build a checked report: report unavailable"), "{err}");
     }
 
     #[test]

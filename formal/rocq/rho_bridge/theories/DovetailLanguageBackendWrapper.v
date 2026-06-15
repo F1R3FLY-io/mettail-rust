@@ -1,6 +1,6 @@
 (*
  * DovetailLanguageBackendWrapper: a generated MeTTaIL language can be wrapped
- * with a complete Dovetail report producer without changing the generated
+ * with a language-matched Dovetail report producer without changing the generated
  * crate or coupling `dovetail` to `mettail-runtime`.
  *
  * Rust image:
@@ -12,9 +12,10 @@
  *     Dovetail-backed value.
  *   - The wrapper installs the default only when the Dovetail report producer
  *     was derived from the same macro-expanded generated `LanguageDef` as the
- *     wrapped language. The report itself is still checked for completeness and
- *     structural
- *     well-formedness before it can run as the default backend.
+ *     wrapped language.
+ *   - Concrete term execution has additional obligations: the report producer
+ *     must return a report, and that report must be structurally well formed
+ *     and complete before it can run as the default backend.
  *   - The Dovetail path returns a `DovetailRunReport` shaped
  *     `RuntimeBackendReport`, not `AscentResults` and not Rho observations.
  *   - `BoundedByCycleCut`, malformed reports, and Ascent-shaped seeded facts
@@ -73,7 +74,6 @@ Section DovetailLanguageBackendWrapper.
       (generated_definition_id wrapper).
 
   Definition wrapper_installs_dovetail (wrapper : DovetailWrapper) : bool :=
-    dovetail_report_available wrapper &&
     dovetail_compiler_matches_language wrapper.
 
   Definition inner_supports
@@ -134,6 +134,7 @@ Section DovetailLanguageBackendWrapper.
 
   Definition wrapper_default_report_runs (wrapper : DovetailWrapper) : bool :=
     wrapper_installs_dovetail wrapper &&
+    dovetail_report_available wrapper &&
     completeness_is_complete (dovetail_report_completeness wrapper) &&
     dovetail_report_well_formed wrapper.
 
@@ -167,27 +168,10 @@ Section DovetailLanguageBackendWrapper.
     wrapper_supports wrapper Dovetail = wrapper_installs_dovetail wrapper.
   Proof. intros wrapper. reflexivity. Qed.
 
-  Theorem wrapper_installs_dovetail_requires_report_available : forall wrapper,
-    wrapper_installs_dovetail wrapper = true ->
-    dovetail_report_available wrapper = true.
-  Proof.
-    intros wrapper Hinstall.
-    unfold wrapper_installs_dovetail in Hinstall.
-    destruct (dovetail_report_available wrapper); simpl in Hinstall.
-    - reflexivity.
-    - discriminate Hinstall.
-  Qed.
-
   Theorem wrapper_installs_dovetail_requires_compiler_match : forall wrapper,
     wrapper_installs_dovetail wrapper = true ->
     dovetail_compiler_matches_language wrapper = true.
-  Proof.
-    intros wrapper Hinstall.
-    unfold wrapper_installs_dovetail in Hinstall.
-    destruct (dovetail_report_available wrapper); simpl in Hinstall.
-    - exact Hinstall.
-    - discriminate Hinstall.
-  Qed.
+  Proof. intros wrapper Hinstall. exact Hinstall. Qed.
 
   Theorem mismatched_compiler_blocks_installation : forall wrapper,
     dovetail_compiler_matches_language wrapper = false ->
@@ -195,8 +179,7 @@ Section DovetailLanguageBackendWrapper.
   Proof.
     intros wrapper Hmismatch.
     unfold wrapper_installs_dovetail.
-    rewrite Hmismatch.
-    destruct (dovetail_report_available wrapper); reflexivity.
+    exact Hmismatch.
   Qed.
 
   Theorem wrapper_capabilities_support_matches_wrapper_supports :
@@ -220,20 +203,20 @@ Section DovetailLanguageBackendWrapper.
       reflexivity.
   Qed.
 
-  Theorem available_wrapper_capabilities_start_with_dovetail_default :
-    forall inner definition_id completeness well_formed,
+  Theorem matched_wrapper_capabilities_start_with_dovetail_default :
+    forall inner definition_id available completeness well_formed,
       exists tail,
         wrapper_runtime_capabilities
           {| wrapped_inner := inner;
              generated_definition_id := definition_id;
              dovetail_compiler_definition_id := definition_id;
-             dovetail_report_available := true;
+             dovetail_report_available := available;
              dovetail_report_completeness := completeness;
              dovetail_report_well_formed := well_formed |} =
         {| capability_backend := Dovetail;
            capability_is_default := true |} :: tail.
   Proof.
-    intros inner definition_id completeness well_formed.
+    intros inner definition_id available completeness well_formed.
     exists (demoted_inner_capabilities inner).
     unfold wrapper_runtime_capabilities, wrapper_installs_dovetail,
       dovetail_compiler_matches_language.
@@ -282,26 +265,24 @@ Section DovetailLanguageBackendWrapper.
   Proof.
     intros wrapper Hrun.
     unfold wrapper_default_report_runs in Hrun.
-    unfold wrapper_installs_dovetail in Hrun.
-    destruct (dovetail_report_available wrapper); simpl in Hrun.
-    - reflexivity.
-    - discriminate Hrun.
+    apply andb_true_iff in Hrun as [Hrun _].
+    apply andb_true_iff in Hrun as [Hrun _].
+    apply andb_true_iff in Hrun as [_ Havailable].
+    exact Havailable.
   Qed.
 
   Theorem wrapper_default_report_requires_complete_report : forall wrapper,
     wrapper_default_report_runs wrapper = true ->
     dovetail_report_completeness wrapper = Complete.
   Proof.
-    intros [inner generated_id compiler_id available completeness well_formed] Hrun.
+    intros [inner generated_id compiler_id available completeness well_formed]
+      Hrun.
     unfold wrapper_default_report_runs in Hrun.
-    unfold wrapper_installs_dovetail, dovetail_compiler_matches_language in Hrun.
-    destruct available; simpl in Hrun.
-    - destruct (compiler_id =? generated_id); simpl in Hrun.
-      + destruct completeness; simpl in Hrun.
-        * reflexivity.
-        * discriminate Hrun.
-      + discriminate Hrun.
-    - discriminate Hrun.
+    apply andb_true_iff in Hrun as [Hrun _].
+    apply andb_true_iff in Hrun as [_ Hcomplete].
+    destruct completeness; simpl in Hcomplete.
+    - reflexivity.
+    - discriminate Hcomplete.
   Qed.
 
   Theorem wrapper_default_report_requires_compiler_match : forall wrapper,
@@ -321,18 +302,11 @@ Section DovetailLanguageBackendWrapper.
     wrapper_default_report_runs wrapper = true ->
     dovetail_report_well_formed wrapper = true.
   Proof.
-    intros [inner generated_id compiler_id available completeness well_formed] Hrun.
+    intros [inner generated_id compiler_id available completeness well_formed]
+      Hrun.
     unfold wrapper_default_report_runs in Hrun.
-    unfold wrapper_installs_dovetail, dovetail_compiler_matches_language in Hrun.
-    destruct available; simpl in Hrun.
-    - destruct (compiler_id =? generated_id); simpl in Hrun.
-      + destruct completeness; simpl in Hrun.
-        * destruct well_formed; simpl in Hrun.
-          -- reflexivity.
-          -- discriminate Hrun.
-        * discriminate Hrun.
-      + discriminate Hrun.
-    - discriminate Hrun.
+    apply andb_true_iff in Hrun as [_ Hwell_formed].
+    exact Hwell_formed.
   Qed.
 
   Theorem available_complete_well_formed_wrapper_default_report_runs :
@@ -361,6 +335,38 @@ Section DovetailLanguageBackendWrapper.
          dovetail_report_completeness := BoundedByCycleCut;
          dovetail_report_well_formed := true |} = false.
   Proof. intros inner. reflexivity. Qed.
+
+  Theorem unavailable_wrapper_default_report_rejects :
+    forall inner completeness well_formed,
+    wrapper_default_report_runs
+      {| wrapped_inner := inner;
+         generated_definition_id := 0;
+         dovetail_compiler_definition_id := 0;
+         dovetail_report_available := false;
+         dovetail_report_completeness := completeness;
+         dovetail_report_well_formed := well_formed |} = false.
+  Proof. intros inner completeness well_formed. reflexivity. Qed.
+
+  Theorem report_availability_does_not_block_capability_exposure :
+    forall inner definition_id completeness well_formed,
+      wrapper_runtime_capabilities
+        {| wrapped_inner := inner;
+           generated_definition_id := definition_id;
+           dovetail_compiler_definition_id := definition_id;
+           dovetail_report_available := false;
+           dovetail_report_completeness := completeness;
+           dovetail_report_well_formed := well_formed |} =
+      wrapper_runtime_capabilities
+        {| wrapped_inner := inner;
+           generated_definition_id := definition_id;
+           dovetail_compiler_definition_id := definition_id;
+           dovetail_report_available := true;
+           dovetail_report_completeness := completeness;
+           dovetail_report_well_formed := well_formed |}.
+  Proof.
+    intros inner definition_id completeness well_formed.
+    reflexivity.
+  Qed.
 
   Theorem available_malformed_wrapper_default_report_rejects :
     forall inner completeness,
@@ -421,6 +427,7 @@ Section DovetailLanguageBackendWrapper.
     unfold wrapper_default_ascent_compat, wrapper_default_report_shape,
       wrapper_default_report_runs, completeness_is_complete.
     destruct (wrapper_installs_dovetail wrapper);
+      destruct (dovetail_report_available wrapper);
       destruct (dovetail_report_completeness wrapper);
       destruct (dovetail_report_well_formed wrapper);
       reflexivity.
