@@ -382,6 +382,11 @@ pub mod any_algebra;
 /// where classical complement is required. `Sat3`, `Classical<A>` bridge.
 pub mod algebra_tower;
 
+/// `BehavioralAlgebra`: semi-decidable behavioral predicates (relational/Datalog
+/// now; modal/temporal next) over a fact-base snapshot + host-term LTS. Implements
+/// `HeytingAlgebra` (NOT classical `BooleanAlgebra`).
+pub mod behavioral_algebra;
+
 /// `OrderedFieldAlgebra<P>`: unbounded interval-union effective Boolean algebra
 /// over any totally-ordered point type (BigInt/BigRational/OrderedF64/i128),
 /// with a single density-aware witness oracle (`OrderedPoint::witness_in`).
