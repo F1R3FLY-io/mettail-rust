@@ -49,7 +49,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | Surface | Current evidence | Production completion condition |
 |---|---|---|
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
-| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, or accepting incomplete cycle-bounded reports as exhaustive |
+| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, native-handler report helper for generated direct evaluation/normalization, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, accepting native-handler output without exact semantic keys, or accepting incomplete cycle-bounded reports as exhaustive |
 | `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
 | `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
@@ -427,6 +427,60 @@ and an invocation mapper F:
   return RuntimeBackendReport with RhoMachine, RhoNormalizedAst, and observations
   reject Ascent-shaped seeded facts on the Dovetail and Rho paths unless the fact set is empty
 ```
+
+### Native-Handler Dovetail Reports
+
+Some generated-language semantics are intentionally native rather than
+rules-as-data. Examples include scalar folds, literal-only direct evaluation,
+and generated normalization steps where the typed AST itself carries enough
+information to compute a closed normal result without running saturation. Those
+cases are still Dovetail runtime-backend work because the rest of the pipeline
+must receive a `RuntimeDovetailRunReport`, not an `AscentResults` graph or a
+display-string reconstruction.
+
+The helper
+`mettail_dovetail_runtime::complete_native_dovetail_report_for_language`
+is the current adapter for that native-handler class. Given a generated
+`Language` value and a typed `Term`, it performs the following checked flow:
+
+```text
+build-native-Dovetail-report(language L, term t):
+  if L.try_direct_eval(t) returns result r:
+    use r as the native result
+  else:
+    let n = L.normalize_term(t)
+    require n is not observationally equal to t
+    if L.try_direct_eval(n) returns result r:
+      use r as the native result
+    else:
+      use n as the native result
+
+  read result.rewrite_seeds()
+  require at least one seed
+  require every retained root seed to carry an exact semantic key
+  deduplicate roots by exact semantic key, not by display text or 64-bit id
+  build a root-only RuntimeDovetailRunReport
+  require RuntimeDovetailRunReport::validate_shape to accept the report
+  return Complete
+```
+
+This is a root-only report because the native handler is already the trusted
+semantic step for that requirement class. It does not claim to have enumerated
+internal Dovetail derivation edges. Multi-category terms may legitimately
+produce several exact roots for the same reader-facing literal; the report must
+preserve those distinct semantic alternatives instead of selecting the first
+category or using a hard-coded category list.
+
+The helper fails closed when a term has neither a direct native result nor
+observable generated-normalization progress, when the result has no roots, when
+any retained root lacks an exact key, or when the constructed report is
+structurally malformed. It is therefore suitable as the per-term Dovetail stage
+for native-handler coverage in transition tests, but it is not a substitute for
+the full generated Dovetail report compiler for rules-as-data saturation. A
+production language may mix both paths only when its generated requirement
+inventory assigns each requirement to exactly one covered mechanism:
+Dovetail-core rules, native handler, Rho-native join, EBA/SFT predicate
+solver, or explicit external contract.
 
 The wrapper is intentionally outside the generated language crate. This avoids
 a Cargo cycle with `mettail-rho-runtime` while still allowing a verified

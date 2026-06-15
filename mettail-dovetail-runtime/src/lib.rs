@@ -9,15 +9,16 @@
 #![forbid(unsafe_code)]
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::fmt;
 
 use dovetail::extract::ExtractionCompleteness;
 use dovetail::report::DovetailRunReport;
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendCapability, RuntimeBackendReport,
-    RuntimeDovetailCompleteness, RuntimeDovetailDerivationEdge, RuntimeDovetailRunReport,
-    RuntimeDovetailTermRecord, SeedFacts, Term, TermType, VarTypeInfo, WeightedRewriteSeed,
-    WeightedSeedId,
+    RuntimeDovetailCompleteness, RuntimeDovetailDerivationEdge, RuntimeDovetailReportError,
+    RuntimeDovetailRunReport, RuntimeDovetailTermRecord, SeedFacts, Term, TermType, VarTypeInfo,
+    WeightedRewriteSeed, WeightedSeedId,
 };
 
 /// Convert a checked Dovetail report into the runtime-neutral report projection.
@@ -66,6 +67,146 @@ where
             },
         },
     }
+}
+
+/// Failure building a complete Dovetail report through a native generated
+/// evaluator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeDovetailReportError {
+    /// The generated language has no native direct-evaluation result and no
+    /// observable normalization result for this term.
+    DirectEvaluationUnavailable {
+        language_name: String,
+        term_display: String,
+    },
+    /// The evaluated result did not expose any root alternative.
+    EmptyRootSet { language_name: String },
+    /// A result alternative exposed only the legacy 64-bit id. Dovetail reports
+    /// require exact semantic keys.
+    MissingExactKey {
+        language_name: String,
+        term_display: String,
+    },
+    /// Too many roots to project into the runtime report's `u32` class-id field.
+    RootIndexOverflow { language_name: String, root_count: usize },
+    /// The constructed report failed the runtime structural validator.
+    MalformedReport(RuntimeDovetailReportError),
+}
+
+impl fmt::Display for NativeDovetailReportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DirectEvaluationUnavailable { language_name, term_display } => write!(
+                f,
+                "native Dovetail report for language {language_name} has no native handler for term {term_display}"
+            ),
+            Self::EmptyRootSet { language_name } => write!(
+                f,
+                "native Dovetail report for language {language_name} produced no result roots"
+            ),
+            Self::MissingExactKey { language_name, term_display } => write!(
+                f,
+                "native Dovetail report for language {language_name} requires an exact semantic key for result {term_display}"
+            ),
+            Self::RootIndexOverflow { language_name, root_count } => write!(
+                f,
+                "native Dovetail report for language {language_name} produced {root_count} roots, exceeding the runtime class-id range"
+            ),
+            Self::MalformedReport(err) => write!(f, "native Dovetail report is malformed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for NativeDovetailReportError {}
+
+/// Build a complete Dovetail report for a generated native direct-evaluation
+/// handler.
+///
+/// This is for the `fold/native handler` part of the Dovetail requirement
+/// taxonomy, not a substitute for rules-as-data saturation. The function first
+/// asks `Language::try_direct_eval` for a native result. If no direct result is
+/// available, generated normalization may still prove a semantic step; in that
+/// case the normalized term is the reported result. If neither path makes
+/// observable progress, or if the result lacks exact keys, the function fails
+/// closed.
+pub fn complete_native_dovetail_report_for_language<L>(
+    language: &L,
+    term: &dyn Term,
+) -> Result<RuntimeDovetailRunReport, NativeDovetailReportError>
+where
+    L: Language + ?Sized,
+{
+    let language_name = language.name().to_string();
+    let evaluated = if let Some(evaluated) = language.try_direct_eval(term) {
+        evaluated
+    } else {
+        let normalized = language.normalize_term(term);
+        if normalized.term_eq(term) {
+            return Err(NativeDovetailReportError::DirectEvaluationUnavailable {
+                language_name: language_name.clone(),
+                term_display: language.format_term(term),
+            });
+        }
+        language
+            .try_direct_eval(normalized.as_ref())
+            .unwrap_or(normalized)
+    };
+
+    let seeds = evaluated.rewrite_seeds();
+    if seeds.is_empty() {
+        return Err(NativeDovetailReportError::EmptyRootSet {
+            language_name: language_name.clone(),
+        });
+    }
+    if seeds.len() > u32::MAX as usize {
+        return Err(NativeDovetailReportError::RootIndexOverflow {
+            language_name,
+            root_count: seeds.len(),
+        });
+    }
+
+    let mut roots = Vec::with_capacity(seeds.len());
+    let mut root_ordinals = Vec::with_capacity(seeds.len());
+    let mut terms = Vec::with_capacity(seeds.len());
+    let mut seen = HashSet::new();
+    for seed in seeds {
+        let Some(key) = seed.exact_key else {
+            return Err(NativeDovetailReportError::MissingExactKey {
+                language_name: language_name.clone(),
+                term_display: seed.display,
+            });
+        };
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let ordinal = terms.len();
+        roots.push(key.clone());
+        root_ordinals.push(ordinal);
+        terms.push(RuntimeDovetailTermRecord {
+            ordinal,
+            class_id: ordinal as u32,
+            key,
+            op_display: seed.display,
+            weight_display: "0".to_string(),
+            is_root: true,
+        });
+    }
+
+    if roots.is_empty() {
+        return Err(NativeDovetailReportError::EmptyRootSet { language_name });
+    }
+
+    let report = RuntimeDovetailRunReport {
+        roots,
+        root_ordinals,
+        terms,
+        derivation_edges: Vec::new(),
+        completeness: RuntimeDovetailCompleteness::Complete,
+    };
+    report
+        .validate_shape()
+        .map_err(NativeDovetailReportError::MalformedReport)?;
+    Ok(report)
 }
 
 /// Runtime adapter that selects a complete Dovetail report as the default
@@ -402,7 +543,7 @@ mod tests {
     use dovetail::extract::Extractor;
     use dovetail::report::report_from_extraction;
     use mettail_runtime::{
-        AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackend,
+        AscentResults, BackendCapabilityDef, LanguageMetadata, RewriteSeed, RuntimeBackend,
         RuntimeBackendArtifact, RuntimeBackendOutput, SeedFacts, Term,
     };
     use rigail::TropicalWeight;
@@ -426,7 +567,11 @@ mod tests {
         }
 
         fn term_id(&self) -> u64 {
-            1
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            self.0.hash(&mut hasher);
+            hasher.finish()
         }
 
         fn term_eq(&self, other: &dyn Term) -> bool {
@@ -439,6 +584,14 @@ mod tests {
 
         fn as_any(&self) -> &dyn Any {
             self
+        }
+
+        fn rewrite_seeds(&self) -> Vec<RewriteSeed> {
+            Vec::from([RewriteSeed::exact(
+                self.term_id(),
+                self.0.as_bytes().to_vec(),
+                self.0.clone(),
+            )])
         }
     }
 
@@ -507,6 +660,28 @@ mod tests {
 
         fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
             Ok(AscentResults::empty())
+        }
+
+        fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
+            let typed = term.as_any().downcast_ref::<DummyTerm>()?;
+            if typed.0.starts_with("no-native")
+                || typed.0.starts_with("normalize-only")
+                || typed.0.starts_with("normalized")
+            {
+                return None;
+            }
+            Some(Box::new(DummyTerm(format!("nf({})", typed.0))))
+        }
+
+        fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+            let Some(typed) = term.as_any().downcast_ref::<DummyTerm>() else {
+                return term.clone_box();
+            };
+            if typed.0.starts_with("normalize-only") {
+                Box::new(DummyTerm(format!("normalized({})", typed.0)))
+            } else {
+                term.clone_box()
+            }
         }
 
         fn create_env(&self) -> Box<dyn Any + Send + Sync> {
@@ -604,6 +779,54 @@ mod tests {
 
     fn complete_report_runner(_term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
         Ok(complete_runtime_report())
+    }
+
+    #[test]
+    fn native_dovetail_report_uses_direct_eval_result_exact_key() {
+        let term = DummyTerm("x".to_string());
+
+        let report = complete_native_dovetail_report_for_language(&DummyLanguage, &term)
+            .expect("native direct eval should produce a complete Dovetail report");
+
+        assert_eq!(report.completeness, RuntimeDovetailCompleteness::Complete);
+        assert_eq!(report.roots, vec![b"nf(x)".to_vec()]);
+        assert_eq!(report.root_ordinals, vec![0]);
+        assert_eq!(report.terms.len(), 1);
+        assert_eq!(report.terms[0].key, b"nf(x)".to_vec());
+        assert_eq!(report.terms[0].op_display, "nf(x)");
+        assert_eq!(report.terms[0].weight_display, "0");
+        assert!(report.terms[0].is_root);
+        assert!(report.derivation_edges.is_empty());
+        report
+            .validate_shape()
+            .expect("native direct-eval report must be structurally valid");
+    }
+
+    #[test]
+    fn native_dovetail_report_fails_closed_without_direct_handler() {
+        let term = DummyTerm("no-native(x)".to_string());
+
+        let err = complete_native_dovetail_report_for_language(&DummyLanguage, &term)
+            .expect_err("native report helper must not fabricate unsupported Dovetail coverage");
+
+        assert!(matches!(err, NativeDovetailReportError::DirectEvaluationUnavailable { .. }));
+        assert!(err.to_string().contains("no native handler"), "{err}");
+    }
+
+    #[test]
+    fn native_dovetail_report_accepts_generated_normalization_progress() {
+        let term = DummyTerm("normalize-only(x)".to_string());
+
+        let report = complete_native_dovetail_report_for_language(&DummyLanguage, &term)
+            .expect("generated normalization progress is a checked native report result");
+
+        assert_eq!(report.completeness, RuntimeDovetailCompleteness::Complete);
+        assert_eq!(report.roots, vec![b"normalized(normalize-only(x))".to_vec()]);
+        assert_eq!(report.terms[0].op_display, "normalized(normalize-only(x))");
+        assert!(report.derivation_edges.is_empty());
+        report
+            .validate_shape()
+            .expect("normalization-backed report must be structurally valid");
     }
 
     #[test]

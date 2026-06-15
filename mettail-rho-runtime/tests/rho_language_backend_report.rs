@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
+use mettail_dovetail_runtime::complete_native_dovetail_report_for_language;
 use mettail_languages::calculator::{
     Bool, CalculatorLanguage, CalculatorTerm, CalculatorTermInner, Int, Str,
 };
@@ -317,6 +318,13 @@ fn malformed_dovetail_report_for(term: &dyn Term) -> Result<RuntimeDovetailRunRe
     let mut report = complete_dovetail_report_for(term)?;
     report.root_ordinals[0] = 1;
     Ok(report)
+}
+
+fn native_calculator_dovetail_report_for(
+    term: &dyn Term,
+) -> Result<RuntimeDovetailRunReport, String> {
+    complete_native_dovetail_report_for_language(&FragmentMatchedCalculatorLanguage, term)
+        .map_err(|err| err.to_string())
 }
 
 fn int_literal(term: &Int) -> Result<i64, String> {
@@ -976,7 +984,7 @@ fn dovetail_rho_runtime_installer_derives_stage_fingerprints_from_plan() {
     let language = install_dovetail_rho_runtime_backend(
         FragmentMatchedCalculatorLanguage,
         calculator_backend(),
-        complete_dovetail_report_for,
+        native_calculator_dovetail_report_for,
         calculator_invocation_from_dovetail,
     )
     .expect("plan-derived Dovetail and Rho stages should install on matching language");
@@ -992,6 +1000,18 @@ fn dovetail_rho_runtime_installer_derives_stage_fingerprints_from_plan() {
         .expect("installer-built wrapper must expose the checked Dovetail intermediate");
     assert_eq!(dovetail_report.backend(), RuntimeBackend::Dovetail);
     assert_eq!(dovetail_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+    let RuntimeBackendOutput::Dovetail(dovetail_output) = dovetail_report.into_output() else {
+        panic!("Dovetail backend must return Dovetail report output");
+    };
+    assert!(dovetail_output.is_complete());
+    assert!(dovetail_output.root_count() >= 1);
+    assert!(
+        dovetail_output
+            .terms
+            .iter()
+            .any(|term| term.op_display == "5"),
+        "complete Dovetail report must include the normalized integer literal root: {dovetail_output:?}"
+    );
 
     let rho_report = language
         .run_default_backend_report(term.as_ref())
@@ -1011,7 +1031,7 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
     let language = DovetailRhoRuntimeBackedLanguage::new(
         FragmentMatchedCalculatorLanguage,
         backend,
-        DovetailCompilerStage::new(fingerprint.clone(), complete_dovetail_report_for),
+        DovetailCompilerStage::new(fingerprint.clone(), native_calculator_dovetail_report_for),
         RhoInvocationCompilerStage::new(fingerprint, calculator_invocation_from_dovetail),
     )
     .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");
@@ -1036,7 +1056,14 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
         panic!("Dovetail backend must return Dovetail report output");
     };
     assert!(dovetail_output.is_complete());
-    assert_eq!(dovetail_output.root_count(), 1);
+    assert!(dovetail_output.root_count() >= 1);
+    assert!(
+        dovetail_output
+            .terms
+            .iter()
+            .any(|term| term.op_display == "5"),
+        "complete Dovetail report must include the normalized integer literal root: {dovetail_output:?}"
+    );
 
     let rho_report = language
         .run_default_backend_report(term.as_ref())
