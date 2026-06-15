@@ -30,6 +30,22 @@ pub trait LanguageMetadata: 'static + Send + Sync {
         None
     }
 
+    /// Raw `language!` body source from which this language was generated.
+    ///
+    /// When present, this is the verbatim token-stream text of the macro
+    /// invocation body (everything inside `language! { ... }`). Feeding it to
+    /// `mettail_ast::auto_inject::reconstruct_language_def` replays the exact
+    /// macro-time augmentation (composition + auto-injection) and reproduces a
+    /// `LanguageDef` that fingerprints identically to
+    /// [`Self::definition_fingerprint`]. This enables runtime reconstruction of
+    /// the real augmented definition (e.g. for per-language Dovetail/Rho backend
+    /// planning) instead of fingerprint-spoofing shims.
+    ///
+    /// Defaults to `None` so hand-written metadata impls remain valid.
+    fn definition_source(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Type definitions (first is primary)
     fn types(&self) -> &'static [TypeDef];
 

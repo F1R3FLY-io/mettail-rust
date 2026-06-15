@@ -26,12 +26,20 @@ fn collection_type_name(coll_type: &CollectionType) -> &'static str {
 }
 
 /// Generate metadata struct and impl for a language
-pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
+///
+/// `definition_source` is the verbatim `language!` body text (captured in
+/// `macros/src/lib.rs` before parsing). It is emitted via
+/// `LanguageMetadata::definition_source` so a generated language's exact
+/// augmented `LanguageDef` can be reconstructed at runtime
+/// (`mettail_ast::auto_inject::reconstruct_language_def`), reproducing the same
+/// `definition_fingerprint`.
+pub fn generate_metadata(language: &LanguageDef, definition_source: &str) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
     let name_lit = LitStr::new(&name_str, name.span());
     let fingerprint = mettail_ast::identity::language_definition_fingerprint(language);
     let fingerprint_lit = LitStr::new(&fingerprint, name.span());
+    let source_lit = LitStr::new(definition_source, Span::call_site());
     let metadata_name = format_ident!("{}Metadata", name);
 
     // Generate type definitions
@@ -75,6 +83,10 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
 
             fn definition_fingerprint(&self) -> Option<&'static str> {
                 Some(#fingerprint_lit)
+            }
+
+            fn definition_source(&self) -> Option<&'static str> {
+                Some(#source_lit)
             }
 
             fn types(&self) -> &'static [mettail_runtime::TypeDef] {

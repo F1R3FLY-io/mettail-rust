@@ -35,6 +35,12 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Clone input BEFORE parse_macro_input! consumes it.
     // The clone is safe within the same invocation's bridge session.
     let input_for_registry: proc_macro2::TokenStream = input.clone().into();
+    // Verbatim raw body source, emitted as `LanguageMetadata::definition_source`
+    // so the exact augmented `LanguageDef` can be reconstructed at runtime via
+    // `mettail_ast::auto_inject::reconstruct_language_def` (reproducing the same
+    // `definition_fingerprint`). Captured before parse so it is byte-for-byte
+    // the macro invocation body.
+    let definition_source_str = input_for_registry.to_string();
     let mut language_def = parse_macro_input!(input as LanguageDef);
     let lang_name = language_def.name.to_string();
 
@@ -135,7 +141,7 @@ pub fn language(input: TokenStream) -> TokenStream {
 
     stage!("generate_metadata.start");
     // Generate metadata for REPL introspection
-    let metadata_code = generate_metadata(&language_def);
+    let metadata_code = generate_metadata(&language_def, &definition_source_str);
     stage!("generate_metadata.done");
 
     stage!("generate_language_impl.start");
