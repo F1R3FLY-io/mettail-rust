@@ -387,6 +387,10 @@ pub mod algebra_tower;
 /// `HeytingAlgebra` (NOT classical `BooleanAlgebra`).
 pub mod behavioral_algebra;
 
+/// Bisimulation by partition refinement over a behavioral LTS — the sound,
+/// compile-time (clopen / regular-core) layer of the Heyting-SFA bisimulation.
+pub mod bisimulation;
+
 /// `OrderedFieldAlgebra<P>`: unbounded interval-union effective Boolean algebra
 /// over any totally-ordered point type (BigInt/BigRational/OrderedF64/i128),
 /// with a single density-aware witness oracle (`OrderedPoint::witness_in`).
