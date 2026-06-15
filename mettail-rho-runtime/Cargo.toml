@@ -15,10 +15,11 @@ description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's R
 # is feature-gated below.
 
 [features]
-default = []
-# Enables conversion from typed Rho observation reports into
-# mettail_runtime::RuntimeBackendReport, the generic Language backend report
-# surface used by generated backends.
+default = ["runtime-report"]
+# Default production surface: expose conversion from typed Rho observation
+# reports into mettail_runtime::RuntimeBackendReport plus the generic Language
+# backend installer wrappers. This does not pull in generated languages or the
+# Ascent oracle; those remain explicit opt-in features below.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
 # Pulls in the generated MeTTaIL language suite for the two-backend
 # Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine

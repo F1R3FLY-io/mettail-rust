@@ -387,14 +387,17 @@ AST-first Rho invocation descriptions, and the explicit transition oracle.
 descriptions are present on the normal generated-language surface. The default
 still stops at `mettail-rho-codegen` payloads; it does not link generated
 language crates to `mettail-rho-runtime` and does not execute a Rho VM inside a
-generated crate. The Rho runtime crate supplies a direct
+generated crate. The Rho runtime crate enables its `runtime-report` surface by
+default, so a normal `mettail-rho-runtime` dependency exposes the direct
 `RhoRuntimeBackedLanguage<L, F>` wrapper for Rho-only plans and the composed
 production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
-has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. The
-direct wrapper is useful for Rho-native fragments and transition tests, but it
-is not a shortcut around identity: `F` is installed as a
-`RhoInvocationCompilerStage` and must carry the same macro-expanded
-`LanguageDef` fingerprint as `L` and the planned backend.
+has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. That
+default does not pull in generated language crates, `oracle-ascent`,
+`rhocalc-runtime`, or hand-authored source-oracle execution. The direct wrapper
+is useful for Rho-native fragments and transition tests, but it is not a
+shortcut around identity: `F` is installed as a `RhoInvocationCompilerStage`
+and must carry the same macro-expanded `LanguageDef` fingerprint as `L` and
+the planned backend.
 
 The composed production wrapper follows this flow:
 
