@@ -52,8 +52,9 @@ predicate terminates_bounded:
 predicate local_progress:
     forall x. exists y. y = x + 1 /\ P_a(y);  // step function
 
-// Option 3: Provide a user proof for the undecidable predicate:
-#[assert_pred(proof = "termination_proof.rocq")]
+// Option 3: Keep the trust boundary explicit and cite the external proof
+// in nearby documentation or implementation commentary:
+#[assert_pred]
 predicate terminates:
     forall x. not(exists x'. x ->* x');
 ```

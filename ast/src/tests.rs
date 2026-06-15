@@ -988,7 +988,6 @@ mod tests {
         assert_eq!(directive.tier, TierRequest::T1);
         assert!(!directive.force);
         assert!(directive.bound.is_none());
-        assert!(directive.proof.is_none());
     }
 
     #[test]
@@ -1011,12 +1010,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_tier_directive_t4_with_force_and_proof() {
+    fn parse_tier_directive_t4_with_force() {
         let input = quote! {
             name: T4Lang,
             types { Proc },
             terms {
-                #[tier(t4, force, proof = "proofs/foo.v")]
+                #[tier(t4, force)]
                 PZero . |- "0" : Proc ;
             }
         };
@@ -1027,7 +1026,23 @@ mod tests {
             .expect("tier directive");
         assert_eq!(directive.tier, TierRequest::T4);
         assert!(directive.force);
-        assert_eq!(directive.proof, Some("proofs/foo.v".to_string()));
+    }
+
+    #[test]
+    fn parse_tier_directive_proof_key_rejected() {
+        let input = quote! {
+            name: T4Lang,
+            types { Proc },
+            terms {
+                #[tier(t4, force, proof = "proofs/foo.v")]
+                PZero . |- "0" : Proc ;
+            }
+        };
+        let err = parse2::<LanguageDef>(input).expect_err("proof key rejected");
+        assert!(
+            err.to_string().contains("expected one of bound/force"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

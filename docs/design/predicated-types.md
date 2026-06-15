@@ -5144,8 +5144,8 @@ efficient compilation strategy that soundness permits: if a guard *can* be
 eliminated at compile time (T1), it *is* eliminated; if it *can* be compiled
 to a finite automaton (T2), it *is* compiled rather than interpreted; if it can
 only be approximated (T3), the approximation is bounded and the user is warned;
-if nothing can be done (T4), the burden shifts to the user via proof
-certificates or trust assertions.
+if nothing can be done (T4), the burden shifts to the user via external
+verification records or explicit trust assertions.
 
 ```
 ┌─────────┬───────────────────────────┬──────────────────────────────────┐
@@ -5164,7 +5164,7 @@ certificates or trust assertions.
 │         │                           │  Runtime cost: O(k · value_size) │
 ├─────────┼───────────────────────────┼──────────────────────────────────┤
 │   T4    │  Undecidable              │  User assertion (assert_pred)    │
-│         │  (Rice's theorem, etc.)   │  or Rocq proof certificate       │
+│         │  (Rice's theorem, etc.)   │  plus external verification note │
 │         │                           │  Runtime cost: O(1) (trust)      │
 └─────────┴───────────────────────────┴──────────────────────────────────┘
 ```
@@ -5243,7 +5243,7 @@ properties of programs, membership is undecidable.
 
 | Predicate                                        | Why Undecidable           | Mitigation                     |
 |--------------------------------------------------|---------------------------|--------------------------------|
-| `halts(x)`                                       | Rice's theorem            | User proof or Rocq certificate |
+| `halts(x)`                                       | Rice's theorem            | External proof or trust note   |
 | `forall(y, entails(rewrites_to(x, y), safe(y)))` | Unbounded ∀ over ∞ domain | `assert_pred` annotation       |
 | `forall(X, φ(X))`                                | Second-order universal    | Restricted MSO or user proof   |
 
@@ -5286,16 +5286,16 @@ relations?" branch — if an atom requires runtime state (Ascent relation) but
 is not available as a declared relation, no amount of bounding helps, since the
 issue is missing data, not unbounded search. The MSO01 lint emitted for T4
 second-order formulas warns the user that their guard is inherently undecidable
-and suggests either providing a Rocq proof certificate or rewriting as a
-bounded (T3) variant.
+and suggests either recording an external formal justification or rewriting as
+a bounded (T3) variant.
 
 ### Cost Model
 
 The following table summarizes the asymptotic costs and correctness guarantees
 of each tier. The key trade-off is between compile cost and runtime cost: T1
 pays a linear compile cost to achieve zero runtime cost, while T4 pays a
-minimal compile cost (just verifying the proof certificate) but shifts all
-correctness responsibility to the user. T2's worst-case exponential compile
+minimal compile cost but shifts all correctness responsibility to the user and
+the external verification record. T2's worst-case exponential compile
 cost (from SFA subset construction) is the price of achieving complete and
 sound runtime evaluation — in practice, most guards produce small automata
 because the SFA representation avoids the per-symbol blowup of explicit-alphabet
@@ -5608,8 +5608,8 @@ the computability-theoretic differences between tiers. T1 produces *no* code
 (the guard is constant-folded away); T2 produces deterministic finite-state
 code (match tables, arithmetic checks, or Ascent join clauses); T3 produces
 bounded-search code with an explicit depth counter; T4 produces a trust wrapper
-that defers to user-provided proof certificates. The following table summarizes
-the code shape and runtime cost for each tier:
+whose justification is external to the generated implementation. The following
+table summarizes the code shape and runtime cost for each tier:
 
 | Tier | Generated Code Shape                                                                          | Runtime Cost         |
 |------|-----------------------------------------------------------------------------------------------|----------------------|
@@ -6011,16 +6011,14 @@ holds. This is analogous to Rust's `unsafe` keyword or Coq's `Admitted`
 tactic: the type system acknowledges its limitation and shifts the correctness
 burden to the programmer.
 
-The MSO01 lint fires at compile time if the T4 guard is not accompanied by a
-Rocq proof certificate, alerting the user that the guard's correctness is
-unverified. If a certificate is provided, it is checked during macro expansion;
-a valid proof silences the lint and provides the same confidence as T1–T3
-evaluation — the only difference is that the proof obligation was discharged
-externally rather than by the automaton tower:
+The MSO01 lint fires at compile time for T4 guards to make the trust boundary
+visible. Formal justification can be cited in the verification tree or adjacent
+implementation commentary, but it is not parsed as a source-level certificate
+and it does not silently suppress the lint:
 
 ```
 assert_pred(value: Term) → 𝔹
-  ▷ trust user annotation or Rocq proof certificate; MSO01 lint if absent
+  ▷ trust user annotation; cite external formal evidence outside the AST
   return true
 ```
 
@@ -6051,8 +6049,12 @@ The existing mechanisms address specific instances of this problem — `Bounded`
 wraps a quantifier with an explicit depth limit (T4→T3), and `assert_pred`
 trusts the user unconditionally (any tier → T4 semantics). The `#[tier(...)]`
 directive **unifies and generalises** these mechanisms into a single, explicit
-annotation that works in any direction, carries optional proof certificates, and
-integrates with the lint infrastructure.
+annotation that works in any direction and integrates with the lint
+infrastructure. It deliberately does **not** carry paths to Rocq, TLA+, Maude,
+or mCRL2 proof artifacts. Formal verification is attributed in `formal/`,
+architecture documents, and implementation comments; generated runtime
+semantics are driven by analyzer evidence such as effective Boolean algebras
+and symbolic finite-state transducers, not by source-coupled proof files.
 
 ##### Syntax
 
@@ -6063,14 +6065,13 @@ expression:
 #[tier(T3)]                          // single-step downgrade
 #[tier(T3, bound = 500)]             // downgrade with explicit iteration bound
 #[tier(T2, force)]                   // multi-step downgrade (requires force)
-#[tier(T2, proof = "path.rocq")]     // downgrade with proof certificate
 #[tier(T4)]                          // conservative upgrade (always allowed)
 ```
 
 The general form is:
 
 ```
-#[tier( <target-tier> [, bound = <k>] [, force] [, proof = "<path>"] )]
+#[tier( <target-tier> [, bound = <k>] [, force] )]
 ```
 
 where:
@@ -6080,7 +6081,6 @@ where:
 | `<target-tier>` | `T1`–`T4` | Yes                        | The tier the programmer asserts this predicate belongs to |
 | `bound = <k>`   | `usize`   | If target is T3            | Explicit iteration depth limit for bounded checking       |
 | `force`         | flag      | If downgrade spans >1 tier | Acknowledges multi-step override risk                     |
-| `proof = "<p>"` | string    | No                         | Path to a Rocq proof certificate of the claimed tier      |
 
 ##### Override Direction Rules
 
@@ -6096,11 +6096,12 @@ always safe — they simply trade performance for conservatism.
 | Upward             | T1→T2, T2→T3, T3→T4, etc. | Yes      | —                     | No lint          |
 | Identity           | T3→T3                     | Yes      | —                     | No lint (no-op)  |
 
-**Proof certificates**: when a `proof = "path.rocq"` parameter is supplied, the
-macro-expansion phase validates the certificate against the predicate's AST. A
-valid proof **silences** the TIER01 lint entirely — the override is no longer
-an unverified trust assumption but a machine-checked guarantee. An invalid or
-missing certificate re-enables the lint.
+**Formal verification attribution**: a tier override may be justified by a
+machine-checked proof, but the proof is not referenced from the `language!`
+model. The proof belongs in the formal-verification tree and in design or
+implementation commentary. The compiler treats `proof = "..."` as invalid
+syntax so stale paths, unchecked axioms, or proof-file hashes cannot become
+part of runtime backend selection.
 
 ##### Semantic Specification
 
@@ -6112,7 +6113,7 @@ decidable at macro-expansion time. The guard codegen evaluates the predicate
 statically and eliminates the guard entirely (constant-folds to `true` or
 `false`). If the predicate is *not* actually ground-decidable, macro expansion
 fails with an error — this is the only target tier that provides an automatic
-soundness check without a proof certificate.
+soundness check from the syntax alone.
 
 **Override to T2** — the programmer asserts that a decision procedure exists and
 terminates for all inputs. The guard codegen emits a decidable guard function
@@ -6132,8 +6133,8 @@ explicit resource bounding). The checker returns `TriState`:
 
 **Override to T4** — the programmer requests the most conservative tier. The
 guard codegen emits an `assert_pred` wrapper that unconditionally returns
-`true`, placing full correctness responsibility on the programmer (or on an
-external proof certificate). This is useful during development: marking an
+`true`, placing full correctness responsibility on the programmer and the
+external verification record. This is useful during development: marking an
 experimental guard as T4 ensures it never silently blocks rule firing while
 the predicate's properties are still being investigated.
 
@@ -6161,13 +6162,13 @@ guard_reachable_safe(src: Term, vertices: [Term], k: ℕ = 1000) → TriState
   return true
 ```
 
-**T4→T2 multi-step override with proof certificate.** The compiler classifies
-a normalization predicate as T4 (potentially non-terminating rewrite), but the
-programmer has a Rocq proof of strong normalisation for the type system's term
-language:
+**T4→T2 multi-step override with external verification.** The compiler
+classifies a normalization predicate as T4 (potentially non-terminating
+rewrite), but the project has a Rocq proof of strong normalization for the type
+system's term language recorded outside the `language!` source:
 
 ```rust
-#[tier(T2, force, proof = "proofs/strong_normalisation.rocq")]
+#[tier(T2, force)]
 guard(is_normalising(term))
 ```
 
@@ -6175,19 +6176,21 @@ Generated code (decidable guard — no depth bound):
 
 ```
 guard_is_normalising(term: Term) → 𝔹
-  ▷ termination guaranteed by strong_normalisation.rocq certificate
+  ▷ termination justified by the external strong-normalization proof
   nf ← reduce_to_normal_form(term)
   return nf ≠ ⊥
 ```
 
-Because a valid proof certificate is provided, the TIER01 lint is silent.
+The TIER01 lint remains an implementation reminder unless the analyzer itself
+can derive the stronger tier. A proof can be cited in docs/comments, but it is
+not a source-level suppression key.
 
 ##### TIER01 Lint — Unverified Tier Override
 
 **Diagnostic code:** `TIER01`
 **Severity:** Warning
 **Fires when:** A `#[tier(...)]` directive specifies a *downward* override
-(lower tier than the compiler infers) **without** a valid `proof` certificate.
+(lower tier than the compiler infers).
 
 **Message format:**
 
@@ -6198,14 +6201,15 @@ warning[TIER01]: unverified tier override
 42 |     #[tier(T2, force)]
    |     ^^^^^^^^^^^^^^^^^^ compiler infers T4, override claims T2
    |
-   = note: override trusts programmer assertion; provide `proof = "..."` to silence
-   = help: add a Rocq proof certificate, or verify manually that the predicate
-           is decidable for all inputs
+   = note: override trusts programmer assertion; keep formal justification in
+           the verification tree and implementation commentary
+   = help: prefer analyzer-recognized EBA/SFST evidence when the predicate is
+           decidable for all inputs
 ```
 
-**Suppression:** Providing a `proof = "path.rocq"` parameter that passes
-certificate validation silences TIER01. The lint does **not** fire for upward
-overrides (those are always sound) or identity overrides (no-ops).
+**Suppression:** The lint does **not** fire for upward overrides (those are
+always sound) or identity overrides (no-ops). Proof paths are intentionally not
+accepted as suppression syntax.
 
 ##### Relationship to Existing Mechanisms
 
@@ -6373,7 +6377,7 @@ discussion, see the referenced section.
 | Guard codegen (T1)                     | Static evaluation → dead-code elim                           | — (zero overhead)                             | §13      |
 | Guard codegen (T2)                     | SFA/range/register compilation                               | Guard function: O(1)–O(\|value\|)             | §13      |
 | Guard codegen (T3)                     | Bounded automaton compilation                                | BFS with depth counter: O(k·\|value\|)        | §13      |
-| Guard codegen (T4)                     | Lint MSO01, Rocq certificate check                           | `assert_pred()` returns true (trust)          | §13      |
+| Guard codegen (T4)                     | Lint MSO01, external verification commentary                 | `assert_pred()` returns true (trust)          | §13      |
 | Pipeline (Stages 1–5)                  | Parse → Classify → Compile → Optimize → Codegen              | —                                             | §12      |
 | BooleanAlgebra + SFA ops               | `is_satisfiable`, intersect, minimize                        | —                                             | §15      |
 | ConstraintTheory suite                 | Propagate, label, witness                                    | —                                             | §16      |

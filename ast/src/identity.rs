@@ -402,10 +402,7 @@ fn write_grammar_rule(rule: &GrammarRule, out: &mut String) {
     }
     out.push(':');
     if let Some(tier) = &rule.tier_directive {
-        out.push_str(&format!(
-            "tier={:?},bound={:?},force={},proof={:?}",
-            tier.tier, tier.bound, tier.force, tier.proof
-        ));
+        out.push_str(&format!("tier={:?},bound={:?},force={}", tier.tier, tier.bound, tier.force));
     }
     out.push(':');
     out.push_str(if rule.is_auto_injected {

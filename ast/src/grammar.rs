@@ -261,15 +261,15 @@ pub struct GrammarRule {
 
 /// Phase 11 (predicated types): user-supplied tier override.
 ///
-/// Parsed from `#[tier(t1|t2|t3|t4 [, bound = N] [, force] [, proof = "..."])]`
+/// Parsed from `#[tier(t1|t2|t3|t4 [, bound = N] [, force])]`
 /// attributes that may appear immediately before a guarded
 /// constructor in the `terms { }` block.
 ///
 /// The validator (`mettail_ast::validation::validator`) checks the
 /// override against the auto-classified tier and emits TIER01 if
 /// they disagree without `force = true`. With `force`, the override
-/// is respected unconditionally and the user assumes responsibility
-/// for soundness.
+/// is accepted as an explicit source annotation only; formal proof attribution
+/// remains outside the implementation model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TierDirective {
     /// The requested tier (1, 2, 3, or 4).
@@ -278,11 +278,6 @@ pub struct TierDirective {
     pub bound: Option<usize>,
     /// `force = true` skips the TIER01 mismatch check.
     pub force: bool,
-    /// Optional path to a Rocq/Coq proof certificate validating
-    /// the assertion. The runtime hashes the file at startup; if
-    /// the hash mismatches, the assertion is rejected and the
-    /// guard falls back to safe-fail.
-    pub proof: Option<String>,
 }
 
 /// Tier identifier in a `#[tier(...)]` directive.
@@ -353,7 +348,6 @@ pub fn parse_tier_directive(input: ParseStream) -> SynResult<Option<TierDirectiv
 
     let mut bound: Option<usize> = None;
     let mut force = false;
-    let mut proof: Option<String> = None;
 
     while parens.peek(Token![,]) {
         let _ = parens.parse::<Token![,]>()?;
@@ -371,24 +365,16 @@ pub fn parse_tier_directive(input: ParseStream) -> SynResult<Option<TierDirectiv
                 // `force` is a flag — no `= value` part required.
                 force = true;
             },
-            "proof" => {
-                let _ = parens.parse::<Token![=]>()?;
-                let lit: syn::LitStr = parens.parse()?;
-                proof = Some(lit.value());
-            },
             other => {
                 return Err(syn::Error::new(
                     key.span(),
-                    format!(
-                        "unknown tier attribute key `{}`; expected one of bound/force/proof",
-                        other
-                    ),
+                    format!("unknown tier attribute key `{}`; expected one of bound/force", other),
                 ));
             },
         }
     }
 
-    Ok(Some(TierDirective { tier, bound, force, proof }))
+    Ok(Some(TierDirective { tier, bound, force }))
 }
 
 /// Stage 3.27a (2026-05-04): consume zero or more `#[doc = "..."]`
