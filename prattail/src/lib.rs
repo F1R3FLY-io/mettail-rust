@@ -399,6 +399,10 @@ pub mod product_nary;
 /// feasibility) and `MapAlgebra` (key→value), generic over the element algebra.
 pub mod collection_algebra;
 
+/// Symbolic tree automata over ranked terms with symbolic payload guards — the
+/// structural-recursion core for algebraic/recursive data types.
+pub mod sym_tree;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
