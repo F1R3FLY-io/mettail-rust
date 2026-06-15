@@ -11,8 +11,9 @@ Located in `simulation/src/coverage.rs`.
 The coverage system provides:
 
 1. **SimulationCoverage**: tracks rule firings and constructor hits across simulation runs, computes coverage percentages, identifies uncovered rules, and supports merging of coverage data from multiple runs.
-2. **coverage_from_ascent()**: extracts coverage data from the Ascent engine's execution results.
-3. **RuleCoverage** (in `results.rs`): a lighter-weight coverage tracker embedded in `CampaignResults`.
+2. **coverage_from_trace()**: extracts coverage data from report-aware `ExecutionTrace` values without assuming every backend is Ascent-shaped.
+3. **coverage_from_ascent()**: extracts coverage data from explicit Ascent-oracle execution results.
+4. **RuleCoverage** (in `results.rs`): a lighter-weight coverage tracker embedded in `CampaignResults`.
 
 ## Why Was It Chosen?
 
@@ -85,9 +86,40 @@ PROCEDURE merge(other: SimulationCoverage):
 
 This enables parallel simulation campaigns to contribute to a shared coverage map.
 
+### coverage_from_trace()
+
+The production coverage extractor consumes a simulation trace, not a backend
+private result type. Rewrite operations contribute rule firings; every step
+display contributes constructor coverage. Runtime report and runtime
+observation steps therefore contribute structural diversity without fabricating
+rewrite-rule firings.
+
+```
+PROCEDURE coverage_from_trace(trace: ExecutionTrace) → SimulationCoverage:
+    coverage ← SimulationCoverage::new()
+
+    FOR entry in trace.steps:
+        IF entry.operation starts with "rewrite:" THEN
+            rule ← entry.operation.strip_prefix("rewrite:")
+            coverage.record_rewrite(rule)
+        ELSE IF entry.operation == "rewrite" THEN
+            coverage.record_rewrite("__anonymous__")
+
+        ctor ← extract_constructor_name(entry.term_display)
+        IF ctor is not empty THEN
+            coverage.record_constructor(ctor)
+
+    RETURN coverage
+```
+
+This is the correct extractor for Dovetail/Rho production campaigns because
+their terminal steps are `runtime:Dovetail:DovetailRunReport` or
+`runtime:RhoMachine:RhoNormalizedAst`, not Ascent rewrite edges.
+
 ### coverage_from_ascent()
 
-The `coverage_from_ascent()` function extracts coverage from `AscentResults`:
+The `coverage_from_ascent()` function remains the explicit reference-oracle
+extractor for Ascent-shaped reports:
 
 ```
 PROCEDURE coverage_from_ascent(results: AscentResults) → SimulationCoverage:
@@ -171,7 +203,7 @@ The full coverage-guided generation cycle:
 
 1. **Generate**: use proptest strategies to produce random terms.
 2. **Simulate**: run each term through the parse → rewrite pipeline via `SimulationRunner`.
-3. **Collect**: extract `SimulationCoverage` from each run, merge into cumulative coverage.
+3. **Collect**: extract `SimulationCoverage` from each trace, merge into cumulative coverage.
 4. **Analyze**: compute `uncovered_rules()` and identify constructors that appear in uncovered rules' LHS patterns.
 5. **Adjust**: bias the term generation strategy toward those constructors in the next round.
 6. **Repeat** until coverage target is met or budget is exhausted.

@@ -52,7 +52,7 @@ pub enum TraceOutcome {
     /// The term reached a normal form.
     NormalForm { term: String, steps: usize },
     /// The selected runtime backend produced substrate observations rather
-    /// than an Ascent-shaped rewrite graph.
+    /// than rewrite-result evidence.
     RuntimeObservations {
         backend: String,
         artifact: String,
@@ -60,8 +60,8 @@ pub enum TraceOutcome {
         values: usize,
         summary: String,
     },
-    /// The selected runtime backend returned a checked backend report that is
-    /// not an Ascent rewrite graph and not substrate observations.
+    /// The selected runtime backend returned a checked terminal backend report
+    /// that is not substrate observations.
     RuntimeReport {
         backend: String,
         artifact: String,

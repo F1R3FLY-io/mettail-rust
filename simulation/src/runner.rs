@@ -11,8 +11,10 @@
 //!   the first. This is essential for understanding the failure landscape.
 //! - **Deterministic**: seeds are recorded per test case so failures can
 //!   be reproduced exactly.
-//! - **Trampoline-style**: the rewrite loop uses iterative BFS over the
-//!   Ascent results graph rather than recursion.
+//! - **Report-aware execution**: the runner consumes `RuntimeBackendReport`.
+//!   Ascent-shaped reference reports are walked with iterative BFS, complete
+//!   Dovetail reports are accepted as terminal rewrite evidence, and Rho
+//!   observations remain terminal runtime evidence.
 
 use crate::invariant::{Invariant, InvariantState};
 use crate::morphology::{MorphologyTracker, TermMetrics};
@@ -231,6 +233,34 @@ fn dovetail_report_summary(report: &RuntimeDovetailRunReport) -> String {
     )
 }
 
+fn has_normal_form_reachable_invariant(config: &SimulationConfig) -> bool {
+    config
+        .invariants
+        .iter()
+        .any(|invariant| invariant.name() == "NormalFormReachable")
+}
+
+fn dovetail_report_satisfies_normal_form_reachable(report: &RuntimeDovetailRunReport) -> bool {
+    report.is_complete() && !report.root_ordinals.is_empty()
+}
+
+fn dovetail_normal_form_reachability_message(
+    backend: impl std::fmt::Display,
+    report: &RuntimeDovetailRunReport,
+) -> String {
+    if !report.is_complete() {
+        format!(
+            "Normal form not proven: {} backend returned a {} Dovetail report, which is non-exhaustive",
+            backend, report.completeness
+        )
+    } else {
+        format!(
+            "Normal form not reached: {} backend returned a complete Dovetail report with no extracted roots",
+            backend
+        )
+    }
+}
+
 /// Extract a human-readable message from a panic payload.
 fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -406,14 +436,9 @@ impl<'a> SimulationRunner<'a> {
                 };
                 let morphology = morphology_tracker.as_ref().map(|t| t.summary());
 
-                if self
-                    .config
-                    .invariants
-                    .iter()
-                    .any(|invariant| invariant.name() == "NormalFormReachable")
-                {
+                if has_normal_form_reachable_invariant(&self.config) {
                     let message = format!(
-                        "Normal form not reached: {} backend returned runtime observations, not an Ascent-shaped rewrite graph",
+                        "Normal form not reached: {} backend returned runtime observations, not rewrite-result evidence",
                         backend
                     );
                     let trace = ExecutionTrace {
@@ -472,16 +497,11 @@ impl<'a> SimulationRunner<'a> {
                 };
                 let morphology = morphology_tracker.as_ref().map(|t| t.summary());
 
-                if self
-                    .config
-                    .invariants
-                    .iter()
-                    .any(|invariant| invariant.name() == "NormalFormReachable")
+                if has_normal_form_reachable_invariant(&self.config)
+                    && !dovetail_report_satisfies_normal_form_reachable(&dovetail_report)
                 {
-                    let message = format!(
-                        "Normal form not reached: {} backend returned a Dovetail report, not an Ascent-shaped rewrite graph",
-                        backend
-                    );
+                    let message =
+                        dovetail_normal_form_reachability_message(backend, &dovetail_report);
                     let trace = ExecutionTrace {
                         seed: seed_str.clone(),
                         language: language_name,
@@ -1355,6 +1375,12 @@ mod tests {
         }
     }
 
+    fn bounded_dovetail_runtime_report() -> RuntimeDovetailRunReport {
+        let mut report = complete_dovetail_runtime_report();
+        report.completeness = RuntimeDovetailCompleteness::BoundedByCycleCut;
+        report
+    }
+
     impl Language for RuntimeObservationLanguage {
         fn name(&self) -> &'static str {
             "RuntimeObservationMock"
@@ -1477,8 +1503,12 @@ mod tests {
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
                 RuntimeBackend::Dovetail => {
-                    RuntimeBackendReport::try_dovetail(complete_dovetail_runtime_report())
-                        .map_err(|err| err.to_string())
+                    RuntimeBackendReport::try_dovetail(if format!("{}", _term) == "bounded" {
+                        bounded_dovetail_runtime_report()
+                    } else {
+                        complete_dovetail_runtime_report()
+                    })
+                    .map_err(|err| err.to_string())
                 },
                 RuntimeBackend::Ascent => self.run_ascent(_term).map(RuntimeBackendReport::ascent),
                 other => Err(format!("{other} is not installed")),
@@ -1690,7 +1720,8 @@ mod tests {
         match failure.trace.outcome {
             TraceOutcome::InvariantViolation { invariant, message, .. } => {
                 assert_eq!(invariant, "NormalFormReachable");
-                assert!(message.contains("not an Ascent-shaped rewrite graph"));
+                assert!(message.contains("runtime observations"));
+                assert!(message.contains("not rewrite-result evidence"));
             },
             other => panic!("expected NormalFormReachable violation, got {other:?}"),
         }
@@ -1746,6 +1777,55 @@ mod tests {
                 );
             },
             other => panic!("expected RuntimeReport, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn complete_dovetail_report_satisfies_normal_form_reachable() {
+        let language = DovetailReportLanguage;
+        let config = SimulationConfig {
+            invariants: vec![Box::new(crate::invariant::NormalFormReachable { max_steps: 1 })],
+            ..SimulationConfig::default()
+        };
+        let runner = SimulationRunner::new(&language, config);
+
+        let trace = runner
+            .run_to_normal_form("dovetail-call")
+            .expect("complete Dovetail roots are terminal rewrite evidence");
+
+        match trace.outcome {
+            TraceOutcome::RuntimeReport { backend, artifact, summary } => {
+                assert_eq!(backend, "Dovetail");
+                assert_eq!(artifact, "DovetailRunReport");
+                assert!(summary.contains("completeness=Complete"));
+                assert!(summary.contains("roots=[normal-form]"));
+            },
+            other => panic!("expected RuntimeReport, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bounded_dovetail_report_does_not_satisfy_normal_form_reachable() {
+        let language = DovetailReportLanguage;
+        let config = SimulationConfig {
+            invariants: vec![Box::new(crate::invariant::NormalFormReachable { max_steps: 1 })],
+            ..SimulationConfig::default()
+        };
+        let runner = SimulationRunner::new(&language, config);
+
+        let failure = runner
+            .run_to_normal_form("bounded")
+            .expect_err("cycle-bounded Dovetail reports are not exhaustive evidence");
+
+        assert!(failure.error.contains("BoundedByCycleCut"));
+        assert!(failure.error.contains("non-exhaustive"));
+        match failure.trace.outcome {
+            TraceOutcome::InvariantViolation { invariant, message, .. } => {
+                assert_eq!(invariant, "NormalFormReachable");
+                assert!(message.contains("BoundedByCycleCut"));
+                assert!(message.contains("non-exhaustive"));
+            },
+            other => panic!("expected NormalFormReachable violation, got {other:?}"),
         }
     }
 

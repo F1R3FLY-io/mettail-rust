@@ -10,7 +10,7 @@ Located in `simulation/src/runner.rs`.
 
 The runner provides two levels of API:
 
-1. **Single-term simulation**: `run_to_normal_form(input: &str)` parses a term, runs the language's selected default runtime backend through `RuntimeBackendReport`, checks invariants at every observable step, and returns a complete `ExecutionTrace`. Ascent-shaped reports are walked as rewrite graphs to a normal form. Dovetail report-shaped outputs become terminal runtime-report outcomes, and observation-shaped Rho outputs become terminal runtime-observation outcomes instead of fabricated Ascent graphs.
+1. **Single-term simulation**: `run_to_normal_form(input: &str)` parses a term, runs the language's selected default runtime backend through `RuntimeBackendReport`, checks invariants at every observable step, and returns a complete `ExecutionTrace`. Ascent-shaped reports are walked as rewrite graphs to a normal form. Complete Dovetail report-shaped outputs with extracted roots become terminal runtime-report outcomes that satisfy `NormalFormReachable`; bounded or rootless Dovetail reports do not. Observation-shaped Rho outputs become terminal runtime-observation outcomes instead of fabricated Ascent graphs.
 
 2. **Campaign mode**: `run_campaign(strategy)` generates many terms, runs each through the single-term pipeline, collects ALL failures (does not stop at the first), attempts shrinking for each failure, and returns aggregate `CampaignResults`.
 
@@ -140,6 +140,13 @@ Phase 3B: Runtime Observation Outcome
 ├── summarize observations by channel
 ├── append one terminal runtime step
 └── determine outcome: RuntimeObservations | InvariantViolation
+
+Phase 3C: Dovetail Report Outcome
+├── summarize completeness, roots, terms, and derivation edges
+├── append one terminal runtime-report step
+├── IF NormalFormReachable is requested:
+│     accept only Complete reports with at least one extracted root
+└── determine outcome: RuntimeReport | InvariantViolation
 ```
 
 For Ascent-shaped reports, the BFS finds the **shortest** path from the initial
@@ -150,9 +157,12 @@ the most direct path.
 
 For Dovetail report-shaped and observation-shaped reports, there is no Ascent
 rewrite graph to walk. The simulation records the backend, artifact, report or
-observation summary, and terminal runtime outcome. A normal-form invariant
-requested against either shape fails explicitly because checked reports and
-runtime observations are not normal-form graph evidence.
+observation summary, and terminal runtime outcome. Complete Dovetail reports
+with at least one extracted root are accepted as terminal rewrite-result
+evidence for `NormalFormReachable`; `BoundedByCycleCut` and rootless Dovetail
+reports fail that invariant because they are not exhaustive evidence. Runtime
+observations also fail that invariant because they are substrate observations,
+not rewrite-result evidence.
 
 ### Trampoline-Style Rewriting
 
@@ -170,9 +180,11 @@ available:
 - The `TraceOutcome` enum has a dedicated `NormalForm` variant
 - The `check_trace_ltl()` temporal checker provides an `IsNormalForm` atomic proposition for LTL formulas like `F(normal_form)` ("eventually, normal form is reached")
 
-Rho/default-backend observation reports instead use
-`TraceOutcome::RuntimeObservations`. That outcome is terminal runtime evidence,
-not a normal-form graph claim.
+Dovetail/default-backend reports use `TraceOutcome::RuntimeReport`. A complete
+Dovetail report with extracted roots is a terminal rewrite-result claim even
+though the runner does not fabricate an Ascent BFS path for it. Rho/default
+backend observation reports use `TraceOutcome::RuntimeObservations`; that
+outcome is terminal runtime evidence, not a normal-form graph claim.
 
 ## Seed Persistence and Regression Files
 

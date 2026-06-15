@@ -609,8 +609,10 @@ When SimulationRunner executes a term:
   if the report is Dovetail-report-shaped:
     record one terminal runtime step with backend and artifact identity
     summarize completeness, roots, terms, and edges as TraceOutcome::RuntimeReport
+    satisfy NormalFormReachable only when the report is Complete and has at least one root
+    reject BoundedByCycleCut as non-exhaustive reachability evidence
     write the report outcome through the JSONL trace format
-    do not fabricate an Ascent rewrite graph or normal-form claim
+    do not fabricate an Ascent rewrite graph; only Complete rooted reports carry the terminal rewrite-result claim
   if the report is observation-shaped:
     record one terminal runtime step with backend and artifact identity
     summarize observed channels and values as TraceOutcome::RuntimeObservations
@@ -621,11 +623,14 @@ When SimulationRunner executes a term:
 ```
 
 Report-shaped and observation-shaped runtime outputs are terminal simulation
-outcomes. They are not normal-form graph evidence, and they intentionally
-bypass the Ascent-only normal-form BFS. Explicit Ascent-oracle tests may still
-provide legacy reference evidence, while Dovetail-default languages expose
-checked report evidence and Rho-default languages are simulated by their actual
-runtime observations.
+outcomes. Complete Dovetail reports with extracted roots are terminal
+rewrite-result evidence for `NormalFormReachable`; `BoundedByCycleCut` and
+rootless reports are not exhaustive evidence. Runtime observations are not
+normal-form evidence. These outcomes intentionally bypass the Ascent-only
+normal-form BFS instead of fabricating Ascent rewrite graphs. Explicit
+Ascent-oracle tests may still provide legacy reference evidence, while
+Dovetail-default languages expose checked report evidence and Rho-default
+languages are simulated by their actual runtime observations.
 
 `mettail-simulation` remains substrate-neutral: its focused unit tests use a
 small mock language that returns a Rho-shaped observation report. Generated

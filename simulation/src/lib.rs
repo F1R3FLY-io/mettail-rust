@@ -42,14 +42,14 @@
 //!   ├── mdp               — MDP with value iteration + policy extraction
 //!   ├── parikh_automaton   — Parikh automaton + semilinear sets
 //!   ├── streaming_automaton — StreamingMonitor + windowed/aggregate monitors
-//!   ├── runner             — SimulationRunner for property-based testing campaigns
+//!   ├── runner             — report-aware SimulationRunner for property-based testing campaigns
 //!   ├── step               — SimStep, SimOperation step types
 //!   ├── trace              — ExecutionTrace with JSONL serialization
 //!   ├── invariant          — Invariant trait + built-in invariants
 //!   ├── morphology         — TermMetrics + MorphologyTracker
 //!   ├── results            — CampaignResults + SimulationFailure
 //!   ├── model              — LanguageStateMachine + ModelOp + proptest strategies
-//!   ├── coverage           — SimulationCoverage + coverage_from_ascent
+//!   ├── coverage           — SimulationCoverage + explicit Ascent-oracle coverage
 //!   └── temporal           — LTL checking over traces (AtomicProposition, check_trace_ltl)
 //! ```
 

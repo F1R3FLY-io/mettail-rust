@@ -126,7 +126,7 @@ Note the `clear_var_cache()` call: MeTTaIL languages use a global variable name 
 
 **Why it matters:** Termination is the most important liveness property. If rewriting does not terminate, the language definition has a bug (e.g., a non-decreasing rewrite cycle).
 
-Unlike the other invariants, `NormalFormReachable` is **not checked at each step**. Its `check()` method is intentionally a no-op. Instead, the `SimulationRunner` checks it at the end of the simulation by inspecting the trace outcome:
+Unlike the other invariants, `NormalFormReachable` is **not checked at each step**. Its `check()` method is intentionally a no-op. Instead, the `SimulationRunner` checks it at the end of the simulation by inspecting the selected backend report and trace outcome:
 
 ```rust
 pub struct NormalFormReachable {
@@ -138,7 +138,13 @@ pub struct NormalFormReachable {
 PROCEDURE NormalFormReachable.check(state):
     RETURN Ok(())    // no-op per step
 
-PROCEDURE NormalFormReachable.check_completion(total_steps, reached_nf):
+PROCEDURE NormalFormReachable.check_completion(report, total_steps, reached_nf):
+    IF report is Complete DovetailRunReport with at least one root THEN
+        RETURN Ok(())
+    IF report is BoundedByCycleCut DovetailRunReport THEN
+        RETURN Err("Dovetail report is non-exhaustive")
+    IF report is RuntimeObservations THEN
+        RETURN Err("runtime observations are not rewrite-result evidence")
     IF NOT reached_nf AND total_steps ≥ max_steps THEN
         RETURN Err("Normal form not reached after {total_steps} steps
                      (limit: {max_steps})")
@@ -148,12 +154,23 @@ PROCEDURE NormalFormReachable.check_completion(total_steps, reached_nf):
 The runner detects `NormalFormReachable` by its `name()` returning `"NormalFormReachable"` and calls the completion check:
 
 ```
-IF outcome is NOT NormalForm THEN
+IF outcome is NormalForm THEN
+    RETURN Ok(())
+IF outcome is RuntimeReport for Complete DovetailRunReport with roots THEN
+    RETURN Ok(())
+ELSE
     FOR inv in invariants WHERE inv.name() == "NormalFormReachable":
         RETURN Err(SimulationFailure {
-            error: "Normal form not reached after {step_index} steps"
+            error: precise backend-report reachability error
         })
 ```
+
+This makes Dovetail a first-class rewrite backend in simulation. The invariant
+does not require an Ascent-shaped BFS path when Dovetail has already produced a
+complete checked extraction report. It still rejects `BoundedByCycleCut`
+because a cycle-bounded report is honest partial evidence, not proof of
+termination or exhaustive reachability. It also rejects Rho observation reports
+because those are substrate runtime observations, not rewrite-result evidence.
 
 **Typical configuration:** `NormalFormReachable { max_steps: 1000 }`.
 

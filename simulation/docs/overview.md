@@ -99,7 +99,7 @@ MeTTaIL languages are defined declaratively: type categories, term constructors,
 | `morphology`            | `morphology.rs`           | TermMetrics + MorphologyTracker                       |
 | `results`               | `results.rs`              | CampaignResults + SimulationFailure                   |
 | `model`                 | `model.rs`                | LanguageStateMachine + ModelOp + proptest strategies  |
-| `coverage`              | `coverage.rs`             | SimulationCoverage + coverage_from_ascent             |
+| `coverage`              | `coverage.rs`             | SimulationCoverage + explicit Ascent-oracle coverage  |
 | `temporal`              | `temporal.rs`             | LTL checking over traces                              |
 
 ## Three Execution Modes
@@ -172,11 +172,12 @@ The simulation pipeline processes each test case through the following stages:
    │  Backend    │  language.run_default_backend_report(term)
    │  Report     │  RuntimeBackendReport from selected backend
    └──────┬──────┘
-          │ Ascent graph or runtime observations
+          │ Ascent graph, Dovetail report, or runtime observations
           ▼
    ┌─────────────┐
    │ Interpret   │  Ascent: BFS from initial term to normal form
-   │ Report      │  Observations: terminal runtime-observation outcome
+   │ Report      │  Dovetail: terminal checked report outcome
+   │             │  Observations: terminal runtime-observation outcome
    │             │  Records observable steps and morphology metrics
    └──────┬──────┘
           │

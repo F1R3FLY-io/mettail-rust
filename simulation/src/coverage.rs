@@ -8,13 +8,9 @@
 //! ## Architecture
 //!
 //! ```text
-//! AscentResults
-//!       │
-//!       ▼
-//! coverage_from_ascent()
-//!       │
-//!       ▼
-//! SimulationCoverage
+//! ExecutionTrace ── coverage_from_trace() ──┐
+//!                                           ▼
+//! explicit AscentResults ── coverage_from_ascent() ── SimulationCoverage
 //!   ├── rule_firings: HashMap<String, usize>
 //!   ├── constructor_hits: HashMap<String, usize>
 //!   └── total_steps: usize
@@ -31,6 +27,7 @@ use proptest::strategy::Strategy;
 
 use crate::results::SimulationFailure;
 use crate::runner::{SimulationConfig, SimulationRunner};
+use crate::trace::ExecutionTrace;
 
 /// Coverage tracker for simulation runs.
 ///
@@ -178,6 +175,31 @@ pub fn coverage_from_ascent(results: &AscentResults) -> SimulationCoverage {
     coverage
 }
 
+/// Compute coverage from a report-aware simulation trace.
+///
+/// Rewrite operations are recorded as rule firings. All step displays are
+/// scanned for constructor-shape diversity. Terminal runtime-report and
+/// runtime-observation steps therefore contribute constructor coverage without
+/// fabricating rewrite-rule firings.
+pub fn coverage_from_trace(trace: &ExecutionTrace) -> SimulationCoverage {
+    let mut coverage = SimulationCoverage::new();
+
+    for entry in &trace.steps {
+        if let Some(rule_name) = entry.operation.strip_prefix("rewrite:") {
+            coverage.record_rewrite(rule_name);
+        } else if entry.operation == "rewrite" {
+            coverage.record_rewrite("__anonymous__");
+        }
+
+        let ctor_name = extract_constructor_name(&entry.term_display);
+        if !ctor_name.is_empty() {
+            coverage.record_constructor(&ctor_name);
+        }
+    }
+
+    coverage
+}
+
 /// Extract the constructor name from a term display string.
 ///
 /// Handles formats like:
@@ -255,7 +277,7 @@ fn extract_constructor_name(display: &str) -> String {
 /// │  1. Generate random terms via strategy │
 /// │  2. Run SimulationRunner::run_campaign │
 /// │  3. Extract coverage via              │
-/// │     coverage_from_ascent per term     │
+/// │     coverage_from_trace per term      │
 /// │  4. Merge into accumulated coverage   │
 /// │  5. Compute improvement vs previous   │
 /// │  6. If improvement < threshold, stop  │
@@ -424,6 +446,7 @@ impl<'a> CoverageGuidedCampaign<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trace::{ExecutionTrace, TraceEntry, TraceOutcome};
     use mettail_runtime::{Rewrite, TermInfo};
 
     #[test]
@@ -586,6 +609,75 @@ mod tests {
         assert_eq!(coverage.constructor_hits.get("AddInt"), Some(&1));
         assert_eq!(coverage.constructor_hits.get("SubInt"), Some(&1));
         assert_eq!(coverage.constructor_hits.get("8"), Some(&1));
+    }
+
+    #[test]
+    fn test_coverage_from_trace_records_rewrite_rules_and_constructors() {
+        let trace = ExecutionTrace {
+            seed: "case_0".to_string(),
+            language: "TraceLang".to_string(),
+            steps: vec![
+                TraceEntry {
+                    step_index: 0,
+                    term_display: "(AddInt 3 5)".to_string(),
+                    operation: "parse".to_string(),
+                    metrics: None,
+                },
+                TraceEntry {
+                    step_index: 1,
+                    term_display: "8".to_string(),
+                    operation: "rewrite:fold_AddInt".to_string(),
+                    metrics: None,
+                },
+            ],
+            outcome: TraceOutcome::NormalForm { term: "8".to_string(), steps: 2 },
+            morphology: None,
+        };
+
+        let coverage = coverage_from_trace(&trace);
+
+        assert_eq!(coverage.rule_firings.get("fold_AddInt"), Some(&1));
+        assert_eq!(coverage.total_steps, 1);
+        assert_eq!(coverage.constructor_hits.get("AddInt"), Some(&1));
+        assert_eq!(coverage.constructor_hits.get("8"), Some(&1));
+    }
+
+    #[test]
+    fn test_coverage_from_trace_does_not_fabricate_runtime_rule_firings() {
+        let trace = ExecutionTrace {
+            seed: "case_1".to_string(),
+            language: "RuntimeLang".to_string(),
+            steps: vec![
+                TraceEntry {
+                    step_index: 0,
+                    term_display: "source".to_string(),
+                    operation: "parse".to_string(),
+                    metrics: None,
+                },
+                TraceEntry {
+                    step_index: 1,
+                    term_display:
+                        "DovetailRunReport(completeness=Complete, roots=[root], terms=1, edges=0)"
+                            .to_string(),
+                    operation: "runtime:Dovetail:DovetailRunReport".to_string(),
+                    metrics: None,
+                },
+            ],
+            outcome: TraceOutcome::RuntimeReport {
+                backend: "Dovetail".to_string(),
+                artifact: "DovetailRunReport".to_string(),
+                summary: "DovetailRunReport(completeness=Complete, roots=[root], terms=1, edges=0)"
+                    .to_string(),
+            },
+            morphology: None,
+        };
+
+        let coverage = coverage_from_trace(&trace);
+
+        assert!(coverage.rule_firings.is_empty());
+        assert_eq!(coverage.total_steps, 0);
+        assert_eq!(coverage.constructor_hits.get("source"), Some(&1));
+        assert_eq!(coverage.constructor_hits.get("DovetailRunReport"), Some(&1));
     }
 
     #[test]

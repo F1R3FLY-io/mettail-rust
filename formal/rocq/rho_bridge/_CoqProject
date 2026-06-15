@@ -22,6 +22,7 @@ theories/RhoArtifactBoundary.v
 theories/RhoAstSendBoundary.v
 theories/RhocalcAstLowering.v
 theories/RuntimeBackendDispatch.v
+theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v
 theories/RhoCommScheduleFamily.v
 theories/LinearCommCorrespondence.v
