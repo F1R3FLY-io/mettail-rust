@@ -992,7 +992,9 @@ pub trait Language: Send + Sync {
         term: &dyn Term,
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
-            RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
+            RuntimeBackend::Ascent if self.supports_runtime_backend(RuntimeBackend::Ascent) => {
+                self.run_ascent(term).map(RuntimeBackendReport::ascent)
+            },
             other => {
                 Err(format!("{} backend is not installed for language {}", other, self.name()))
             },
@@ -1039,7 +1041,7 @@ pub trait Language: Send + Sync {
         facts: &SeedFacts,
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
-            RuntimeBackend::Ascent => self
+            RuntimeBackend::Ascent if self.supports_runtime_backend(RuntimeBackend::Ascent) => self
                 .run_ascent_with_facts(term, facts)
                 .map(RuntimeBackendReport::ascent),
             other => Err(format!(
@@ -2369,12 +2371,32 @@ mod tests {
             "{report_err}"
         );
 
+        let explicit_ascent_err = language
+            .run_backend_report(RuntimeBackend::Ascent, &term)
+            .expect_err("explicit Ascent report execution must require advertised capability");
+        assert!(
+            explicit_ascent_err.contains("Ascent backend is not installed for language NoDefault"),
+            "{explicit_ascent_err}"
+        );
+
         let seeded_err = language
             .run_default_backend_report_with_facts(&term, &SeedFacts::new())
             .expect_err("seeded default report execution must fail closed without a default");
         assert!(
             seeded_err.contains("does not advertise a default runtime backend"),
             "{seeded_err}"
+        );
+
+        let explicit_seeded_ascent_err = language
+            .run_backend_report_with_facts(RuntimeBackend::Ascent, &term, &SeedFacts::new())
+            .expect_err(
+                "explicit seeded Ascent report execution must require advertised capability",
+            );
+        assert!(
+            explicit_seeded_ascent_err.contains(
+                "Ascent backend with seeded facts is not installed for language NoDefault"
+            ),
+            "{explicit_seeded_ascent_err}"
         );
     }
 

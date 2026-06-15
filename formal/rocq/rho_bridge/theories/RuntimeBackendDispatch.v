@@ -159,6 +159,14 @@ Section RuntimeBackendDispatch.
     exact Habsent.
   Qed.
 
+  Theorem requested_ascent_absent_blocks : forall state,
+    ascent_installed state = false ->
+    can_request_backend_report state Ascent = false.
+  Proof.
+    intros state Habsent. unfold can_request_backend_report, backend_installed.
+    exact Habsent.
+  Qed.
+
   Theorem default_backend_requires_installation : forall state,
     default_selected state = true ->
     can_select_default_backend state = true <->
