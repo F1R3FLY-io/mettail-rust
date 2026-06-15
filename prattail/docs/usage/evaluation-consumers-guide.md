@@ -1,11 +1,18 @@
 # Evaluation Consumers Guide
 
+> **Status: historical CEK consumer guide.** The production REPL/runtime path
+> now calls `Language::run_default_backend_report` and consumes
+> `RuntimeBackendReport`. The old `Language::decompose_into_cek` bridge has
+> been removed from the production trait and from generated `language!`
+> implementations. The examples below describe the retired CEK consumer shape
+> for archival/prattail-internal context only.
+
 ## Why does this exist?
 
-The CEK evaluator is a generic state machine. Multiple consumers drive it
+The CEK evaluator is a generic state machine. Historical consumers drove it
 in different ways: the REPL runs it to completion in one shot, a debugger
 steps through transitions one at a time, the DAP protocol maps each step
-to a protocol message. This guide documents how each consumer integrates
+to a protocol message. This guide documents the retired consumer integration
 with `CekEvaluator` and `decompose_into_cek`, with pseudocode, sequence
 diagrams, and example sessions.
 
@@ -13,10 +20,9 @@ diagrams, and example sessions.
 
 ### 1.1 Why does this exist?
 
-The REPL is the primary interactive consumer. When a user types `exec 1+2`,
-they want the result immediately. The REPL drives the three-tier evaluation
-pipeline (try_direct_eval → CEK decompose → Ascent) and displays the first
-result it obtains.
+The REPL is the primary interactive consumer. In the current production
+runtime, `exec` dispatches through the selected backend report. The older
+three-tier path below is retained only as historical CEK documentation.
 
 ### 1.2 Pseudocode
 
@@ -646,7 +652,7 @@ MeTTaIL has two distinct CEK machines. Consumers should use the correct one:
 |------|---------|
 | `prattail/src/cek.rs` | Parsing CEK, CekObserver, TracingObserver, NullObserver |
 | `prattail/src/cek_eval.rs` | CekEvaluator, EvalFrame, EvalObserver, EvalTrace |
-| `runtime/src/language.rs` | Language trait: try_direct_eval, decompose_into_cek |
-| `repl/src/repl.rs` | REPL exec_or_step_term: three-tier dispatch |
+| `runtime/src/language.rs` | Production runtime trait and selected backend report dispatch |
+| `repl/src/repl.rs` | REPL execution through the selected runtime backend report |
 | `prattail/src/green_thread.rs` | GreenThread with persistent CEK triple |
 | `prattail/src/scheduler.rs` | Scheduler FSM driving green thread execution |

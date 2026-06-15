@@ -53,8 +53,9 @@ The CESK store provides address-based indirection for the PraTTaIL evaluation en
 
 - **Explicit CEK tools/tests** (`prattail/src/cek_eval.rs`): Use `CekEvaluator`
   with optional persistent environments across CEK sessions.
-- **Generated code** (`macros/src/gen/runtime/language.rs`): Emits
-  `decompose_into_cek` hooks for explicit CEK/debug consumers.
+- **Production generated code** (`macros/src/gen/runtime/language.rs`): Does
+  not emit the retired `decompose_into_cek` runtime hook; generated languages
+  enter execution through selected backend reports.
 - **Green threads** (`prattail/src/green_thread.rs`): Two-tier store with O(1) fork
 - **Ascent** (CESK-8): Store-resident relations for incremental fixpoint
 - **Pipeline** (`prattail/src/pipeline.rs`): E-graph export after saturation (CESK-11)

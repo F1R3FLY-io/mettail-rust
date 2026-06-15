@@ -1,6 +1,6 @@
 # Requirements Traceability
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 This document maps the explicit Dovetail documentation and verification
 requirements to the files that satisfy them. It is a reader aid: the detailed
@@ -25,6 +25,9 @@ Rho-native consumer, but Dovetail itself remains substrate-neutral. The active
 WPDA parser stays upstream. Ascent/CESK may be used as temporary
 reference/oracle machinery during rollout, but campaign completion removes
 those runtime paths from the live production tree; git history is the archive.
+The production `Language` trait no longer exposes the historical
+`decompose_into_cek` hook, and generated `language!` implementations no longer
+emit CEK decomposition methods.
 
 The documentation makes four kinds of claims:
 

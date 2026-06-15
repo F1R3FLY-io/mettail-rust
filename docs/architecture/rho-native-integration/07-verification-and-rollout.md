@@ -652,6 +652,14 @@ that language's default runtime backend; the active WPDA parser/recognizer
 remains upstream. At campaign completion, Ascent/CESK runtime paths are deleted
 from the live production tree rather than retained as dormant legacy code.
 
+The current production `Language` trait surface has already removed the old
+CEK decomposition hook. Generated `language!` implementations no longer emit
+`decompose_into_cek`, Rho/Dovetail runtime wrappers do not override such a hook,
+and `mettail-runtime` does not re-export CEK/CESK evaluator, store, or GC types
+as a runtime-backend API. Historical CEK/CESK proofs and prattail internals may
+remain as parser or archive evidence, but they are not a live runtime backend
+boundary for Dovetail/Rho.
+
 ## Formal Verification Commands
 
 All commands must run under the repository's capped formal entry point or an

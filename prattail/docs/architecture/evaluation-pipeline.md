@@ -73,13 +73,19 @@ or constructs that require rewriting (e.g., `new x in { ... }`).
 
 ### 1.3 Explicit Helper: CEK Decomposition + Evaluation
 
-**When it fires.** The term is structurally complex (nested binary operators,
+**Status.** This helper is retired from the production `Language` trait.
+Generated `language!` implementations no longer emit `decompose_into_cek`;
+Dovetail/Rho execution enters through checked `RuntimeBackendReport` values.
+The notes below remain as historical/prattail-internal context for the CEK
+evaluator.
+
+**When it fired historically.** The term was structurally complex (nested binary operators,
 let-bindings, parallel compositions) but does not require the full Ascent
-rewrite graph. The `decompose_into_cek` method successfully pushes frames
+rewrite graph. The retired `decompose_into_cek` method successfully pushed frames
 onto the evaluator's continuation stack, and `run_to_completion` reaches
 the `Accepted` state without error.
 
-**Why it exists.** Many terms fall between "trivially ground" and "needs
+**Why it existed.** Many terms fall between "trivially ground" and "needs
 full rewriting." A nested expression like `(1 + 2) + (3 + 4)` requires
 descending into sub-expressions, evaluating them, and combining results.
 The CEK machine handles this with an explicit continuation stack, without
@@ -88,7 +94,7 @@ building a rewrite graph.
 **Cost.** O(n) in term size, with per-step observer callback overhead (zero
 for `NullEvalObserver`). Step limit (default 10,000) prevents divergence.
 
-**Signature.**
+**Historical signature.**
 
 ```rust
 Language::decompose_into_cek(
@@ -310,6 +316,6 @@ sharing via path copying).
 | `prattail/src/cek.rs` | Parsing CEK: states, events, transitions, observer |
 | `prattail/src/cek_eval.rs` | Evaluation CEK: CekEvaluator, EvalFrame, EvalObserver |
 | `prattail/src/green_thread.rs` | Green thread with persistent CEK triple |
-| `runtime/src/language.rs` | Language trait: try_direct_eval, decompose_into_cek |
-| `macros/src/gen/runtime/language.rs` | Code generation for decompose_into_cek |
+| `runtime/src/language.rs` | Production runtime trait and selected backend report dispatch |
+| `macros/src/gen/runtime/language.rs` | Code generation for selected backend reports and runtime metadata |
 | `repl/src/repl.rs` | `exec` dispatch through the selected runtime backend report |

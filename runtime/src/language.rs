@@ -1218,33 +1218,6 @@ pub trait Language: Send + Sync {
     ///
     /// Returns `None` if the variable is not found or its type cannot be inferred.
     fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType>;
-
-    /// Decompose a parsed term into CEK evaluation frames.
-    ///
-    /// Pattern-matches on the language's AST variants and pushes appropriate
-    /// `EvalFrame`s onto the evaluator's continuation stack. After this call,
-    /// the evaluator is ready to be driven via `step()` or `run_to_completion()`.
-    ///
-    /// Returns `true` if the term was decomposed (frames were pushed),
-    /// `false` if the language has no CEK decomposition (default).
-    ///
-    /// The same evaluator + observer pattern supports explicit CEK/CESK consumers:
-    /// - nREPL: `NullEvalObserver` + `run_to_completion()`, with `reset_with_term()`
-    ///   for env persistence
-    /// - CLI debugger: custom observer + `step()` loop
-    /// - DAP server: protocol observer + `step()` loop
-    ///
-    /// REPL `exec` uses `run_default_backend_report()` so selected backend
-    /// metadata, Dovetail reports, and Rho-machine observations stay
-    /// authoritative at the command boundary.
-    fn decompose_into_cek(
-        &self,
-        term: &dyn Term,
-        evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
-    ) -> bool {
-        let _ = (term, evaluator);
-        false
-    }
 }
 
 /// Results from running Ascent

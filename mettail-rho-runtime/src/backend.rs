@@ -1138,15 +1138,6 @@ where
     fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
         self.inner.infer_var_type(term, var_name)
     }
-
-    fn decompose_into_cek(
-        &self,
-        term: &dyn Term,
-        evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
-    ) -> bool {
-        let _ = (term, evaluator);
-        false
-    }
 }
 
 #[cfg(feature = "runtime-report")]
@@ -1370,15 +1361,6 @@ where
 
     fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
         self.inner.infer_var_type(term, var_name)
-    }
-
-    fn decompose_into_cek(
-        &self,
-        term: &dyn Term,
-        evaluator: &mut mettail_prattail::cek_eval::CekEvaluator,
-    ) -> bool {
-        let _ = (term, evaluator);
-        false
     }
 }
 

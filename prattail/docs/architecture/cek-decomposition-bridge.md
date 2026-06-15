@@ -1,11 +1,19 @@
 # CEK Decomposition Bridge
 
-## Why does this exist?
+> **Status: retired from the production runtime API.** This document is a
+> historical/prattail-internal design note. The production
+> `mettail_runtime::Language` trait no longer exposes `decompose_into_cek`,
+> generated `language!` implementations no longer emit it, and the
+> Dovetail/Rho runtime path enters through checked `RuntimeBackendReport`
+> values. The active WPDA parser remains upstream and is not part of this
+> runtime-backend retirement.
 
-The `CekEvaluator` is a generic term-rewriting machine. It knows about
+## Why did this exist?
+
+The `CekEvaluator` was designed as a generic term-rewriting machine. It knows about
 continuation frames, environments, and evaluation states -- but it does
-not know the structure of any particular language's AST. The decomposition
-bridge translates a language-specific AST into the evaluator's frame
+not know the structure of any particular language's AST. The retired
+decomposition bridge translated a language-specific AST into the evaluator's frame
 vocabulary, enabling the generic CEK machine to evaluate language-specific
 terms.
 
@@ -44,10 +52,9 @@ The bridge has given the evaluator a roadmap of the term's structure.
 
 ## 2. The Solution
 
-### 2.1 API
+### 2.1 Historical API
 
 ```rust
-#[cfg(feature = "cek-runtime")]
 fn decompose_into_cek(
     &self,
     term: &dyn Term,
@@ -56,6 +63,8 @@ fn decompose_into_cek(
 ```
 
 **Input**: A parsed AST node and a mutable evaluator.
+
+This is not part of the current production `Language` trait.
 
 **Output**: `true` if the term was decomposed (frames were pushed onto the
 evaluator's continuation stack); `false` if the language cannot decompose
@@ -210,9 +219,11 @@ Every `EvalFrame` variant and its corresponding AST pattern:
 
 ## 5. Generated Code
 
-The `language!` macro generates `decompose_into_cek` by inspecting each
-`GrammarRule`'s structure at compile time. The code generator lives in
-`macros/src/gen/runtime/language.rs` and dispatches to two generators:
+Historically, the `language!` macro generated `decompose_into_cek` by
+inspecting each `GrammarRule`'s structure at compile time. That generated
+bridge has been removed from `macros/src/gen/runtime/language.rs`; the
+following generator names are retained here only to explain the archived
+design:
 
 - **`generate_cek_decompose_single`**: For single-type languages (one
   category). Downcasts the `dyn Term` to the concrete type, then matches
@@ -322,9 +333,9 @@ backend and stores the resulting `RuntimeBackendReport`.
 
 ### 7.2 Green Thread Fork
 
-When the `green-threads` feature is enabled, `decompose_into_cek` for
-`Parallel` frames can trigger green thread forking instead of sequential
-evaluation. The `GreenThread::run_quantum()` method detects `Parallel`
+In the retired CEK bridge, `decompose_into_cek` for `Parallel` frames could
+trigger green thread forking instead of sequential evaluation. The
+`GreenThread::run_quantum()` method detects `Parallel`
 frames with multiple remaining sub-terms and returns
 `QuantumResult::Forked`, signaling the worker to create child threads.
 
@@ -340,6 +351,6 @@ frames with multiple remaining sub-terms and returns
 | File | Content |
 |------|---------|
 | `prattail/src/cek_eval.rs` | `CekEvaluator`, `EvalFrame`, `EvalObserver` |
-| `runtime/src/language.rs` | `Language::decompose_into_cek` trait method |
-| `macros/src/gen/runtime/language.rs` | `generate_cek_decompose_single`, `generate_cek_decompose_multi` |
+| `runtime/src/language.rs` | Production runtime trait without the retired CEK decomposition hook |
+| `macros/src/gen/runtime/language.rs` | Production generated runtime metadata and report dispatch; historical CEK-decompose generators removed |
 | `repl/src/repl.rs` | Runtime-backend report dispatch for `exec`; explicit Ascent-shaped graph stepping |

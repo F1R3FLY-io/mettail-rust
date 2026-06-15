@@ -982,11 +982,6 @@ fn rho_runtime_backed_language_dispatches_default_report() {
         RhoRuntimeBackedLanguage::new(FragmentMatchedCalculatorLanguage, backend, invocation)
             .expect("Calculator plan should install on CalculatorLanguage");
     let term = language.parse_term("2 + 3").expect("calculator parse");
-    let mut evaluator = mettail_prattail::cek_eval::CekEvaluator::new(format!("{}", term));
-    assert!(
-        !language.decompose_into_cek(term.as_ref(), &mut evaluator),
-        "Rho runtime wrapper must not expose the legacy CEK/CESK decomposition path"
-    );
 
     assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
@@ -1118,11 +1113,6 @@ fn dovetail_rho_runtime_backed_language_checks_dovetail_before_rho_execution() {
     )
     .expect("Calculator Dovetail+Rho plan should install on CalculatorLanguage");
     let term = language.parse_term("2 + 3").expect("calculator parse");
-    let mut evaluator = mettail_prattail::cek_eval::CekEvaluator::new(format!("{}", term));
-    assert!(
-        !language.decompose_into_cek(term.as_ref(), &mut evaluator),
-        "Dovetail+Rho production wrapper must not expose the legacy CEK/CESK decomposition path"
-    );
 
     assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));

@@ -133,19 +133,6 @@ pub use parser::{
     parse_predicate_from_str, ParseError, PredicateParser, PredicateParserConfig, TerminatorToken,
 };
 
-// Re-export CEK evaluator types when cek-runtime feature is enabled,
-// so consumers don't need a direct mettail-prattail dependency.
-pub use mettail_prattail::cek_eval::{
-    CekEvaluator, EvalFrame, EvalObserver, EvalState, EvalStepEvent, NullEvalObserver, StepResult,
-    TracingEvalObserver,
-};
-
-// Re-export CESK store types for consumers that need store manipulation.
-pub use mettail_prattail::cesk_store::{LocalCeskStore, StoreAddr, StoreValue};
-
-// Re-export GC types for consumers that need GC configuration.
-pub use mettail_prattail::gc::{GcStrategy, RefCountGc};
-
 /// `Lift<T>` — autoref-specialization helper used by the macro-generated
 /// safeify wrapper around user `![…]` eval blocks.
 ///

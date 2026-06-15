@@ -11,6 +11,9 @@
  * is absent.
  * A selected non-Ascent backend may run through the report API while still
  * being rejected by the legacy AscentResults compatibility surface.
+ * The production runtime trait surface also excludes the historical CEK
+ * decomposition hook: Dovetail/Rho execution is represented by checked reports
+ * and Rho observations, not by language-generated CEK frames.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -289,6 +292,43 @@ Section RuntimeBackendDispatch.
          default_selected := true;
          default_backend := RhoMachine;
          default_output_shape := DovetailReportShape |} = false.
+  Proof. reflexivity. Qed.
+
+  Record RuntimeTraitSurface : Type := {
+    surface_state : BackendState;
+    cek_runtime_hook_exposed : bool
+  }.
+
+  Definition report_only_runtime_surface (surface : RuntimeTraitSurface) : bool :=
+    negb (cek_runtime_hook_exposed surface).
+
+  Definition dovetail_rho_report_surface : RuntimeTraitSurface :=
+    {|
+      surface_state :=
+        {| ascent_installed := false;
+           dovetail_installed := true;
+           rho_machine_installed := true;
+           default_selected := true;
+           default_backend := RhoMachine;
+           default_output_shape := ObservationReportShape |};
+      cek_runtime_hook_exposed := false
+    |}.
+
+  Theorem dovetail_rho_report_surface_exposes_no_cek_hook :
+    report_only_runtime_surface dovetail_rho_report_surface = true.
+  Proof. reflexivity. Qed.
+
+  Theorem report_only_surface_has_no_cek_runtime_hook : forall surface,
+    report_only_runtime_surface surface = true ->
+    cek_runtime_hook_exposed surface = false.
+  Proof.
+    intros surface Hreport_only.
+    unfold report_only_runtime_surface in Hreport_only.
+    destruct (cek_runtime_hook_exposed surface); simpl in Hreport_only; congruence.
+  Qed.
+
+  Theorem dovetail_rho_surface_still_runs_report_backend :
+    can_run_default_backend_report (surface_state dovetail_rho_report_surface) = true.
   Proof. reflexivity. Qed.
 
 End RuntimeBackendDispatch.
