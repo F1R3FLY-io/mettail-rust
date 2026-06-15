@@ -386,6 +386,10 @@ pub mod ordered_field;
 /// strings (symbolic regex AST compiled to `SymbolicAutomaton<CharClassAlgebra>`).
 pub mod string_algebra;
 
+/// N-ary product (tuples/records) and sum (variants) effective Boolean algebra
+/// combinators, generic over the element algebra.
+pub mod product_nary;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;
