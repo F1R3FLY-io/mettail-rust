@@ -15,3 +15,5 @@ theories/CollectionAlgebraClosure.v
 theories/TreeAlgebraClosure.v
 theories/TheoryCombination.v
 theories/HeytingAlgebra.v
+theories/GuardTierCertificate.v
+theories/BehavioralNegation.v
