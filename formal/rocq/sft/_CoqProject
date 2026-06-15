@@ -15,3 +15,5 @@
 theories/SftComposition.v
 theories/SftFunctionality.v
 theories/OutputTermAlgebra.v
+theories/StftComposition.v
+theories/StftFunctionality.v
