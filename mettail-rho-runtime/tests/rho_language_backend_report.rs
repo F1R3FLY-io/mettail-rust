@@ -28,7 +28,12 @@ use mettail_runtime::{
 
 const CALC_RUN_FRAGMENT: &str = r#"
     name: Calculator,
-    types { Proc }
+    types {
+        Proc
+        ![i64] as Int
+        ![bool] as Bool
+        ![str] as Str
+    }
     terms {
         AddInt . a:Int, b:Int |- a "+" b : Int ;
         SubInt . a:Int, b:Int |- a "-" b : Int ;
