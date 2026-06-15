@@ -27,7 +27,19 @@ fn resolvable(lower: i64) -> DemandEntry {
     DemandEntry { known_lower_bound: lower, unknown: false }
 }
 
-/// Law (sound proof-checker, both directions): funded iff `Σ ≥ Δ + margin`.
+/// An over-approximated demand (`unknown == true`): a term with an unresolvable
+/// dequotation `*x`, for which the Thm 20 safety margin applies.
+fn unresolvable(lower: i64) -> DemandEntry {
+    DemandEntry { known_lower_bound: lower, unknown: true }
+}
+
+/// Law (sound proof-checker, BOTH regimes): for RESOLVABLE demand the funds
+/// judgment is EXACTLY Def 19 `Σ ≥ Δ` (the economic margin is INERT — it is not
+/// folded into the resolvable-demand correctness gate, matching the verified Rocq
+/// model `funds n d := d ≤ n`, which has no margin term); for OVER-APPROXIMATED
+/// (`unknown`) demand the Thm 20 safety margin applies, `Σ ≥ Δ + margin`. This is
+/// the faithful mirror of f1r3node-rust's `resource_logic::tests::law_sound`,
+/// whose `is_funded` applies the margin only when `analysis.unknown` is `true`.
 pub fn law_sound<G, R>(rl: &R)
 where
     G: GsltPresentation,
@@ -36,12 +48,19 @@ where
     for &lower in &[0i64, 1, 5, 100] {
         for &supply in &[0i64, 1, 5, 100, 101] {
             for &margin in &[0i64, 1, 10] {
-                let d = resolvable(lower);
-                let funded = rl.is_funded(&d, supply, margin);
+                // Resolvable: Def 19 `Σ ≥ Δ` — margin NOT applied.
+                let resolved = rl.is_funded(&resolvable(lower), supply, margin);
                 assert_eq!(
-                    funded,
+                    resolved,
+                    i128::from(supply) >= i128::from(lower),
+                    "resolvable funds judgment must be Σ ≥ Δ (lower={lower}, supply={supply}, margin={margin})"
+                );
+                // Over-approximated: Thm 20 `Σ ≥ Δ + margin` — margin applied.
+                let over = rl.is_funded(&unresolvable(lower), supply, margin);
+                assert_eq!(
+                    over,
                     i128::from(supply) >= i128::from(lower) + i128::from(margin),
-                    "funds judgment must be Σ ≥ Δ + margin (lower={lower}, supply={supply}, margin={margin})"
+                    "unknown funds judgment must be Σ ≥ Δ + margin (lower={lower}, supply={supply}, margin={margin})"
                 );
             }
         }
