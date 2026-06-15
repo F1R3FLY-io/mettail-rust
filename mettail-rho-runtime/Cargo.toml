@@ -24,10 +24,13 @@ runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
 # Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine
 # tests do not compile every generated language.
 oracle-ascent = ["runtime-report", "dep:mettail-languages", "mettail-languages/calculator"]
-# Pulls in the generated rhocalc language only for the AST-first rhocalc-to-Rho
-# oracle. This keeps the Rholang process lowering independent from the legacy
-# calculator/Ascent oracle feature.
-oracle-rhocalc = ["runtime-report", "dep:mettail-languages", "mettail-languages/rhocalc"]
+# Pulls in the generated rhocalc language for the production-shaped AST-first
+# rhocalc-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
+# Rholang source text that has to be reparsed.
+rhocalc-runtime = ["runtime-report", "dep:mettail-languages", "mettail-languages/rhocalc"]
+# Backward-compatible test/oracle feature name. New production code should use
+# `rhocalc-runtime` directly.
+oracle-rhocalc = ["rhocalc-runtime"]
 # Enables hand-authored Rholang source evaluation helpers used only by
 # source-oracle regression tests. Generated backend execution remains AST-first:
 # the production boundary is `ValidatedRhoProgram` / `PlannedRhoBackend`, not
@@ -66,7 +69,7 @@ required-features = ["oracle-ascent"]
 [[test]]
 name = "rho_rhocalc_ast"
 path = "tests/rho_rhocalc_ast.rs"
-required-features = ["oracle-rhocalc"]
+required-features = ["rhocalc-runtime"]
 
 [[test]]
 name = "rho_structured_ast_send"

@@ -187,14 +187,25 @@ the thunked path reports typed values rather than stringifying all computed
 results.
 
 Rejected-rule coverage should start from generated inventory, not hand-written
-category lists. `mettail_rho_codegen::classify_rejected_rules(def, lowering)`
-derives an advisory classification for every label in `RhoLowering::rejected`
-from the parsed `LanguageDef`: native evaluation metadata suggests a native
-handler, equation/rewrite references and structured syntax suggest a Rho AST
-contract, and unsupported scalar-operator shapes suggest an external contract.
-This helper is for planning and review. It does not satisfy the production
-coverage gate until each suggestion is supplied as exact
-`RhoCoverageEvidence::CoveredRejectedRules` coverage.
+category lists. The build-time installer should first call
+`mettail_rho_codegen::audit_rho_default_backend(def)`. The audit lowers the
+structured `LanguageDef`, returns the exact `RhoLowering::lowered` and
+`RhoLowering::rejected` sets, derives advisory rejected-rule classifications,
+collects guard obligations, records artifact-validation errors, and runs the
+normal flip decision under the deliberately strict assumption that no external
+coverage has been supplied yet. This answers “what is missing?” without
+answering “is it accepted?”.
+
+`mettail_rho_codegen::classify_rejected_rules(def, lowering)` remains the
+lower-level advisory classifier used by the audit. It derives a classification
+for every label in `RhoLowering::rejected` from the parsed `LanguageDef`:
+native evaluation metadata suggests a native handler, equation/rewrite
+references and structured syntax suggest a Rho AST contract, and unsupported
+scalar-operator shapes suggest an external contract. These helpers are for
+planning and review. They do not satisfy the production coverage gate until
+each suggestion is supplied as exact `RhoCoverageEvidence::CoveredRejectedRules`
+coverage and every guard obligation is supplied as exact
+`RhoGuardCoverageEvidence::CoveredGuardObligations` coverage.
 
 ## Predicated-Type And Guard Coverage
 

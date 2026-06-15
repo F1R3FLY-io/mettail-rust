@@ -16,6 +16,7 @@ theories/MettaOslfLawsConformance.v
 theories/RhoLoweringTotalOrRejects.v
 theories/RhoScalarOperatorTyping.v
 theories/RhoRejectedCoverage.v
+theories/RhoDefaultBackendAudit.v
 theories/RhoParWellFormedness.v
 theories/RhoArtifactBoundary.v
 theories/RhoAstSendBoundary.v

@@ -32,12 +32,15 @@
 //! helpers are available only behind the `source-oracle` feature; generated
 //! backend execution is always AST-first and enters through validated
 //! `rhoapi::Par` artifacts. Ascent remains the per-language flip baseline until
-//! a language's coverage, artifact-validation, and deadlock gates pass.
+//! a language's coverage, artifact-validation, and deadlock gates pass. The
+//! `rhocalc-runtime` feature exposes the AST-first RhoCalc wrapper; the
+//! compatibility `oracle-rhocalc` feature name is retained only as an alias for
+//! existing differential tests.
 
 #![forbid(unsafe_code)]
 
 pub mod backend;
-#[cfg(feature = "oracle-rhocalc")]
+#[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
 pub mod run;
 #[cfg(feature = "runtime-report")]
@@ -50,7 +53,7 @@ pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
 };
 pub use mettail_rho_codegen::RHOCALC_BAG_ABI_TAG;
-#[cfg(feature = "oracle-rhocalc")]
+#[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
     lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_ints,
     rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,

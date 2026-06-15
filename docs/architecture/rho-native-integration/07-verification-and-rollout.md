@@ -569,6 +569,14 @@ over the same boundary. It derives suggested disposition kinds from the parsed
 constructor labels referenced by equations/rewrites and structured syntax
 suggest Rho AST contracts, and unsupported scalar-operator shapes suggest
 external contracts. The classifier does not satisfy coverage by itself.
+`mettail_rho_codegen::audit_rho_default_backend` is the production planning
+view over that same data. It lowers the structured `LanguageDef`, records
+rejected-rule classifications, derives guard obligations, validates the
+generated `rhoapi::Par` artifact, carries the deadlock report through the
+normal flip decision, and reports whether the language would pass with no
+external coverage. Its suggestions are still planning diagnostics; they become
+acceptance evidence only when supplied back to `plan_rho_default_backend` as
+exact rejected-rule and guard coverage.
 `RhoRejectedCoverage.v` models this explicitly: a classification with no
 suggested kind yields no disposition, and a classification with a blank rule id
 remains an invalid disposition. Production flips therefore still pass only
@@ -607,6 +615,8 @@ Rust flip-gate evidence:
 - `mettail_rho_codegen::validate_rho_program`
 - `mettail_rho_codegen::RhoValidationError`
 - `mettail_rho_codegen::RhoCoverageEvidence`
+- `mettail_rho_codegen::audit_rho_default_backend`
+- `mettail_rho_codegen::RhoDefaultBackendAudit`
 - `mettail_rho_codegen::classify_rejected_rules`
 - `mettail_rho_codegen::RhoRejectedRuleClassification`
 - `mettail_rho_codegen::RhoRejectedRuleClassificationReason`

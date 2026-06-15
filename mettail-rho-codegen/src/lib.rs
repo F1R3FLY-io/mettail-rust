@@ -63,13 +63,13 @@ pub mod need;
 pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
-    classify_rejected_rules, collect_guard_obligations, plan_rho_default_backend,
-    RhoCoverageEvidence, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
-    RhoGuardDispositionDiagnostic, RhoGuardDispositionKind, RhoGuardObligation,
-    RhoGuardObligationKind, RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason,
-    RhoRejectedRuleDisposition, RhoRejectedRuleDispositionDiagnostic,
-    RhoRejectedRuleDispositionKind,
+    audit_rho_default_backend, classify_rejected_rules, collect_guard_obligations,
+    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendAudit, RhoDefaultBackendPlan,
+    RhoDefaultBackendPlanError, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    RhoGuardDisposition, RhoGuardDispositionDiagnostic, RhoGuardDispositionKind,
+    RhoGuardObligation, RhoGuardObligationKind, RhoRejectedRuleClassification,
+    RhoRejectedRuleClassificationReason, RhoRejectedRuleDisposition,
+    RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
 };
 pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,

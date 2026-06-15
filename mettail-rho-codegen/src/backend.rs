@@ -716,6 +716,79 @@ pub fn classify_rejected_rules(
         .collect()
 }
 
+/// Readiness audit for installing a `LanguageDef` as a Rho-default backend.
+///
+/// This is a diagnostic artifact, not acceptance evidence. It exposes the
+/// exact lowering, validation, deadlock, rejected-rule, and guard-obligation
+/// state that generated installers need before they decide which separately
+/// verified coverage evidence to supply to [`plan_rho_default_backend`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RhoDefaultBackendAudit {
+    pub lowering: RhoLowering,
+    pub rejected_rule_classifications: Vec<RhoRejectedRuleClassification>,
+    pub guard_obligations: Vec<RhoGuardObligation>,
+    pub validation_errors: Vec<RhoValidationError>,
+    pub decision_without_external_coverage: RhoFlipDecision,
+}
+
+impl RhoDefaultBackendAudit {
+    /// True when this language can pass the Rho-default gate with no external,
+    /// native, guard, or structural coverage dispositions.
+    pub fn can_plan_without_external_coverage(&self) -> bool {
+        self.decision_without_external_coverage.can_flip_to_rho()
+    }
+
+    /// Suggested rejected-rule dispositions for review output or generated
+    /// coverage scaffolding.
+    ///
+    /// Missing suggestions are omitted deliberately. Callers must compare the
+    /// returned disposition count against `lowering.rejected.len()` before using
+    /// the result as coverage input.
+    pub fn suggested_rejected_rule_dispositions(&self) -> Vec<RhoRejectedRuleDisposition> {
+        self.rejected_rule_classifications
+            .iter()
+            .filter_map(RhoRejectedRuleClassification::to_disposition)
+            .collect()
+    }
+
+    /// Whether every rejected rule has an advisory disposition.
+    pub fn all_rejected_rules_have_suggestions(&self) -> bool {
+        self.suggested_rejected_rule_dispositions().len() == self.lowering.rejected.len()
+    }
+}
+
+/// Lower `def` and report all Rho-default planning blockers without accepting
+/// any rejected-rule or guard coverage by implication.
+///
+/// The resulting classifications are advisory. They intentionally do not
+/// modify the exact flip gate: production planning still has to call
+/// [`plan_rho_default_backend`] with coverage evidence that exactly matches the
+/// rejected-rule and guard-obligation sets.
+pub fn audit_rho_default_backend(def: &LanguageDef) -> RhoDefaultBackendAudit {
+    let lowering = lower_language_def(def);
+    let validation_errors = ValidatedRhoProgram::try_from(lowering.program.clone())
+        .err()
+        .unwrap_or_default();
+    let rejected_rule_classifications = classify_rejected_rules(def, &lowering);
+    let guard_obligations = collect_guard_obligations(def);
+    let coverage_passed = lowering.rejected.is_empty() && guard_obligations.is_empty();
+    let decision_without_external_coverage = decide_rho_flip(
+        RhoFlipGates {
+            coverage_passed,
+            artifact_validated: validation_errors.is_empty(),
+        },
+        &lowering.deadlock_report,
+    );
+
+    RhoDefaultBackendAudit {
+        lowering,
+        rejected_rule_classifications,
+        guard_obligations,
+        validation_errors,
+        decision_without_external_coverage,
+    }
+}
+
 /// Checkable inputs for selecting Rho as a language's default runtime backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhoDefaultBackendRequirements {
@@ -1059,6 +1132,73 @@ mod tests {
                 RhoRejectedRuleDispositionKind::ExternalContract
             )
         );
+    }
+
+    #[test]
+    fn default_backend_audit_reports_all_lowered_readiness_without_external_coverage() {
+        let audit = audit_rho_default_backend(&parse(ALL_LOWERED_FRAGMENT));
+
+        assert_eq!(audit.lowering.language_name(), "CalcAllLowered");
+        assert_eq!(audit.lowering.lowered, vec!["AddInt", "SubInt", "Neg"]);
+        assert!(audit.lowering.rejected.is_empty());
+        assert!(audit.rejected_rule_classifications.is_empty());
+        assert!(audit.guard_obligations.is_empty());
+        assert!(audit.validation_errors.is_empty());
+        assert!(audit.can_plan_without_external_coverage());
+        assert!(audit.decision_without_external_coverage.can_flip_to_rho());
+    }
+
+    #[test]
+    fn default_backend_audit_keeps_rejected_classifications_advisory() {
+        let audit = audit_rho_default_backend(&parse(PARTIAL_FRAGMENT));
+
+        assert_eq!(audit.lowering.lowered, vec!["AddInt"]);
+        assert_eq!(audit.lowering.rejected, vec!["PowInt", "AddBigInt"]);
+        assert_eq!(audit.rejected_rule_classifications.len(), 2);
+        assert!(audit.all_rejected_rules_have_suggestions());
+        assert_eq!(
+            audit
+                .suggested_rejected_rule_dispositions()
+                .iter()
+                .map(|disposition| (disposition.rule.as_str(), disposition.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                ("PowInt", RhoRejectedRuleDispositionKind::ExternalContract),
+                ("AddBigInt", RhoRejectedRuleDispositionKind::ExternalContract),
+            ]
+        );
+        assert!(
+            !audit.can_plan_without_external_coverage(),
+            "advisory classifications must not make rejected rules accepted coverage"
+        );
+        assert!(audit
+            .decision_without_external_coverage
+            .blockers
+            .contains(&RhoFlipBlocker::Coverage));
+    }
+
+    #[test]
+    fn default_backend_audit_reports_guard_obligations_as_blockers() {
+        let audit = audit_rho_default_backend(&guarded_scalar_with_structural_guard());
+
+        assert_eq!(audit.lowering.lowered, vec!["AddInt"]);
+        assert!(!audit.guard_obligations.is_empty());
+        assert!(audit
+            .guard_obligations
+            .iter()
+            .any(|obligation| { obligation.kind == RhoGuardObligationKind::BehavioralPredicate }));
+        assert!(audit
+            .guard_obligations
+            .iter()
+            .any(|obligation| { obligation.kind == RhoGuardObligationKind::StructuralPattern }));
+        assert!(
+            !audit.can_plan_without_external_coverage(),
+            "guard obligations require explicit coverage evidence"
+        );
+        assert!(audit
+            .decision_without_external_coverage
+            .blockers
+            .contains(&RhoFlipBlocker::Coverage));
     }
 
     #[test]
