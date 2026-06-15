@@ -117,6 +117,13 @@ There are two production runtime lanes after the Dovetail report:
 | direct Dovetail runtime | `DovetailRunReport → RuntimeDovetailRunReport → RuntimeBackendOutput::Dovetail` | expose checked rewrite evidence as the selected runtime result |
 | Rho-native runtime | `DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → RSpace observations → RuntimeBackendReport` | execute covered rewrite semantics as host Rho-machine dataflow |
 
+Ascent is outside these production lanes. `Language::run_ascent` remains a
+reference/oracle method for verification and transition evidence, and
+`RuntimeBackendOutput::Ascent` remains the report shape for that reference data.
+The production dispatcher does not select Ascent as a default backend and does
+not execute `RuntimeBackend::Ascent` through `run_backend_report` or seeded
+report dispatch.
+
 The Rho-native lane has two generation shapes. Rho-shaped or directly covered
 rules lower through a RhoNet plan. Generic call-by-need computations lower
 through `RhoAstLiteral` payloads inside

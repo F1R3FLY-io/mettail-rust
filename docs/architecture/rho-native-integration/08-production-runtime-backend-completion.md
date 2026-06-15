@@ -435,8 +435,8 @@ from a display/default metadata fallback. Production callers must ask
 closed when they return `None`.
 This is the rule implemented by `run_default_*`, the REPL, the simulation
 runner, and production testkit helpers. No default-backend query is allowed to
-report `Ascent` unless the concrete runtime capability view actually
-advertises an Ascent default. The separate
+report `Ascent`; an advertised Ascent capability is treated as reference/oracle
+metadata and is filtered out of production default selection. The separate
 `run_ascent_oracle_report` test helper is intentionally named as a reference
 oracle and does not participate in production default dispatch.
 Graph-shaped test utilities follow the same runtime-view rule. When a property

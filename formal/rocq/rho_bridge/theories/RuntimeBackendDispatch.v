@@ -6,10 +6,9 @@
  * `RuntimeBackend` query. The base metadata trait advertises no backend unless
  * the implementation explicitly returns one. Raw generated languages advertise
  * no production backend by default; Dovetail/Rho production defaults are
- * installed by checked wrappers. The legacy Ascent runner can still be modeled
- * as an explicit reference-oracle capability, but a concrete language value
- * with no selected default returns `None` and must not silently fabricate an
- * Ascent fallback.
+ * installed by checked wrappers. The legacy Ascent runner is modeled as an
+ * explicit reference-oracle capability, but production report dispatch never
+ * selects or executes Ascent.
  * Requested backend selection must also fail closed when the requested backend
  * is absent.
  * A selected backend runs through the report API; the production trait no
@@ -58,7 +57,10 @@ Section RuntimeBackendDispatch.
     else None.
 
   Definition can_request_backend_report (state : BackendState) (backend : Backend) : bool :=
-    backend_installed state backend.
+    match backend with
+    | Ascent => false
+    | Dovetail | RhoMachine => backend_installed state backend
+    end.
 
   Definition can_select_default_backend (state : BackendState) : bool :=
     default_selected state && can_request_backend_report state (default_backend state).
@@ -86,12 +88,12 @@ Section RuntimeBackendDispatch.
       default_output_shape := AscentResultsShape
     |}.
 
-  Theorem explicit_ascent_oracle_default_runs :
-    can_select_default_backend explicit_ascent_oracle_state = true.
+  Theorem explicit_ascent_oracle_not_production_default :
+    can_select_default_backend explicit_ascent_oracle_state = false.
   Proof. reflexivity. Qed.
 
-  Theorem explicit_ascent_oracle_default_report_runs :
-    can_run_default_backend_report explicit_ascent_oracle_state = true.
+  Theorem explicit_ascent_oracle_report_rejected :
+    can_run_default_backend_report explicit_ascent_oracle_state = false.
   Proof. reflexivity. Qed.
 
   Definition empty_metadata_state : BackendState :=
@@ -164,21 +166,23 @@ Section RuntimeBackendDispatch.
   Theorem requested_ascent_absent_blocks : forall state,
     ascent_installed state = false ->
     can_request_backend_report state Ascent = false.
-  Proof.
-    intros state Habsent. unfold can_request_backend_report, backend_installed.
-    exact Habsent.
-  Qed.
+  Proof. intros state _Habsent. reflexivity. Qed.
+
+  Theorem requested_ascent_always_blocks : forall state,
+    can_request_backend_report state Ascent = false.
+  Proof. intros state. reflexivity. Qed.
 
   Theorem default_backend_requires_installation : forall state,
     default_selected state = true ->
+    default_backend state <> Ascent ->
     can_select_default_backend state = true <->
     backend_installed state (default_backend state) = true.
   Proof.
-    intros state Hselected.
+    intros state Hselected Hnot_ascent.
     unfold can_select_default_backend, can_request_backend_report.
     rewrite Hselected.
-    simpl.
-    split; intro H; exact H.
+    destruct (default_backend state); try contradiction; simpl;
+      split; intro H; exact H.
   Qed.
 
   Theorem absent_default_blocks : forall state,
@@ -187,8 +191,10 @@ Section RuntimeBackendDispatch.
   Proof.
     intros state Habsent.
     unfold can_select_default_backend, can_request_backend_report.
-    rewrite Habsent.
-    destruct (default_selected state); reflexivity.
+    destruct (default_selected state); [| reflexivity].
+    destruct (default_backend state) eqn:Hbackend; simpl; [reflexivity | |].
+    - simpl in Habsent. exact Habsent.
+    - simpl in Habsent. exact Habsent.
   Qed.
 
   Theorem unselected_default_blocks : forall state,

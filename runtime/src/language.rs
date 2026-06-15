@@ -941,12 +941,15 @@ pub trait Language: Send + Sync {
     ///
     /// The runtime capability view must advertise only executable backends.
     /// When multiple entries are marked default, the first declaration wins,
-    /// preserving the language author's generated order unless a wrapper
-    /// deliberately installs a new default.
+    /// preserving the language author's generated order among production
+    /// backends unless a wrapper deliberately installs a new default. Ascent is
+    /// reference/oracle-only and is never selected as a production default.
     fn selected_default_runtime_backend(&self) -> Option<RuntimeBackend> {
         self.runtime_backend_capabilities()
             .iter()
-            .find(|capability| capability.is_default)
+            .find(|capability| {
+                capability.is_default && capability.backend != RuntimeBackend::Ascent
+            })
             .map(|capability| capability.backend)
     }
 
@@ -992,10 +995,12 @@ pub trait Language: Send + Sync {
         term: &dyn Term,
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
-            RuntimeBackend::Ascent if self.supports_runtime_backend(RuntimeBackend::Ascent) => {
-                self.run_ascent(term).map(RuntimeBackendReport::ascent)
-            },
+            RuntimeBackend::Ascent => Err(format!(
+                "Ascent report execution for language {} is oracle-only; use the explicit reference helper instead of the production runtime dispatcher",
+                self.name()
+            )),
             other => {
+                let _ = term;
                 Err(format!("{} backend is not installed for language {}", other, self.name()))
             },
         }
@@ -1041,14 +1046,18 @@ pub trait Language: Send + Sync {
         facts: &SeedFacts,
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
-            RuntimeBackend::Ascent if self.supports_runtime_backend(RuntimeBackend::Ascent) => self
-                .run_ascent_with_facts(term, facts)
-                .map(RuntimeBackendReport::ascent),
-            other => Err(format!(
-                "{} backend with seeded facts is not installed for language {}",
-                other,
+            RuntimeBackend::Ascent => Err(format!(
+                "seeded Ascent report execution for language {} is oracle-only; use the explicit reference helper instead of the production runtime dispatcher",
                 self.name()
             )),
+            other => {
+                let _ = (term, facts);
+                Err(format!(
+                    "{} backend with seeded facts is not installed for language {}",
+                    other,
+                    self.name()
+                ))
+            },
         }
     }
 
@@ -2078,10 +2087,13 @@ mod tests {
         fn run_backend_report(
             &self,
             backend: RuntimeBackend,
-            term: &dyn Term,
+            _term: &dyn Term,
         ) -> Result<RuntimeBackendReport, String> {
             match backend {
-                RuntimeBackend::Ascent => self.run_ascent(term).map(RuntimeBackendReport::ascent),
+                RuntimeBackend::Ascent => Err(format!(
+                    "Ascent report execution for language {} is oracle-only; use the explicit reference helper instead of the production runtime dispatcher",
+                    self.name()
+                )),
                 RuntimeBackend::RhoMachine => RuntimeBackendReport::try_observations(
                     RuntimeBackend::RhoMachine,
                     RuntimeBackendArtifact::RhoNormalizedAst,
@@ -2335,17 +2347,33 @@ mod tests {
     }
 
     #[test]
-    fn runtime_backend_dispatch_uses_explicit_ascent_capability_and_fails_closed() {
+    fn runtime_backend_dispatch_rejects_ascent_production_default() {
         let language = DispatchLanguage;
         let term = DispatchTerm;
 
         assert_eq!(language.metadata().runtime_backends(), DISPATCH_BACKENDS);
-        assert_eq!(language.selected_default_runtime_backend(), Some(RuntimeBackend::Ascent));
-        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::Ascent));
+        assert_eq!(language.selected_default_runtime_backend(), None);
+        assert_eq!(language.default_runtime_backend(), None);
         assert!(language.supports_runtime_backend(RuntimeBackend::Ascent));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
         assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
-        assert!(language.run_default_backend_report(&term).is_ok());
+        assert!(language.run_ascent(&term).is_ok());
+
+        let default_err = language
+            .run_default_backend_report(&term)
+            .expect_err("Ascent metadata default must not become a production default");
+        assert!(
+            default_err.contains("does not advertise a default runtime backend"),
+            "{default_err}"
+        );
+
+        let ascent_err = language
+            .run_backend_report(RuntimeBackend::Ascent, &term)
+            .expect_err("Ascent report execution must be oracle-only");
+        assert!(
+            ascent_err.contains("Ascent report execution for language Dispatch is oracle-only"),
+            "{ascent_err}"
+        );
 
         let err = language
             .run_backend_report(RuntimeBackend::Dovetail, &term)
@@ -2373,9 +2401,10 @@ mod tests {
 
         let explicit_ascent_err = language
             .run_backend_report(RuntimeBackend::Ascent, &term)
-            .expect_err("explicit Ascent report execution must require advertised capability");
+            .expect_err("explicit Ascent report execution must be oracle-only");
         assert!(
-            explicit_ascent_err.contains("Ascent backend is not installed for language NoDefault"),
+            explicit_ascent_err
+                .contains("Ascent report execution for language NoDefault is oracle-only"),
             "{explicit_ascent_err}"
         );
 
@@ -2389,13 +2418,10 @@ mod tests {
 
         let explicit_seeded_ascent_err = language
             .run_backend_report_with_facts(RuntimeBackend::Ascent, &term, &SeedFacts::new())
-            .expect_err(
-                "explicit seeded Ascent report execution must require advertised capability",
-            );
+            .expect_err("explicit seeded Ascent report execution must be oracle-only");
         assert!(
-            explicit_seeded_ascent_err.contains(
-                "Ascent backend with seeded facts is not installed for language NoDefault"
-            ),
+            explicit_seeded_ascent_err
+                .contains("seeded Ascent report execution for language NoDefault is oracle-only"),
             "{explicit_seeded_ascent_err}"
         );
     }
