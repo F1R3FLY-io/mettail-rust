@@ -1,6 +1,6 @@
 # Runtime Backend Replacement Spine
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 This page is the connective tissue between the standalone
 [Dovetail rewrite-engine suite](dovetail/README.md) and the
@@ -123,6 +123,12 @@ reference/oracle method for verification and transition evidence, and
 The production dispatcher does not select Ascent as a default backend and does
 not execute `RuntimeBackend::Ascent` through `run_backend_report` or seeded
 report dispatch.
+The REPL follows the same rule: session state caches a `RuntimeBackendReport`
+for the current term, and graph navigation moves the current cursor while
+preserving that report envelope. It projects an Ascent-shaped graph only when
+the cached report is explicitly Ascent-shaped reference evidence; the REPL
+crate itself does not carry the generated Ascent BYODS dependency or crate-root
+`eqrel` re-export.
 
 Generated language crates also keep this distinction at build time. Their
 normal parser/AST/Rho-codegen surface does not compile generated Ascent structs,

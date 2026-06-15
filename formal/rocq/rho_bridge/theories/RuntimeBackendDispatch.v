@@ -394,4 +394,105 @@ Section RuntimeBackendDispatch.
     can_run_default_backend_report (surface_state dovetail_rho_report_surface) = true.
   Proof. reflexivity. Qed.
 
+  Record ReplRuntimeState : Type := {
+    repl_report_backend : option Backend;
+    repl_report_shape : option OutputShape;
+    repl_has_term_cursor : bool
+  }.
+
+  Definition repl_empty_state : ReplRuntimeState :=
+    {|
+      repl_report_backend := None;
+      repl_report_shape := None;
+      repl_has_term_cursor := false
+    |}.
+
+  Definition repl_report_shape_valid (state : ReplRuntimeState) : bool :=
+    match repl_report_backend state, repl_report_shape state with
+    | Some backend, Some shape => output_shape_matches_backend backend shape
+    | None, None => true
+    | _, _ => false
+    end.
+
+  Definition repl_set_report
+      (backend : Backend) (shape : OutputShape) : ReplRuntimeState :=
+    {|
+      repl_report_backend := Some backend;
+      repl_report_shape := Some shape;
+      repl_has_term_cursor := true
+    |}.
+
+  Definition repl_move_cursor_preserving_report
+      (state : ReplRuntimeState) : ReplRuntimeState :=
+    {|
+      repl_report_backend := repl_report_backend state;
+      repl_report_shape := repl_report_shape state;
+      repl_has_term_cursor := true
+    |}.
+
+  Definition repl_project_ascent_results (state : ReplRuntimeState) : bool :=
+    match repl_report_backend state, repl_report_shape state with
+    | Some Ascent, Some AscentResultsShape => true
+    | _, _ => false
+    end.
+
+  Theorem repl_empty_state_has_no_report :
+    repl_report_backend repl_empty_state = None /\
+    repl_report_shape repl_empty_state = None.
+  Proof. split; reflexivity. Qed.
+
+  Theorem repl_empty_state_projects_no_ascent_results :
+    repl_project_ascent_results repl_empty_state = false.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_rho_observation_report_is_valid :
+    repl_report_shape_valid
+      (repl_set_report RhoMachine ObservationReportShape) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_rho_observation_report_projects_no_ascent :
+    repl_project_ascent_results
+      (repl_set_report RhoMachine ObservationReportShape) = false.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_dovetail_report_is_valid :
+    repl_report_shape_valid
+      (repl_set_report Dovetail DovetailReportShape) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_dovetail_report_projects_no_ascent :
+    repl_project_ascent_results
+      (repl_set_report Dovetail DovetailReportShape) = false.
+  Proof. reflexivity. Qed.
+
+  Theorem repl_cursor_move_preserves_report_backend : forall state,
+    repl_report_backend (repl_move_cursor_preserving_report state) =
+    repl_report_backend state.
+  Proof. intros state. destruct state. reflexivity. Qed.
+
+  Theorem repl_cursor_move_preserves_report_shape : forall state,
+    repl_report_shape (repl_move_cursor_preserving_report state) =
+    repl_report_shape state.
+  Proof. intros state. destruct state. reflexivity. Qed.
+
+  Theorem repl_cursor_move_cannot_fabricate_ascent_projection : forall state,
+    repl_project_ascent_results state = false ->
+    repl_project_ascent_results
+      (repl_move_cursor_preserving_report state) = false.
+  Proof. intros state Hno_ascent. destruct state. exact Hno_ascent. Qed.
+
+  Theorem repl_ascent_projection_requires_ascent_report : forall state,
+    repl_project_ascent_results state = true ->
+    repl_report_backend state = Some Ascent /\
+    repl_report_shape state = Some AscentResultsShape.
+  Proof.
+    intros state Hproject.
+    destruct state as [backend_opt shape_opt cursor].
+    destruct backend_opt as [backend|]; cbn in Hproject; [| discriminate Hproject].
+    destruct shape_opt as [shape|].
+    - destruct backend; destruct shape; cbn in Hproject; try discriminate Hproject.
+      split; reflexivity.
+    - destruct backend; cbn in Hproject; discriminate Hproject.
+  Qed.
+
 End RuntimeBackendDispatch.

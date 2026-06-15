@@ -1,5 +1,5 @@
-use anyhow::Result;
-use mettail_runtime::{AscentResults, RuntimeBackendReport, Term};
+use anyhow::{anyhow, Result};
+use mettail_runtime::{RuntimeBackendReport, Term};
 use std::any::Any;
 
 /// The current state of the REPL session
@@ -90,26 +90,29 @@ impl ReplState {
         self.language_name.as_deref()
     }
 
-    /// Set the current term from legacy/reference Ascent results.
-    pub fn set_term(&mut self, term: Box<dyn Term>, results: AscentResults) -> Result<()> {
+    /// Set the current term from a checked runtime backend report.
+    pub fn set_term(&mut self, term: Box<dyn Term>, report: RuntimeBackendReport) -> Result<()> {
         let graph_id = term.term_id();
-        self.set_term_with_id(term, results, graph_id)
+        self.set_term_with_report(term, report, graph_id)
     }
 
-    /// Set the current term with an explicit graph ID from legacy/reference
-    /// Ascent results.
-    pub fn set_term_with_id(
-        &mut self,
-        term: Box<dyn Term>,
-        results: AscentResults,
-        graph_id: u64,
-    ) -> Result<()> {
-        self.set_term_with_report(term, RuntimeBackendReport::ascent(results), graph_id)
+    /// Move the current term/cursor while preserving the cached backend report.
+    ///
+    /// Graph-navigation commands use this after they have already required a
+    /// report shape that supports graph traversal. The session state remains
+    /// report-shaped; it does not rebuild itself from an Ascent-only payload.
+    pub fn set_term_preserving_report(&mut self, term: Box<dyn Term>, graph_id: u64) -> Result<()> {
+        let report = self
+            .backend_report
+            .clone()
+            .ok_or_else(|| anyhow!("cannot update REPL term without a runtime backend report"))?;
+        self.set_term_with_report(term, report, graph_id)
     }
 
     /// Set the current term with an explicit graph ID and runtime backend
-    /// report. Non-Ascent reports keep the REPL state current, but
-    /// graph-navigation/query commands require `ascent_results()`.
+    /// report. Non-Ascent reports keep the REPL state current. Commands that
+    /// need a rewrite-graph relation view must explicitly project such a view
+    /// from the cached report instead of assuming the state is Ascent-shaped.
     pub fn set_term_with_report(
         &mut self,
         term: Box<dyn Term>,
@@ -143,8 +146,8 @@ impl ReplState {
         self.current_term.as_ref().map(|b| b.as_ref())
     }
 
-    /// Get the Ascent results
-    pub fn ascent_results(&self) -> Option<&AscentResults> {
+    /// Project an explicit reference rewrite graph from the current report.
+    pub fn ascent_results(&self) -> Option<&mettail_runtime::AscentResults> {
         self.backend_report
             .as_ref()
             .and_then(RuntimeBackendReport::as_ascent_results)
@@ -212,8 +215,8 @@ impl Default for ReplState {
 mod tests {
     use super::*;
     use mettail_runtime::{
-        RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
-        RuntimeObservationValue,
+        AscentResults, RuntimeBackend, RuntimeBackendArtifact, RuntimeBackendReport,
+        RuntimeChannelObservation, RuntimeObservationValue,
     };
 
     #[derive(Debug, Clone)]
@@ -250,9 +253,8 @@ mod tests {
     fn ascent_results_are_projected_from_backend_report() {
         let mut state = ReplState::new();
         let term: Box<dyn Term> = Box::new(TestTerm { display: "x", id: 7 });
-        state
-            .set_term(term, AscentResults::empty())
-            .expect("set Ascent term");
+        let report = RuntimeBackendReport::ascent(AscentResults::empty());
+        state.set_term(term, report).expect("set Ascent term");
 
         assert!(state.backend_report().is_some());
         assert!(state.ascent_results().is_some());
@@ -279,5 +281,31 @@ mod tests {
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
         assert!(state.ascent_results().is_none());
         assert_eq!(state.current_graph_id(), Some(5));
+    }
+
+    #[test]
+    fn cursor_updates_preserve_cached_backend_report() {
+        let mut state = ReplState::new();
+        let initial_term: Box<dyn Term> = Box::new(TestTerm { display: "5", id: 5 });
+        let report = RuntimeBackendReport::try_observations(
+            RuntimeBackend::RhoMachine,
+            RuntimeBackendArtifact::RhoNormalizedAst,
+            vec![RuntimeChannelObservation::new("OUT", vec![RuntimeObservationValue::Int(5)])],
+        )
+        .expect("test Rho observation report is shape-valid");
+        state
+            .set_term(initial_term, report)
+            .expect("set initial Rho report");
+
+        let moved_term: Box<dyn Term> = Box::new(TestTerm { display: "display cursor", id: 99 });
+        state
+            .set_term_preserving_report(moved_term, 123)
+            .expect("cursor move preserves report");
+
+        let report = state.backend_report().expect("report remains cached");
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert!(state.ascent_results().is_none());
+        assert_eq!(state.current_graph_id(), Some(123));
+        assert_eq!(format!("{}", state.current_term().unwrap()), "display cursor");
     }
 }

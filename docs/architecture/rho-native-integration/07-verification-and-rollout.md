@@ -180,6 +180,12 @@ authority. `Language::selected_default_runtime_backend()` and
 value advertises no executable default, and `run_default_*`, the REPL, the
 simulation runner, and testkit diagnostics fail closed in that case. No runtime
 query fabricates an `Ascent` default for a value that does not advertise one.
+The REPL state follows the same authority rule: `exec` stores the selected
+backend's `RuntimeBackendReport`, graph cursor commands preserve that cached
+report envelope, and Ascent rewrite facts are exposed only by projecting an
+explicitly Ascent-shaped reference report. `RuntimeBackendDispatch.v` models
+that state transition and proves cursor movement cannot fabricate an Ascent
+projection from a Dovetail or Rho report.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
 lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,

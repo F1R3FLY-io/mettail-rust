@@ -2039,49 +2039,55 @@ impl Repl {
 
         let language = self.registry.get(language_name)?;
 
-        let results = self.get_results()?;
-
         let current_id = self
             .state
             .current_graph_id()
             .ok_or_else(|| anyhow::anyhow!("No current term"))?;
 
-        // Find available rewrites
-        let available_rewrites: Vec<_> = results
-            .rewrites
-            .iter()
-            .filter(|r| r.from_id == current_id)
-            .collect();
+        let (target_id, target_display) = {
+            let results = self.get_results()?;
 
-        if idx >= available_rewrites.len() {
-            anyhow::bail!("Rewrite {} not found. Use 'rewrites' to see available rewrites.", idx);
-        }
+            // Find available rewrites
+            let available_rewrites: Vec<_> = results
+                .rewrites
+                .iter()
+                .filter(|r| r.from_id == current_id)
+                .collect();
 
-        let rewrite = available_rewrites[idx];
+            if idx >= available_rewrites.len() {
+                anyhow::bail!(
+                    "Rewrite {} not found. Use 'rewrites' to see available rewrites.",
+                    idx
+                );
+            }
 
-        // Find the target term
-        let target_info = results
-            .all_terms
-            .iter()
-            .find(|t| t.term_id == rewrite.to_id)
-            .ok_or_else(|| anyhow::anyhow!("Target term not found"))?;
+            let rewrite = available_rewrites[idx];
+
+            // Find the target term
+            let target_info = results
+                .all_terms
+                .iter()
+                .find(|t| t.term_id == rewrite.to_id)
+                .ok_or_else(|| anyhow::anyhow!("Target term not found"))?;
+            (rewrite.to_id, target_info.display.clone())
+        };
 
         // Parse the target term and update its ID to match what's in the graph
         let target_term = language
-            .parse_term(&target_info.display)
+            .parse_term(&target_display)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         println!();
         println!("{}", "Applied rewrite →".yellow());
-        let formatted = format_term_pretty(&target_info.display);
+        let formatted = format_term_pretty(&target_display);
         for line in formatted.lines() {
             println!("  {}", line.green());
         }
         println!();
 
-        // Update state - pass the target_id so we can track position in the graph
+        // Update state while preserving the checked report that owns the graph.
         self.state
-            .set_term_with_id(target_term, results.clone(), rewrite.to_id)?;
+            .set_term_preserving_report(target_term, target_id)?;
 
         Ok(())
     }
@@ -2102,31 +2108,34 @@ impl Repl {
 
         let language = self.registry.get(language_name)?;
 
-        let results = self.get_results()?;
+        let (target_id, target_display) = {
+            let results = self.get_results()?;
 
-        let target_info = results.normal_forms_iter().nth(idx).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Normal form {} not found. Use 'normal-forms' to see available normal forms.",
-                idx
-            )
-        })?;
+            let target_info = results.normal_forms_iter().nth(idx).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Normal form {} not found. Use 'normal-forms' to see available normal forms.",
+                    idx
+                )
+            })?;
+            (target_info.term_id, target_info.display.clone())
+        };
 
         // Parse the target term
         let target_term = language
-            .parse_term(&target_info.display)
+            .parse_term(&target_display)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         println!();
         println!("{}", "Navigated to normal form:".bold());
-        let formatted = format_term_pretty(&target_info.display);
+        let formatted = format_term_pretty(&target_display);
         for line in formatted.lines() {
             println!("  {}", line.green());
         }
         println!();
 
-        // Update state with the correct graph ID
+        // Update state with the correct graph ID while preserving the report.
         self.state
-            .set_term_with_id(target_term, results.clone(), target_info.term_id)?;
+            .set_term_preserving_report(target_term, target_id)?;
 
         Ok(())
     }

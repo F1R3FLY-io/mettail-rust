@@ -118,7 +118,11 @@ The REPL uses the same concrete runtime-capability view. Its `languages` and
 runtime, a non-default backend set, or a selected default. Raw generated
 language entries therefore remain useful for parsing and introspection, but
 `exec` fails with explicit Dovetail/Rho wrapper guidance until a checked
-runtime wrapper is registered.
+runtime wrapper is registered. The REPL session state stores the
+`RuntimeBackendReport` returned by that execution. Cursor-changing graph
+commands preserve the cached report rather than rebuilding state from
+`AscentResults`, so Rho observation reports and Dovetail reports remain
+shape-honest after display navigation.
 
 ## Runtime Observation Payloads
 
@@ -554,15 +558,26 @@ When a user runs step, apply, equations, rewrites, normal-forms, or queries:
   require an Ascent-shaped rewrite graph
   reject non-Ascent selected backends before executing step
   reject Dovetail-report-shaped and observation-shaped reports with an explicit message
+  preserve the cached RuntimeBackendReport when graph cursor commands move
 ```
 
 This preserves old graph-navigation ergonomics while allowing Dovetail-default
 languages to return checked report evidence and Rho-default languages to return
-typed RSpace observations. The REPL crate also exposes the bundled generated
-language registry behind its default `bundled-languages` feature. Normal CLI
-builds keep that feature enabled. Focused state tests may disable default
-features so report-state behavior can be checked without compiling every
-generated language.
+typed RSpace observations. The state API is report-native:
+`set_term(…, RuntimeBackendReport)` installs a checked backend report,
+`set_term_with_report(…, graph_id)` records an explicit graph/result cursor,
+and `set_term_preserving_report(…, graph_id)` moves within the current display
+or reference graph without changing the report envelope. The legacy
+`AscentResults` projection is a read-only compatibility view over
+`RuntimeBackendReport::as_ascent_results()`, not the stored state type.
+
+The REPL crate also exposes the bundled generated language registry behind its
+default `bundled-languages` feature. Normal CLI builds keep that feature
+enabled. Focused state tests may disable default features so report-state
+behavior can be checked without compiling every generated language. Ascent
+oracle support is owned by `mettail-languages/oracle-ascent`; the REPL crate no
+longer depends directly on `ascent` or `ascent-byods-rels` just to store or
+display runtime results.
 
 ## Simulation Runner Boundary
 
