@@ -4,6 +4,26 @@ Status: in progress. This is the working plan for bringing both architecture-doc
 (`docs/architecture/dovetail/`, `docs/architecture/rho-native-integration/`) to a pedagogical,
 diagram-rich, citation-verified standard. Derived from a full code-grounded survey (2026-06-16).
 
+## Progress log
+
+- **Phase 1 — DONE** (commit `a6032991`). Fixed `04-rules-and-saturation` (real
+  `RewriteRule {lhs,rhs,label}`, the `AcApp` third `Pattern` variant, AcApp match
+  arm, "Guards Are Discharged Upstream", new AC-matching section), `01-concepts-and-glossary`
+  (guard entry + AC/binder/disposition terms + symbols), `03-data-model-and-exact-keys`
+  (three e-graph keys + FIX-A α-canonical key). All citations/test/lemma names verified.
+- **Phase 2 — DONE** (commit `a6032991`). New `11-binder-congruence-handler.md`
+  (full pedagogical treatment; DOIs verified; grounded in `binder_congruence.rs` +
+  `AmbientBinderHandler.v`). Registered in README index + `references.md`.
+- **E-graph diagrams (the user's specific request) — 4 of 5 DONE** (commit `a6032991`):
+  `03-egraph-term-dag` (saturation+congruence), `04-egraph-ac-openrule` (AC),
+  `06-egraph-cyclic-closure` (Newton-SCC vs cycle-cut), `11-capture-safety` (binder).
+  All render + well-formed + embedded. The 5th (base hashconsing) is subsumed by 03.
+- **REMAINING**: Phase 3 (de-stale `00-executive-brief`, `02-engine-architecture`,
+  `00-requirements-traceability`, README framing — the "inert/no caller" + Ambient
+  "fails-closed" lines), Phase 4 (rho-native-integration suite reconciliation),
+  Phase 5 (actor/lane redraws of `02-engine-lifecycle`/`05-extraction-frontier`/`README`
+  + the float→AC swimlane + disposition decision tree; render + validate).
+
 ## The headline gap
 The **Ambient binder NativeHandler (Inc 0–4), FIX-A alpha-canonical keys, the in-engine AC matcher,
 and the float→AC composition** are fully implemented (`macros/src/gen/runtime/binder_congruence.rs`,
