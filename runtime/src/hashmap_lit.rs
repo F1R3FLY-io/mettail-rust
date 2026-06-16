@@ -162,6 +162,44 @@ impl<K: Hash + Ord, V: Hash + Ord> Hash for HashMapLit<K, V> {
     }
 }
 
+impl<K, V> HashMapLit<K, V> {
+    /// Order-independent SEMANTIC hash: like [`Hash::hash`] but each key/value is
+    /// hashed through `key_sem`/`val_sem` (their alpha-canonical `semantic_hash`)
+    /// instead of `std::hash::Hash`, and entries are ordered by their SEMANTIC
+    /// digest rather than by structural `Ord`.
+    ///
+    /// Both the per-entry hash source AND the ordering must be semantic: the
+    /// structural `Ord` used by `Hash::hash` sorts via the binder's run-varying
+    /// `unique_id` (`Scope::cmp`), which would make the emitted byte stream
+    /// non-deterministic for maps whose keys/values contain binders. Sorting by
+    /// the alpha-canonical semantic digest restores determinism while keeping
+    /// order-independence (equal maps emit identical streams).
+    pub fn semantic_hash_into<H, FK, FV>(&self, state: &mut H, key_sem: FK, val_sem: FV)
+    where
+        H: Hasher,
+        FK: Fn(&K, &mut FxHasher),
+        FV: Fn(&V, &mut FxHasher),
+    {
+        self.0.len().hash(state);
+        let mut entries: Vec<(u64, u64)> = self
+            .0
+            .iter()
+            .map(|(k, v)| {
+                let mut hk = FxHasher::default();
+                key_sem(k, &mut hk);
+                let mut hv = FxHasher::default();
+                val_sem(v, &mut hv);
+                (hk.finish(), hv.finish())
+            })
+            .collect();
+        entries.sort_unstable();
+        for (kd, vd) in entries {
+            state.write_u64(kd);
+            state.write_u64(vd);
+        }
+    }
+}
+
 impl<K, V> FromIterator<(K, V)> for HashMapLit<K, V>
 where
     K: Eq + Hash,

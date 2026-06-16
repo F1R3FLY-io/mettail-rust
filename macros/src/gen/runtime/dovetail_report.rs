@@ -216,24 +216,27 @@ fn binder_arm(
         .map(|(i, (field, var))| field_child_expr(&owner, i, field, var))
         .collect();
     let body_fn = category_lowering_fn(category);
+    // (FIX-A) The binder position is lowered to an ANONYMOUS, arity-only marker
+    // — never the binder's `FreeVar` identity. moniker `Binder`'s `Debug`/`Hash`
+    // expose the `FreeVar`'s `unique_id` (a process-global counter freshened by
+    // every `unbind`), so a `{:?}` label leaked a run-varying, alpha-irrelevant
+    // value into the e-graph `content_key`. The body (lowered via `unsafe_body`)
+    // already carries the de-Bruijn `BoundVar{scope,binder}` coordinates that
+    // alpha-canonically identify each bound occurrence, so the binder position
+    // must contribute only its arity.
     let binder_child = if multi {
-        quote! {{
-            let mut __binders = Vec::new();
-            for __binder in #scope_var.unsafe_pattern().iter() {
-                __binders.push(eg.add(::dovetail::egraph::ENode::leaf(format!(
-                    "{}::{:?}",
-                    #binder_label,
-                    __binder
-                ))));
-            }
-            eg.add(::dovetail::egraph::ENode::new(#binder_label.to_string(), __binders))
-        }}
+        quote! {
+            eg.add(::dovetail::egraph::ENode::leaf(format!(
+                "{}::arity::{}",
+                #binder_label,
+                #scope_var.unsafe_pattern().len()
+            )))
+        }
     } else {
         quote! {
             eg.add(::dovetail::egraph::ENode::leaf(format!(
-                "{}::{:?}",
-                #binder_label,
-                #scope_var.unsafe_pattern()
+                "{}::arity::1",
+                #binder_label
             )))
         }
     };

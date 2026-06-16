@@ -353,6 +353,56 @@ impl<T: Clone + Hash + Eq> Hash for HashBag<T> {
     }
 }
 
+impl<T: Clone + Hash + Eq> HashBag<T> {
+    /// Order-independent SEMANTIC hash: identical multiset-combine to
+    /// [`Hash::hash`], but each element is hashed through the supplied `elem_sem`
+    /// visitor instead of its `std::hash::Hash`.
+    ///
+    /// Generated `semantic_hash` uses this for collections whose elements are
+    /// category types that may contain binders. The element's `semantic_hash` is
+    /// alpha-canonical (de-Bruijn body + arity-only binder position), whereas its
+    /// `std::hash::Hash` is structural and leaks the binder's run-varying,
+    /// alpha-irrelevant `unique_id`. The combine (lanes, `mix_hashbag_lane`,
+    /// sum/xor, `total_count`/`counts.len()` framing) is byte-for-byte the same as
+    /// `Hash::hash`, so multiset order-independence and count-sensitivity are
+    /// preserved — only the per-element hash source changes.
+    pub fn semantic_hash_into<H, F>(&self, state: &mut H, elem_sem: F)
+    where
+        H: Hasher,
+        F: Fn(&T, &mut FxHasher),
+    {
+        self.total_count.hash(state);
+        self.counts.len().hash(state);
+
+        let mut sum_a = 0u64;
+        let mut sum_b = 0u64;
+        let mut xor_a = 0u64;
+        let mut xor_b = 0u64;
+
+        for (elem, count) in self.counts.iter() {
+            let mut ha = FxHasher::with_seed(0);
+            elem_sem(elem, &mut ha);
+            count.hash(&mut ha);
+            let a = mix_hashbag_lane(ha.finish());
+
+            let mut hb = FxHasher::with_seed(0x9e37_79b9_7f4a_7c15usize);
+            count.hash(&mut hb);
+            elem_sem(elem, &mut hb);
+            let b = mix_hashbag_lane(hb.finish());
+
+            sum_a = sum_a.wrapping_add(a);
+            sum_b = sum_b.wrapping_add(b);
+            xor_a ^= a.rotate_left((b & 63) as u32);
+            xor_b ^= b.rotate_left((a & 63) as u32);
+        }
+
+        sum_a.hash(state);
+        sum_b.hash(state);
+        xor_a.hash(state);
+        xor_b.hash(state);
+    }
+}
+
 #[inline]
 fn mix_hashbag_lane(mut x: u64) -> u64 {
     x ^= x >> 30;

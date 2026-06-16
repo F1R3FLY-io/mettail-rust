@@ -66,6 +66,7 @@
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
@@ -228,6 +229,50 @@ fn generate_semantic_engine(
     }
 }
 
+/// (FIX-A) Emit alpha-canonical SEMANTIC hashing for a collection whose elements
+/// are a category type (which may contain binders). Each element is routed through
+/// its `semantic_hash` (de-Bruijn body + arity-only binder position) instead of
+/// structural `Hash` — which hashes a binder's `unique_id`, a process-global
+/// counter freshened by every `unbind` and never reset, leaking a run-varying,
+/// alpha-irrelevant value into the semantic fingerprint (`exact_key`). The
+/// collection's order semantics are preserved per kind:
+/// - `Vec`: ordered — length + each element in order.
+/// - `HashBag`: order-independent multiset combine (`HashBag::semantic_hash_into`).
+/// - `HashMap`: order-independent map combine, ordered by semantic digest
+///   (`HashMapLit::semantic_hash_into`).
+/// - `HashSet`: no language declares a set of a category element, so this arm is
+///   reachable only for non-binder elements whose structural `Hash` is already
+///   canonical; it falls back to that.
+///
+/// `coll_expr` borrows the collection; `element_cat` is its element category.
+fn semantic_hash_collection(
+    coll_expr: &TokenStream,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+) -> TokenStream {
+    match coll_type {
+        CollectionType::Vec => quote! {
+            state.write_usize(#coll_expr.len());
+            for __e in #coll_expr.iter() {
+                #element_cat::semantic_hash(__e, state);
+            }
+        },
+        CollectionType::HashBag => quote! {
+            #coll_expr.semantic_hash_into(state, |__e, __h| #element_cat::semantic_hash(__e, __h));
+        },
+        CollectionType::HashMap => quote! {
+            #coll_expr.semantic_hash_into(
+                state,
+                |__k, __h| #element_cat::semantic_hash(__k, __h),
+                |__v, __h| #element_cat::semantic_hash(__v, __h),
+            );
+        },
+        CollectionType::HashSet => quote! {
+            std::hash::Hash::hash(#coll_expr, state);
+        },
+    }
+}
+
 /// Generate match arms for a specific variant in the semantic_hash engine.
 ///
 /// Key difference from iterative_hash: each arm decides whether to emit a
@@ -280,18 +325,20 @@ fn generate_semantic_variant_arm(
             language,
         ),
 
-        VariantKind::Collection { label, .. } => {
-            // Collections: emit variant_idx + delegate to collection's
-            // Hash (its elements may themselves be category types — those
-            // would use standard Hash, not semantic_hash. This is a known
-            // limitation; semantic equivalence inside collections is
-            // approximated by structural equivalence. Future refinement
-            // could add a per-element semantic_hash visitor for
-            // category-typed collections).
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            // (FIX-A) Collections of category-typed elements are hashed via the
+            // element's alpha-canonical `semantic_hash`, not structural `Hash`.
+            // This closes the former limitation (noted here historically) where
+            // category elements were hashed structurally — leaking a binder's
+            // run-varying `unique_id` into the semantic fingerprint and making
+            // `exact_key` non-deterministic for terms like Ambient's
+            // `{ new(x, P) | Q }` (a `PNew` binder inside a `PPar` bag).
+            let coll_expr = quote! { coll };
+            let body = semantic_hash_collection(&coll_expr, element_cat, coll_type);
             quote! {
                 #category::#label(coll) => {
                     state.write_u8(#variant_idx);
-                    std::hash::Hash::hash(coll, state);
+                    #body
                 }
             }
         },
@@ -387,12 +434,18 @@ fn generate_semantic_regular_arm(
         for (i, field) in fields.iter().enumerate().take(eager_end) {
             let name = &field_names[i];
             if field.is_optional && field.is_collection {
+                // (FIX-A) element semantic_hash, not structural Hash.
+                let coll_type = field
+                    .coll_type
+                    .as_ref()
+                    .expect("collection field must carry a CollectionType");
+                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
                 final_stmts.push(quote! {
                     match #name.as_ref() {
                         None => state.write_u8(0u8),
                         Some(__c) => {
                             state.write_u8(1u8);
-                            std::hash::Hash::hash(__c, state);
+                            #sem
                         }
                     }
                 });
@@ -415,9 +468,17 @@ fn generate_semantic_regular_arm(
                     std::hash::Hash::hash(#name, state);
                 });
             } else if field.is_collection {
-                final_stmts.push(quote! {
-                    std::hash::Hash::hash(#name, state);
-                });
+                // (FIX-A) Collection fields of category elements hash via the
+                // element's alpha-canonical `semantic_hash`, not structural `Hash`.
+                let coll_type = field
+                    .coll_type
+                    .as_ref()
+                    .expect("collection field must carry a CollectionType");
+                final_stmts.push(semantic_hash_collection(
+                    &quote! { #name },
+                    &field.category,
+                    coll_type,
+                ));
             } else {
                 // Box<T> before a collection: eager via re-entrant
                 // semantic_hash (stack-safe — inner uses the trampoline).
@@ -435,12 +496,18 @@ fn generate_semantic_regular_arm(
         for &(i, field) in deferred.iter().rev() {
             let name = &field_names[i];
             if field.is_optional && field.is_collection {
+                // (FIX-A) element semantic_hash, not structural Hash.
+                let coll_type = field
+                    .coll_type
+                    .as_ref()
+                    .expect("collection field must carry a CollectionType");
+                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
                 final_stmts.push(quote! {
                     match #name.as_ref() {
                         None => state.write_u8(0u8),
                         Some(__c) => {
                             state.write_u8(1u8);
-                            std::hash::Hash::hash(__c, state);
+                            #sem
                         }
                     }
                 });
@@ -459,9 +526,17 @@ fn generate_semantic_regular_arm(
                     std::hash::Hash::hash(#name, state);
                 });
             } else if field.is_collection {
-                final_stmts.push(quote! {
-                    std::hash::Hash::hash(#name, state);
-                });
+                // (FIX-A) Collection fields of category elements hash via the
+                // element's alpha-canonical `semantic_hash`, not structural `Hash`.
+                let coll_type = field
+                    .coll_type
+                    .as_ref()
+                    .expect("collection field must carry a CollectionType");
+                final_stmts.push(semantic_hash_collection(
+                    &quote! { #name },
+                    &field.category,
+                    coll_type,
+                ));
             } else {
                 let task_variant = format_ident!("SemHash{}", field.category);
                 final_stmts.push(quote! {
@@ -508,9 +583,31 @@ fn generate_semantic_binder_arm(
                 std::hash::Hash::hash(#name, state);
             });
         } else if field.is_collection {
-            hash_stmts.push(quote! {
-                std::hash::Hash::hash(#name, state);
-            });
+            // (FIX-A) pre-scope collection: element semantic_hash, not std Hash.
+            // Handles both `Coll` and `*opt(Coll)` = `Option<Coll>` shapes.
+            let coll_type = field
+                .coll_type
+                .as_ref()
+                .expect("collection field must carry a CollectionType");
+            if field.is_optional {
+                let sem =
+                    semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
+                hash_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => state.write_u8(0u8),
+                        Some(__c) => {
+                            state.write_u8(1u8);
+                            #sem
+                        }
+                    }
+                });
+            } else {
+                hash_stmts.push(semantic_hash_collection(
+                    &quote! { #name },
+                    &field.category,
+                    coll_type,
+                ));
+            }
         } else {
             hash_stmts.push(quote! {
                 (&**#name).semantic_hash(state);
@@ -518,11 +615,19 @@ fn generate_semantic_binder_arm(
         }
     }
 
-    // Scope: hash pattern eagerly (Binder<String>), push body to stack.
+    // Scope: hash the binder ARITY (always 1 for a single binder), NOT the
+    // binder's `FreeVar` identity. (FIX-A) moniker `FreeVar::Hash` hashes only
+    // `unique_id`, a process-global counter freshened by every `unbind` and
+    // never reset — so hashing the pattern leaked a run-varying, alpha-irrelevant
+    // value into the semantic fingerprint (`exact_key`/`content_key`), making it
+    // non-deterministic and non-alpha-canonical. The bound occurrences in the
+    // body are de-Bruijn `BoundVar{scope,binder}` coordinates (name-free, already
+    // alpha-canonical) and are hashed via the trampolined body task below, so the
+    // arity is the only structural information the binder position must contribute.
     let body_task = format_ident!("SemHash{}", body_cat);
     hash_stmts.push(quote! {
         {
-            std::hash::Hash::hash(&#scope_name.inner().unsafe_pattern, state);
+            state.write_usize(1usize);
             let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
             stack.push(SemanticHashTask::#body_task(body_ptr));
         }
@@ -561,9 +666,31 @@ fn generate_semantic_multi_binder_arm(
                 std::hash::Hash::hash(#name, state);
             });
         } else if field.is_collection {
-            hash_stmts.push(quote! {
-                std::hash::Hash::hash(#name, state);
-            });
+            // (FIX-A) pre-scope collection: element semantic_hash, not std Hash.
+            // Handles both `Coll` and `*opt(Coll)` = `Option<Coll>` shapes.
+            let coll_type = field
+                .coll_type
+                .as_ref()
+                .expect("collection field must carry a CollectionType");
+            if field.is_optional {
+                let sem =
+                    semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
+                hash_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => state.write_u8(0u8),
+                        Some(__c) => {
+                            state.write_u8(1u8);
+                            #sem
+                        }
+                    }
+                });
+            } else {
+                hash_stmts.push(semantic_hash_collection(
+                    &quote! { #name },
+                    &field.category,
+                    coll_type,
+                ));
+            }
         } else {
             hash_stmts.push(quote! {
                 (&**#name).semantic_hash(state);
@@ -571,10 +698,17 @@ fn generate_semantic_multi_binder_arm(
         }
     }
 
+    // Scope: hash the binder ARITY (number of binders), NOT the binders'
+    // `FreeVar` identities. (FIX-A) See the single-binder arm above for the
+    // rationale; for a multi-binder the arity (`unsafe_pattern.len()`) is the
+    // structural information that distinguishes, e.g., a 2-binder from a 3-binder
+    // scope whose bodies coincide on a shared de-Bruijn prefix. The body's
+    // `BoundVar{scope,binder}` coordinates (incl. `BinderIndex`) disambiguate
+    // which binder each occurrence references and are hashed via the body task.
     let body_task = format_ident!("SemHash{}", body_cat);
     hash_stmts.push(quote! {
         {
-            std::hash::Hash::hash(&#scope_name.inner().unsafe_pattern, state);
+            state.write_usize(#scope_name.inner().unsafe_pattern.len());
             let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
             stack.push(SemanticHashTask::#body_task(body_ptr));
         }
