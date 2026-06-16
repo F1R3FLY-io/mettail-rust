@@ -589,8 +589,8 @@ out-of-scope pre-existing residual, not a flip blocker):
 | `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (native folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; big-numeric/cast folds defer to the Dovetail native-handler report | ✅ `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime`; differential oracle `rho_backend_agrees_with_ascent_on_calculator_int_ops` |
 | `Ambient` | Dovetail (in-engine; host-less) | binder-congruence handler floats `new`s, then AC rules (`In`/`Out`/`OpenRule`) reduce the soup in-engine | ✅ `ambient_dovetail_flip.rs` (Complete reports); `ambient_binder_handler.rs` |
 | `RhoCalc` | RhoMachine (host RSpace) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag | ✅ `rhocalc_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; OOS: one `castbigrat` residual |
-| `GuardedRho` | RhoMachine + guard dispositions | channel/join guards classified by the guard-quality seam (P5a); behavioral legs via the EBA/SFT dispositions | ◐ guard-quality wired + `rho_guard_oracle`; full flip in P5b; OOS: `@1!(Nil)` parser residual |
-| `MiniRho` | RhoMachine | the end-to-end report→backend example ([dovetail 10](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example)) | ◐ P5b rollout |
+| `GuardedRho` | RhoMachine + guard dispositions | channel/join guards classified by the guard-quality seam (P5a); behavioral legs via the EBA/SFT dispositions | ◐ guard-quality wired; plans end-to-end through the gate (`guarded_rho_rho_backend.rs`); guards execute on host RSpace (`rho_guard_oracle`); generated-AST execution = B1 |
+| `MiniRhoFor` *(doc example — not a generated language)* | — | the end-to-end report→backend **worked example** ([dovetail 10](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example)); there is no `languages/src` crate for it | n/a — illustrative only, not a flip target |
 
 `audit_rho_default_backend(&L::definition())` is the mechanical classifier that
 decides "flippable now" vs "blocked on X" for each language; that classification
