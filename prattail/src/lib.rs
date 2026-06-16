@@ -221,65 +221,9 @@ pub mod behavioral_pred;
 /// incremental session, environment infrastructure.
 pub mod cek;
 
-/// Legacy CEK evaluator: demand-driven term rewriting via CEK machine.
-/// Control = current term, Environment = variable bindings,
-/// Kontinuation = evaluation context stack.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod cek_eval;
-
-/// Legacy CESK store: address-based indirection for mutable state.
-/// Extends the CEK machine with an explicit Store component:
-/// env[var] → addr, store[addr] → value. Enables mutation (set!),
-/// aliasing, closures with shared state, and tuplespace semantics.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod cesk_store;
-
-/// Garbage collection infrastructure for the legacy CESK store.
-/// Configurable strategies: None (monotonic), RefCount (async dealloc),
-/// MarkSweep (snapshot-based async mark-and-sweep). Adapted from
-/// MeTTaTron's GC infrastructure.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod gc;
-
-/// Abstract CESK machine: abstract GC, evaluation WPDS, Dyck state graphs.
-/// Implements abstract interpretation via the AAM recipe (Van Horn & Might 2010)
-/// and introspective pushdown analysis (Earl et al. 2013).
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod abstract_cesk;
-
 /// Channel infrastructure: lock-free MPMC queues, channel maps,
 /// join patterns, channel specifications from `channels {}` block.
 pub mod channel;
-
-/// Green thread core: suspendable CEK machines with persistent
-/// continuation stacks (`im::Vector`) and environments (`im::HashMap`).
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod green_thread;
-
-/// Scheduler: MeTTaTron-adapted CronStateMachine with multi-tape
-/// automaton dispatch for K-channel scheduling.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod scheduler;
-
-/// Global pool: process-wide adaptive thread pool shared across
-/// all MeTTaIL language instances. OnceLock singleton.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod global_pool;
-
-/// Reactive FSM types for the M:N green thread scheduler:
-/// Worker, Coordinator, and Pool state machines.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod pool_fsm;
-
-/// Worker pool: crossbeam-deque work-stealing execution layer.
-/// N native OS threads executing M green threads cooperatively.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod worker_pool;
-
-/// Coordinator: scheduling layer that owns the Scheduler FSM,
-/// processes worker reports, and dispatches work to workers.
-#[cfg(feature = "legacy-cesk-runtime")]
-pub mod coordinator;
 
 /// Railroad diagram generation from grammar specifications.
 pub mod railroad;

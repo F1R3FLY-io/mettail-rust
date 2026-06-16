@@ -39,13 +39,6 @@ hang-dump = ["dep:signal-hook", "dep:parking_lot"]
 ## Use: `cargo test --features mettail-prattail/walker-stats ... \
 ##       -- --nocapture` with `PRATTAIL_WALKER_STATS=1` env var.
 walker-stats = []
-## Legacy CESK runtime evaluator/store/scheduler stack.
-##
-## The production runtime backend replacement path is Dovetail/Rho. Parser-side
-## CEK/WPDA observer types remain available by default, but the standalone
-## evaluator/store/green-thread runtime cluster is opt-in so normal builds do
-## not expose it as a live runtime backend surface.
-legacy-cesk-runtime = []
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []
@@ -151,13 +144,3 @@ harness = false
 [[bench]]
 name = "bench_egraph"
 harness = false
-
-[[bench]]
-name = "bench_cesk_store"
-harness = false
-required-features = ["legacy-cesk-runtime"]
-
-[[bench]]
-name = "bench_green_threads"
-harness = false
-required-features = ["legacy-cesk-runtime"]

@@ -7,9 +7,7 @@
 //! ## Module Structure
 //!
 //! - `properties/` — Property assertion functions (structural, semantic, algebraic)
-//! - `analytical/` — Analytical test drivers (confluence, termination, CEGAR);
-//!   legacy CESK/green-thread runtime analyses require the
-//!   `legacy-cesk-runtime` feature
+//! - `analytical/` — Analytical test drivers (confluence, termination, CEGAR)
 //! - `strategies` — Shared proptest strategy helpers
 //! - `alpha` — Alpha-equivalence assertion utilities
 //! - `program` — `ProgramTestSuite` builder for application-level testing
