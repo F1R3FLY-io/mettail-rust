@@ -140,7 +140,7 @@ exactly what was proved, what was enumerated, and where bounds applied:
 | `DovetailRunReport` | runtime handoff | Which exact roots, term records, derivation edges, and completeness status may a consumer rely on? |
 
 The theoretical basis is equality saturation over e-graphs
-([EGG-2021](references.md#egg-2021)), k-best style lazy enumeration
+([EGG-2021](references.md#egg-2021)), complete-on-demand lazy best-first enumeration
 ([HUANG-CHIANG-2005](references.md#huang-chiang-2005)), and semiring fixed-point
 closure for cyclic automaton components
 ([ESPARZA-KIEFER-LUTTENBERGER-2008](references.md#esparza-kiefer-luttenberger-2008),

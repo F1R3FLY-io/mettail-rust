@@ -49,9 +49,11 @@ terminal metadata, not an item-level error.
 
 For a fixed e-node with `k` children, the candidate space is `ℕᵏ`. A rank vector
 `[r₀, …, rₖ₋₁]` means: use child `i`'s `rᵢ`-th derivation.
-The engineering pattern is the same family of problem as lazy k-best parsing:
-emit the next best composite object without precomputing the full Cartesian
-product ([HUANG-CHIANG-2005](references.md#huang-chiang-2005)).
+The engineering pattern is the same family of problem as lazy best-first
+hypergraph parsing: emit the next best composite object without precomputing the
+full Cartesian product ([HUANG-CHIANG-2005](references.md#huang-chiang-2005)).
+Dovetail uses that lazy machinery to enumerate the *complete* derivation set on
+demand — it is not a truncated top-N selection.
 
 Literate pseudocode:
 

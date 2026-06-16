@@ -17,7 +17,7 @@ Graphviz source: [figures/07-verification-dag.dot](figures/07-verification-dag.d
 | exact-key dedup preserves distinct keys | `dovetail/formal/rocq/theories/ExactKeys/ExactKeyDedup.v` |
 | lazy frontier emits sorted complete candidate stream | `dovetail/formal/rocq/theories/Extraction/LazyFrontierOrder.v` |
 | ordered framing is injective and order-preserving | `dovetail/formal/rocq/theories/Extraction/OrderPreservingFraming.v` |
-| N-best extraction keeps non-`0̄` distinct alternatives | `dovetail/formal/rocq/theories/Extraction/NBestExtraction.v` |
+| complete best-first extraction keeps non-`0̄` distinct alternatives | `dovetail/formal/rocq/theories/Extraction/NBestExtraction.v` |
 | enumeration covers hyperedge rank-vector products | `dovetail/formal/rocq/theories/Extraction/EnumerationCompleteness.v` |
 | cycle cuts cannot be reported as complete | `dovetail/formal/rocq/theories/Extraction/ExtractionOutcome.v` and `CycleCutBoundary.v` |
 | productive cyclic enumeration is not finitely exhaustive | `dovetail/formal/rocq/theories/Extraction/CyclicEnumerationImpossibility.v` |

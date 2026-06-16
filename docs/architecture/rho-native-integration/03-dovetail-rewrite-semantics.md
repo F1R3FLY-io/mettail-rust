@@ -182,7 +182,7 @@ The fixed point is:
 `F* = μF. seed ∪ derive(F, F)`
 
 For finite acyclic rewrite graphs, saturation reaches `F*`. For cyclic graphs,
-Dovetail separates exact inside-weight closure from bounded k-best enumeration.
+Dovetail separates exact inside-weight closure from complete, cycle-bounded enumeration.
 
 ### 9. Extraction Rules
 
@@ -198,8 +198,9 @@ The selection relation preserves all non-refuted candidates:
 
 Weights order extraction. They do not define identity and do not justify silent
 candidate removal.
-Dovetail's lazy best-first extraction is informed by k-best hypergraph parsing
-([HUANG-CHIANG-2005](references.md#huang-chiang-2005)).
+Dovetail's lazy best-first extraction is informed by lazy best-first hypergraph
+parsing ([HUANG-CHIANG-2005](references.md#huang-chiang-2005)) — but it enumerates
+the *complete* derivation set on demand, never a truncated top-N.
 
 ## Literate Algorithm: Semi-Naive Saturation
 
@@ -327,7 +328,7 @@ The Newton-style least-fixed-point background is
 [NEWTON-MONOTONE-2010](references.md#newton-monotone-2010); the repository-local
 formal boundary is listed in [DOVETAIL-FORMAL](references.md#dovetail-formal).
 
-Enumeration is more delicate. Full finite k-best enumeration through arbitrary
+Enumeration is more delicate. Full finite enumeration through arbitrary
 productive cycles is impossible in general: a self-cycle with one acyclic exit
 has one distinct derivation for each finite unrolling depth. Dovetail therefore
 exposes cyclic boundedness:

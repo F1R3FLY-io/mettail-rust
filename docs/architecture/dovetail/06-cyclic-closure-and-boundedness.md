@@ -79,7 +79,7 @@ cyclic closed path is implemented for `TropicalWeight`.
 
 ## Enumeration Boundary
 
-Closed inside weights can be exact even when full cyclic k-best enumeration is
+Closed inside weights can be exact even when full cyclic enumeration is
 infinite.
 
 A productive self-cycle with an exit has derivations:

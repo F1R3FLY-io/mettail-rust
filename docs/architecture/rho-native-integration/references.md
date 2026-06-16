@@ -142,8 +142,8 @@ Liang Huang and David Chiang. 2005. "Better k-best Parsing." Proceedings of
 the Ninth International Workshop on Parsing Technology, pages 53-64. ACL.
 [ACL Anthology W05-1506](https://aclanthology.org/W05-1506/).
 
-Used for: lazy k-best extraction over hypergraphs, which informs Dovetail's
-best-first derivation enumeration.
+Used for: lazy best-first extraction over hypergraphs, which informs Dovetail's
+complete-on-demand best-first derivation enumeration.
 
 ### NEWTON-MONOTONE-2010
 

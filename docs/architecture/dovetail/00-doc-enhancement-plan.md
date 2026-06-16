@@ -58,7 +58,7 @@ binder/freshness `#FAE8FF` (lilac).
 | Engine lifecycle | swimlane UML activity (lanes = Caller/egraph/wta/extract/report) | shows WHO owns each phase (existing is actorless) |
 | e-graph + hashconsing + congruence | term-DAG / e-graph drawing (Graphviz) | a box diagram can't show class-merge / shared children |
 | Equality saturation | UML activity w/ back-edge + `Fᵢ₊₁ = Fᵢ ∪ Δᵢ₊₁` | fixpoint loop w/ 3 terminal exits |
-| WTA + N-best extraction | sequence (Extractor ↔ ClassState ↔ child) | the recursion into child classes is the no-miss heart |
+| WTA + complete best-first extraction | sequence (Extractor ↔ ClassState ↔ child) | the recursion into child classes is the no-miss heart |
 | Cyclic closure / Newton-SCC | Graphviz SCC condensation + state machine | separates exact-inside-weight from enumeration-impossibility |
 | Exact-key dedup | decision flowchart | the insert-by-exact-key decision |
 | Runtime-report boundary | C4 component + sequence overlay | the projection seam + direct/Rho split |
