@@ -534,6 +534,19 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         .expect("language has at least one type");
     let primary_add = category_lowering_fn(&primary_type);
 
+    // Inc 2/3: a host-less language with a binder handler (e.g. Ambient) floats
+    // its `new`s outward (the binder congruences) BEFORE the in-engine AC
+    // reduction, rather than failing closed on the unlowered equations. The
+    // floated term is what gets lowered into the e-graph; the AC rules match the
+    // soup under the floated news, so no peel/re-wrap is needed.
+    let should_emit_binder =
+        crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language);
+    let source_expr: TokenStream = if should_emit_binder {
+        quote! { __source }
+    } else {
+        quote! { typed_term.0 }
+    };
+
     let root_block = if language.types.len() > 1 {
         let inner_enum = format_ident!("{}TermInner", name);
         let mut arms = Vec::new();
@@ -547,7 +560,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
             });
         }
         quote! {
-            for __alt in typed_term.0.all_alts() {
+            for __alt in #source_expr.all_alts() {
                 match __alt {
                     #(#arms)*
                     #inner_enum::Ambiguous(_) => unreachable!(
@@ -558,8 +571,47 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         }
     } else {
         quote! {
-            __roots.push(#primary_add(&mut eg, &typed_term.0));
+            __roots.push(#primary_add(&mut eg, &#source_expr));
         }
+    };
+
+    // For a handler language the binder congruences are discharged by the float
+    // (so there is no fail-closed gate and no native-eval short-circuit); the
+    // floated term flows straight into the e-graph AC reduction. For every other
+    // language the existing native-eval + fail-closed gate is preserved exactly.
+    let native_gate: TokenStream = if should_emit_binder {
+        quote! {}
+    } else {
+        quote! {
+            if let Ok(report) =
+                ::mettail_dovetail_runtime::complete_native_dovetail_report_for_language(
+                    &#language_struct,
+                    term,
+                )
+            {
+                return Ok(report);
+            }
+
+            let unsupported: &[&str] = &[#(#unsupported_lits),*];
+            if !unsupported.is_empty() {
+                return Err(format!(
+                    "generated Dovetail compiler for language {} needs specialized lowering before structural saturation can be complete: {}",
+                    #language_lit,
+                    unsupported.join("; "),
+                ));
+            }
+        }
+    };
+    let source_binding: TokenStream = if should_emit_binder {
+        quote! {
+            // Inc 2: float `new`s outward (binder congruences) before AC
+            // reduction. `binder_congruence_nf_term` returns `None` when there is
+            // no floatable redex, in which case the original term is lowered.
+            let __source = typed_term.0.binder_congruence_nf_term()
+                .unwrap_or_else(|| typed_term.0.clone());
+        }
+    } else {
+        quote! {}
     };
 
     quote! {
@@ -581,28 +633,14 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
                 max_iters: usize,
                 max_nodes: usize,
             ) -> Result<mettail_runtime::RuntimeDovetailRunReport, String> {
-                if let Ok(report) =
-                    ::mettail_dovetail_runtime::complete_native_dovetail_report_for_language(
-                        &#language_struct,
-                        term,
-                    )
-                {
-                    return Ok(report);
-                }
-
-                let unsupported: &[&str] = &[#(#unsupported_lits),*];
-                if !unsupported.is_empty() {
-                    return Err(format!(
-                        "generated Dovetail compiler for language {} needs specialized lowering before structural saturation can be complete: {}",
-                        #language_lit,
-                        unsupported.join("; "),
-                    ));
-                }
+                #native_gate
 
                 let typed_term = term
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("expected {}Term, got {:?}", #language_lit, term))?;
+
+                #source_binding
 
                 let mut eg = ::dovetail::egraph::EGraph::<String>::with_config(
                     ::dovetail::egraph::EGraphConfig { max_nodes },
