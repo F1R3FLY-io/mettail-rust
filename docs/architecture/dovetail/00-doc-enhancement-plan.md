@@ -22,7 +22,7 @@ diagram-rich, citation-verified standard. Derived from a full code-grounded surv
   `00-requirements-traceability`, README framing — the "inert/no caller" + Ambient
   "fails-closed" lines), Phase 4 (rho-native-integration suite reconciliation),
   Phase 5 (actor/lane redraws of `02-engine-lifecycle`/`05-extraction-frontier`/`README`
-  + the float→AC swimlane + disposition decision tree; render + validate).
+  + the `float→AC` swimlane + disposition decision tree; render + validate).
 
 ## The headline gap
 The **Ambient binder NativeHandler (Inc 0–4), FIX-A alpha-canonical keys, the in-engine AC matcher,
@@ -54,11 +54,11 @@ binder/freshness `#FAE8FF` (lilac).
 | Cyclic closure / Newton-SCC | Graphviz SCC condensation + state machine | separates exact-inside-weight from enumeration-impossibility |
 | Exact-key dedup | decision flowchart | the insert-by-exact-key decision |
 | Runtime-report boundary | C4 component + sequence overlay | the projection seam + direct/Rho split |
-| End-to-end MeTTaIL→Dovetail→Rho | actor-rich sequence (KEEP rho 02) | temporal handoff across actors |
+| End-to-end `MeTTaIL→Dovetail→Rho` | actor-rich sequence (KEEP rho 02) | temporal handoff across actors |
 | Dataflow lowering to Rholang | Kahn process-network dataflow | facts-as-messages, rules-as-contracts |
 | RSpace COMM / scheduling | state machine + `par` sequence fragment | produce/match/commit cycle + true concurrency |
 | Disposition decision rule | UML activity / decision tree | `ambiguous ∧ host-less` is a literal decision |
-| **Ambient binder float→AC** | **swimlane activity (NativeHandler ‖ AC) w/ bounded loop** | the headline missing diagram |
+| **Ambient binder `float→AC`** | **swimlane activity (NativeHandler ‖ AC) w/ bounded loop** | the headline missing diagram |
 | **Capture-safety** | **term-DAG before/after** (witness `new(z,in(z,new(x,0)))`) | makes T1/T1' visual |
 | OSLF / guard-quality seam | C4 component fan-out | classification fan-out |
 

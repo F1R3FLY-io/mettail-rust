@@ -1,0 +1,49 @@
+@startuml
+title Discharge decision rule: how each rule/equation is covered
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+
+start
+:A rewrite rule, structural\nequation, or guard\n(from the language inventory); <<#DBEAFE>>
+
+if (Is the matching AMBIGUOUS\nand is there NO host layer\nto preserve that ambiguity?) then (yes)
+  :**IN-ENGINE**\n`AcApp` lazy e-graph matching\n(Ambient `In`/`Out`/`OpenRule`); <<#FEF3C7>>
+  note right
+    Weight ORDERS the alternatives;
+    nothing is pruned. The only
+    family that goes in-engine.
+  end note
+else (no — disposition it)
+  if (Deterministic native fold?\n(arithmetic, casts, length, ...)) then (yes)
+    :**NativeHandler**\nnative Rust fold\n(root-only exact-key report); <<#DCFCE7>>
+  elseif (Process COMM / binder /\nsubstitution with a host RSpace?) then (yes)
+    :**RhoNativeJoin**\nexecute on the host Rho machine\n(ambiguity preserved at RSpace); <<#FCE7F3>>
+  elseif (Pure congruence rule?\n(equal children give equal parents)) then (yes)
+    :**DovetailCoreStructural**\ne-graph congruence closure\n(no explicit rule emitted); <<#EDE9FE>>
+  elseif (Guard classifiable by\nan evidence quality tier?) then (yes)
+    :**Guard disposition**\nExactDecidable / BoundedDecidable /\nRejectSafeApprox / TrustedNativeGuard; <<#BFDBFE>>
+  else (unclassifiable)
+    :**Unknown** -> flip gate\n**FAILS CLOSED**\n(language stays un-flipped); <<#FEE2E2>>
+  endif
+endif
+stop
+
+legend right
+|= Color |= Disposition |
+|<#FEF3C7> | in-engine AC (ambiguous and host-less) |
+|<#DCFCE7> | NativeHandler (native fold) |
+|<#FCE7F3> | RhoNativeJoin (host RSpace) |
+|<#EDE9FE> | e-graph congruence closure |
+|<#BFDBFE> | guard disposition (by quality tier) |
+|<#FEE2E2> | Unknown gives fail closed (un-flipped) |
+endlegend
+@enduml

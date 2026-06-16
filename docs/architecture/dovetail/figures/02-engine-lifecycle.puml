@@ -1,5 +1,5 @@
 @startuml
-title Dovetail Engine Lifecycle
+title Dovetail Engine Lifecycle (swimlanes = owning component)
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -8,13 +8,18 @@ skinparam ArrowThickness 1.3
 skinparam activity {
   BorderColor #1F2937
   FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
 }
 
+|#DBEAFE|Caller|
 start
 :Receive typed seed terms\nand rewrite rules; <<#DBEAFE>>
+
+|#BBF7D0|E-graph · `egraph` + `rules`|
 :Validate `SemanticHash`\nexact-key contract; <<#BFDBFE>>
 :Build exact-keyed e-graph\nwith length-framed identity; <<#BBF7D0>>
-:Run saturation iterations; <<#DCFCE7>>
+:Run saturation iterations\n(`AcApp` AC matching when present); <<#DCFCE7>>
 if (terminal outcome?) then (Converged)
   :Use saturated graph as complete\nfor the chosen bounds; <<#DCFCE7>>
 elseif (NodeLimit)
@@ -22,8 +27,12 @@ elseif (NodeLimit)
 elseif (IterationLimit)
   :Report iteration boundary; <<#FFEDD5>>
 endif
+
+|#FEF3C7|Automaton · `wta`|
 :View e-graph as weighted tree automaton; <<#FEF3C7>>
 :Compute inside weights\nand cyclic SCC closure when requested; <<#FDE68A>>
+
+|#FBCFE8|Extractor · `extract`|
 :Order child keys with\norder-preserving framing; <<#CCFBF1>>
 :Extract derivations through\nchecked best-first stream; <<#FBCFE8>>
 if (cycle cut?) then (yes)
@@ -31,19 +40,23 @@ if (cycle cut?) then (yes)
 else (no)
   :Return Complete; <<#BBF7D0>>
 endif
+
+|#EDE9FE|Report · `report`|
 :Build substrate-neutral run report\nwith saturation and extraction metadata; <<#EDE9FE>>
+
+|#DBEAFE|Caller|
 :Dispatch report to oracle,\nRho backend, or tooling; <<#FCE7F3>>
 stop
 
 legend right
-|= Area |= Meaning |
-|<#DBEAFE> Inputs | typed terms and rewrite rules |
-|<#BBF7D0> Identity | exact-keyed e-graph construction |
-|<#DCFCE7> Saturation | equality evidence growth |
-|<#FEF3C7> Automaton | weighted-tree interpretation |
-|<#CCFBF1> Ordering | framed child-key ordering |
-|<#FBCFE8> Extraction | checked derivation stream |
-|<#EDE9FE> Report | substrate-neutral handoff |
-|<#FEE2E2> Boundary | explicit bounded outcome |
+|= Box color |= Area |
+|<#DBEAFE> | Inputs — typed terms and rewrite rules |
+|<#BBF7D0> | Identity — exact-keyed e-graph construction |
+|<#DCFCE7> | Saturation — equality evidence growth |
+|<#FEF3C7> | Automaton — weighted-tree interpretation |
+|<#CCFBF1> | Ordering — framed child-key ordering |
+|<#FBCFE8> | Extraction — checked derivation stream |
+|<#EDE9FE> | Report — substrate-neutral handoff |
+|<#FEE2E2> | Boundary — explicit bounded outcome |
 endlegend
 @enduml

@@ -8,6 +8,15 @@ beam-pruned.
 
 PlantUML source: [figures/05-extraction-frontier.puml](figures/05-extraction-frontier.puml).
 
+The activity diagram above is the per-candidate logic for *one* class. The
+sequence diagram below shows the other half — the **recursion across actors**: the
+extractor enumerates each child class best-first, on demand, which is why no valid
+derivation is ever skipped (the "no-miss" property).
+
+![N-best extraction recursion sequence](figures/05-extraction-sequence.svg)
+
+PlantUML source: [figures/05-extraction-sequence.puml](figures/05-extraction-sequence.puml).
+
 ## Derivation Model
 
 A derivation for class `q` chooses one e-node `n ∈ nodes(q)` and one derivation

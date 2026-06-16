@@ -78,6 +78,10 @@ selects.
 
 ## 4. The disposition: in-engine iff ambiguous **and** host-less
 
+![Discharge decision tree: how each rule is covered](figures/04-disposition-decision-tree.svg)
+
+PlantUML source: [figures/04-disposition-decision-tree.puml](figures/04-disposition-decision-tree.puml).
+
 Dovetail's governing **discharge decision rule** ([Rules and Saturation](04-rules-and-saturation.md#guards-are-discharged-upstream))
 is: *lower a family in-engine iff its matching is ambiguous **and** no host layer
 already preserves that ambiguity; otherwise disposition it (to the host, or to a
@@ -226,7 +230,7 @@ split them. FIX-A makes the **exact-key path α-canonical** — a binder contrib
 `frame(arity) · key(de-Bruijn body)`, excluding the binder's `unique_id` — while
 leaving the structural `Hash`/`Eq`/`Ord` untouched (Ascent's identity must not
 change). The full treatment, with the three e-graph keys it interacts with, is in
-[Data Model and Exact Keys → The α-Canonical Binder Key](03-data-model-and-exact-keys.md#the-α-canonical-binder-key-fix-a).
+[Data Model and Exact Keys — The α-Canonical Binder Key](03-data-model-and-exact-keys.md#the-α-canonical-binder-key-fix-a).
 
 ## 6. The legacy `run_ascent` backend is capture-**un**safe (a finding)
 
@@ -291,12 +295,18 @@ Parallel-composition associativity/commutativity/identity (`P|Q ≡ Q|P`,
 `(P|Q)|R ≡ P|(Q|R)`, `P|0 ≡ P`) are the AC normalization of the bag itself
 (canonical sort + flatten + drop-`0`); ambient and `new` congruence
 (`P ≡ P' ⇒ n[P] ≡ n[P']`, etc.) are ordinary e-graph **congruence closure**
-(equal children ⇒ equal parents). Neither needs a rule.
+(equal children imply equal parents). Neither needs a rule.
 
 ## 8. Composition: where the handler sits in the pipeline
 
+![Float-then-AC-reduce swimlane: which actor owns each step](figures/11-binder-float-ac-swimlane.svg)
+
+PlantUML source: [figures/11-binder-float-ac-swimlane.puml](figures/11-binder-float-ac-swimlane.puml).
+
 The handler is Ambient's `try_direct_eval`; the generated Dovetail report compiler
-calls it before building the report. The data flow:
+calls it before building the report. The swimlane above shows which actor owns each
+step (Report Compiler ‖ Binder NativeHandler ‖ AC e-graph engine ‖ Extractor); the
+text version of the same flow:
 
 ```
  Ambient surface term  (typed AST, possibly Ambiguous with alternatives)
@@ -364,7 +374,7 @@ make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-dovetail \
 | No blocking guard (FIX-B dropped) | freshening makes the float *always* sound ⇒ nothing to block (`new_is_fresh_in_its_binder`) |
 | Single float normalization (no float↔AC loop) | floating moves all `new`s up; AC rules add none back ⇒ float-once is a fixpoint |
 | α-canonical key only on the exact-key path (FIX-A) | the e-graph must see α-equivalent binders as one redex; Ascent's structural identity must stay structural |
-| In-engine, not host-routed | Ambient has no RSpace host and its AC redexes are ambiguous ⇒ the decision rule puts it in-engine (§4) |
+| In-engine, not host-routed | Ambient has no RSpace host and its AC redexes are ambiguous, so the decision rule puts it in-engine (§4) |
 
 ## 11. Cross-references
 

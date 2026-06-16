@@ -1,0 +1,67 @@
+@startuml
+title Ambient binder handler: float-then-AC-reduce (who owns each step)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+|#DBEAFE|Report Compiler|
+start
+:Ambient term\n(typed AST, maybe Ambiguous); <<#DBEAFE>>
+:call `try_direct_eval`\n= the binder NativeHandler; <<#DBEAFE>>
+
+|#FAE8FF|Binder NativeHandler|
+:`binder_congruence_nf`; <<#FAE8FF>>
+repeat :`__bcn_float_pass`\n(bottom-up: float one level); <<#FAE8FF>>
+  note right
+    Capture-safe: moniker `unbind`
+    FRESHENS the binder (x → x'),
+    `Scope::new` re-closes locally.
+    Never `from_parts_unsafe`.
+  end note
+repeat while (`term_eq` fixpoint?) is (no) not (yes — all `new`s at top)
+:Re-close the `new`-run in\nα-canonical (FIX-A) order\n(NewComm); <<#FAE8FF>>
+:Binder-free soup\nunder one canonical `new`-run; <<#FAE8FF>>
+
+|#FEF3C7|AC e-graph engine|
+:Build exact-keyed e-graph\nfrom the soup; <<#BBF7D0>>
+:Saturate with `In`/`Out`/`OpenRule`\n(`AcApp` matching, lazy selection); <<#FEF3C7>>
+note right
+  AC ambiguity preserved:
+  every valid pairing is a
+  distinct e-node. Weight
+  orders; nothing is pruned.
+end note
+if (saturation outcome?) then (Converged)
+  :SatReport = Converged; <<#DCFCE7>>
+else (NodeLimit / IterationLimit)
+  :SatReport = bounded; <<#FFEDD5>>
+endif
+
+|#FBCFE8|Extractor + Report|
+:Exact lazy N-best extraction; <<#FBCFE8>>
+if (cycle cut?) then (no)
+  :completeness = Complete; <<#BBF7D0>>
+else (yes)
+  :completeness = BoundedByCycleCut; <<#FFEDD5>>
+endif
+:Build `DovetailRunReport`; <<#EDE9FE>>
+
+|#DBEAFE|Report Compiler|
+:Return Some(report)\n(None if nothing progressed\n— fail-closed preserved); <<#DBEAFE>>
+stop
+
+legend right
+|= Lane / color |= Owner |
+|<#DBEAFE> Report Compiler | calls the handler, returns the report |
+|<#FAE8FF> Binder NativeHandler | float `new`s out, capture-safe, α-canonical |
+|<#FEF3C7> AC e-graph engine | saturate the binder-free soup, AcApp rules |
+|<#FBCFE8> Extractor + Report | N-best extraction, completeness, run report |
+|<#FFEDD5> Boundary | bounded outcome (honest, not Complete) |
+endlegend
+@enduml

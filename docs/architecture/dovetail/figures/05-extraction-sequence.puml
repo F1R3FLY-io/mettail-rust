@@ -1,0 +1,62 @@
+@startuml
+title N-best extraction: the recursion into child classes (the no-miss heart)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowThickness 1.2
+skinparam sequence {
+  ArrowColor #374151
+  LifeLineBorderColor #6B7280
+  ParticipantBorderColor #1F2937
+  ParticipantFontColor #111827
+}
+
+actor "Caller" as caller #DBEAFE
+participant "Extractor\n`kth(q, k)`" as ex #FBCFE8
+participant "ClassState[root q]" as root #FEF3C7
+participant "min-heap\n(frontier)" as heap #DCFCE7
+participant "ClassState[child c]" as child #FDE68A
+
+caller -> ex : kth(q, k)  — ask for the k-th best
+activate ex
+ex -> root : ensure k-th derivation
+activate root
+
+loop until k-th distinct derivation emitted
+  root -> heap : pop best candidate\n(weight, ordered exact key)
+  activate heap
+  heap --> root : candidate e-node n + child ranks
+  deactivate heap
+
+  group recurse per child (best-first, lazy)
+    root -> child : kth(c, rank_c)
+    activate child
+    child --> root : child derivation  (or 0̄ = refuted)
+    deactivate child
+  end
+
+  alt cycle back-edge
+    root -> root : mark cycle cut\n(BoundedByCycleCut)
+  else exact key already emitted
+    root -> root : skip duplicate\n(exact-key dedup)
+  else weight = 0̄
+    root -> root : refuted; keep successors
+  else valid + distinct
+    root -> heap : push successors\n(bump ONE child rank)
+    activate heap
+    deactivate heap
+    root --> ex : emit derivation tree
+  end
+end
+
+ex --> caller : Done(Complete)\nor Done(BoundedByCycleCut)
+deactivate root
+deactivate ex
+
+note over root, child #EDE9FE
+  No-miss: every child class is itself
+  extracted best-first on demand, so no
+  valid derivation is skipped — weight
+  ORDERS the alternatives; it never prunes.
+end note
+@enduml
