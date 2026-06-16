@@ -4,59 +4,89 @@
 //!   - the explicit ASCENT oracle:
 //!     `CalculatorLanguage::run_ascent(parse_term(input))` → its normal-form
 //!     display strings, and
-//!   - the RHO backend: the lowered Rholang contract (mettail-rho-codegen) on a
-//!     real in-memory f1r3node RhoRuntime (mettail-rho-runtime),
+//!   - the RHO backend: the REAL `CalculatorLanguage` definition (reconstructed
+//!     from `definition_source()`, so the plan fingerprint equals the generated
+//!     one — no synthetic fragment) lowered to a Rholang contract
+//!     (mettail-rho-codegen) on a real in-memory f1r3node RhoRuntime
+//!     (mettail-rho-runtime),
 //!
-//! The test asserts the rho result is among the Ascent normal forms
-//! (weight-erased = display-string comparison). This is the genuine two-backend
-//! differential the exactness proof `OracleQuotientEquivalence.v` underwrites —
-//! not a comparison against hand-written constants.
+//! Both sides are therefore the SAME real language. The test asserts the rho
+//! result is among the Ascent normal forms (weight-erased = display-string
+//! comparison). This is the genuine two-backend differential the exactness proof
+//! `OracleQuotientEquivalence.v` underwrites — not a comparison against
+//! hand-written constants.
 
 use mettail_ast::language::LanguageDef;
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_rho_codegen::{
-    plan_rho_default_backend, RhoAstSend, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence,
+    lower_language_def, plan_rho_default_backend, reconstruct_language_def, RhoAstSend,
+    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    RhoRejectedRuleDisposition, RhoRejectedRuleDispositionKind,
 };
 use mettail_rho_runtime::PlannedRhoBackend;
-use mettail_runtime::Language;
+use mettail_runtime::{Language, LanguageMetadata};
 use std::collections::BTreeSet;
 
-const CALC_RUN_FRAGMENT: &str = r#"
-    name: CalcRun,
-    types {
-        Proc
-        ![i64] as Int
-        ![bool] as Bool
-        ![str] as Str
-    }
-    terms {
-        AddInt . a:Int, b:Int |- a "+" b : Int ;
-        SubInt . a:Int, b:Int |- a "-" b : Int ;
-        MulInt . a:Int, b:Int |- a "*" b : Int ;
-        DivInt . a:Int, b:Int |- a "/" b : Int ;
-        ModInt . a:Int, b:Int |- a "%" b : Int ;
-    }
-"#;
+/// Reconstruct the REAL `CalculatorLanguage` augmented `LanguageDef` from its
+/// generated `definition_source()` — the same identity path the production
+/// installer uses, so the resulting plan's fingerprint equals the generated one.
+fn calculator_def() -> LanguageDef {
+    let source = CalculatorLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated CalculatorLanguage must expose its definition_source");
+    reconstruct_language_def(source)
+        .expect("CalculatorLanguage definition_source must reconstruct as a LanguageDef")
+}
 
-fn passing_requirements() -> RhoDefaultBackendRequirements {
+/// Map every scalar-lowering-rejected rule (big-numeric folds, casts, …) to an
+/// exactly-once native-handler disposition (deduplicated; a label may appear in
+/// several rejected categories).
+fn native_handler_dispositions_for(def: &LanguageDef) -> Vec<RhoRejectedRuleDisposition> {
+    lower_language_def(def)
+        .rejected
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .map(|label| {
+            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
+        })
+        .collect()
+}
+
+fn calculator_requirements() -> RhoDefaultBackendRequirements {
     RhoDefaultBackendRequirements {
-        coverage: RhoCoverageEvidence::AllRulesLowered,
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(native_handler_dispositions_for(
+            &calculator_def(),
+        )),
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
     }
 }
 
+/// Build the Rho-default backend plan from the REAL `CalculatorLanguage` def, so
+/// BOTH sides of the differential are the real language: the Ascent side runs
+/// `CalculatorLanguage::run_ascent` and the Rho side runs a plan whose
+/// `definition_fingerprint()` equals `CalculatorLanguage`'s (no synthetic fragment).
 fn calculator_backend() -> PlannedRhoBackend {
-    let def =
-        syn::parse_str::<LanguageDef>(CALC_RUN_FRAGMENT).expect("calculator fragment must parse");
-    let plan = plan_rho_default_backend(&def, passing_requirements())
-        .expect("all calculator Int scalar ops must pass the Rho-default gate");
+    let def = calculator_def();
+    let plan = plan_rho_default_backend(&def, calculator_requirements())
+        .expect("real Calculator def must pass the Rho-default gate with native-handler coverage");
+    assert_eq!(plan.language_name(), "Calculator", "the Rho side must be the real Calculator");
     assert_eq!(
-        plan.lowering.lowered,
-        vec!["AddInt", "SubInt", "MulInt", "DivInt", "ModInt"],
-        "all five Int binary scalar ops must lower"
+        plan.definition_fingerprint(),
+        CalculatorLanguage
+            .metadata()
+            .definition_fingerprint()
+            .expect("generated Calculator must expose its definition fingerprint"),
+        "the Rho-side plan must be the REAL Calculator (fingerprint parity, no shim)"
     );
-    assert!(plan.lowering.rejected.is_empty(), "no rule should be rejected here");
+    for op in ["AddInt", "SubInt", "MulInt", "DivInt", "ModInt"] {
+        assert!(
+            plan.lowering.lowered.iter().any(|lowered| lowered == op),
+            "the real Calculator plan must lower the Int op {op} the differential exercises"
+        );
+    }
     PlannedRhoBackend::from_plan(plan)
 }
 

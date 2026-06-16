@@ -580,16 +580,18 @@ Flip condition for language `L`:
 ### Per-language flip status
 
 The rollout proceeds one language at a time; the gate keeps an under-covered
-language un-flipped (fail-closed) rather than mis-flipped. Status as of this
-writing (✅ flipped with passing tests · ◐ in rollout · OOS = a known
-out-of-scope pre-existing residual, not a flip blocker):
+language un-flipped (fail-closed) rather than mis-flipped. **All four target
+languages are now flipped** (Calculator, RhoCalc, Ambient, GuardedRho); legend
+(✅ flipped with passing tests · OOS = a known out-of-scope pre-existing residual,
+not a flip blocker · *in-engine* = flips to the Dovetail backend by the discharge
+rule, not RhoMachine):
 
 | Language | Default backend | How it executes | Status / evidence |
 |---|---|---|---|
 | `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (native folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; big-numeric/cast folds defer to the Dovetail native-handler report | ✅ `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime`; differential oracle `rho_backend_agrees_with_ascent_on_calculator_int_ops` |
 | `Ambient` | Dovetail (in-engine; host-less) | binder-congruence handler floats `new`s, then AC rules (`In`/`Out`/`OpenRule`) reduce the soup in-engine | ✅ `ambient_dovetail_flip.rs` (Complete reports); `ambient_binder_handler.rs` |
 | `RhoCalc` | RhoMachine (host RSpace) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag | ✅ `rhocalc_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; OOS: one `castbigrat` residual |
-| `GuardedRho` | RhoMachine + guard dispositions | channel/join guards classified by the guard-quality seam (P5a); behavioral legs via the EBA/SFT dispositions | ◐ guard-quality wired; plans end-to-end through the gate (`guarded_rho_rho_backend.rs`); guards execute on host RSpace (`rho_guard_oracle`); generated-AST execution = B1 |
+| `GuardedRho` | RhoMachine (host RSpace) + guard dispositions | guarded receive host-routed (`RhoNativeJoin`); the behavioral guard over external relations `halts`/`safe` is `RejectSafeApprox` — not `rhoapi::Par`-representable (no guard field on `ReceiveBind`; external relations are not Rholang-computable), so host-routing is *derived-required*, see [proposal](proposals/p5b-residual-completion-plan.md) | ✅ host-routed: plans end-to-end (`guarded_rho_rho_backend.rs`); guarded-receive semantics (non-consuming on failed guard) execute on host RSpace (`rho_guard_oracle`) |
 | `MiniRhoFor` *(doc example — not a generated language)* | — | the end-to-end report→backend **worked example** ([dovetail 10](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example)); there is no `languages/src` crate for it | n/a — illustrative only, not a flip target |
 
 `audit_rho_default_backend(&L::definition())` is the mechanical classifier that

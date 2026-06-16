@@ -21,16 +21,31 @@ targets).
 
 ## Genuine residual (ordered)
 
-- **B1 — GuardedRho completion bar.** Either (B1-A) build a generated-AST install+execute
-  path (`mettail-rho-runtime/src/guarded_rho_ast.rs`, mirroring `rhocalc_ast.rs`; lower
-  `PGuardedInput`→`Receive` with the `?guard` predicate as a `where`/pattern body) and an
-  install helper + an end-to-end `run_default_backend_report` test; or (B1-B) declare the
-  flip "planned + host-routed, execution-proven via `rho_guard_oracle`" (the `RhoNativeJoin`
-  disposition's defining evidence per doc-08). **Risk:** GuardedRho's guards call external
-  relations (`halts`/`safe`) populated by user code — undecidable in-engine (hence
-  `RejectSafeApprox`). The channel/join legs are AST-first-able; the external-relation leg
-  may need a host relation provider, and if it cannot be executed AST-first it is a
-  documented `RejectSafeApprox` boundary (a plan-defined skip on that leg only).
+- **B1 — GuardedRho completion bar. RESOLVED (2026-06-16): host-routed is derived-correct;
+  a sound generated-AST guarded-receive lowering is impossible.** The resolution is a
+  derivation, not a preference:
+  - `rhoapi::ReceiveBind` has EXACTLY `{patterns, source, remainder, free_count}` — no guard
+    field (proven by the struct literal at `mettail-rho-runtime/src/rhocalc_ast.rs:413-418`,
+    which specifies all fields with no `..default`). RSpace matching is purely structural.
+  - GuardedRho's `?guard` is a `BehavioralPred::RelationQuery` over the **external relations**
+    `halts`/`safe`, "populated by user code" (`languages/src/guarded_rho.rs:33-34,92-95`).
+    These are not Rholang-computable and not structural patterns, so they cannot be encoded in
+    a `ReceiveBind` pattern, nor evaluated in a desugared `Par` body.
+  - Therefore lowering `PGuardedInput` to a plain `rhoapi` `Receive` would have to DROP the
+    guard ⇒ consume-on-false ⇒ semantically UNSOUND (a guarded receive that ignores its
+    guard). That is exactly the "hack/pragmatic decision" the mandate forbids.
+  - Hence the guarded receive is *semantically* a host-routed `RhoNativeJoin` / external-relation
+    disposition — which the guard-quality seam already classifies (`RejectSafeApprox`,
+    `guard_quality.rs`) and which `rho_guard_oracle` executes on the real host RSpace
+    (non-consuming-on-failed-guard semantics, 4 tests). Per doc-08:386-388 the host RSpace
+    mechanism IS the `RhoNativeJoin` disposition's defining evidence.
+  - **Completion:** GuardedRho's flip is COMPLETE — it plans end-to-end through the gate
+    (`guarded_rho_rho_backend.rs`, all qualities non-`Unknown`) and its guarded-receive
+    semantics execute on the host RSpace (`rho_guard_oracle`). The behavioral guard being
+    host-routed is a gate working as designed, not a deferral. Doc-07 cell → ✅ host-routed.
+  - (A generated-AST wrapper could lower GuardedRho's *guard-free* structural fragment
+    — `POutput`/`PPar`/`NQuote`/`PDrop`/`CastInt` — like RhoCalc, but that fragment excludes
+    the language's defining `PGuardedInput`, so it adds no real coverage. Not built.)
 - **B2 — MiniRho/stale-note doc reconciliation** (decision-free, done first):
   remove/relabel the `◐ MiniRho` row (not a generated language) and the now-false
   `@1!(Nil)` OOS note (that term parses + passes today) in
