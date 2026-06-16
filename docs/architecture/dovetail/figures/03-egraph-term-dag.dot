@@ -1,0 +1,102 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  Dovetail's core data structure: the e-graph (equivalence graph of terms).
+//
+//  Drawn in the egg convention (Willsey et al., POPL 2021, doi:10.1145/3434304):
+//    • an  e-CLASS  is a DASHED rounded box  — a set of provably-equal terms;
+//    • an  e-NODE   is a SOLID box inside it — one operator with child e-CLASS
+//                                              references (NOT child e-nodes);
+//    • a child edge points from an e-node INTO the e-class of its argument.
+//
+//  Worked example — the engine's own `saturate_congruence_via_rule` test
+//  (dovetail/src/rules.rs): seed terms  f(a)  and  f(b)  under the single
+//  rewrite rule  a → b.  Equality saturation records  a ≈ b  (it MERGES the two
+//  leaf classes; it never deletes a term), and congruence closure then derives
+//  f(a) ≈ f(b) for free because their only child class is now shared.
+//
+//  Render:  dot -Tsvg 03-egraph-term-dag.dot -o 03-egraph-term-dag.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph EGraphTermDag {
+    compound = true;              // allow edges to terminate on a cluster boundary
+    rankdir  = TB;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 18;
+    label = "The e-graph: equality saturation merges classes; congruence shares children; no term is ever pruned";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3];
+
+    // ───────────────────────────── ① BEFORE ──────────────────────────────────
+    subgraph cluster_before {
+        label = "① Seeded e-graph — four classes, before the rule fires";
+        labeljust = "l"; fontsize = 14; fontcolor = "#0F172A";
+        style = "rounded"; color = "#94A3B8"; penwidth = 1.6; margin = 16;
+
+        // Leaf classes (inputs → blue).
+        subgraph cluster_b_qa {
+            label = "q₀"; style = "dashed,rounded"; color = "#2563EB";
+            fontcolor = "#1E3A8A"; bgcolor = "#DBEAFE";
+            b_a [label="a", fillcolor="#EFF6FF"];
+        }
+        subgraph cluster_b_qb {
+            label = "q₁"; style = "dashed,rounded"; color = "#2563EB";
+            fontcolor = "#1E3A8A"; bgcolor = "#DBEAFE";
+            b_b [label="b", fillcolor="#EFF6FF"];
+        }
+        // Applied-function classes (structural → violet).
+        subgraph cluster_b_qfa {
+            label = "q₂"; style = "dashed,rounded"; color = "#7C3AED";
+            fontcolor = "#5B21B6"; bgcolor = "#EDE9FE";
+            b_fa [label="f(·)", fillcolor="#F5F3FF"];
+        }
+        subgraph cluster_b_qfb {
+            label = "q₃"; style = "dashed,rounded"; color = "#7C3AED";
+            fontcolor = "#5B21B6"; bgcolor = "#EDE9FE";
+            b_fb [label="f(·)", fillcolor="#F5F3FF"];
+        }
+        b_fa -> b_a [lhead=cluster_b_qa, label=" child"];
+        b_fb -> b_b [lhead=cluster_b_qb, label=" child"];
+    }
+
+    // ───────────────────────────── ② AFTER ───────────────────────────────────
+    subgraph cluster_after {
+        label = "② After saturation — a→b merges {q₀,q₁}; congruence then merges {q₂,q₃}";
+        labeljust = "l"; fontsize = 14; fontcolor = "#0F172A";
+        style = "rounded"; color = "#94A3B8"; penwidth = 1.6; margin = 16;
+
+        // Merged leaf class: holds BOTH e-nodes a and b — both survive (saturation → green).
+        subgraph cluster_a_qab {
+            label = "q₀′ = {a, b}   ◄ two e-nodes, both alive";
+            style = "dashed,rounded"; color = "#16A34A";
+            fontcolor = "#14532D"; bgcolor = "#DCFCE7";
+            a_a [label="a", fillcolor="#F0FDF4"];
+            a_b [label="b", fillcolor="#F0FDF4"];
+        }
+        // Congruence-merged function class: one e-node f(·), child = the shared class.
+        subgraph cluster_a_qfab {
+            label = "q₂′ = {f(·)}   ◄ f(a) and f(b) now identical";
+            style = "dashed,rounded"; color = "#16A34A";
+            fontcolor = "#14532D"; bgcolor = "#DCFCE7";
+            a_f [label="f(·)", fillcolor="#F0FDF4"];
+        }
+        a_f -> a_a [lhead=cluster_a_qab, label=" child (shared)", color="#15803D", penwidth=1.8];
+    }
+
+    // The saturation step that connects the two snapshots.
+    b_a -> a_a [ltail=cluster_b_qa, lhead=cluster_a_qab,
+                style=dashed, color="#DC2626", penwidth=2.0, constraint=true,
+                label="  saturate: a → b  (record a ≈ b, prune nothing)  ",
+                fontcolor="#991B1B"];
+
+    // ───────────────────────────── legend ────────────────────────────────────
+    subgraph cluster_legend {
+        label = "legend"; fontsize = 12; style = "rounded"; color = "#CBD5E1"; margin = 10;
+        node [shape=box, style="filled,rounded", fontsize=11, width=2.0];
+        L_in   [label="input / leaf class",          fillcolor="#DBEAFE", color="#2563EB"];
+        L_str  [label="structural (applied) class",   fillcolor="#EDE9FE", color="#7C3AED"];
+        L_merge[label="saturation-merged class",       fillcolor="#DCFCE7", color="#16A34A"];
+        L_in -> L_str -> L_merge [style=invis];
+    }
+}

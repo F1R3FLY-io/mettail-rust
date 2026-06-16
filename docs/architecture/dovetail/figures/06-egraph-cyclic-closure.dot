@@ -1,0 +1,76 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  A CYCLIC e-graph, and why Dovetail's two answers to it differ.
+//
+//  egg convention (Willsey et al., POPL 2021, doi:10.1145/3434304):
+//    dashed box = e-class, solid box = e-node, edge = child-CLASS reference.
+//
+//  After a recursive rewrite  t ⟶ g(t)  saturates, the class q_t contains BOTH a
+//  base e-node `a` AND `g(·)` whose child is q_t ITSELF — a self-loop. The class
+//  is its own descendant: the e-graph is cyclic (it finitely represents the
+//  infinite family a, g(a), g(g(a)), …).
+//
+//  Dovetail gives this TWO different, both-correct answers:
+//    • INSIDE WEIGHT is EXACT — the loop is a semiring fixpoint
+//        inside(q_t) = w(a) ⊕ w(g) ⊗ inside(q_t)
+//      solved in closed form by Newton/Kleene-star SCC closure (rigail), NOT by
+//      unrolling. (InsideWeightSccClosure.v / NewtonSccAdequacy.v)
+//    • ENUMERATION is BOUNDED — best-first extraction must not unfold g(g(g(…)))
+//      forever, so it CUTS at the back-edge and reports `BoundedByCycleCut`,
+//      never a cycle-cut prefix mislabeled `Complete`. (CycleCutBoundary.v)
+//
+//  Render: dot -Tsvg 06-egraph-cyclic-closure.dot -o 06-egraph-cyclic-closure.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph EGraphCyclicClosure {
+    compound = true;
+    rankdir  = TB;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 16;
+    label = "A cyclic e-class: inside-weight stays EXACT (Newton-SCC fixpoint); enumeration is BOUNDED (cycle-cut)";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3];
+
+    // ───────────── the strongly-connected component (one self-looping class) ─────────────
+    subgraph cluster_scc {
+        label = "SCC of e-classes (here a single self-looping class)";
+        labeljust="l"; fontsize=12; fontcolor="#92400E";
+        style="dashed,rounded"; color="#D97706"; bgcolor="#FEF3C7"; penwidth=1.8; margin=18;
+
+        subgraph cluster_qt {
+            label = "q_t = { a, g(·) }   ◄ t ≈ g(t)";
+            labeljust="l"; fontsize=12; fontcolor="#5B21B6";
+            style="dashed,rounded"; color="#7C3AED"; bgcolor="#EDE9FE"; margin=12;
+            e_a [label="a  (base)", fillcolor="#DBEAFE", color="#2563EB"];
+            e_g [label="g(·)", fillcolor="#F5F3FF", color="#7C3AED"];
+        }
+        // the self-loop: g's child is q_t itself (the cycle / back-edge)
+        e_g -> e_a [lhead=cluster_qt, label="  child = q_t  (BACK-EDGE)  ",
+                    color="#DC2626", penwidth=2.2, constraint=false];
+    }
+
+    // ───────────── the two answers ─────────────
+    weight [shape=note, fillcolor="#DCFCE7", color="#16A34A", penwidth=1.6, fontsize=12,
+            label="① INSIDE WEIGHT — EXACT\l    inside(q_t) = w(a) ⊕ w(g) ⊗ inside(q_t)\l    closed-form fixpoint via Newton / Kleene-star\l    SCC closure (rigail). No unrolling.\l    ⇒ InsideWeightSccClosure.v\l"];
+
+    enum   [shape=note, fillcolor="#FEE2E2", color="#DC2626", penwidth=1.6, fontsize=12,
+            label="② ENUMERATION — BOUNDED\l    a, g(a), g(g(a)), … is infinite.\l    Best-first CUTS at the back-edge and\l    reports Extraction = BoundedByCycleCut,\l    never a cut prefix labeled Complete.\l    ⇒ CycleCutBoundary.v\l"];
+
+    e_a -> weight [ltail=cluster_scc, style=dashed, color="#16A34A", penwidth=1.5,
+                   label="  weight: solve the loop  "];
+    e_g -> enum   [ltail=cluster_scc, style=dashed, color="#DC2626", penwidth=1.5,
+                   label="  enumerate: cut the loop  "];
+
+    // ───────────── legend ─────────────
+    subgraph cluster_legend {
+        label="legend"; fontsize=11; style="rounded"; color="#CBD5E1"; margin=8;
+        node [shape=box, style="filled,rounded", fontsize=10, width=1.8];
+        Lbase [label="base / leaf e-node",  fillcolor="#DBEAFE", color="#2563EB"];
+        Lrec  [label="recursive e-node",     fillcolor="#F5F3FF", color="#7C3AED"];
+        Lscc  [label="SCC boundary",          fillcolor="#FEF3C7", color="#D97706"];
+        Lback [label="back-edge (cycle)",     fillcolor="#FEE2E2", color="#DC2626"];
+        Lbase -> Lrec -> Lscc -> Lback [style=invis];
+    }
+}

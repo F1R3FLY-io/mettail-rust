@@ -37,8 +37,9 @@ For implementers:
 4. [Extraction and Weights](05-extraction-and-weights.md)
 5. [Cyclic Closure and Boundedness](06-cyclic-closure-and-boundedness.md)
 6. [Runtime-Facing Reports](10-runtime-facing-reports.md)
-7. [Worked Example](09-worked-example.md)
-8. [Engineering Handoff](08-engineering-handoff.md)
+7. [Binder-Congruence Handler](11-binder-congruence-handler.md)
+8. [Worked Example](09-worked-example.md)
+9. [Engineering Handoff](08-engineering-handoff.md)
 
 For reviewers checking claims:
 
@@ -88,6 +89,7 @@ the e-graph or extractor internals.
 | [08 - Engineering Handoff](08-engineering-handoff.md) | What does another agent need to maintain or complete Dovetail independently? |
 | [09 - Worked Example](09-worked-example.md) | How does a small rewrite system move through e-graphing, saturation, extraction, and reporting? |
 | [10 - Runtime-Facing Reports](10-runtime-facing-reports.md) | What is a Dovetail report, why does a rewrite engine need one, and what may downstream runtimes rely on? |
+| [11 - Binder-Congruence Handler](11-binder-congruence-handler.md) | How does Dovetail evaluate Ambient's binders and freshness equations capture-safely (float-then-AC-reduce), and why is that in-engine rather than host-routed? |
 | [References](references.md) | Which local source, test, proof, and design artifacts support the suite? |
 
 ## Architecture at a Glance
@@ -105,8 +107,15 @@ SVG-capable tools installed. This suite uses:
 | Tool | Why it is used here |
 |---|---|
 | PlantUML | component, lifecycle, and frontier diagrams where named architecture elements are more useful than geometric precision |
-| Graphviz DOT | proof-dependency graphs, because graph layout should follow the actual dependency relation |
+| Graphviz DOT | (a) **e-graph term-DAGs** in the [egg convention](https://doi.org/10.1145/3434304) (dashed box = e-class, solid box = e-node, edge = child-class reference) — the engine's core data structure; (b) proof-dependency graphs; (c) capture-safety term trees — because in all three the layout should follow the actual graph relation |
 | SVG output | reviewable repository artifacts that render consistently in GitHub and browser-based documentation |
+
+The e-graph drawings — [`figures/03-egraph-term-dag.svg`](figures/03-egraph-term-dag.svg)
+(saturation + congruence), [`figures/04-egraph-ac-openrule.svg`](figures/04-egraph-ac-openrule.svg)
+(AC matching), and [`figures/11-capture-safety.svg`](figures/11-capture-safety.svg)
+(binder capture-safety) — use a consistent per-concept color legend: inputs/leaves
+blue, AC op-bags amber, constructors violet, saturation-merged results green,
+binders lilac, captured names red.
 
 Other installed tools remain useful for future packet layouts, timing diagrams,
 statistical plots, and publication figures, but they would add little signal to

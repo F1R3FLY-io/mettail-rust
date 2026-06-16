@@ -25,6 +25,8 @@ files that are versioned with the implementation and formal artifacts.
 - `dovetail/src/extract.rs`
 - `dovetail/src/report.rs`
 - `dovetail/src/space.rs`
+- `macros/src/gen/runtime/binder_congruence.rs` (Ambient binder NativeHandler codegen)
+- `macros/src/gen/runtime/dovetail_report.rs` (generated report compiler + handler install)
 
 ## Rust Tests
 
@@ -34,6 +36,11 @@ files that are versioned with the implementation and formal artifacts.
 - `dovetail/tests/corpus_replay.rs`
 - `dovetail/tests/language_inventory.rs`
 - `dovetail/tests/language_shape_parity.rs`
+- `dovetail/tests/ac_ambiguity.rs`, `dovetail/tests/ac_lowering_shape.rs` (in-engine AC matching)
+- `languages/tests/ambient_binder_handler.rs` (binder float capture-safety)
+- `languages/tests/ambient_dovetail_flip.rs` (the Ambient flip: Complete reports)
+- `languages/tests/fix_a_alpha_canonical_semantic_key.rs` (FIX-A α-canonical keys)
+- `languages/tests/rhocalc_dovetail_host_routed.rs` (gate excludes host-routed rhocalc)
 
 ## Formal Artifacts
 
@@ -50,6 +57,8 @@ files that are versioned with the implementation and formal artifacts.
 - `dovetail/formal/rocq/theories/Requirements/LanguageDefInventory.v`
 - `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v`
 - `dovetail/formal/rocq/theories/Lowering/PatternLoweringSoundness.v`
+- `dovetail/formal/rocq/theories/Lowering/AmbientBinderHandler.v` (binder capture-safety)
+- `dovetail/formal/rocq/theories/Lowering/CollectionAcLowering.v` (AC canonicalization soundness)
 - `dovetail/formal/rocq/theories/Refinement/RustModelBridge.v`
 - `dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v`
 - `dovetail/formal/rocq/theories/Refinement/RhoReportHandoff.v`
@@ -87,3 +96,29 @@ Esparza, Kiefer, and Luttenberger, "Computing the Least Fixed Point of Positive
 Polynomial Systems", arXiv: [1001.0340](https://arxiv.org/abs/1001.0340).
 Dovetail uses this as background for least fixed points of positive systems;
 local implementation use: `rigail::solve_scc_weights_newton`.
+
+### CARDELLI-GORDON-2000
+
+Cardelli and Gordon, "Mobile Ambients", Theoretical Computer Science 240(1),
+2000, DOI:
+[10.1016/S0304-3975(99)00231-5](https://doi.org/10.1016/S0304-3975(99)00231-5).
+The source calculus whose binder/freshness structural congruence the
+[Binder-Congruence Handler](11-binder-congruence-handler.md) discharges.
+
+### DEBRUIJN-1972
+
+de Bruijn, "Lambda calculus notation with nameless dummies, a tool for automatic
+formula manipulation, with application to the Church-Rosser theorem", Indagationes
+Mathematicae 34, 1972, DOI:
+[10.1016/1385-7258(72)90034-0](https://doi.org/10.1016/1385-7258(72)90034-0).
+The nameless-binder encoding behind FIX-A's α-canonical key (α-equivalent bodies
+become byte-identical); local use:
+[Data Model and Exact Keys](03-data-model-and-exact-keys.md#the-α-canonical-binder-key-fix-a).
+
+### PITTS-2003
+
+Pitts, "Nominal Logic, a First Order Theory of Names and Binding", Information and
+Computation 186(2), 2003, DOI:
+[10.1016/S0890-5401(03)00138-X](https://doi.org/10.1016/S0890-5401(03)00138-X).
+The freshness relation `x # t` and capture-avoidance reasoning the binder handler
+and `AmbientBinderHandler.v` use.

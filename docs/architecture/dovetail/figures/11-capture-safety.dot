@@ -1,0 +1,107 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  Capture-safety of the binder float — the witness from AmbientBinderHandler.v.
+//
+//  These are TERM TREES (not e-graphs): solid edge = subterm; a dashed box marks
+//  a binder's SCOPE; a name node is BLUE when free, RED when captured. Binders are
+//  LILAC. The point is purely about binding structure, so trees beat e-graphs here.
+//
+//  Redex:  open(a, new^a. 0)   — the OUTER `a` (open's name) is FREE; the inner
+//                                `new^a` binds a DIFFERENT, restricted `a`.
+//
+//  ✗ naive_float (reuse the binder `a`):  new^a. open(a, 0)
+//        the free `a` is now UNDER new^a's scope  →  CAPTURED.   (run_ascent's bug)
+//  ✓ float_prefix (freshen to `a'`):      new^a'. open(a, 0)
+//        a ≠ a', so the free `a` stays FREE.                     (the handler)
+//
+//  Render: dot -Tsvg 11-capture-safety.dot -o 11-capture-safety.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph CaptureSafety {
+    rankdir  = TB;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 17;
+    label = "Capture-safety: freshening the floated binder (a → a′) is what keeps the free name a free";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3, arrowsize=0.8];
+
+    // ─────────────────────────── ① the redex ────────────────────────────────
+    subgraph cluster_redex {
+        label = "① redex:  open(a, new^a. 0)";
+        labeljust="l"; fontsize=14; fontcolor="#0F172A";
+        style="rounded"; color="#94A3B8"; penwidth=1.6; margin=14;
+
+        r_open [label="open(·,·)", fillcolor="#EDE9FE", color="#7C3AED"];
+        r_a    [label="a  (free)", fillcolor="#DBEAFE", color="#2563EB"];
+        subgraph cluster_r_scope {
+            label="scope of new^a"; labeljust="l"; fontsize=10; fontcolor="#A21CAF";
+            style="dashed,rounded"; color="#C026D3"; bgcolor="#FAE8FF";
+            r_new [label="new^a", fillcolor="#FAE8FF", color="#A21CAF"];
+            r_0   [label="0", fillcolor="#F1F5F9", color="#64748B"];
+            r_new -> r_0 [label=" body"];
+        }
+        r_open -> r_a   [label=" name"];
+        r_open -> r_new [label=" body"];
+    }
+
+    // ────────────────────── ② naive float (✗ capture) ───────────────────────
+    subgraph cluster_naive {
+        label = "②  ✗ naive_float — reuse binder a:  new^a. open(a, 0)";
+        labeljust="l"; fontsize=14; fontcolor="#991B1B";
+        style="rounded"; color="#DC2626"; penwidth=1.8; margin=14;
+
+        subgraph cluster_n_scope {
+            label="scope of new^a  (now covers open's name)"; labeljust="l";
+            fontsize=10; fontcolor="#A21CAF";
+            style="dashed,rounded"; color="#C026D3"; bgcolor="#FAE8FF";
+            n_new  [label="new^a", fillcolor="#FAE8FF", color="#A21CAF"];
+            n_open [label="open(·,·)", fillcolor="#EDE9FE", color="#7C3AED"];
+            n_a    [label="a  (CAPTURED)", fillcolor="#FEE2E2", color="#DC2626", penwidth=1.8];
+            n_0    [label="0", fillcolor="#F1F5F9", color="#64748B"];
+            n_new  -> n_open [label=" body"];
+            n_open -> n_a    [label=" name", color="#DC2626", penwidth=1.7];
+            n_open -> n_0    [label=" body"];
+        }
+    }
+
+    // ────────────────────── ③ fresh float (✓ safe) ──────────────────────────
+    subgraph cluster_fresh {
+        label = "③  ✓ float_prefix — freshen to a′:  new^a′. open(a, 0)";
+        labeljust="l"; fontsize=14; fontcolor="#14532D";
+        style="rounded"; color="#16A34A"; penwidth=1.8; margin=14;
+
+        subgraph cluster_f_scope {
+            label="scope of new^a′  (binds a′, not a)"; labeljust="l";
+            fontsize=10; fontcolor="#A21CAF";
+            style="dashed,rounded"; color="#C026D3"; bgcolor="#FAE8FF";
+            f_new  [label="new^a′", fillcolor="#FAE8FF", color="#A21CAF"];
+            f_open [label="open(·,·)", fillcolor="#EDE9FE", color="#7C3AED"];
+            f_a    [label="a  (still free)", fillcolor="#DBEAFE", color="#2563EB", penwidth=1.8];
+            f_0    [label="0", fillcolor="#F1F5F9", color="#64748B"];
+            f_new  -> f_open [label=" body"];
+            f_open -> f_a    [label=" name", color="#16A34A", penwidth=1.7];
+            f_open -> f_0    [label=" body"];
+        }
+    }
+
+    // float transitions
+    r_open -> n_new [ltail=cluster_redex, lhead=cluster_naive, style=dashed,
+                     color="#DC2626", penwidth=1.6, constraint=false,
+                     label="  reuse a  ", fontcolor="#991B1B"];
+    r_open -> f_new [ltail=cluster_redex, lhead=cluster_fresh, style=dashed,
+                     color="#16A34A", penwidth=1.6, constraint=false,
+                     label="  unbind ⇒ a′ fresh  ", fontcolor="#14532D"];
+
+    // legend
+    subgraph cluster_legend {
+        label="legend"; fontsize=11; style="rounded"; color="#CBD5E1"; margin=8;
+        node [shape=box, style="filled,rounded", fontsize=10, width=1.7];
+        Lfree [label="free name",      fillcolor="#DBEAFE", color="#2563EB"];
+        Lcap  [label="captured name",  fillcolor="#FEE2E2", color="#DC2626"];
+        Lbind [label="binder (new)",   fillcolor="#FAE8FF", color="#A21CAF"];
+        Lctor [label="constructor",     fillcolor="#EDE9FE", color="#7C3AED"];
+        Lfree -> Lcap -> Lbind -> Lctor [style=invis];
+    }
+}

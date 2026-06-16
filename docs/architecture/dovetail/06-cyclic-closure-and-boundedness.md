@@ -8,6 +8,20 @@ Dovetail distinguishes two cyclic questions:
 The first is solved by SCC closure. The second is answered honestly through
 bounded extraction metadata.
 
+![Cyclic e-class: exact inside-weight via Newton-SCC, bounded enumeration via cycle-cut](figures/06-egraph-cyclic-closure.svg)
+
+Graphviz source: [figures/06-egraph-cyclic-closure.dot](figures/06-egraph-cyclic-closure.dot).
+
+The diagram shows why the two questions get *different* answers from the *same*
+cyclic e-class. After a recursive rewrite `t ⟶ g(t)` saturates, the class `q_t`
+holds both a base e-node `a` and `g(·)` whose child is `q_t` itself — a back-edge,
+so `q_t` is its own descendant (the e-graph finitely represents the infinite family
+`a, g(a), g(g(a)), …`). **Inside weight** is the semiring fixpoint
+`inside(q_t) = w(a) ⊕ w(g) ⊗ inside(q_t)`, solved in closed form by Newton/Kleene-star
+SCC closure — exact, no unrolling. **Enumeration** cannot unfold the loop forever,
+so best-first extraction cuts at the back-edge and reports `BoundedByCycleCut`
+rather than a cut prefix mislabeled `Complete`.
+
 ## Class Dependency Graph
 
 There is an edge from e-class `q` to e-class `c` when some e-node of `q` has

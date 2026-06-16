@@ -1,0 +1,109 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  Associative-commutative rewriting in the e-graph: Ambient's OpenRule.
+//
+//  egg convention (Willsey et al., POPL 2021, doi:10.1145/3434304):
+//    dashed box = e-class, solid box = e-node, edge = child-CLASS reference.
+//
+//  Redex:  { open(n, A) | n[B] | C }      — a par-bag of THREE members.
+//  Rule :  par⟦ open(N,P), N[Q], …rest ⟧ ⤳ par⟦ P, Q, …rest ⟧      (OpenRule)
+//
+//  The AcApp{op=par, fixed=[open(N,P), N[Q]], rest} pattern selects the size-2
+//  sub-multiset { open(n,A), n[B] }, binds  rest ↦ { C }  (a FRESH canonical
+//  par-node — the only e-graph mutation AC matching makes, budget-gated), and
+//  instantiates  par⟦ A, B ⟧ ⊎ rest = par⟦ A, B, C ⟧, which saturation MERGES
+//  into the redex class. The unselected member C flows through untouched.
+//
+//  Render: dot -Tsvg 04-egraph-ac-openrule.dot -o 04-egraph-ac-openrule.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph EGraphAcOpenRule {
+    compound = true;
+    rankdir  = LR;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 17;
+    label = "AC matching: OpenRule selects a sub-multiset, binds the rest-complement to a fresh canonical bag, and merges the result";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3];
+
+    // ───────── the parallel-composition (par) bag class — the redex ─────────
+    subgraph cluster_par {
+        label = "q_par : the parallel soup  { open(n,A) | n[B] | C }";
+        labeljust = "l"; fontsize = 13; fontcolor = "#92400E";
+        style = "dashed,rounded"; color = "#D97706"; bgcolor = "#FEF3C7"; margin = 14;
+
+        // Before: the redex e-node (amber = AC op-bag). After: the result e-node,
+        // both live in q_par because OpenRule MERGED them (equality added).
+        par_redex  [label="par⟦ ●, ●, ● ⟧\n(redex)", fillcolor="#FFFBEB", color="#D97706"];
+        par_result [label="par⟦ ●, ●, ● ⟧\n(result, merged)", fillcolor="#DCFCE7", color="#16A34A", penwidth=1.8];
+    }
+
+    // ───────── the three matched members (selected pair + the rest) ─────────
+    subgraph cluster_open {
+        label = "q_open  ◄ selected"; labeljust="l"; fontsize=12; fontcolor="#5B21B6";
+        style="dashed,rounded"; color="#7C3AED"; bgcolor="#EDE9FE"; margin=10;
+        e_open [label="open(·,·)", fillcolor="#F5F3FF"];
+    }
+    subgraph cluster_amb {
+        label = "q_amb  ◄ selected"; labeljust="l"; fontsize=12; fontcolor="#5B21B6";
+        style="dashed,rounded"; color="#7C3AED"; bgcolor="#EDE9FE"; margin=10;
+        e_amb [label="n[ · ]  (= amb(n, B))", fillcolor="#F5F3FF"];
+    }
+    subgraph cluster_C {
+        label = "q_C  ◄ unselected (the rest)"; labeljust="l"; fontsize=12; fontcolor="#1E3A8A";
+        style="dashed,rounded"; color="#2563EB"; bgcolor="#DBEAFE"; margin=10;
+        e_C [label="C", fillcolor="#EFF6FF"];
+    }
+
+    // ───────── the leaves shared by open and amb (note: same n) ─────────
+    subgraph cluster_n { label="q_n"; style="dashed,rounded"; color="#2563EB"; bgcolor="#DBEAFE";
+                         e_n [label="n", fillcolor="#EFF6FF"]; }
+    subgraph cluster_A { label="q_A"; style="dashed,rounded"; color="#2563EB"; bgcolor="#DBEAFE";
+                         e_A [label="A", fillcolor="#EFF6FF"]; }
+    subgraph cluster_B { label="q_B"; style="dashed,rounded"; color="#2563EB"; bgcolor="#DBEAFE";
+                         e_B [label="B", fillcolor="#EFF6FF"]; }
+
+    // ───────── the FRESH rest-complement node bound to `rest` ─────────
+    subgraph cluster_rest {
+        label = "q_rest : FRESH canonical bag  par⟦ C ⟧  (budget-gated)";
+        labeljust="l"; fontsize=12; fontcolor="#92400E";
+        style="dashed,rounded"; color="#D97706"; bgcolor="#FEF3C7"; margin=10;
+        e_rest [label="par⟦ ● ⟧", fillcolor="#FFFBEB", color="#D97706"];
+    }
+
+    // redex bag → its three members
+    par_redex -> e_open [lhead=cluster_open,  label=" member"];
+    par_redex -> e_amb  [lhead=cluster_amb,   label=" member"];
+    par_redex -> e_C    [lhead=cluster_C,     label=" member"];
+
+    // open(n,A) and n[B] share the name n (the non-linear N constraint)
+    e_open -> e_n [lhead=cluster_n, label=" N", color="#B91C1C", penwidth=1.6];
+    e_open -> e_A [lhead=cluster_A, label=" P"];
+    e_amb  -> e_n [lhead=cluster_n, label=" N", color="#B91C1C", penwidth=1.6];
+    e_amb  -> e_B [lhead=cluster_B, label=" Q"];
+
+    // the rest-complement node holds the unselected member C
+    e_rest -> e_C [lhead=cluster_C, label=" "];
+
+    // result bag → its members: P=A, Q=B, and the spliced rest {C}
+    par_result -> e_A    [lhead=cluster_A,    label=" P", color="#15803D", penwidth=1.6];
+    par_result -> e_B    [lhead=cluster_B,    label=" Q", color="#15803D", penwidth=1.6];
+    par_result -> e_rest [lhead=cluster_rest, label=" …rest (flattened)", color="#15803D", penwidth=1.6, style=dashed];
+
+    // the saturation equality that joins redex and result
+    par_redex -> par_result [label=" OpenRule fires:\l record redex ≈ result \l",
+                             color="#16A34A", penwidth=2.2, fontcolor="#14532D"];
+
+    // ───────── legend ─────────
+    subgraph cluster_legend {
+        label="legend"; fontsize=12; style="rounded"; color="#CBD5E1"; margin=10;
+        node [shape=box, style="filled,rounded", fontsize=10, width=2.2];
+        Lleaf [label="leaf / input class",       fillcolor="#DBEAFE", color="#2563EB"];
+        Lac   [label="AC op-bag (par) class",     fillcolor="#FEF3C7", color="#D97706"];
+        Lcons [label="constructor class",          fillcolor="#EDE9FE", color="#7C3AED"];
+        Lres  [label="reduced / merged result",    fillcolor="#DCFCE7", color="#16A34A"];
+        Lleaf -> Lac -> Lcons -> Lres [style=invis];
+    }
+}

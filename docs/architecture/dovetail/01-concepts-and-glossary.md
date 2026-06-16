@@ -9,8 +9,21 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | MeTTaIL | A language modeling system that defines syntax and rewrite semantics for object languages. |
 | `language!` | The MeTTaIL specification macro that declares categories, constructors, syntax, rewrites, native hooks, and metadata for a modeled language. |
 | Dovetail | The standalone MeTTaIL rewrite engine crate at `dovetail/`. |
-| rewrite rule | A data value with a left-hand pattern and right-hand pattern. |
-| guard | A predicate attached to a rule or term slot; it is evaluated over the match substitution and must fail with no derived fact when false. |
+| rewrite rule | A `RewriteRule<L>` data value: a left-hand `Pattern`, a right-hand `Pattern`, and an optional `label`. It has **no** guard or evidence field — a rule that reaches saturation is unconditional (see *guard*). |
+| guard | A predicate that conditions a language's rewrite. Guards are **discharged upstream** of Dovetail (in `mettail-rho-codegen`): a structural guard is folded into the LHS pattern shape, a behavioral guard routes the rule to the host (`RhoNativeJoin`) or a native handler, and an unclassifiable guard fails the flip closed. Dovetail's rule data therefore carries no guard to evaluate; the law `guard(σ)=false ⇒ no derived fact` is realized by *not lowering* the rule, not by an inline predicate call. |
+| disposition | The upstream classification of a rejected/guarded rule into how it is covered: `NativeHandler` (native fold), `RhoNativeJoin`/`RhoAstContract` (host RSpace), `DovetailCoreStructural` (e-graph congruence), in-engine `AcStructuralApply` (AC rewrite), or `ExternalContract` (evidence outside the generated contract). The flip gate is fail-closed: an `Unknown` disposition leaves a language un-flipped. |
+| AC (associative-commutative) operator | An operator whose children form an unordered multiset and nest flatly — parallel composition `\|`, a bag collection. `op⟦P,Q⟧ ≡ op⟦Q,P⟧` (commutative) and `op⟦P, op⟦Q,R⟧⟧ ≡ op⟦P,Q,R⟧` (associative). |
+| op-bag | An e-node whose label is an AC operator; its children are the multiset members. |
+| sub-multiset selection | A size-`k` multiset `s⋆ ⊆ b⋆` chosen from an op-bag `b⋆`; enumerated lazily by `lazy_ac_select` (one `k`-combination at a time, never all `C(m,k)` at once). |
+| rest complement | In `AcApp{op, fixed, rest}`, the multiset `b⋆ ⊖ s⋆` of unselected children; `rest` binds to a **fresh canonical** op-node over it (the only e-graph mutation AC matching makes, budget-gated). |
+| associative flattening | On instantiation, splicing any op-bag member into its parent op-bag so a result is one flat bag, not a bag-of-bags (`add_flattened_bag`). |
+| binder | A constructor that introduces a bound name with lexical scope — Ambient's `new(x, P)` binds `x` in `P`. Represented with the `moniker` crate's `Scope`/`Binder`/`FreeVar`. |
+| de-Bruijn index | A nameless representation of a bound variable as the count of binders between its use and its binder, making α-equivalent terms *identical* (de Bruijn 1972). The binder-congruence handler keys on de-Bruijn body shape. |
+| α-equivalence | Equality up to consistent renaming of bound names: `new(x, x[0]) ≈α new(y, y[0])`. |
+| capture-avoidance | Renaming a bound name so it cannot be accidentally captured when a term moves under another binder; realized here by `moniker` `unbind` (which freshens the bound name) before re-closing with `Scope::new`. |
+| freshness `x # t` | "`x` does not occur free in `t`" (Pitts' nominal-logic relation): the side condition under which a binder may float past a term. |
+| NativeHandler | A disposition (and the Ambient binder mechanism): a deterministic, capture-safe in-Rust transform — here, float `new`s outward then AC-reduce — installed as a language's `try_direct_eval`. |
+| binder-congruence handler | Ambient's `NativeHandler`: floats every `new` to the top (capture-safe), leaving a binder-free soup the AC rules reduce. Documented in [Binder-Congruence Handler](11-binder-congruence-handler.md). |
 | predicated type | A type-like language constraint expressed as a guard over values or patterns. Dovetail consumes predicated types as guarded rules and coverage obligations from generated inventory. |
 | structural predicated type | A guard whose truth is determined by constructor shape, exact keys, binding layout, AC decomposition, or other pattern structure. |
 | behavioral predicated type | A guard whose truth depends on a relation, theory, host operation, channel compatibility, or other behavior beyond immediate shape. |
@@ -97,6 +110,13 @@ The detailed contract is
 | `1̄` | Semiring one; identity for composition. |
 | `key(x)` | Exact content key of value `x`. |
 | `D(q)` | Set of derivations rooted at e-class `q`. |
+| `σ` | A substitution `variableName ↦ EClassId` (a match's bindings). |
+| `b⋆` | A multiset (bag) of e-class children, e.g. `⟦c₁, c₂, c₂⟧` — duplicates count, order does not. |
+| `s⋆ ⊆ b⋆` | `s⋆` is a sub-multiset of `b⋆`. |
+| `⊎`, `⊖` | Multiset union and difference. |
+| `x # t` | Freshness: name `x` does not occur free in term `t`. |
+| `≈α` | α-equivalence (equality up to renaming of bound names). |
+| `λ`-free / de-Bruijn body | A binder's body with bound names replaced by de-Bruijn indices, so α-equivalent bodies are byte-identical. |
 
 The WTA recurrence is:
 
