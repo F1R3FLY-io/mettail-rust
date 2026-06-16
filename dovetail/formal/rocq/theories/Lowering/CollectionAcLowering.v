@@ -430,7 +430,63 @@ Section AcSelection.
 End AcSelection.
 
 (* ════════════════════════════════════════════════════════════════════════ *)
-(*  Part C — Capability coverage (reuse, no new requirement constructor)      *)
+(*  Part C — Associative flattening (bag-of-bags ≡ flat bag)                   *)
+(* ════════════════════════════════════════════════════════════════════════ *)
+
+(* Part A is the COMMUTATIVE half of AC (canon over multisets). This is the
+   ASSOCIATIVE half: a constructed rewrite result that places a bag-valued
+   binding into a new bag — e.g. opening `n[B | C]` yields `A | (B | C)` — must
+   FLATTEN to one bag (`A | B | C`), matching the generated `normalize()`'s
+   iterative `insert_into_<bag>`. The engine's `add_flattened_bag` peels every
+   same-`op` layer; `bflatten` models that peel and is proven (i) an exact,
+   multiplicity-preserving inlining (`bflatten_splice`, an equality) and (ii)
+   stable under the Part-A canonicalization, so a re-associated result lowers to
+   the SAME canonical bag key. *)
+Section AcAssociativeFlatten.
+
+  (* One constructed AC result member: a `BLeaf` is a non-`op` member kept
+     intact; a `BBag` is a nested same-`op` collection whose members splice into
+     the parent. *)
+  Inductive btree : Type :=
+    | BLeaf : nat -> btree
+    | BBag  : list btree -> btree.
+
+  (* Peel every `BBag` layer to the flat multiset (list) of leaves — exactly the
+     engine's iterative `add_flattened_bag`. `flat_map` preserves each
+     occurrence, so multiplicity is exact by construction. *)
+  Fixpoint bflatten (t : btree) : list nat :=
+    match t with
+    | BLeaf n => n :: nil
+    | BBag cs => flat_map bflatten cs
+    end.
+
+  (* Splicing a nested bag member inlines its leaves: the flat leaf-list is the
+     SAME whether that member stays nested (`BBag ys` in place) or is spliced
+     (`ys` inlined). An EQUALITY, so multiplicity is preserved exactly — a bag
+     spliced as two siblings contributes its leaves twice. This is the
+     associativity the engine's flatten relies on. *)
+  Lemma bflatten_splice : forall (xs ys zs : list btree),
+    bflatten (BBag (xs ++ BBag ys :: zs)) = bflatten (BBag (xs ++ ys ++ zs)).
+  Proof.
+    intros xs ys zs.
+    cbn [bflatten].
+    rewrite !flat_map_app.
+    reflexivity.
+  Qed.
+
+  (* Flattening then canonicalizing (Part A) is invariant under re-association:
+     a re-associated result lowers to the SAME canonical bag key. *)
+  Theorem flatten_canon_assoc_invariant : forall (xs ys zs : list btree),
+    canon (bflatten (BBag (xs ++ BBag ys :: zs)))
+    = canon (bflatten (BBag (xs ++ ys ++ zs))).
+  Proof.
+    intros xs ys zs. f_equal. apply bflatten_splice.
+  Qed.
+
+End AcAssociativeFlatten.
+
+(* ════════════════════════════════════════════════════════════════════════ *)
+(*  Part D — Capability coverage (reuse, no new requirement constructor)      *)
 (* ════════════════════════════════════════════════════════════════════════ *)
 
 Section AcLoweringCoverage.

@@ -7,7 +7,7 @@
 //! best-first. **Nothing is pruned during saturation**; node and iteration
 //! limits are explicit [`SaturationOutcome`] values, never silent.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::key::SemanticHash;
@@ -387,6 +387,59 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         self.try_add_with_budget(ENode::new(op, sorted))
     }
 
+    /// Add a canonical n-ary `op` bag, FLATTENING any child that is itself an
+    /// `op`-bag — the ASSOCIATIVE half of AC: `op{P, op{Q, R}} ≡ op{P, Q, R}`.
+    /// A constructed rewrite result is thus one flat bag (matching the generated
+    /// `normalize()`'s iterative `insert_into_<bag>`), not a bag-of-bags.
+    ///
+    /// Only constructed RESULTS are flattened here; seeds keep their parsed
+    /// structure (the grammar already parses `{p | p | ...}` as a flat bag, so
+    /// seeds carry no same-`op` nesting to peel — only a rewrite that places a
+    /// bag-valued binding into a new bag introduces a layer).
+    ///
+    /// Iterative work-stack (no recursion, so deep nesting cannot overflow the
+    /// call stack). MULTIPLICITY-preserving: a bag class spliced as two distinct
+    /// siblings flattens twice (`op{op{B}, op{B}} ⇒ op{B, B}`). CYCLE-guarded by
+    /// a per-splice-path ancestor set: a class reachable as its own splice
+    /// ancestor — which a terminating rewrite never produces (RHS bag members are
+    /// proper subterms), but the generic e-graph could after merges — is kept as
+    /// a leaf rather than looping. A class is a bag iff it carries an `op`-labeled
+    /// node, the same interpretation the matcher and the `rest` splice use.
+    fn add_flattened_bag(&mut self, op: L, children: &[EClassId]) -> Option<EClassId> {
+        let mut flat: Vec<EClassId> = Vec::with_capacity(children.len());
+        // (class to place, the set of bag classes whose splice is in progress
+        // strictly above it on this path). Pushed in reverse for a stable
+        // left-to-right splice order (the final canonical sort makes order
+        // irrelevant, but determinism aids debugging).
+        let mut stack: Vec<(EClassId, HashSet<EClassId>)> = children
+            .iter()
+            .rev()
+            .map(|&c| (self.find(c), HashSet::new()))
+            .collect();
+        while let Some((class, ancestors)) = stack.pop() {
+            let class = self.find(class);
+            let bag_children: Option<Vec<EClassId>> = if ancestors.contains(&class) {
+                None // cycle on this path: keep as a leaf, do not expand.
+            } else {
+                self.nodes(class)
+                    .iter()
+                    .find(|n| n.op == op)
+                    .map(|n| n.children.iter().map(|&c| self.find(c)).collect())
+            };
+            match bag_children {
+                Some(grandchildren) => {
+                    let mut child_ancestors = ancestors.clone();
+                    child_ancestors.insert(class);
+                    for &gc in grandchildren.iter().rev() {
+                        stack.push((self.find(gc), child_ancestors.clone()));
+                    }
+                },
+                None => flat.push(class),
+            }
+        }
+        self.add_canonical_bag(op, &flat)
+    }
+
     fn rhs_vars_bound(pattern: &Pattern<L>, subst: &Subst) -> bool {
         match pattern {
             Pattern::Var(name) => subst.contains_key(name),
@@ -412,27 +465,22 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                 self.try_add_with_budget(ENode::new(op.clone(), children))
             },
             Pattern::AcApp { op, fixed, rest } => {
-                // Build the result bag: each `fixed` pattern instantiated, then
-                // the bound `rest` complement's elements FLATTENED in (so the
-                // result is one bag, not a bag-of-bags). The children are sorted
-                // by canonical key (the canonical bag order) by add_canonical_bag.
-                let mut children = Vec::with_capacity(fixed.len());
+                // Build the result bag from the instantiated `fixed` patterns plus
+                // the bound `rest` complement, then FLATTEN: any member that is
+                // itself an `op`-bag is spliced in (associativity), so the result
+                // is one flat canonical bag, not a bag-of-bags. This covers both
+                // the complement (always an `op`-bag) and any `fixed` pattern that
+                // instantiates to a parallel composition — e.g. opening `n[B | C]`
+                // binds the ambient body to the bag `{B, C}`, which must merge
+                // into the surrounding parallel rather than nest.
+                let mut children = Vec::with_capacity(fixed.len() + 1);
                 for f in fixed {
                     children.push(self.instantiate(f, subst)?);
                 }
                 if let Some(name) = rest {
-                    let comp_id = self.find(*subst.get(name)?);
-                    // The complement was bound to an `op`-bag node during
-                    // matching; splice in its (current canonical) children.
-                    let comp_children: Vec<EClassId> = self
-                        .nodes(comp_id)
-                        .iter()
-                        .find(|n| n.op == *op)
-                        .map(|n| n.children.iter().map(|&c| self.find(c)).collect())
-                        .unwrap_or_default();
-                    children.extend(comp_children);
+                    children.push(self.find(*subst.get(name)?));
                 }
-                self.add_canonical_bag(op.clone(), &children)
+                self.add_flattened_bag(op.clone(), &children)
             },
         }
     }
@@ -1005,5 +1053,67 @@ mod tests {
         // equivalent to `par` unless the rule had fired.)
         let expected = eg.add(ENode::new("par".into(), expected_children));
         assert!(!eg.equiv(par, expected), "n ≠ m: open|amb must not reduce");
+    }
+
+    #[test]
+    fn ac_open_rule_flattens_nested_ambient_body() {
+        // Associativity: open(n, A) | n[ B | C ] ~> A | B | C  (ONE flat bag),
+        // NOT A | (B | C) (a bag-of-bags). The ambient body is itself a `par`
+        // bag, so opening it must SPLICE its members into the surrounding
+        // parallel — the associative half of AC. Without `add_flattened_bag`
+        // the redex would instead reduce to the nested `par{A, par{B,C}}`.
+        let mut eg = EGraph::<String>::new();
+        let n = eg.add(ENode::leaf("n".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let vc = eg.add(ENode::leaf("C".into()));
+        // The ambient body is itself a `par` bag { B, C }.
+        let mut body_bag = vec![vb, vc];
+        body_bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let body = eg.add(ENode::new("par".into(), body_bag));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![n, body]));
+        let mut bag = vec![open, amb];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+
+        let rule = RewriteRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                ],
+                Some("rest".into()),
+            ),
+            rhs: Pattern::ac(
+                "par".into(),
+                vec![Pattern::var("P"), Pattern::var("Q")],
+                Some("rest".into()),
+            ),
+            label: Some("OpenRule".into()),
+        };
+        let rep = eg.saturate(&[rule], 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+
+        // The FLAT result par{A, B, C} must be equivalent to the redex.
+        let mut flat = vec![eg.find(va), eg.find(vb), eg.find(vc)];
+        flat.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let expected_flat = eg.add(ENode::new("par".into(), flat));
+        assert!(
+            eg.equiv(par, expected_flat),
+            "open(n,A) | n[B|C] ~> A | B | C (one flat bag)"
+        );
+
+        // The NESTED bag-of-bags par{A, par{B,C}} must NOT be the result: it has
+        // a distinct canonical key, so associativity must have flattened it away.
+        let mut nested = vec![eg.find(va), eg.find(body)];
+        nested.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let nested_node = eg.add(ENode::new("par".into(), nested));
+        assert!(
+            !eg.equiv(par, nested_node),
+            "the result must be flat, never a nested bag-of-bags"
+        );
     }
 }
