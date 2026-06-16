@@ -18,11 +18,19 @@ diagram-rich, citation-verified standard. Derived from a full code-grounded surv
   `03-egraph-term-dag` (saturation+congruence), `04-egraph-ac-openrule` (AC),
   `06-egraph-cyclic-closure` (Newton-SCC vs cycle-cut), `11-capture-safety` (binder).
   All render + well-formed + embedded. The 5th (base hashconsing) is subsumed by 03.
-- **REMAINING**: Phase 3 (de-stale `00-executive-brief`, `02-engine-architecture`,
-  `00-requirements-traceability`, README framing — the "inert/no caller" + Ambient
-  "fails-closed" lines), Phase 4 (rho-native-integration suite reconciliation),
-  Phase 5 (actor/lane redraws of `02-engine-lifecycle`/`05-extraction-frontier`/`README`
-  + the `float→AC` swimlane + disposition decision tree; render + validate).
+- **Phase 3 — DONE** (commit `029a93b9`). De-staled `00-executive-brief` (installed
+  production backend, not inert M-E.0), `02-engine-architecture` ("Inert Milestone"
+  → "Installation Status"), `10-runtime-facing-reports` (AC parallel-bag carve-out),
+  `ambient-binder/README` (status banner → COMPLETE).
+- **Phase 4 — DONE** (commit `029a93b9`). Rho suite `07-verification-and-rollout`
+  "Current Verified Base: M-RHO.0" → "advanced through the P-series" + a NEW
+  per-language flip-status table. Rholang-code illustration already present (doc 04).
+- **Phase 5 — DONE** (commit `1dffd8f3`). `02-engine-lifecycle` redrawn with owner
+  swimlanes; NEW `11-binder-float-ac-swimlane`, `04-disposition-decision-tree`,
+  `05-extraction-sequence`. PlantUML deprecated-prefix + math-symbol fixes.
+- **ALL FIVE PHASES COMPLETE.** Both suite `validate.sh` pass; 7 new figures + the
+  lifecycle redraw. Optional future: richer README component actors; an end-to-end
+  `MeTTaIL→Dovetail→Rho` actor sequence in the rho suite.
 
 ## The headline gap
 The **Ambient binder NativeHandler (Inc 0–4), FIX-A alpha-canonical keys, the in-engine AC matcher,
