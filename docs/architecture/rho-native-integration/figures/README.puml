@@ -1,5 +1,5 @@
 @startuml
-title Rho-Native MeTTaIL Integration — Component View
+title Rho-Native MeTTaIL Integration — Component View (actors named by owning crate)
 
 skinparam backgroundColor #FEFEFE
 skinparam componentStyle rectangle
@@ -18,33 +18,39 @@ rectangle "MeTTaIL\nlanguage frontend" as M #DBEAFE {
   component "Bootstrapped\nRholang model" as RhoModel #93C5FD
 }
 
-rectangle "Dovetail\nrewrite semantics" as D #DCFCE7 {
-  component "SemanticHash\nexact keys" as Keys #BBF7D0
-  component "E-graph + facts" as EGraph #BBF7D0
-  component "Saturation\nwith outcomes" as Saturation #BBF7D0
-  component "Checked extraction\nand run report" as Report #BBF7D0
+rectangle "Dovetail rewrite semantics\n`dovetail` + `rigail`" as D #DCFCE7 {
+  component "SemanticHash\nexact keys · `key`" as Keys #BBF7D0
+  component "E-graph + facts\n`egraph`" as EGraph #BBF7D0
+  component "Saturation\nwith outcomes · `rules`" as Saturation #BBF7D0
+  component "Checked extraction\nand run report · `extract`" as Report #BBF7D0
 }
 
-rectangle "Rho backend\ncompile-time bridge" as B #FEF3C7 {
+rectangle "Rho compile-time bridge\n`mettail-rho-codegen`" as B #FEF3C7 {
   component "RhoNet IR" as RhoNet #FDE68A
   component "Guard + native\nhandler classifier" as Guards #FDE68A
   component "rhoapi::Par\nAST builder" as AstBuilder #FDE68A
+  component "Flip gate + audit\n(coverage / deadlock)" as Gate #FDE68A
   component "Bytecode-ready\nartifact boundary" as Artifact #CCFBF1
-  component "Oracle harness" as Oracle #FDE68A
 }
 
-rectangle "F1r3node / Rholang\nruntime substrate" as F #FCE7F3 {
+rectangle "Rho runtime binding\n(MeTTaIL side)" as R #FBCFE8 {
+  component "RhoBackend seam +\ninstallers · `mettail-rho-runtime`" as Seam #FBCFE8
+  component "Differential oracle\nvs Ascent · `mettail-rho-runtime`" as Oracle #FBCFE8
+  component "Direct Dovetail path\n`mettail-dovetail-runtime`" as DirectPath #FBCFE8
+  component "OSLF cost / funding\n`mettail-rho-adapter`" as Cost #FBCFE8
+}
+
+rectangle "F1r3node / Rholang\nruntime substrate (external)" as F #FCE7F3 {
   component "RhoRuntime" as Runtime #FBCFE8
   component "RSpace" as RSpace #FBCFE8
   component "COMM scheduler\nand event log" as Scheduler #FBCFE8
   component "Replay + checkpoints" as Replay #FBCFE8
-  component "Cost / funding" as Cost #FBCFE8
+  component "Funding gate" as Funding #FBCFE8
 }
 
 rectangle "Verification + rollout\nevidence" as V #EDE9FE {
   component "Formal proof suite" as Formal #DDD6FE
   component "Differential reports" as Diff #DDD6FE
-  component "Flip gate\nchecked gates" as Gate #DDD6FE
 }
 
 Parser --> AST : parsed terms
@@ -58,13 +64,16 @@ Saturation --> Report : complete or bounded report
 Report --> RhoNet : supported rewrite network
 RhoNet --> Guards : join + guard plan
 Guards --> AstBuilder : guarded contracts
-AstBuilder --> Artifact : normalized Rholang AST (`Par`)
-Artifact --> Runtime : direct AST injection
+AstBuilder --> Gate : flip eligibility check
+Gate --> Artifact : accepted plan only
+Artifact --> Seam : normalized Rholang AST (`Par`)
+Report --> DirectPath : RuntimeBackend::Dovetail
+Seam --> Runtime : direct AST injection
 Runtime --> RSpace : produce / consume / join
 RSpace --> Scheduler : enabled COMM events
 Scheduler --> RSpace : parallel continuations
 Scheduler --> Replay : event log
-Runtime --> Cost : funded execution
+Cost --> Funding : OSLF demand / is-funded
 RSpace --> Oracle : resting-space facts
 Report --> Oracle : Dovetail reference facts
 Oracle --> Diff : observed equivalence
@@ -74,11 +83,12 @@ Diff --> Gate : oracle parity evidence
 Gate --> Metadata : Rho backend default eligibility
 
 legend right
-|= Area |= Role |
+|= Area |= Owning crate(s) |
 |<#DBEAFE> MeTTaIL | parser, typed terms, metadata |
-|<#DCFCE7> Dovetail | rewrite semantics and checked reports |
-|<#FEF3C7> Rho backend | RhoNet lowering and AST artifact |
-|<#FCE7F3> F1r3node | RhoRuntime, RSpace, scheduler |
-|<#EDE9FE> Evidence | proofs, oracle reports, flip gates |
+|<#DCFCE7> Dovetail | `dovetail` + `rigail` |
+|<#FEF3C7> Rho compile-time | `mettail-rho-codegen` |
+|<#FBCFE8> Rho runtime binding | `mettail-rho-runtime`, `-dovetail-runtime`, `-adapter` |
+|<#FCE7F3> F1r3node | RhoRuntime, RSpace, scheduler (external) |
+|<#EDE9FE> Evidence | proofs + oracle reports |
 endlegend
 @enduml

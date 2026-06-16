@@ -38,8 +38,8 @@ rectangle "Proof Boundary" as Proof #EDE9FE {
 }
 
 rectangle "Consumers" as Consumers #FCE7F3 {
-  rectangle "Rho backend\nrhoapi::Par lowering" as Rho #FBCFE8
-  rectangle "Ascent oracle\nexact-key comparison" as Oracle #FBCFE8
+  rectangle "Rho backend\n`mettail-rho-codegen`" as Rho #FBCFE8
+  rectangle "Differential oracle\nvs legacy Ascent · `mettail-rho-runtime`" as Oracle #FBCFE8
   rectangle "Tests and tools\nedge inspection" as Tools #FBCFE8
 }
 

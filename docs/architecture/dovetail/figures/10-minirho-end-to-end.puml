@@ -27,12 +27,12 @@ rectangle "Runtime Snippet Path" as RuntimePath #DCFCE7 {
 }
 
 rectangle "Direct Dovetail Runtime Path" as DirectPath #E0F2FE {
-  rectangle "Dovetail runtime adapter\nreport projection" as DirectAdapter #BAE6FD
+  rectangle "Dovetail runtime adapter\n`mettail-dovetail-runtime`" as DirectAdapter #BAE6FD
   rectangle "RuntimeBackendOutput::Dovetail\nreport-shaped result" as DirectOutput #CFFAFE
 }
 
 rectangle "Rho Runtime Path" as RhoPath #FCE7F3 {
-  rectangle "Rho backend lowerer\ncomplete reports only" as Lowerer #FBCFE8
+  rectangle "Rho backend lowerer\n`mettail-rho-codegen`" as Lowerer #FBCFE8
   rectangle "rhoapi::Par\nnormalized AST artifact" as Par #FDE68A
   rectangle "F1r3node RhoRuntime\nRSpace COMM scheduling" as Runtime #FBCFE8
   rectangle "RuntimeBackendReport\nobserved values and evidence" as RuntimeReport #EDE9FE

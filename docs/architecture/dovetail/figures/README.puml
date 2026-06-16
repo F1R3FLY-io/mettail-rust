@@ -27,7 +27,7 @@ rectangle "Dovetail core" as Core #DCFCE7 {
   component "Run report\nwith completeness" as Report #BBF7D0
 }
 
-rectangle "Algebra" as Algebra #FEF3C7 {
+rectangle "Weight algebra\n`rigail`" as Algebra #FEF3C7 {
   component "Semiring weights" as Weights #FDE68A
   component "Newton-SCC solver" as Newton #FDE68A
   component "Monotone best order" as Order #FDE68A
@@ -39,8 +39,9 @@ rectangle "Evidence" as Evidence #EDE9FE {
 }
 
 rectangle "Consumers" as Consumers #FCE7F3 {
-  component "Differential oracle" as Oracle #FBCFE8
-  component "Rho backend" as Rho #FBCFE8
+  component "Direct Dovetail path\n`mettail-dovetail-runtime`" as Direct #FBCFE8
+  component "Differential oracle\n`mettail-rho-runtime`" as Oracle #FBCFE8
+  component "Rho backend\n`mettail-rho-codegen`" as Rho #FBCFE8
   component "Local tooling" as Tooling #FBCFE8
 }
 
@@ -59,6 +60,7 @@ Extractor --> Report : checked derivations
 Saturation --> Report : convergence or bound outcome
 Report --> Formal : proof obligations
 Report --> Tests : executable evidence
+Report --> Direct : RuntimeBackend::Dovetail
 Report --> Oracle
 Report --> Rho
 Report --> Tooling
@@ -67,8 +69,8 @@ legend right
 |= Area |= Role |
 |<#DBEAFE> Inputs | typed terms, rules, weights, bounds |
 |<#DCFCE7> Dovetail core | exact keys, e-graph, saturation, extraction |
-|<#FEF3C7> Algebra | semiring, SCC, and best-order support |
+|<#FEF3C7> Algebra | `rigail` — semiring, SCC, best-order support |
 |<#EDE9FE> Evidence | formal models and tests |
-|<#FCE7F3> Consumers | oracle, Rho backend, local tooling |
+|<#FCE7F3> Consumers | `mettail-dovetail-runtime`, oracle, Rho backend, tooling |
 endlegend
 @enduml

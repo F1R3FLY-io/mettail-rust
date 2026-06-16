@@ -14,7 +14,7 @@ skinparam sequence {
 actor "Caller" as caller #DBEAFE
 participant "Extractor\n`kth(q, k)`" as ex #FBCFE8
 participant "ClassState[root q]" as root #FEF3C7
-participant "min-heap\n(frontier)" as heap #DCFCE7
+participant "root.cand\nper-class min-heap" as heap #DCFCE7
 participant "ClassState[child c]" as child #FDE68A
 
 caller -> ex : kth(q, k)  — ask for the k-th best
