@@ -136,6 +136,27 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     let var_inference_impl =
         spill_and_include(&lang_name, "var_inference", generate_var_category_inference(language));
 
+    // Binder-congruence NativeHandler (Inc 1) — emitted only for host-less
+    // languages with structural-congruence equations (e.g. Ambient); a no-op
+    // (empty TokenStream) otherwise. Combines the float (`impl Cat`) with the
+    // term-level wrapper (`impl {Name}TermInner`).
+    let binder_congruence_impl = {
+        let inner_enum = quote::format_ident!("{}TermInner", language.name);
+        let float = runtime::binder_congruence::generate_binder_congruence(language);
+        let wrapper = runtime::binder_congruence::generate_binder_congruence_term_wrapper(
+            language,
+            &inner_enum,
+        );
+        spill_and_include(
+            &lang_name,
+            "binder_congruence",
+            quote! {
+                #float
+                #wrapper
+            },
+        )
+    };
+
     // Parser code: PraTTaIL (inline) — also captures pipeline analysis.
     // The parser output is large (DFA tables, parse fns per category); spill it.
     let (parser_code, pipeline_analysis) = {
@@ -190,6 +211,8 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #guard_codegen_impl
 
         #var_inference_impl
+
+        #binder_congruence_impl
 
         #parser_code
     };

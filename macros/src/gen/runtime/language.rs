@@ -3977,7 +3977,20 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
     let try_direct_eval_method: TokenStream = if try_direct_eval_arms.is_empty() {
-        quote! {}
+        // No native-type direct eval. For a host-less language with structural-
+        // congruence equations (e.g. Ambient), emit the binder-congruence
+        // NativeHandler (Inc 1): float `new`s outward to a capture-safe NF.
+        if crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language) {
+            quote! {
+                fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
+                    let typed_term = term.as_any().downcast_ref::<#term_name>()?;
+                    let progressed = typed_term.0.binder_congruence_nf_term()?;
+                    Some(Box::new(#term_name(progressed)))
+                }
+            }
+        } else {
+            quote! {}
+        }
     } else {
         quote! {
             fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
