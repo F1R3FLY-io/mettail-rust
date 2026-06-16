@@ -23,8 +23,8 @@ diagram-rich, citation-verified standard. Derived from a full code-grounded surv
   → "Installation Status"), `10-runtime-facing-reports` (AC parallel-bag carve-out),
   `ambient-binder/README` (status banner → COMPLETE).
 - **Phase 4 — DONE** (commit `029a93b9`). Rho suite `07-verification-and-rollout`
-  "Current Verified Base: M-RHO.0" → "advanced through the P-series" + a NEW
-  per-language flip-status table. Rholang-code illustration already present (doc 04).
+  retitled from "Current Verified Base: M-RHO.0" to "advanced through the P-series",
+  plus a NEW per-language flip-status table. Rholang-code already present (doc 04).
 - **Phase 5 — DONE** (commit `1dffd8f3`). `02-engine-lifecycle` redrawn with owner
   swimlanes; NEW `11-binder-float-ac-swimlane`, `04-disposition-decision-tree`,
   `05-extraction-sequence`. PlantUML deprecated-prefix + math-symbol fixes.
