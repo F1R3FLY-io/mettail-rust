@@ -16,9 +16,19 @@
 //! `6d20b82d`): [`RhoGuardQuality::MachineCheckedModel`] is a quality *class*,
 //! never a `RocqLemmaRef` carried in `LanguageDef` identity or runtime data.
 //!
-//! Wiring status: **inert** (M6.0). The classifier and types are built and
-//! tested here but are not yet consumed by the coverage gate; M6.1 attaches the
-//! quality to emitted dispositions and lets the gate observe `Unknown`.
+//! Wiring status: **live**. [`crate::backend::plan_rho_default_backend`] derives
+//! these qualities for a language's covered guard obligations
+//! ([`derive_guard_qualities`]), carries them on the
+//! [`RhoDefaultBackendPlan`](crate::backend::RhoDefaultBackendPlan) as
+//! observability, and folds a fail-closed
+//! [`RhoFlipBlocker::GuardQuality`](crate::flip::RhoFlipBlocker::GuardQuality)
+//! into the flip gate for any obligation whose quality
+//! [`refuses_production_default`](RhoGuardQuality::refuses_production_default)
+//! (i.e. `Unknown`) — enforcing doc-08's "`Unknown` quality ⇒ production-default
+//! refused". The Rocq gate model
+//! `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v` proves the necessity
+//! of the `Unknown` blocker and composes with the M7 mixed-guard soundness
+//! theorem (`RhoGuardedCommSoundness.v`).
 
 use mettail_ast::language::LanguageDef;
 
@@ -146,9 +156,11 @@ impl RhoGuardQuality {
 
 /// An existing [`RhoGuardDisposition`](crate::backend::RhoGuardDisposition)
 /// paired with its substrate quality tag — the substrate's per-obligation
-/// output. (Held separately from `RhoGuardDisposition` so the live coverage gate
-/// is untouched at M6.0; M6.1 threads the quality through the disposition
-/// planner.)
+/// output. Held alongside (not merged into) `RhoGuardDisposition` so the
+/// coverage gate keeps checking the disposition MECHANISM while the planner
+/// folds the orthogonal QUALITY axis into the flip gate
+/// ([`crate::backend::guard_quality_blockers_for`]) and carries it on the plan
+/// as diagnostic observability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhoGuardDispositionQuality {
     /// The obligation id this classifies (mirrors `RhoGuardDisposition::obligation`).
@@ -319,7 +331,8 @@ mod tests {
         assert_eq!(dq.quality, Q::BoundedDecidable);
     }
 
-    // ── M6.1 wiring: default classification + coverage-matrix consistency ────
+    // ── Live wiring: default classification + coverage-matrix consistency ────
+    // (consumed by `backend::plan_rho_default_backend` via the flip gate).
 
     use crate::backend::{guard_disposition_covers, RhoGuardObligationKind};
 

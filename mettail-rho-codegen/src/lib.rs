@@ -550,6 +550,7 @@ mod tests {
                 artifact_validated: true,
             },
             &out.deadlock_report,
+            Vec::new(),
         );
 
         assert!(

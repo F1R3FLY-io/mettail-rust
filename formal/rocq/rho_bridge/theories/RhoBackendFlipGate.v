@@ -6,11 +6,24 @@
  * static channel deadlocks.  Proof/oracle attribution lives in formal
  * commentary and CI, not in runtime gate data.
  *
+ * The second section (`RhoGuardQualityGate`) models the predicate-substrate
+ * QUALITY axis wired into the gate by `mettail-rho-codegen/src/backend.rs`:
+ * each covered guard obligation carries a `RhoGuardQuality`, and an `Unknown`
+ * quality (the only one that `refuses_production_default`) contributes a
+ * fail-closed `RhoFlipBlocker::GuardQuality`.  It COMPOSES with the M7 mixed-
+ * guard soundness theorem (`RhoGuardedCommSoundness.v`) — cited, not re-proved —
+ * to show that a flip-eligible (Unknown-free) plan licenses exactly the case in
+ * which a fired guarded Comm satisfies the true guard.
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
 From Stdlib Require Import Bool.
 From Stdlib Require Import PeanoNat.
+From Stdlib Require Import List.
+From RhoBridge Require Import RhoGuardedCommSoundness.
+
+Import ListNotations.
 
 Section RhoBackendFlipGate.
 
@@ -394,3 +407,192 @@ Section RhoBackendFlipGate.
   Qed.
 
 End RhoBackendFlipGate.
+
+(* ──────────────────────────────────────────────────────────────────────────
+ * RhoGuardQualityGate: the predicate-substrate QUALITY axis of the flip gate.
+ *
+ * Rust mirror: `mettail-rho-codegen/src/{guard_quality,flip,backend}.rs`.
+ *   - `RhoGuardQuality` (the documented 7-value vocabulary);
+ *   - `RhoGuardQuality::refuses_production_default` = `Unknown`-only;
+ *   - `RhoFlipBlocker::GuardQuality { obligation, quality }`, one per covered
+ *     obligation whose quality refuses production-default lowering;
+ *   - `decide_rho_flip` folds those blockers into the gate.
+ * ────────────────────────────────────────────────────────────────────────── *)
+Section RhoGuardQualityGate.
+
+  (* The documented 7-value guard-quality vocabulary (docs §04 / Rust
+     `RhoGuardQuality`).  Only `Unknown` is fail-closed. *)
+  Inductive RhoGuardQuality : Type :=
+    | ExactDecidable
+    | BoundedDecidable
+    | RejectSafeApprox
+    | TrustedNativeGuard
+    | MachineCheckedModel
+    | RuntimeObservation
+    | Unknown.
+
+  (* Faithful image of `RhoGuardQuality::refuses_production_default`: the gate
+     must refuse production-default lowering for exactly `Unknown`. *)
+  Definition refuses_production_default (q : RhoGuardQuality) : bool :=
+    match q with
+    | Unknown => true
+    | _ => false
+    end.
+
+  Theorem refuses_production_default_iff_unknown : forall q,
+    refuses_production_default q = true <-> q = Unknown.
+  Proof.
+    intro q. destruct q; simpl; split; intro H;
+      solve [ reflexivity | discriminate H ].
+  Qed.
+
+  (* A covered guard obligation paired with its substrate quality (the Rust
+     `RhoGuardDispositionQuality`; `goq_id` mirrors the obligation id). *)
+  Record GuardObligationQuality : Type := {
+    goq_id : nat;
+    goq_quality : RhoGuardQuality
+  }.
+
+  (* The number of `RhoFlipBlocker::GuardQuality` blockers the planner derives:
+     one per covered obligation whose quality refuses production-default
+     lowering (the image of `guard_quality_blockers_for`). *)
+  Definition quality_blocker_count (qs : list GuardObligationQuality) : nat :=
+    length (filter (fun q => refuses_production_default (goq_quality q)) qs).
+
+  (* No quality blockers  <->  every covered obligation is non-refusing
+     (non-`Unknown`).  This is the "non-`Unknown` disposition is the unique
+     evidence-backed owner" statement: the gate accepts the guard-quality axis
+     exactly when no covered obligation refuses production-default lowering. *)
+  Theorem quality_blocker_count_zero_iff_all_usable : forall qs,
+    quality_blocker_count qs = 0
+    <-> (forall q, In q qs -> refuses_production_default (goq_quality q) = false).
+  Proof.
+    intros qs. unfold quality_blocker_count.
+    induction qs as [| q qs IH]; simpl.
+    - split; [intros _ q Hin; inversion Hin | reflexivity].
+    - destruct (refuses_production_default (goq_quality q)) eqn:Hq; simpl.
+      + (* head refuses: count = S _, never 0; and the head witnesses the RHS
+           cannot hold. *)
+        split.
+        * intro H. discriminate H.
+        * intro H. specialize (H q (or_introl eq_refl)).
+          rewrite Hq in H. discriminate H.
+      + (* head is usable: reduce to the tail. *)
+        rewrite IH. split.
+        * intros Htail q' [Heq | Hin].
+          -- subst q'. exact Hq.
+          -- apply Htail. exact Hin.
+        * intros Hall q' Hin. apply Hall. right. exact Hin.
+  Qed.
+
+  (* An `Unknown` quality among the covered obligations forces at least one
+     blocker — the necessity of the fail-closed `GuardQuality` blocker. *)
+  Theorem unknown_quality_contributes_blocker : forall qs q,
+    In q qs ->
+    goq_quality q = Unknown ->
+    quality_blocker_count qs <> 0.
+  Proof.
+    intros qs q Hin Hunknown Hzero.
+    pose proof (proj1 (quality_blocker_count_zero_iff_all_usable qs) Hzero q Hin) as Husable.
+    rewrite Hunknown in Husable. simpl in Husable. discriminate Husable.
+  Qed.
+
+  (* The full flip gate including the guard-quality axis: the Boolean gate AND
+     no quality blockers (the image of `decide_rho_flip` with the derived
+     `RhoFlipBlocker::GuardQuality` list folded in). *)
+  Definition can_flip_with_qualities
+      (g : GateState) (qs : list GuardObligationQuality) : bool :=
+    can_flip_to_rho g && Nat.eqb (quality_blocker_count qs) 0.
+
+  Theorem can_flip_with_qualities_iff : forall g qs,
+    can_flip_with_qualities g qs = true
+    <-> can_flip_to_rho g = true
+        /\ (forall q, In q qs -> refuses_production_default (goq_quality q) = false).
+  Proof.
+    intros g qs. unfold can_flip_with_qualities.
+    rewrite andb_true_iff.
+    rewrite Nat.eqb_eq.
+    rewrite quality_blocker_count_zero_iff_all_usable.
+    reflexivity.
+  Qed.
+
+  (* MAIN (necessity): an `Unknown`-quality covered obligation makes the flip
+     gate refuse — the new blocker is necessary (doc-08: "`Unknown` quality ⇒
+     production-default refused"). *)
+  Theorem unknown_guard_quality_blocks_flip : forall g qs q,
+    In q qs ->
+    goq_quality q = Unknown ->
+    can_flip_with_qualities g qs = false.
+  Proof.
+    intros g qs q Hin Hunknown.
+    unfold can_flip_with_qualities.
+    assert (Hnz : quality_blocker_count qs <> 0)
+      by (apply (unknown_quality_contributes_blocker qs q Hin Hunknown)).
+    assert (Hfalse : Nat.eqb (quality_blocker_count qs) 0 = false)
+      by (rewrite Nat.eqb_neq; exact Hnz).
+    rewrite Hfalse. apply andb_false_r.
+  Qed.
+
+  (* The flip gate ALSO refuses whenever the Boolean gate refuses, regardless of
+     the quality axis (the quality axis only ever ADDS blockers). *)
+  Theorem boolean_gate_failure_blocks_flip_with_qualities : forall g qs,
+    can_flip_to_rho g = false ->
+    can_flip_with_qualities g qs = false.
+  Proof.
+    intros g qs Hg. unfold can_flip_with_qualities. rewrite Hg. reflexivity.
+  Qed.
+
+  (* ── Composition with M7 (`RhoGuardedCommSoundness`), CITED not re-proved ──
+   *
+   * A flip-eligible (Boolean-passing AND `Unknown`-free) plan licenses
+   * production-default lowering.  Exactly under that licensing the M7 mixed-
+   * guard soundness applies: a fired guarded Comm satisfies the TRUE guard
+   * (structural ∧ behavioral_true) — the reject-safe behavioral leg never
+   * wrongly admits a Comm.  The first conjunct consumes the flip-eligibility
+   * premise (via `can_flip_with_qualities_iff`); the second is M7's
+   * `comm_fires_implies_true_guard`, instantiated here, not rederived. *)
+  Theorem licensed_flip_is_guard_sound :
+    forall (g : GateState) (qs : list GuardObligationQuality)
+           (Subst : Type)
+           (name_match structural_eval behavioral_eval behavioral_true : Subst -> bool),
+      (forall s, behavioral_eval s = true -> behavioral_true s = true) ->
+      can_flip_with_qualities g qs = true ->
+      forall s,
+        comm_fires Subst name_match structural_eval behavioral_eval s = true ->
+        can_flip_to_rho g = true
+        /\ name_match s = true
+        /\ product_true Subst structural_eval behavioral_true s = true.
+  Proof.
+    intros g qs Subst name_match structural_eval behavioral_eval behavioral_true
+      Hsound Hflip s Hfires.
+    apply can_flip_with_qualities_iff in Hflip.
+    destruct Hflip as [Hgate _].
+    split; [exact Hgate |].
+    apply (comm_fires_implies_true_guard
+             Subst name_match structural_eval behavioral_eval behavioral_true
+             Hsound s Hfires).
+  Qed.
+
+  (* Conversely, the soundness licensing is genuinely GATED: if a covered
+     obligation is `Unknown`, no such licensing is granted (the plan does not
+     flip), so the reject-safe lowering is never installed on un-evidenced
+     guards. *)
+  Theorem unknown_guard_quality_denies_licensing : forall g qs q,
+    In q qs ->
+    goq_quality q = Unknown ->
+    can_flip_with_qualities g qs = true -> False.
+  Proof.
+    intros g qs q Hin Hunknown Hflip.
+    rewrite (unknown_guard_quality_blocks_flip g qs q Hin Hunknown) in Hflip.
+    discriminate Hflip.
+  Qed.
+
+End RhoGuardQualityGate.
+
+Print Assumptions refuses_production_default_iff_unknown.
+Print Assumptions quality_blocker_count_zero_iff_all_usable.
+Print Assumptions unknown_quality_contributes_blocker.
+Print Assumptions can_flip_with_qualities_iff.
+Print Assumptions unknown_guard_quality_blocks_flip.
+Print Assumptions licensed_flip_is_guard_sound.
+Print Assumptions unknown_guard_quality_denies_licensing.

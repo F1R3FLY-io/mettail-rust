@@ -12,7 +12,8 @@ use mettail_ast::language::{BehavioralPred, GuardConfig, LanguageDef, Premise, R
 use mettail_ast::types::TypeExpr;
 use models::rhoapi::Par;
 
-use crate::flip::{decide_rho_flip, RhoFlipDecision, RhoFlipGates};
+use crate::flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
+use crate::guard_quality::{derive_guard_qualities, RhoGuardDispositionQuality};
 use crate::lower::{lower_language_def, RhoLowering};
 use crate::validate::{RhoValidationError, ValidatedRhoProgram};
 
@@ -405,6 +406,32 @@ pub fn collect_guard_obligations(def: &LanguageDef) -> Vec<RhoGuardObligation> {
     obligations.into_iter().collect()
 }
 
+/// The fail-closed guard-quality blockers for a set of substrate-derived
+/// quality-tagged dispositions: one [`RhoFlipBlocker::GuardQuality`] per
+/// obligation whose [`RhoGuardQuality`](crate::guard_quality::RhoGuardQuality)
+/// refuses production-default lowering (i.e. `Unknown`).
+///
+/// This is the live consumption of the predicate-substrate quality classifier
+/// ([`derive_guard_qualities`]): the planner derives qualities for the covered
+/// guard obligations and folds these blockers into the flip gate, enforcing the
+/// doc-08 rule "`Unknown` quality ⇒ production-default refused". For all current
+/// languages `derive_guard_qualities` never yields `Unknown` (proven by
+/// `default_classification` + the `default_quality_per_obligation_kind` test),
+/// so this returns an empty vector — the wiring is real and fail-closed without
+/// changing behavior for the existing obligation kinds.
+pub fn guard_quality_blockers_for(
+    qualities: &[RhoGuardDispositionQuality],
+) -> Vec<RhoFlipBlocker> {
+    qualities
+        .iter()
+        .filter(|disposition| disposition.quality.refuses_production_default())
+        .map(|disposition| RhoFlipBlocker::GuardQuality {
+            obligation: disposition.obligation.clone(),
+            quality: disposition.quality,
+        })
+        .collect()
+}
+
 /// Coverage for one rule that `lower_language_def` recorded as
 /// rejected by this scalar lowering family.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -776,12 +803,19 @@ pub fn audit_rho_default_backend(def: &LanguageDef) -> RhoDefaultBackendAudit {
     let rejected_rule_classifications = classify_rejected_rules(def, &lowering);
     let guard_obligations = collect_guard_obligations(def);
     let coverage_passed = lowering.rejected.is_empty() && guard_obligations.is_empty();
+    // The audit models the NO-external-coverage scenario: no guard-coverage
+    // evidence is supplied, so the covered-obligation set is empty and there are
+    // no guard-quality blockers to fold in (any guard obligations already fail
+    // the `coverage_passed` gate above). Quality blockers are derived in
+    // `plan_rho_default_backend`, where actual coverage evidence selects the
+    // covered obligations to quality-check.
     let decision_without_external_coverage = decide_rho_flip(
         RhoFlipGates {
             coverage_passed,
             artifact_validated: validation_errors.is_empty(),
         },
         &lowering.deadlock_report,
+        Vec::new(),
     );
 
     RhoDefaultBackendAudit {
@@ -807,6 +841,15 @@ pub struct RhoDefaultBackendPlan {
     pub validated_program: ValidatedRhoProgram,
     pub rejected_rule_dispositions: Vec<RhoRejectedRuleDisposition>,
     pub guard_obligation_dispositions: Vec<RhoGuardDisposition>,
+    /// Substrate quality tags for the language's guard obligations, derived by
+    /// the predicate-substrate classifier ([`derive_guard_qualities`]). This is
+    /// strictly diagnostic/observability data recording how strong each guard's
+    /// evidence is (every tag here is non-`Unknown`, since an `Unknown` quality
+    /// would have produced a [`RhoFlipBlocker::GuardQuality`] and blocked the
+    /// flip). It is NEVER part of `LanguageDef` identity, the
+    /// `definition_fingerprint`, or any runtime gate field — proof/quality
+    /// attribution stays external (commit `6d20b82d`).
+    pub guard_obligation_qualities: Vec<RhoGuardDispositionQuality>,
 }
 
 impl RhoDefaultBackendPlan {
@@ -815,6 +858,13 @@ impl RhoDefaultBackendPlan {
     /// installation.
     pub fn language_name(&self) -> &str {
         self.lowering.language_name()
+    }
+
+    /// The substrate quality tags for this language's guard obligations
+    /// (diagnostic observability; every entry is non-`Unknown`). See
+    /// [`RhoDefaultBackendPlan::guard_obligation_qualities`].
+    pub fn guard_obligation_qualities(&self) -> &[RhoGuardDispositionQuality] {
+        &self.guard_obligation_qualities
     }
 
     /// Stable compiler-facing identity of the `LanguageDef` whose lowering
@@ -879,6 +929,29 @@ pub fn plan_rho_default_backend(
             .guard_coverage
             .exactly_covers(&guard_obligations);
 
+    // Predicate-substrate quality tags for every induced guard obligation. The
+    // substrate ([`derive_guard_qualities`]) classifies HOW STRONG each guard's
+    // evidence is (orthogonal to the disposition MECHANISM the coverage gate
+    // checks). Restrict to the obligations the requirements actually cover: an
+    // uncovered obligation is already a `Coverage` blocker, so it must not also
+    // produce a quality blocker. A covered obligation whose quality refuses
+    // production-default lowering (`Unknown`) becomes a fail-closed
+    // `RhoFlipBlocker::GuardQuality` (doc-08: "`Unknown` quality ⇒
+    // production-default refused"). For all current obligation kinds the
+    // substrate never yields `Unknown`, so this is real, fail-closed wiring with
+    // no behavioral change for existing languages.
+    let guard_obligation_qualities = derive_guard_qualities(def);
+    let covered_guard_obligations = requirements.guard_coverage.covered_set();
+    let guard_quality_blockers = guard_quality_blockers_for(
+        &guard_obligation_qualities
+            .iter()
+            .filter(|disposition| {
+                covered_guard_obligations.contains(disposition.obligation.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+
     // Formal model: `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`.
     // The Rust plan carries only the semantic gate result and validated
     // artifacts; proof attribution stays in comments and CI/docs, not runtime
@@ -889,6 +962,7 @@ pub fn plan_rho_default_backend(
             artifact_validated: validation_errors.is_empty(),
         },
         &lowering.deadlock_report,
+        guard_quality_blockers,
     );
 
     if decision.can_flip_to_rho() {
@@ -899,6 +973,7 @@ pub fn plan_rho_default_backend(
         Ok(RhoDefaultBackendPlan {
             rejected_rule_dispositions,
             guard_obligation_dispositions,
+            guard_obligation_qualities,
             validated_program,
             lowering,
         })
@@ -1342,6 +1417,92 @@ mod tests {
         assert_eq!(plan.lowering.lowered, vec!["AddInt"]);
         assert_eq!(plan.lowering.rejected, vec!["PGuardedInput"]);
         assert_eq!(plan.guard_obligation_dispositions.len(), 6);
+
+        // The substrate quality tags are carried on the plan (observability).
+        // The behavioral-predicate legs (`predicate:gt`,
+        // `term:PGuardedInput:guard:guard`) are RECORDED as reject-safe — not
+        // Unknown — so the language flips with bounded/reject-safe evidence,
+        // exactly the M7 mixed-guard soundness case.
+        use crate::guard_quality::RhoGuardQuality;
+        let quality_for = |obligation: &str| -> RhoGuardQuality {
+            plan.guard_obligation_qualities()
+                .iter()
+                .find(|disposition| disposition.obligation == obligation)
+                .unwrap_or_else(|| panic!("plan must carry a quality tag for {obligation}"))
+                .quality
+        };
+        assert_eq!(quality_for("predicate:gt"), RhoGuardQuality::RejectSafeApprox);
+        assert_eq!(
+            quality_for("term:PGuardedInput:guard:guard"),
+            RhoGuardQuality::RejectSafeApprox
+        );
+        assert_eq!(quality_for("rewrite:GuardedStep:guard:0"), RhoGuardQuality::ExactDecidable);
+        assert_eq!(quality_for("theory:arithmetic"), RhoGuardQuality::ExactDecidable);
+        assert_eq!(quality_for("channel:Name"), RhoGuardQuality::RuntimeObservation);
+        assert_eq!(quality_for("join:PGuardedInput"), RhoGuardQuality::RuntimeObservation);
+        // No obligation is Unknown ⇒ no quality blocker fired (the flip succeeded).
+        assert!(
+            plan.guard_obligation_qualities()
+                .iter()
+                .all(|disposition| !disposition.quality.refuses_production_default()),
+            "a flipped plan must carry no production-default-refusing (Unknown) quality"
+        );
+        assert_eq!(plan.guard_obligation_qualities().len(), 6);
+    }
+
+    #[test]
+    fn unknown_guard_quality_yields_fail_closed_blocker() {
+        // The live consumption of the substrate classifier: an `Unknown`-quality
+        // covered obligation produces a `RhoFlipBlocker::GuardQuality` that the
+        // flip gate treats as fail-closed (doc-08: "`Unknown` ⇒ refused"). The
+        // substrate's `default_classification` never yields `Unknown` for the
+        // real obligation kinds, so this exercises the gate's wiring with a
+        // hand-built Unknown disposition-quality.
+        use crate::guard_quality::{RhoGuardDispositionQuality, RhoGuardQuality};
+
+        let usable = RhoGuardDispositionQuality {
+            obligation: "predicate:gt".to_string(),
+            kind: RhoGuardDispositionKind::EffectiveBooleanAlgebra,
+            quality: RhoGuardQuality::RejectSafeApprox,
+        };
+        let unknown = RhoGuardDispositionQuality {
+            obligation: "predicate:mystery".to_string(),
+            kind: RhoGuardDispositionKind::EffectiveBooleanAlgebra,
+            quality: RhoGuardQuality::Unknown,
+        };
+
+        // A usable quality produces no blocker.
+        assert!(guard_quality_blockers_for(&[usable.clone()]).is_empty());
+
+        // The Unknown quality produces exactly one GuardQuality blocker, and it
+        // blocks the flip even with all Boolean gates passing + a clean report.
+        let blockers = guard_quality_blockers_for(&[usable, unknown]);
+        assert_eq!(
+            blockers,
+            vec![RhoFlipBlocker::GuardQuality {
+                obligation: "predicate:mystery".to_string(),
+                quality: RhoGuardQuality::Unknown,
+            }]
+        );
+
+        let clean = crate::deadlock::analyze_channel_deadlocks(
+            &crate::deadlock::ChannelNetwork::new()
+                .with_external("entry")
+                .with_contract(crate::deadlock::ContractFlow::exported_service(
+                    "entry",
+                    std::iter::empty::<&str>(),
+                )),
+        );
+        let decision = crate::flip::decide_rho_flip(
+            RhoFlipGates {
+                coverage_passed: true,
+                artifact_validated: true,
+            },
+            &clean,
+            blockers.clone(),
+        );
+        assert!(!decision.can_flip_to_rho(), "an Unknown-quality guard must refuse the flip");
+        assert_eq!(decision.blockers, blockers);
     }
 
     #[test]

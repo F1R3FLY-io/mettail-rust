@@ -120,6 +120,11 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 rand_distr = "0.4"
 mettail-testkit = { path = "../testkit" }
+# Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name
+# `LanguageDef` directly when reconstructing the real augmented definition. It is
+# already a transitive dependency (via mettail-macros / mettail-rho-codegen);
+# this only makes the type nameable from the integration test.
+mettail-ast = { path = "../ast" }
 
 # W7 Stage 8 (parity testing): postcard golden inspector.
 # No `required-features` — usable on default builds.

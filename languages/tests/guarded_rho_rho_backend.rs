@@ -1,0 +1,175 @@
+//! End-to-end Rho-default backend planning for the REAL `GuardedRho` language
+//! under the LIVE guard-quality wiring (`mettail_rho_codegen::guard_quality`).
+//!
+//! `GuardedRho` is the project's guarded smoke-test language: its
+//! `guards { channels { channel Name; join PGuardedInput(ch: Name); } }` block
+//! plus the `?guard:Guard` slot on `PGuardedInput` induce four guard
+//! obligations. This test reconstructs the exact augmented `LanguageDef` from
+//! the generated `definition_source()` (the same path the production installer
+//! uses), supplies exact rejected-rule and guard coverage, and proves the
+//! language plans end-to-end with every substrate quality non-`Unknown` — so the
+//! fail-closed `RhoFlipBlocker::GuardQuality` gate (doc-08: "`Unknown` quality ⇒
+//! production-default refused") never fires for a real, fully-covered guarded
+//! language. The behavioral-predicate legs are recorded as `RejectSafeApprox`
+//! (the M7 mixed-guard / Heyting reject-safe case), not `Unknown`.
+
+#![cfg(all(feature = "guarded-rho", feature = "rho-codegen"))]
+
+use std::collections::BTreeSet;
+
+use mettail_languages::guardedrho::GuardedRhoLanguage;
+use mettail_rho_codegen::guard_quality::{derive_guard_qualities, RhoGuardQuality};
+use mettail_rho_codegen::{
+    audit_rho_default_backend, collect_guard_obligations, lower_language_def,
+    plan_rho_default_backend, reconstruct_language_def, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
+    RhoGuardDispositionKind, RhoGuardObligationKind, RhoRejectedRuleDisposition,
+    RhoRejectedRuleDispositionKind,
+};
+use mettail_runtime::Language;
+
+/// Reconstruct the REAL `GuardedRho` augmented `LanguageDef` from the generated
+/// metadata's `definition_source()` (the macro-time def, composition +
+/// auto-injection), exactly as the Rho/Dovetail installer does for Calculator.
+fn guarded_rho_def() -> mettail_ast::language::LanguageDef {
+    let source = GuardedRhoLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated GuardedRhoLanguage must expose its definition_source");
+    reconstruct_language_def(source)
+        .expect("GuardedRhoLanguage definition_source must reconstruct as a LanguageDef")
+}
+
+/// Exactly-once native-handler dispositions for every rule the scalar lowering
+/// rejects (GuardedRho is a structural language, so all of its constructors are
+/// rejected by the scalar family and covered through a native/Rho-AST boundary).
+fn native_handler_dispositions(
+    def: &mettail_ast::language::LanguageDef,
+) -> Vec<RhoRejectedRuleDisposition> {
+    lower_language_def(def)
+        .rejected
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .map(|label| {
+            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
+        })
+        .collect()
+}
+
+/// Gate-compatible dispositions that exactly cover GuardedRho's four guard
+/// obligations: the two Rho-native-join surfaces via `RhoNativeJoin`, and the
+/// two behavioral-predicate legs via an effective Boolean algebra.
+fn guard_dispositions() -> Vec<RhoGuardDisposition> {
+    vec![
+        RhoGuardDisposition::new("channel:Name", RhoGuardDispositionKind::RhoNativeJoin),
+        RhoGuardDisposition::new("join:PGuardedInput", RhoGuardDispositionKind::RhoNativeJoin),
+        RhoGuardDisposition::new(
+            "predicate:standard-builtins",
+            RhoGuardDispositionKind::EffectiveBooleanAlgebra,
+        ),
+        RhoGuardDisposition::new(
+            "term:PGuardedInput:guard:guard",
+            RhoGuardDispositionKind::EffectiveBooleanAlgebra,
+        ),
+    ]
+}
+
+#[test]
+fn guarded_rho_induces_guard_obligations_with_non_unknown_qualities() {
+    let def = guarded_rho_def();
+    let obligations = collect_guard_obligations(&def);
+
+    // GuardedRho genuinely induces guard obligations (it is a guarded language).
+    assert!(
+        !obligations.is_empty(),
+        "GuardedRho must induce guard obligations from its channels/join/guard slots"
+    );
+    assert!(
+        obligations
+            .iter()
+            .any(|o| o.kind == RhoGuardObligationKind::RhoNativeJoin),
+        "GuardedRho's channel/join block induces RhoNativeJoin obligations"
+    );
+    assert!(
+        obligations
+            .iter()
+            .any(|o| o.kind == RhoGuardObligationKind::BehavioralPredicate),
+        "GuardedRho's ?guard slot induces a behavioral-predicate obligation"
+    );
+
+    // Every substrate-derived quality is usable (non-Unknown), and the
+    // behavioral leg lands on the reject-safe quality (never Unknown).
+    let qualities = derive_guard_qualities(&def);
+    assert_eq!(
+        qualities.len(),
+        obligations.len(),
+        "the substrate emits one quality per induced obligation"
+    );
+    assert!(
+        qualities
+            .iter()
+            .all(|q| !q.quality.refuses_production_default()),
+        "no GuardedRho guard obligation may classify to Unknown (fail-closed quality)"
+    );
+    assert!(
+        qualities
+            .iter()
+            .any(|q| q.quality == RhoGuardQuality::RejectSafeApprox),
+        "GuardedRho's behavioral-predicate legs are reject-safe, not Unknown"
+    );
+}
+
+#[test]
+fn guarded_rho_plans_end_to_end_with_all_qualities_non_unknown() {
+    let def = guarded_rho_def();
+
+    // Without external coverage the audit must block (guard obligations are
+    // uncovered) — the gate is genuinely engaged for this language.
+    let audit = audit_rho_default_backend(&def);
+    assert!(
+        !audit.can_plan_without_external_coverage(),
+        "GuardedRho's guard obligations require explicit coverage evidence"
+    );
+
+    let requirements = RhoDefaultBackendRequirements {
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(native_handler_dispositions(&def)),
+        guard_coverage: RhoGuardCoverageEvidence::CoveredGuardObligations(guard_dispositions()),
+    };
+
+    let plan = plan_rho_default_backend(&def, requirements)
+        .expect("fully-covered GuardedRho must pass the Rho-default flip gate end-to-end");
+
+    assert_eq!(plan.language_name(), "GuardedRho");
+    assert_eq!(plan.guard_obligation_dispositions.len(), 4);
+
+    // The plan carries one substrate quality per guard obligation, all
+    // non-Unknown ⇒ no fail-closed `RhoFlipBlocker::GuardQuality` fired.
+    let qualities = plan.guard_obligation_qualities();
+    assert_eq!(qualities.len(), 4, "plan must carry a quality tag per guard obligation");
+    assert!(
+        qualities
+            .iter()
+            .all(|q| !q.quality.refuses_production_default()),
+        "a flipped GuardedRho plan must carry no production-default-refusing (Unknown) quality"
+    );
+
+    let quality_for = |obligation: &str| -> RhoGuardQuality {
+        qualities
+            .iter()
+            .find(|q| q.obligation == obligation)
+            .unwrap_or_else(|| panic!("plan must carry a quality for {obligation}"))
+            .quality
+    };
+    assert_eq!(quality_for("channel:Name"), RhoGuardQuality::RuntimeObservation);
+    assert_eq!(quality_for("join:PGuardedInput"), RhoGuardQuality::RuntimeObservation);
+    assert_eq!(
+        quality_for("predicate:standard-builtins"),
+        RhoGuardQuality::RejectSafeApprox
+    );
+    assert_eq!(
+        quality_for("term:PGuardedInput:guard:guard"),
+        RhoGuardQuality::RejectSafeApprox
+    );
+}
