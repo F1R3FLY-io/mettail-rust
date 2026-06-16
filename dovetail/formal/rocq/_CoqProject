@@ -30,6 +30,7 @@ theories/Requirements/LanguageDefInventory.v
 theories/Lowering/PatternLoweringSoundness.v
 theories/Lowering/CollectionAcLowering.v
 theories/Lowering/GeneratedReportCompiler.v
+theories/Lowering/AmbientBinderHandler.v
 theories/Refinement/RuntimeReportBridge.v
 theories/Refinement/RhoReportHandoff.v
 theories/Refinement/RustModelBridge.v
