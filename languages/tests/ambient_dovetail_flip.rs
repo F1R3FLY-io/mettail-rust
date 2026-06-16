@@ -29,6 +29,25 @@ fn ambient_dovetail_compiler_flips_via_native_handler_and_in_engine_ac() {
         !report.roots.is_empty(),
         "the flipped Ambient Dovetail report must carry at least one root"
     );
+    assert!(
+        report.is_complete(),
+        "the acyclic open-redex reduction must report Complete, not BoundedByCycleCut"
+    );
+}
+
+#[test]
+fn ambient_dovetail_reduces_an_in_rule_redex() {
+    let lang = AmbientLanguage;
+    // InRule: `{ n[{ in(m, 0) }] | m[0] }` ~> `{ m[{ n[{0}] | 0 }] }` — an ambient
+    // `n` carrying an `in(m,·)` enters the sibling ambient `m`. Exercises the AC
+    // reduction half on a nested-ambient redex (not just OpenRule).
+    let term = lang
+        .parse_term("{ n [ { in(m, 0) } ] | m [ 0 ] }")
+        .expect("Ambient parses an in-rule redex");
+    let report = AmbientLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("the InRule AC reduction fires in-engine and the report compiles");
+    assert!(!report.roots.is_empty());
+    assert!(report.is_complete(), "the acyclic InRule reduction must report Complete");
 }
 
 #[test]
