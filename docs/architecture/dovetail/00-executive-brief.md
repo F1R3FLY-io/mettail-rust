@@ -46,9 +46,17 @@ answer when equal or more expensive alternatives remain semantically valid.
 
 ## Current Status
 
-The crate `dovetail` is implemented as milestone `M-E.0`, an inert engine core.
-It is in the workspace, covered by tests and formal artifacts, but is not the
-default live runtime backend for every language. Its public modules are:
+The `dovetail` crate is installed as a production runtime backend — not an inert
+core. The proven flip gate
+(`Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`) has moved the first
+languages off the legacy Ascent path: `CalculatorLanguage` (scalar operations plus
+native-fold coverage) and `Ambient` (the in-engine AC reduction composed with the
+[binder-congruence handler](11-binder-congruence-handler.md)). Per-language rollout
+across the remaining languages and retirement of the legacy Ascent/CESK paths are
+the in-progress campaign remainder. Because the gate is **fail-closed**, a language
+that is not yet fully covered stays un-flipped rather than mis-flipped — so "not yet
+the default for *every* language" is a rollout state, not an engine limitation. Its
+public modules are:
 
 | Module | Role |
 |---|---|

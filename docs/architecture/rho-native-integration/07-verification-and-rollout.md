@@ -12,10 +12,18 @@ and in implementation comments; it is not carried as runtime data.
 All symbols used here are defined in
 [Concepts and Glossary](01-concepts-and-glossary.md).
 
-## Current Verified Base: M-RHO.0
+## Verified Base: M-RHO.0 foundation, advanced through the P-series
 
-M-RHO.0 established an inert, one-way bridge and the first scalar-operation
-execution path.
+M-RHO.0 established the foundation below — a **one-way** bridge (proved by
+`BridgeInertness.v`: no reverse F1r3node→MeTTaIL dependency) and the first
+scalar-operation execution path. The verified base has since advanced through the
+production-completion P-series: the flip gate is wired and fail-closed, the first
+real languages have flipped (`CalculatorLanguage`, `Ambient`), disposition-execution
+routing and guard-quality classification are in place, and per-language rollout
+(P5b) plus legacy-path retirement (P6) are the remainder (the per-language flip
+status table is in [M-RHO.4](#m-rho4-per-language-flip) below). The
+M-RHO.0 artifacts below remain the load-bearing foundation; "inert" describes the
+*bridge direction*, not the engine — the engine is installed and executing.
 The current proof and coverage sources are
 [RHO-BRIDGE-FORMAL](references.md#rho-bridge-formal),
 [DOVETAIL-FORMAL](references.md#dovetail-formal), and
@@ -568,6 +576,25 @@ deadlock gates pass.
 Flip condition for language `L`:
 
 `Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`
+
+### Per-language flip status
+
+The rollout proceeds one language at a time; the gate keeps an under-covered
+language un-flipped (fail-closed) rather than mis-flipped. Status as of this
+writing (✅ flipped with passing tests · ◐ in rollout · OOS = a known
+out-of-scope pre-existing residual, not a flip blocker):
+
+| Language | Default backend | How it executes | Status / evidence |
+|---|---|---|---|
+| `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (native folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; big-numeric/cast folds defer to the Dovetail native-handler report | ✅ `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime`; differential oracle `rho_backend_agrees_with_ascent_on_calculator_int_ops` |
+| `Ambient` | Dovetail (in-engine; host-less) | binder-congruence handler floats `new`s, then AC rules (`In`/`Out`/`OpenRule`) reduce the soup in-engine | ✅ `ambient_dovetail_flip.rs` (Complete reports); `ambient_binder_handler.rs` |
+| `RhoCalc` | RhoMachine (host RSpace) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag | ✅ `rhocalc_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; OOS: one `castbigrat` residual |
+| `GuardedRho` | RhoMachine + guard dispositions | channel/join guards classified by the guard-quality seam (P5a); behavioral legs via the EBA/SFT dispositions | ◐ guard-quality wired + `rho_guard_oracle`; full flip in P5b; OOS: `@1!(Nil)` parser residual |
+| `MiniRho` | RhoMachine | the end-to-end report→backend example ([dovetail 10](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example)) | ◐ P5b rollout |
+
+`audit_rho_default_backend(&L::definition())` is the mechanical classifier that
+decides "flippable now" vs "blocked on X" for each language; that classification
+*is* the rollout ledger this table summarizes.
 
 `RhoBackendFlipGate.v` proves the Boolean flip gate is exactly this checkable
 conjunction and that any missing gate blocks the flip. `RhoParWellFormedness.v` supplies the

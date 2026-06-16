@@ -1,7 +1,19 @@
 # Ambient Binder + Freshness Lowering for the Dovetail Flip — Converged Design (v4)
 
 **Status:** design CONVERGED via plan→red-team iteration (v1→v4, 3+ adversarial rounds);
-implementation in progress (Inc 0). Branch `feature/wfst-architecture`. Part of P5b (Ambient flip).
+implementation **COMPLETE** (Inc 0–4, committed). Branch `feature/wfst-architecture`. Part of P5b (Ambient flip).
+
+> **Read this as the design-derivation record** — how the design was reached,
+> including superseded iterations and refuted approaches (kept deliberately, per the
+> project's "document even what does not work" rule). The authoritative description
+> of the *implemented* mechanism is the published
+> [Binder-Congruence Handler](../11-binder-congruence-handler.md). Two simplifications
+> were discovered during implementation and are reflected there but not below: FIX-B
+> *blocking* proved **unnecessary** (moniker `unbind` freshening makes the float always
+> capture-safe, so there is nothing to block), and the float↔AC fixpoint loop collapses
+> to **float-once** (a bottom-up float moves every `new` to the top; the AC rules add
+> none back). §1's present-tense "FAILS CLOSED on Ambient" describes the *pre-flip*
+> state this work removed; `ambient_dovetail_flip.rs` now asserts **Complete** reports.
 
 This document is the durable record of the design and its derivation, sufficient to reconstruct it
 from scratch. The blow-by-blow red-team ledgers live alongside in this directory.

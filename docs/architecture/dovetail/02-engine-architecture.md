@@ -73,9 +73,13 @@ parser crates, macro crates, Rho crates, runtime crates, or Ascent.
 
 The arrow is one-way. Dovetail never calls back into parser generation.
 
-## Inert Milestone
+## Installation Status
 
-The crate-level status is milestone `M-E.0`, meaning the core exists and is
-verified as an inert engine. It can be tested and consumed by adapters, but
-language-level production flips still require per-language coverage and backend
-selection gates.
+The crate is installed as a production runtime backend: it is consumed by the
+`mettail-dovetail-runtime` and `mettail-rho-runtime` wrappers, and the first
+languages have flipped onto it through the proven flip gate (`CalculatorLanguage`,
+`Ambient`). It is no longer an inert core. Language-level production flips remain
+*per-language* — each still requires its coverage, artifact-validation, and
+no-new-deadlock gates to pass — so the rollout proceeds one language at a time
+while the gate keeps an under-covered language un-flipped (fail-closed) rather than
+mis-flipped.

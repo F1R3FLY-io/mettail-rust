@@ -211,10 +211,14 @@ The current generated structural lowering covers the conservative fragment:
 | generated direct evaluation / native normalization | complete root-only report when every retained root has an exact semantic key |
 
 The helper is deliberately total-or-reject for everything outside that
-fragment. It fails closed for collection, map, and zip metapatterns; lambda and
-multi-lambda metapatterns; substitution and multi-substitution metapatterns;
-non-congruence side conditions; non-converged saturation; malformed projected
-reports; and terms from a different generated language.
+fragment. It fails closed for collection, map, and zip metapatterns — **except**
+the associative-commutative parallel-bag reduction, which is now handled in-engine
+(Ambient's `InRule`/`OutRule`/`OpenRule` via the
+[binder-congruence handler](11-binder-congruence-handler.md) composed with
+[`AcApp` matching](04-rules-and-saturation.md#associative-commutative-matching)) —
+and for lambda and multi-lambda metapatterns; substitution and multi-substitution
+metapatterns; non-congruence side conditions; non-converged saturation; malformed
+projected reports; and terms from a different generated language.
 
 This means the current equation for the generated surface is:
 
