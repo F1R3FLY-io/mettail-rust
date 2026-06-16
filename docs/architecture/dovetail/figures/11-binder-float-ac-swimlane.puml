@@ -44,7 +44,7 @@ else (NodeLimit / IterationLimit)
 endif
 
 |#FBCFE8|Extractor + Report|
-:Exact lazy N-best extraction; <<#FBCFE8>>
+:Exact lazy best-first extraction\n(complete — all alternatives); <<#FBCFE8>>
 if (cycle cut?) then (no)
   :completeness = Complete; <<#BBF7D0>>
 else (yes)
@@ -61,7 +61,7 @@ legend right
 |<#DBEAFE> Report Compiler | calls the handler, returns the report |
 |<#FAE8FF> Binder NativeHandler | float `new`s out, capture-safe, α-canonical |
 |<#FEF3C7> AC e-graph engine | saturate the binder-free soup, AcApp rules |
-|<#FBCFE8> Extractor + Report | N-best extraction, completeness, run report |
+|<#FBCFE8> Extractor + Report | complete best-first extraction, completeness, run report |
 |<#FFEDD5> Boundary | bounded outcome (honest, not Complete) |
 endlegend
 @enduml

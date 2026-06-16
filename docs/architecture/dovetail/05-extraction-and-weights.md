@@ -13,7 +13,7 @@ sequence diagram below shows the other half — the **recursion across actors**:
 extractor enumerates each child class best-first, on demand, which is why no valid
 derivation is ever skipped (the "no-miss" property).
 
-![N-best extraction recursion sequence](figures/05-extraction-sequence.svg)
+![Complete lazy best-first extraction recursion sequence](figures/05-extraction-sequence.svg)
 
 PlantUML source: [figures/05-extraction-sequence.puml](figures/05-extraction-sequence.puml).
 

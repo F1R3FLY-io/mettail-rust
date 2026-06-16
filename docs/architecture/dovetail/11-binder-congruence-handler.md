@@ -321,7 +321,7 @@ text version of the same flow:
         ▼
  e-graph + saturation  (OpenRule / InRule / OutRule fire over the soup)   ── §7.2
         │
-        │  exact lazy N-best extraction  (weight orders alternatives, never prunes)
+        │  exact lazy best-first extraction — COMPLETE (weight orders, never prunes)
         ▼
  DovetailRunReport   { roots, terms, derivation_edges, completeness = Complete }
 ```

@@ -1,5 +1,5 @@
 @startuml
-title N-best extraction: the recursion into child classes (the no-miss heart)
+title Lazy best-first extraction: enumerate ALL derivations (the no-miss heart)
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -11,32 +11,32 @@ skinparam sequence {
   ParticipantFontColor #111827
 }
 
-actor "Caller" as caller #DBEAFE
-participant "Extractor\n`kth(q, k)`" as ex #FBCFE8
+actor "Caller\n(report builder)" as caller #DBEAFE
+participant "Extractor\n`derivations(q)`" as ex #FBCFE8
 participant "ClassState[root q]" as root #FEF3C7
 participant "root.cand\nper-class min-heap" as heap #DCFCE7
 participant "ClassState[child c]" as child #FDE68A
 
-caller -> ex : kth(q, k)  — ask for the k-th best
+caller -> ex : derivations(q).collect_checked()\n— pull ALL, best-first ordered
 activate ex
-ex -> root : ensure k-th derivation
+ex -> root : next derivation (resumable stream)
 activate root
 
-loop until k-th distinct derivation emitted
+loop until Done(completeness)  — EXHAUSTION, not a top-N cap
   root -> heap : pop best candidate\n(weight, ordered exact key)
   activate heap
   heap --> root : candidate e-node n + child ranks
   deactivate heap
 
-  group recurse per child (best-first, lazy)
-    root -> child : kth(c, rank_c)
+  group materialize: pull each child's rankₖ-th best (internal lazy product)
+    root -> child : rankₖ-th derivation of child c
     activate child
     child --> root : child derivation  (or 0̄ = refuted)
     deactivate child
   end
 
   alt cycle back-edge
-    root -> root : mark cycle cut\n(BoundedByCycleCut)
+    root -> root : mark cycle cut\n(stream ends BoundedByCycleCut)
   else exact key already emitted
     root -> root : skip duplicate\n(exact-key dedup)
   else weight = 0̄
@@ -45,18 +45,20 @@ loop until k-th distinct derivation emitted
     root -> heap : push successors\n(bump ONE child rank)
     activate heap
     deactivate heap
-    root --> ex : emit derivation tree
+    root --> ex : yield this derivation\n(next stream item)
   end
 end
 
-ex --> caller : Done(Complete)\nor Done(BoundedByCycleCut)
+ex --> caller : Extraction<Vec<Derivation>>\n+ Complete | BoundedByCycleCut
 deactivate root
 deactivate ex
 
 note over root, child #EDE9FE
-  No-miss: every child class is itself
-  extracted best-first on demand, so no
-  valid derivation is skipped — weight
-  ORDERS the alternatives; it never prunes.
+  No-miss + no-prune: the stream is COMPLETE. Pulled to
+  exhaustion it yields EVERY derivation of q — weight ORDERS
+  the stream, it never PRUNES. The only exclusions are
+  0̄-weight (refuted) and back-edges (reported, not silently
+  dropped). `kth(q, k)` is the indexed-access sibling of this
+  same iterator — not a separate, truncating top-N path.
 end note
 @enduml
