@@ -52,7 +52,33 @@ uses it. Two options:
 4. Update doc-07/08 + both coverage matrices together (Evidence-Loop step 7).
 5. Commit with the complete removal ledger.
 
-## Gating statement
+## Precise file-level removal checklist (verified surface)
 
-Nothing is removed without your explicit approval; git history is the archive. This manifest
-is the separately-confirmed pre-flight the plan (R7) requires.
+The two scopes differ by ONE axis: CESK (`legacy-cesk-runtime`) has **no remaining use** and is
+removed in both; Ascent (`oracle-ascent`) is **still the differential-oracle reference**
+(`rho_vs_ascent`, `rho_language_backend_report`) so it is kept under P6-keep-oracle and removed
+under P6-full. (The Ascent code is already compiled *only* under `oracle-ascent`, fail-closed by
+default — there is no separate always-on "Ascent production path" left to peel; the production
+default is Dovetail/Rho, proven by `RuntimeBackendDispatch.v`.)
+
+### Both scopes remove — the CESK runtime backend (no remaining consumer)
+- `prattail/src/{cek_eval,cesk_store,gc,abstract_cesk,green_thread,scheduler,global_pool,pool_fsm,worker_pool,coordinator}.rs` — 10 standalone modules.
+- `prattail/Cargo.toml:48` `legacy-cesk-runtime` feature + its gated test targets (`:158,163`); the 10 `#[cfg(feature="legacy-cesk-runtime")]` gates + `mod` decls in `prattail/src`.
+- `testkit/Cargo.toml:11` re-export + the 3 `legacy-cesk-runtime` gates/modules in `testkit/src`.
+- VERIFY at execution: `rg 'cek_eval|cesk_store|abstract_cesk|green_thread|scheduler|pool_fsm|worker_pool|coordinator|global_pool'` finds no consumer outside the feature gate (the WPDA-side CEK/observer parser modules are a *different* path — KEEP them).
+
+### P6-full additionally removes — the Ascent reference/oracle
+- `languages/Cargo.toml:46-51` `oracle-ascent` feature + the `ascent`/`ascent-byods-rels`/`hashbrown`/`rustc-hash` optional deps + `ascent-parallel` (`:54`, already broken upstream); the `oracle-ascent`-`required-features` test targets (`:138,143,238`); the 31 `oracle-ascent` cfg-gates in `languages/src` + the Ascent oracle test files.
+- `macros/src/logic/**` — the Ascent code generator (`generate_ascent`/`format_ascent`/the `ascent::ascent!` emitter) + the `ascent_output` wiring in `macros/src/lib.rs`; the generated `run_ascent*`/`eqrel` surfaces under the 15 macros cfg-gates.
+- `ascent_syntax_export/` crate + its dependants' declarations in `ast/Cargo.toml`, `macros/Cargo.toml`, `query/Cargo.toml` — VERIFY it is oracle-only (not used by the active WPDA path) before removal; if shared, keep it.
+- `mettail-rho-runtime/Cargo.toml:27-32` `oracle-ascent` feature + the `rho_vs_ascent.rs` and `rho_language_backend_report.rs` test targets (`:79,84`).
+- `runtime` / generated `Language::run_ascent` trait surface (already fail-closed by default).
+- After removal Calculator's flip is still proven by the end-to-end RhoRuntime tests + `OracleQuotientEquivalence.v` + the COMM/guard oracles; only the *live* Ascent differential is gone.
+
+## Status: PREPPED — awaiting explicit scope + approval
+
+P6 is now staged to the brink: the surface is mapped, the scope fork is exact, the post-removal
+gate sweep is defined. **One destructive step remains — the deletion itself — and it is NOT taken
+until you explicitly approve a scope** (`P6-keep-oracle` or `P6-full`). This is the
+separately-confirmed pre-flight the plan (R7) and the standing "no destructive action without
+explicit approval" rule require. Git history is the archive.
