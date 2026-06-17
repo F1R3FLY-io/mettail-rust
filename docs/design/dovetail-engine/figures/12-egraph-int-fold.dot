@@ -1,0 +1,63 @@
+/*
+ * egg-style e-graph term-DAG: the nested fold `int(1+2, 8)` reducing inside
+ * OSLF-funded saturation, in three snapshots (left → right).
+ *   dashed rounded box  = e-class (an equivalence class of provably-equal terms)
+ *   solid box           = e-node  (a labeled operator over child e-classes)
+ *   solid edge          = child-class reference
+ *   red dashed edge     = a native fold firing (records an equality, prunes nothing)
+ * A folded class holds BOTH the redex e-node AND its value e-node (both alive).
+ * Render: dot -Tsvg 12-egraph-int-fold.dot -o 12-egraph-int-fold.svg
+ */
+digraph int_fold {
+  graph [compound=true, rankdir=LR, bgcolor="#FEFEFE", fontname="Helvetica", labelloc="t",
+         label="int(1+2, 8): Add fires, congruence shares the value, the cast fires (funded 1-best surfaces the NF)"];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", color="#1F2937", fontcolor="#111827"];
+  edge  [color="#374151"];
+
+  /* ───────────── ① Seeded: int(Add(1,2), 8) ───────────── */
+  subgraph cluster_int1 {
+    label="q_int  ◦  ①"; style="rounded,dashed"; color="#7C3AED"; fontcolor="#7C3AED"; bgcolor="#F5F3FF";
+    n_int1 [label="int(·,·)", fillcolor="#EDE9FE"];
+  }
+  subgraph cluster_add1 {
+    label="q_add"; style="rounded,dashed"; color="#7C3AED"; bgcolor="#F5F3FF";
+    n_add1 [label="Add(·,·)", fillcolor="#EDE9FE"];
+  }
+  subgraph cluster_1 { label="q_1"; style="rounded,dashed"; color="#2563EB"; bgcolor="#EFF6FF"; n_1 [label="NumLit 1", fillcolor="#DBEAFE"]; }
+  subgraph cluster_2 { label="q_2"; style="rounded,dashed"; color="#2563EB"; bgcolor="#EFF6FF"; n_2 [label="NumLit 2", fillcolor="#DBEAFE"]; }
+  subgraph cluster_w { label="q_w"; style="rounded,dashed"; color="#2563EB"; bgcolor="#EFF6FF"; n_w [label="NumLit 8", fillcolor="#DBEAFE"]; }
+  n_int1 -> n_add1 [lhead=cluster_add1];
+  n_int1 -> n_w    [lhead=cluster_w];
+  n_add1 -> n_1    [lhead=cluster_1];
+  n_add1 -> n_2    [lhead=cluster_2];
+
+  /* ───────────── ② After native Add fires: q_add ≈ 3 ───────────── */
+  subgraph cluster_add2 {
+    label="q_add′ = { Add(·,·), 3 }  ◦  ② both alive"; style="rounded,dashed"; color="#16A34A"; bgcolor="#F0FDF4";
+    n_add2  [label="Add(·,·)", fillcolor="#EDE9FE"];
+    n_three [label="CastInt 3", fillcolor="#DCFCE7", color="#16A34A"];
+  }
+  w_add [label="w↓  cheaper", shape=note, fillcolor="#FFFBEB", color="#D97706", fontcolor="#92400E"];
+  n_add1 -> n_add2 [style=dashed, color="#DC2626", penwidth=2.0, label=" native Add:  1+2 ≈ 3  (prune nothing) ", fontcolor="#DC2626"];
+  n_three -> w_add [style=dotted, color="#D97706", arrowhead=none];
+
+  /* ───────────── ③ Congruence + native cast fires: int(3,8) ≈ CastInt(3@8) ───────────── */
+  subgraph cluster_int3 {
+    label="q_int′ = { int(·,·), CastInt 3@8 }  ◦  ③"; style="rounded,dashed"; color="#16A34A"; bgcolor="#F0FDF4";
+    n_int3 [label="int(·,·)", fillcolor="#EDE9FE"];
+    n_cast [label="CastInt 3@8", fillcolor="#DCFCE7", color="#16A34A"];
+  }
+  w_int [label="w↓  funded 1-best ↓", shape=note, fillcolor="#FFFBEB", color="#D97706", fontcolor="#92400E"];
+  n_int1 -> n_int3 [style=dashed, color="#DC2626", penwidth=2.0, label=" native int-cast:  int(3,8) ≈ CastInt 3@8 ", fontcolor="#DC2626"];
+  n_cast -> w_int  [style=dotted, color="#D97706", arrowhead=none];
+
+  /* ───────────── legend ───────────── */
+  subgraph cluster_legend {
+    label="legend"; style="rounded,dashed"; color="#9CA3AF"; bgcolor="#F9FAFB";
+    lg_leaf  [label="leaf class (GSLT term)", fillcolor="#DBEAFE", color="#2563EB"];
+    lg_ctor  [label="constructor e-node", fillcolor="#EDE9FE", color="#7C3AED"];
+    lg_nf    [label="native-folded value (NF)", fillcolor="#DCFCE7", color="#16A34A"];
+    lg_w     [label="weight / OSLF funding", shape=note, fillcolor="#FFFBEB", color="#D97706"];
+    lg_leaf -> lg_ctor [style=invis]; lg_ctor -> lg_nf [style=invis]; lg_nf -> lg_w [style=invis];
+  }
+}

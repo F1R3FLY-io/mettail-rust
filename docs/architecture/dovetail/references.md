@@ -10,6 +10,7 @@ files that are versioned with the implementation and formal artifacts.
 - `docs/design/dovetail-engine/cyclic-closure-design.md`
 - `docs/design/dovetail-engine/semiring-extraction-plan.md`
 - `docs/design/dovetail-engine/m-rho-0-implementation-plan.md`
+- `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md`
 - `docs/architecture/dovetail/10-runtime-facing-reports.md`
 - `docs/architecture/rho-native-integration/README.md`
 - `prattail/docs/theory/formal-verification/coverage-matrix.md`
@@ -122,3 +123,48 @@ Computation 186(2), 2003, DOI:
 [10.1016/S0890-5401(03)00138-X](https://doi.org/10.1016/S0890-5401(03)00138-X).
 The freshness relation `x # t` and capture-avoidance reasoning the binder handler
 and `AmbientBinderHandler.v` use.
+
+### TATE-EQSAT-2009
+
+Tate, Stepp, Tatlock, and Lerner, "Equality Saturation: a New Approach to
+Optimization", POPL 2009, pp. 264–276, DOI:
+[10.1145/1480881.1480915](https://doi.org/10.1145/1480881.1480915) (resolves via
+doi.org to the ACM Digital Library). The equality-saturation-as-reduction lineage
+behind treating Dovetail's saturation as the GSLT reduction relation `→*`; local
+use:
+[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+
+### NELSON-OPPEN-1980
+
+Nelson and Oppen, "Fast Decision Procedures Based on Congruence Closure", Journal
+of the ACM 27(2):356–364, 1980, DOI:
+[10.1145/322186.322198](https://doi.org/10.1145/322186.322198) (resolves via
+doi.org to the ACM Digital Library). The congruence-closure basis for Dovetail's
+rebuild step (`equal children ⇒ equal same-operator parents`); local use:
+[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+
+### GIRARD-1987
+
+Girard, "Linear Logic", Theoretical Computer Science 50(1):1–101, 1987, DOI:
+[10.1016/0304-3975(87)90045-4](https://doi.org/10.1016/0304-3975(87)90045-4)
+(resolves via doi.org → Elsevier PII `0304397587900454`, which self-encodes the
+DOI). The substructural-logic source for the OSLF no-contraction reading ("weight
+orders, never prunes"); local use:
+[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+
+### BAADER-NIPKOW-1998
+
+Baader and Nipkow, "Term Rewriting and All That", Cambridge University Press,
+1998, ISBN 978-0-521-77920-3 (no DOI — a monograph). The term-rewriting reference
+for the redex / normal-form / termination vocabulary the fold fragment uses; local
+use:
+[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+
+### MOHRI-2002
+
+Mohri, "Semiring Frameworks and Algorithms for Shortest-Distance Problems",
+Journal of Automata, Languages and Combinatorics 7(3):321–350, 2002. No registered
+(resolvable) DOI; the ACM Digital Library internal id `10.5555/639508.639512` uses
+ACM's non-resolvable internal prefix, **not** a real DOI. The semiring / tropical
+(min-plus) shortest-distance basis for `rigail`'s inside-weight algebra; local use:
+[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).

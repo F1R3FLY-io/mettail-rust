@@ -1,0 +1,71 @@
+' Reducing a fold inside OSLF-funded saturation — control flow (swimlanes = owner).
+' Render: plantuml -tsvg 12-native-fold-saturation-flow.puml
+@startuml
+title Reducing a fold inside OSLF-funded saturation
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+
+|#EDE9FE|Saturation loop|
+start
+:Search a `NativeRule` LHS\n(e.g. `int(?a, ?w)`) for a redex; <<#EDE9FE>>
+if (redex matches?) then (yes)
+else (no)
+  |#FCE7F3|Host-routed / no fold|
+  :Leave term unreduced\n(COMM / new / PZero carry no fold body); <<#FCE7F3>>
+  stop
+endif
+
+|#FEF3C7|OSLF funding|
+:For each LHS-var child class,\n`best_derivation` = funded 1-best\n(min inside weight); <<#FEF3C7>>
+if (child has a funded reducible derivation?) then (yes)
+else (no)
+  |#FEE2E2|No merge|
+  :Dispatcher returns `None`\n(faithful to a fold premise with no solution); <<#FEE2E2>>
+  detach
+endif
+if (`Δ_fold + margin ≤ Σ` ?) then (funded)
+else (Σ exhausted)
+  |#FEE2E2|NodeLimit|
+  :Stop saturation — underfunded; <<#FEE2E2>>
+  stop
+endif
+
+|#DDD6FE|Native body|
+:Reconstruct typed children from the typed op-enum `L`; <<#DDD6FE>>
+:Run the fold body\n`rho_proc_int_bin(&a, w)`; <<#DDD6FE>>
+if (bad cast / type mismatch?) then (yes)
+  :Result = `Proc::Err`\n(a legitimate, merged fold value); <<#FEF3C7>>
+else (no)
+  :Result = `Cast*` literal value; <<#DDD6FE>>
+endif
+
+|#DCFCE7|Result / extraction|
+:`add` the typed result e-node; <<#DCFCE7>>
+if (`find(root) ≠ find(result)` ?) then (yes)
+  :`merge(root, result)`\n(ADD an equality — prune nothing); <<#DCFCE7>>
+else (no — re-fire)
+  :`native_refire_is_noop`\n(no merge); <<#DCFCE7>>
+endif
+:Progress weight makes the folded form\nstrictly cheaper ⇒ funded 1-best\nextraction surfaces the normal form; <<#DCFCE7>>
+:Converged; <<#DCFCE7>>
+stop
+
+legend right
+  |= color |= owner / outcome |
+  |<#EDE9FE>| saturation loop |
+  |<#FEF3C7>| OSLF funding |
+  |<#DDD6FE>| native body |
+  |<#DCFCE7>| result / normal form |
+  |<#FEE2E2>| no merge / underfunded |
+  |<#FCE7F3>| host-routed (no fold) |
+endlegend
+@enduml

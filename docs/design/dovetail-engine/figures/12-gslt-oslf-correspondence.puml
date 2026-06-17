@@ -1,0 +1,64 @@
+' GSLT reduction ≅ OSLF-funded saturation — the central correspondence.
+' Render: plantuml -tsvg 12-gslt-oslf-correspondence.puml
+@startuml
+title GSLT reduction  ≅  OSLF-funded saturation
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "GSLT — reduction theory" as GH #BFDBFE
+rectangle "OSLF — engine realization" as OH #FDE68A
+
+rectangle "reduction relation  `→`" as L1 #DBEAFE
+rectangle "equality saturation\n(close under eqs · rewrites · congruence · AC)" as R1 #FEF3C7
+rectangle "a rewrite fires" as L2 #DBEAFE
+rectangle "match instantiated + `merge`" as R2 #FEF3C7
+rectangle "resource discipline\n(which rewrites may fire)" as L3 #DBEAFE
+rectangle "`is_funded(Δ,Σ,margin) = Δ + margin ≤ Σ`" as R3 #FEF3C7
+rectangle "no-contraction\n(use resources as supplied)" as L4 #DBEAFE
+rectangle "weight ORDERS, never PRUNES" as R4 #FEF3C7
+rectangle "termination\n(no infinite reduction)" as L5 #DBEAFE
+rectangle "node budget Σ bounds saturation\n⇒ Converged / NodeLimit" as R5 #FEF3C7
+rectangle "a fold (recursive redex)" as L6 #EDE9FE
+rectangle "native-computed rewrite, funded" as R6 #EDE9FE
+rectangle "normal form" as L7 #DCFCE7
+rectangle "funded 1-best extraction\n(`best_derivation`, min inside weight)" as R7 #DCFCE7
+
+GH -[hidden]down- L1
+OH -[hidden]down- R1
+
+L1 -[#374151]right-> R1 : is realized by
+L2 -[#374151]right-> R2 : is realized by
+L3 -[#374151]right-> R3 : is realized by
+L4 -[#374151]right-> R4 : is realized by
+L5 -[#374151]right-> R5 : is realized by
+L6 -[#7C3AED]right-> R6 : is realized by
+L7 -[#16A34A]right-> R7 : is realized by
+
+L1 -[hidden]down- L2
+L2 -[hidden]down- L3
+L3 -[hidden]down- L4
+L4 -[hidden]down- L5
+L5 -[hidden]down- L6
+L6 -[hidden]down- L7
+R1 -[hidden]down- R2
+R2 -[hidden]down- R3
+R3 -[hidden]down- R4
+R4 -[hidden]down- R5
+R5 -[hidden]down- R6
+R6 -[hidden]down- R7
+
+legend bottom
+  |= color |= concept |
+  |<#DBEAFE>| GSLT reduction theory (left) |
+  |<#FEF3C7>| OSLF funding realization (right) |
+  |<#EDE9FE>| the fold ↔ native-rewrite row |
+  |<#DCFCE7>| normal form ↔ funded extraction |
+endlegend
+@enduml
