@@ -57,6 +57,13 @@ pub use numeric_cast_dispatch::{
     numeric_try_float, numeric_try_int, numeric_try_uint, uint_bin_pipeline_decimal_str_u32,
     uint_bin_pipeline_u32, NumericInput,
 };
+mod numeric_cast_adapter;
+pub use numeric_cast_adapter::{
+    numeric_bigint_unary, numeric_bigrat_unary, numeric_fixed_bin, numeric_float_bin,
+    numeric_int_bin_i32, numeric_int_bin_i64, numeric_uint_bin_u32, proc_bigint_unary,
+    proc_bigrat_unary, proc_fixed_bin, proc_float_bin, proc_int_bin, proc_uint_bin, CastResult,
+    CastWidth, ProcToNumericInput,
+};
 
 // Overflow-safe / NaN-safe arithmetic used by generated eval and Ascent rules
 // to convert panicking Rust arithmetic into Option-returning steps.
