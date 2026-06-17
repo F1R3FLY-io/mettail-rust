@@ -8,13 +8,15 @@
 //! (deleted in Phase 3): a new language now writes NO numeric glue — the macro derives the
 //! adapter from its `Cast*` wrapper rules and numeric-cast `fold` rules.
 //!
-//! Recognition keys on the runtime reduction the fold body calls (the post-Phase-3 generic
-//! names `numeric_*`/`proc_*`, and — for a build that precedes the body migration — the
-//! legacy `*_try_*`/`*_proc_*` names; both carry the same arity token). Flavor is the
-//! OUTPUT category's `native_type` presence (the dispatcher's own test): a native-output
-//! cast (Calculator `int(a,m) : Int`) returns `Option<scalar>` and defers on `None`; an
-//! object-output cast (RhoCalc `int(a,m) : Proc`) returns the result `Proc` (`Err` on a bad
-//! cast) and needs `CastResult`.
+//! Recognition is **purely structural** (`recognize_cast_fold`) — no keyword, constructor
+//! label, or body fn-name is ever read. A numeric cast is a `fold` rule whose first param is the
+//! primary/object category, whose optional second param is an integer width, and whose OUTPUT
+//! category is either a numeric native type (native-output) or the object category itself
+//! (object-output, keyed on the binary width-bearing shape). Flavor and arity both come from the
+//! output category: a native-output cast (Calculator `int(a,m) : Int`) returns `Option<scalar>`,
+//! defers on `None`, and reads its arity from the output kind; an object-output cast (RhoCalc
+//! `int(a,m) : Proc`) returns the result `Proc` (`Err` on a bad cast), needs `CastResult`, and
+//! carries no arity (parse-committed by the WPDA, never needed at reduction).
 //!
 //! Gating (zero dead-code): a language with a native-output numeric cast has its adapter
 //! consumed by the always-emitted `eval.rs` native path, so its impls are UNGATED; a
@@ -32,6 +34,9 @@ use syn::Ident;
 
 use crate::gen::generate_literal_label;
 
+/// The numeric family a cast narrows to. For native-output casts this is read structurally from
+/// the OUTPUT category's native kind (`arity_of_kind`); object-output casts carry no arity (it is
+/// parse-committed and unneeded — see `CastFold::arity`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arity {
     Int,
@@ -40,13 +45,6 @@ enum Arity {
     Fixed,
     BigInt,
     BigRat,
-}
-
-impl Arity {
-    /// Binary casts take a width arg (`int(a, m)`); unary casts do not (`bigint(a)`).
-    fn is_binary(self) -> bool {
-        matches!(self, Arity::Int | Arity::UInt | Arity::Float | Arity::Fixed)
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,8 +58,17 @@ struct CastFold<'a> {
     label: &'a Ident,
     /// the rule's output category (`Int` native / `Proc` object)
     output_cat: &'a Ident,
-    arity: Arity,
+    /// the cast arity. `Some` for native-output casts — derived **structurally from the OUTPUT
+    /// category's native kind**, never from the keyword/label/body fn-name. `None` for
+    /// object-output casts: the object arity is PARSE-COMMITTED (the WPDA commits the constructor
+    /// from the keyword evidence) and is never needed at reduction — a nested object cast reduces
+    /// child-first via saturation (`try_fold_to_self`) into a value WRAPPER, reaching the
+    /// literal-wrapper arm, so the macro derives no object nested arm and needs no object arity.
+    arity: Option<Arity>,
     flavor: Flavor,
+    /// binary cast (carries a width param, `int(a, m)`) vs unary (`bigint(a)`) — from the param
+    /// count (shape), independent of arity.
+    is_binary: bool,
 }
 
 struct Wrapper<'a> {
@@ -74,40 +81,83 @@ struct Wrapper<'a> {
     kind: NativeKind,
 }
 
-/// Classify the arity of a numeric-cast fold body by its outermost call's final path segment.
-/// `None` ⇒ not a numeric cast. Matches both the post-Phase-3 generic names and the legacy
-/// `*_try_*`/`*_proc_*` names (same arity token); `uint` is tested before `int` because
-/// `"uint_bin"` contains `"int_bin"` as a substring.
-fn classify_arity(expr: &syn::Expr) -> Option<Arity> {
-    match expr {
-        syn::Expr::Block(b) => match b.block.stmts.last()? {
-            syn::Stmt::Expr(e, None) => classify_arity(e),
-            _ => None,
-        },
-        syn::Expr::Paren(p) => classify_arity(&p.expr),
-        syn::Expr::Call(c) => match c.func.as_ref() {
-            syn::Expr::Path(p) => {
-                let n = p.path.segments.last()?.ident.to_string();
-                if n.contains("uint_bin") {
-                    Some(Arity::UInt)
-                } else if n.contains("int_bin") {
-                    Some(Arity::Int)
-                } else if n.contains("float_bin") {
-                    Some(Arity::Float)
-                } else if n.contains("fixed_bin") {
-                    Some(Arity::Fixed)
-                } else if n.contains("bigint_unary") {
-                    Some(Arity::BigInt)
-                } else if n.contains("bigrat_unary") {
-                    Some(Arity::BigRat)
-                } else {
-                    None
-                }
-            },
-            _ => None,
-        },
-        _ => None,
+/// The cast **arity** for a numeric native `kind` — the structural target of a native-output
+/// cast, read from its OUTPUT category (never from the keyword, label, or body fn-name). `None`
+/// for kinds that are not numeric-cast outputs (`Bool`/`Str`/`Other`/wide uints).
+fn arity_of_kind(kind: NativeKind) -> Option<Arity> {
+    Some(match kind {
+        NativeKind::Int8
+        | NativeKind::Int16
+        | NativeKind::Int32
+        | NativeKind::Int64
+        | NativeKind::Int128
+        | NativeKind::Isize => Arity::Int,
+        NativeKind::UInt8 | NativeKind::UInt16 | NativeKind::UInt32 => Arity::UInt,
+        NativeKind::Float32 | NativeKind::Float64 => Arity::Float,
+        NativeKind::CanonicalFixedPoint => Arity::Fixed,
+        NativeKind::CanonicalBigInt => Arity::BigInt,
+        NativeKind::CanonicalBigRat => Arity::BigRat,
+        _ => return None,
+    })
+}
+
+/// Recognize a numeric-cast `fold` rule **purely by its shape** (the OSLF cast-rule shape), with
+/// NO coupling to the keyword, constructor label, or body fn-name — the parser already committed
+/// the constructor from the keyword evidence; the macro only mirrors the structure. A cast fold:
+///
+///   * is a `fold` rule whose **first param is the primary/object category** `proc_cat` (a cast
+///     reinterprets a primary-category value);
+///   * has **1 or 2 value params** — binary casts carry an **integer width** as the 2nd param
+///     (`int(a, m)`), unary casts have none (`bigint(a)`); and
+///   * **outputs** either a **numeric native** category (native-output cast — `Flavor::Native`,
+///     arity from the output kind) or the **object category** `proc_cat` itself (object-output
+///     cast — `Flavor::Object`).
+///
+/// Object-output casts are keyed on the **binary** (width-bearing) shape only: a unary
+/// `proc_cat → proc_cat` fold is shape-indistinguishable from an ordinary unary operation
+/// (`bitnot a`, `not a`, `len(p)`), and the macro needs nothing from object-unary casts — their
+/// result is built by the `CastResult` impl already emitted for the binary object casts, and their
+/// nesting reduces child-first via saturation. Native-output casts have a distinct numeric output
+/// category, so unary native casts (`bigint(a) : BigInt`) are unambiguous and recognized too.
+fn recognize_cast_fold<'a>(
+    language: &LanguageDef,
+    rule: &'a GrammarRule,
+    proc_cat: &Ident,
+) -> Option<CastFold<'a>> {
+    if rule.eval_mode != Some(EvalMode::Fold) {
+        return None;
     }
+    let ps = rule.term_context.as_ref()?;
+    if ps.is_empty() || ps.len() > 2 {
+        return None;
+    }
+    // param 0 must be the primary/object category (the cast's input value).
+    if simple_param_cat(&ps[0])? != proc_cat {
+        return None;
+    }
+    let is_binary = ps.len() == 2;
+    if is_binary {
+        // binary cast ⇒ the 2nd param is an integer width.
+        let w = simple_param_cat(&ps[1])?;
+        if !kind_of(language, w)?.is_integer() {
+            return None;
+        }
+    }
+    // Flavor + arity from the OUTPUT category (structural, never the name):
+    //   * numeric-native output  ⇒ native cast, arity = output kind;
+    //   * object-category output ⇒ object cast (binary only — see above), arity unneeded.
+    let (flavor, arity) = match kind_of(language, &rule.category) {
+        Some(k) => (Flavor::Native, Some(arity_of_kind(k)?)),
+        None if &rule.category == proc_cat && is_binary => (Flavor::Object, None),
+        _ => return None,
+    };
+    Some(CastFold {
+        label: &rule.label,
+        output_cat: &rule.category,
+        arity,
+        flavor,
+        is_binary,
+    })
 }
 
 /// The base category of a `Simple` typed param (`a:Proc` → `Proc`).
@@ -222,49 +272,9 @@ fn kind_of(language: &LanguageDef, cat: &Ident) -> Option<NativeKind> {
 }
 
 pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStream {
-    // 1. Numeric-cast fold rules (redex constructors), with arity + flavor.
-    let folds: Vec<CastFold<'_>> = language
-        .terms
-        .iter()
-        .filter_map(|rule| {
-            if rule.eval_mode != Some(EvalMode::Fold) {
-                return None;
-            }
-            let arity = classify_arity(&rule.rust_code.as_ref()?.code)?;
-            let flavor = match language.get_type(&rule.category) {
-                Some(t) if t.native_type.is_some() => Flavor::Native,
-                _ => Flavor::Object,
-            };
-            Some(CastFold {
-                label: &rule.label,
-                output_cat: &rule.category,
-                arity,
-                flavor,
-            })
-        })
-        .collect();
-    if folds.is_empty() {
-        return quote!();
-    }
-
-    // Gating (computed up-front, applied per-impl — a single `#[cfg]` before a multi-item
-    // block would gate only the first item, the op-enum bug fixed in 4645b0ab):
-    //   * a language with a native-output cast has its `CastWidth`/`ProcToNumericInput`
-    //     consumed by the always-emitted `eval.rs` path ⇒ ungated;
-    //   * an object-only language's adapter is consumed only by the `dovetail-codegen`
-    //     typed dispatcher ⇒ gated;
-    //   * `CastResult` is ALWAYS `dovetail-codegen`-gated (it is consumed only on the
-    //     object-output typed path, even when a mixed language's other impls are ungated).
-    let has_native = folds.iter().any(|f| f.flavor == Flavor::Native);
-    let gate: TokenStream = if has_native {
-        quote!()
-    } else {
-        quote!(#[cfg(feature = "dovetail-codegen")])
-    };
-    let result_gate: TokenStream = quote!(#[cfg(feature = "dovetail-codegen")]);
-
-    // 2. Cast-wrapper rules: single numeric-typed-field, Proc-producing, no body. Group by
-    //    output category; the object/primary category `ProcCat` is the one carrying them.
+    // 1. Cast-wrapper rules: a single numeric-typed field, Proc-producing, no body. Group by
+    //    output category; the object/primary category `ProcCat` is the one carrying them. Computed
+    //    FIRST — the cast-fold recognizer below keys on `ProcCat` to identify a cast's input value.
     struct WrapCand<'a> {
         proc_cat: &'a Ident,
         proc_variant: &'a Ident,
@@ -326,8 +336,37 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
         wrappers.iter().find(|w| w.inner_cat == inner)
     };
 
-    // 3. Width category `IntCat` = the 2nd param category of any binary cast fold.
-    let int_cat: Option<&Ident> = folds.iter().filter(|f| f.arity.is_binary()).find_map(|f| {
+    // 2. Numeric-cast fold rules (the redex constructors), recognized PURELY BY SHAPE — no keyword,
+    //    label, or body fn-name is ever read (see `recognize_cast_fold`). Native casts carry an
+    //    arity (from their output category); object casts do not (parse-committed, unneeded).
+    let folds: Vec<CastFold<'_>> = language
+        .terms
+        .iter()
+        .filter_map(|rule| recognize_cast_fold(language, rule, proc_cat))
+        .collect();
+    if folds.is_empty() {
+        return quote!();
+    }
+
+    // Gating (computed up-front, applied per-impl — a single `#[cfg]` before a multi-item
+    // block would gate only the first item, the op-enum bug fixed in 4645b0ab):
+    //   * a language with a native-output cast has its `CastWidth`/`ProcToNumericInput`
+    //     consumed by the always-emitted `eval.rs` path ⇒ ungated;
+    //   * an object-only language's adapter is consumed only by the `dovetail-codegen`
+    //     typed dispatcher ⇒ gated;
+    //   * `CastResult` is ALWAYS `dovetail-codegen`-gated (it is consumed only on the
+    //     object-output typed path, even when a mixed language's other impls are ungated).
+    let has_native = folds.iter().any(|f| f.flavor == Flavor::Native);
+    let gate: TokenStream = if has_native {
+        quote!()
+    } else {
+        quote!(#[cfg(feature = "dovetail-codegen")])
+    };
+    let result_gate: TokenStream = quote!(#[cfg(feature = "dovetail-codegen")]);
+
+    // 3. Width category `IntCat` = the 2nd param category of any binary cast fold (shape-derived —
+    //    every binary cast, native or object, carries its integer width there).
+    let int_cat: Option<&Ident> = folds.iter().filter(|f| f.is_binary).find_map(|f| {
         let rule = language
             .terms
             .iter()
@@ -377,18 +416,19 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
             // native, binary folds whose redex lives in THIS inner category get a nested sub-arm.
             let nested: Vec<TokenStream> = folds
                 .iter()
-                .filter(|f| f.flavor == Flavor::Native && f.arity.is_binary() && f.output_cat == ic)
-                .map(|f| {
+                .filter(|f| f.flavor == Flavor::Native && f.is_binary && f.output_cat == ic)
+                .filter_map(|f| {
+                    let arity = f.arity?;
                     let fl = f.label;
-                    let nfn = numeric_fn_for(f.arity, int_kind);
+                    let nfn = numeric_fn_for(arity, int_kind);
                     let n = Ident::new("__n", proc_macro2::Span::call_site());
-                    let wrapped = numeric_input_for_reduced(f.arity, int_kind, &n);
-                    quote! {
+                    let wrapped = numeric_input_for_reduced(arity, int_kind, &n);
+                    Some(quote! {
                         #ic::#fl(inner_a, inner_w) => {
                             let #n = ::mettail_runtime::#nfn(inner_a.as_ref(), inner_w.as_ref())?;
                             #wrapped
                         },
-                    }
+                    })
                 })
                 .collect();
             quote! {
@@ -400,29 +440,16 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
             }
         })
         .collect();
-    // (b) object, binary folds: top-level redex arms (one-step nested reduction).
-    let object_arms: Vec<TokenStream> = folds
-        .iter()
-        .filter(|f| f.flavor == Flavor::Object && f.arity.is_binary())
-        .map(|f| {
-            let fl = f.label;
-            let nfn = numeric_fn_for(f.arity, int_kind);
-            let n = Ident::new("__n", proc_macro2::Span::call_site());
-            let wrapped = numeric_input_for_reduced(f.arity, int_kind, &n);
-            quote! {
-                #proc_cat::#fl(inner_a, inner_w) => {
-                    let #n = ::mettail_runtime::#nfn(inner_a.as_ref(), inner_w.as_ref())?;
-                    #wrapped
-                },
-            }
-        })
-        .collect();
-
+    // (b) object-output casts get NO top-level redex arm here. By the time a cast body runs, its
+    //     argument was already reduced child-first (`try_fold_to_self`), so a nested object cast is
+    //     a value WRAPPER (matched by (a)), never an un-reduced redex — object nesting reduces via
+    //     saturation, not a `to_numeric_input` self-arm (the `nested_int_cast_folds_via_saturation`
+    //     regression confirms this). It is also why object casts need no macro-derived arity: their
+    //     only obligation is building the result, discharged by the `CastResult` impl below.
     let to_numeric_input = quote! {
         fn to_numeric_input(&self) -> ::core::option::Option<::mettail_runtime::NumericInput<'_>> {
             ::core::option::Option::Some(match self {
                 #(#wrapper_arms)*
-                #(#object_arms)*
                 _ => return ::core::option::Option::None,
             })
         }
@@ -510,38 +537,29 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
             None => quote!(),
         };
 
-    // ── as_int_bin / as_float_bin / as_fixed_bin: one per arity that has a fold; shape per flavor ──
+    // ── as_int_bin / as_float_bin / as_fixed_bin: the nested same-op fast-path consulted by the
+    //    NATIVE reductions. Emitted only for native binary casts of the given arity — the redex
+    //    lives in the inner numeric category, wrapped by its Proc wrapper (`ProcInt(Int::IntBin)`).
+    //    Object casts have no entry here: their nesting reduces child-first via saturation (see the
+    //    `to_numeric_input` (b) note). ──
     let nested_hook = |arity: Arity, method: &str| -> TokenStream {
         let arms: Vec<TokenStream> = folds
             .iter()
-            .filter(|f| f.arity == arity)
-            .map(|f| {
+            .filter(|f| f.flavor == Flavor::Native && f.is_binary && f.arity == Some(arity))
+            .filter_map(|f| {
                 let fl = f.label;
-                match f.flavor {
-                    Flavor::Object => quote! {
-                        #proc_cat::#fl(a, w) =>
+                // redex lives in the inner category, wrapped by its Proc wrapper.
+                let w = wrapper_for_inner(f.output_cat)?;
+                let pv = w.proc_variant;
+                let ic = w.inner_cat;
+                Some(quote! {
+                    #proc_cat::#pv(x) => match x.as_ref() {
+                        #ic::#fl(a, w) =>
                             ::mettail_runtime::CastWidth::into_width_i64(w.as_ref())
                                 .map(|wi| (a.as_ref(), wi)),
+                        _ => ::core::option::Option::None,
                     },
-                    Flavor::Native => {
-                        // redex lives in the inner category, wrapped by its Proc wrapper.
-                        match wrapper_for_inner(f.output_cat) {
-                            Some(w) => {
-                                let pv = w.proc_variant;
-                                let ic = w.inner_cat;
-                                quote! {
-                                    #proc_cat::#pv(x) => match x.as_ref() {
-                                        #ic::#fl(a, w) =>
-                                            ::mettail_runtime::CastWidth::into_width_i64(w.as_ref())
-                                                .map(|wi| (a.as_ref(), wi)),
-                                        _ => ::core::option::Option::None,
-                                    },
-                                }
-                            },
-                            None => quote!(),
-                        }
-                    },
-                }
+                })
             })
             .collect();
         if arms.is_empty() {
