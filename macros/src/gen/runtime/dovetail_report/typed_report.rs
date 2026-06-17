@@ -440,7 +440,7 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     let struct_slack = language.equations.len() * 2 + language.rewrites.len() + 8;
 
     quote! {
-        #[cfg(feature = "dovetail-codegen")]
+        // `op_enum_decl` carries `#[cfg(feature = "dovetail-codegen")]` on each of its items.
         #op_enum_decl
 
         #[cfg(feature = "dovetail-codegen")]

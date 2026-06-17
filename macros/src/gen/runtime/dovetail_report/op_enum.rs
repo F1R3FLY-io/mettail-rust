@@ -293,7 +293,10 @@ pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
         }
     });
 
+    // Every emitted item is gated on `dovetail-codegen` (it references `::dovetail`): a
+    // `#[cfg]` attribute applies only to the NEXT item, so each of the three carries its own.
     quote! {
+        #[cfg(feature = "dovetail-codegen")]
         #[derive(::core::clone::Clone, ::core::cmp::PartialEq, ::core::cmp::Eq, ::core::hash::Hash)]
         #[allow(non_camel_case_types)]
         pub enum #enum_ident {
@@ -305,6 +308,7 @@ pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
         // big-numerics via `to_canonical_bytes`; Map/Bag via sorted `Display`; vars/Vec via
         // `Debug`). Two values produce identical bytes iff they are `Eq`-equal, and the
         // framing makes the composite injective — satisfying the `SemanticHash` contract.
+        #[cfg(feature = "dovetail-codegen")]
         unsafe impl ::dovetail::key::SemanticHash for #enum_ident {
             fn write_content(&self, out: &mut ::std::vec::Vec<u8>) {
                 match self {
@@ -313,6 +317,7 @@ pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
             }
         }
 
+        #[cfg(feature = "dovetail-codegen")]
         impl ::core::fmt::Display for #enum_ident {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 match self {
