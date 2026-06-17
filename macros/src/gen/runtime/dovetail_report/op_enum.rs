@@ -38,7 +38,7 @@ pub(crate) fn op_enum_ident(language: &LanguageDef) -> Ident {
 /// `Proc_IntBinProc`, `Int_NumLit`. The `<Cat>_<Label>` shape guarantees uniqueness across
 /// categories (two categories may share a constructor label only by accident; the category
 /// prefix disambiguates) and lets reconstruction recover BOTH the AST enum and the variant.
-fn op_variant_ident(category: &Ident, label: &Ident) -> Ident {
+pub(crate) fn op_variant_ident(category: &Ident, label: &Ident) -> Ident {
     format_ident!("{}_{}", category, label)
 }
 

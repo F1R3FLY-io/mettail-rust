@@ -17,6 +17,9 @@ use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantK
 
 pub(crate) mod ac;
 pub(crate) mod op_enum;
+pub(crate) mod reconstruct;
+pub(crate) mod typed_lowering;
+pub(crate) mod typed_report;
 
 /// Whether a language gets the typed-`L` Dovetail fold path (Increment 2/3): it has at least
 /// one `fold` term rule whose OUTPUT category has no native type (a non-native-output fold,
@@ -62,6 +65,30 @@ fn constructor_label(language: &LanguageDef, constructor: &Ident) -> Result<Stri
 
 fn category_lowering_fn(category: &Ident) -> Ident {
     format_ident!("__mettail_dovetail_add_{}", to_snake(&category.to_string()))
+}
+
+/// The e-graph operator expression for a constructor in a rewrite-rule pattern. With
+/// `enum_id = None` (the `EGraph<String>` path) it is the `"Lang::Cat::Ctor"` label string;
+/// with `enum_id = Some(L)` (the typed fold path) it is the typed op variant `L::<Cat>_<Ctor>`,
+/// so `RewriteRule<L>` patterns match the typed lowering's nodes.
+fn constructor_op_expr(
+    language: &LanguageDef,
+    constructor: &Ident,
+    enum_id: Option<&Ident>,
+) -> Result<TokenStream, String> {
+    match enum_id {
+        None => {
+            let label = lit(&constructor_label(language, constructor)?);
+            Ok(quote! { #label.to_string() })
+        },
+        Some(enum_id) => {
+            let category = language
+                .category_of_constructor(constructor)
+                .ok_or_else(|| format!("constructor `{constructor}` has no category"))?;
+            let variant = op_enum::op_variant_ident(&category, constructor);
+            Ok(quote! { #enum_id::#variant })
+        },
+    }
 }
 
 fn opaque_leaf_expr(label: TokenStream, payload: TokenStream) -> TokenStream {
@@ -348,9 +375,10 @@ fn category_lowering(language: &LanguageDef, category: &Ident) -> TokenStream {
 fn pattern_to_dovetail(
     language: &LanguageDef,
     pattern: &AstPattern,
+    enum_id: Option<&Ident>,
 ) -> Result<TokenStream, String> {
     match pattern {
-        AstPattern::Term(term) => pattern_term_to_dovetail(language, term),
+        AstPattern::Term(term) => pattern_term_to_dovetail(language, term, enum_id),
         // A collection directly under a constructor is lowered to an AC bag in
         // the `PatternTerm::Apply` arm (which supplies the operator label). A
         // bare/nested collection with no enclosing constructor has no operator and
@@ -370,34 +398,38 @@ fn pattern_to_dovetail(
 fn pattern_term_to_dovetail(
     language: &LanguageDef,
     term: &PatternTerm,
+    enum_id: Option<&Ident>,
 ) -> Result<TokenStream, String> {
     match term {
         PatternTerm::Var(var) => {
             if let Some(rule) = language.get_constructor(var) {
-                let label = constructor_label(language, &rule.label)?;
-                let label = lit(&label);
-                Ok(quote! { ::dovetail::rules::Pattern::leaf(#label.to_string()) })
+                let op = constructor_op_expr(language, &rule.label, enum_id)?;
+                Ok(quote! { ::dovetail::rules::Pattern::leaf(#op) })
             } else {
                 let name = lit(&var.to_string());
                 Ok(quote! { ::dovetail::rules::Pattern::var(#name) })
             }
         },
         PatternTerm::Apply { constructor, args } => {
-            let label = constructor_label(language, constructor)?;
-            let label = lit(&label);
             // A constructor whose SOLE argument is a collection metapattern
             // `{ ... }` (e.g. Ambient `(PPar { P, Q, ...rest })`) lowers to an AC
             // bag pattern, with the constructor label as the AC operator. The
             // collection has no constructor of its own (see `Pattern::Collection`).
             if let [AstPattern::Collection { .. }] = args.as_slice() {
+                if enum_id.is_some() {
+                    return Err("AC collection metapatterns are not yet lowered on the typed fold path".into());
+                }
+                let label = constructor_label(language, constructor)?;
+                let label = lit(&label);
                 return ac::lower_ac_collection(language, &label, &args[0]);
             }
+            let op = constructor_op_expr(language, constructor, enum_id)?;
             let args = args
                 .iter()
-                .map(|arg| pattern_to_dovetail(language, arg))
+                .map(|arg| pattern_to_dovetail(language, arg, enum_id))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(quote! {
-                ::dovetail::rules::Pattern::app(#label.to_string(), vec![#(#args),*])
+                ::dovetail::rules::Pattern::app(#op, vec![#(#args),*])
             })
         },
         PatternTerm::Lambda { .. } => Err("lambda patterns require binder lowering".into()),
@@ -429,7 +461,11 @@ fn premise_supported(premise: &Premise) -> bool {
     }
 }
 
-fn lower_equation(language: &LanguageDef, eq: &Equation) -> (Vec<TokenStream>, Vec<String>) {
+fn lower_equation(
+    language: &LanguageDef,
+    eq: &Equation,
+    enum_id: Option<&Ident>,
+) -> (Vec<TokenStream>, Vec<String>) {
     let mut out = Vec::new();
     let mut unsupported = Vec::new();
     if !eq.premises.iter().all(premise_supported) {
@@ -437,8 +473,8 @@ fn lower_equation(language: &LanguageDef, eq: &Equation) -> (Vec<TokenStream>, V
         return (out, unsupported);
     }
 
-    match pattern_to_dovetail(language, &eq.left) {
-        Ok(left) if !eq.left.is_just_variable() => match pattern_to_dovetail(language, &eq.right) {
+    match pattern_to_dovetail(language, &eq.left, enum_id) {
+        Ok(left) if !eq.left.is_just_variable() => match pattern_to_dovetail(language, &eq.right, enum_id) {
             Ok(right) => {
                 let label = lit(&format!("{}::equation::{}::forward", language.name, eq.name));
                 out.push(quote! {
@@ -455,9 +491,9 @@ fn lower_equation(language: &LanguageDef, eq: &Equation) -> (Vec<TokenStream>, V
         Err(reason) => unsupported.push(format!("equation `{}` LHS: {reason}", eq.name)),
     }
 
-    match pattern_to_dovetail(language, &eq.right) {
+    match pattern_to_dovetail(language, &eq.right, enum_id) {
         Ok(right) if !eq.right.is_just_variable() => {
-            match pattern_to_dovetail(language, &eq.left) {
+            match pattern_to_dovetail(language, &eq.left, enum_id) {
                 Ok(left) => {
                     let label = lit(&format!("{}::equation::{}::reverse", language.name, eq.name));
                     out.push(quote! {
@@ -480,7 +516,11 @@ fn lower_equation(language: &LanguageDef, eq: &Equation) -> (Vec<TokenStream>, V
     (out, unsupported)
 }
 
-fn lower_rewrite(language: &LanguageDef, rw: &RewriteRule) -> (Vec<TokenStream>, Vec<String>) {
+fn lower_rewrite(
+    language: &LanguageDef,
+    rw: &RewriteRule,
+    enum_id: Option<&Ident>,
+) -> (Vec<TokenStream>, Vec<String>) {
     if !rw.premises.iter().all(premise_supported) {
         return (Vec::new(), vec![format!("rewrite `{}` has side conditions", rw.name)]);
     }
@@ -492,8 +532,8 @@ fn lower_rewrite(language: &LanguageDef, rw: &RewriteRule) -> (Vec<TokenStream>,
     }
 
     match (
-        pattern_to_dovetail(language, &rw.left),
-        pattern_to_dovetail(language, &rw.right),
+        pattern_to_dovetail(language, &rw.left, enum_id),
+        pattern_to_dovetail(language, &rw.right, enum_id),
     ) {
         (Ok(lhs), Ok(rhs)) => {
             let label = lit(&format!("{}::rewrite::{}", language.name, rw.name));
@@ -513,16 +553,16 @@ fn lower_rewrite(language: &LanguageDef, rw: &RewriteRule) -> (Vec<TokenStream>,
     }
 }
 
-fn rule_block(language: &LanguageDef) -> (TokenStream, Vec<String>) {
+fn rule_block(language: &LanguageDef, enum_id: Option<&Ident>) -> (TokenStream, Vec<String>) {
     let mut rules = Vec::new();
     let mut unsupported = Vec::new();
     for eq in &language.equations {
-        let (lowered, rejected) = lower_equation(language, eq);
+        let (lowered, rejected) = lower_equation(language, eq, enum_id);
         rules.extend(lowered);
         unsupported.extend(rejected);
     }
     for rw in &language.rewrites {
-        let (lowered, rejected) = lower_rewrite(language, rw);
+        let (lowered, rejected) = lower_rewrite(language, rw, enum_id);
         rules.extend(lowered);
         unsupported.extend(rejected);
     }
@@ -533,6 +573,12 @@ fn rule_block(language: &LanguageDef) -> (TokenStream, Vec<String>) {
 /// Generate feature-gated helpers that compile generated typed AST terms into
 /// checked `RuntimeDovetailRunReport` values.
 pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
+    // Fold-bearing languages (non-native-output `fold`s — RhoCalc's Proc casts/arith) take the
+    // typed-`L` path: a typed op-enum + native-rewrite dispatcher that actually reduces folds.
+    // Every other language keeps the `EGraph<String>` path below, byte-for-byte unchanged.
+    if needs_typed_fold_path(language) {
+        return typed_report::generate_typed_dovetail_report(language);
+    }
     let name = &language.name;
     let language_struct = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -542,7 +588,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|ty| category_lowering(language, &ty.name))
         .collect();
-    let (rules, unsupported) = rule_block(language);
+    let (rules, unsupported) = rule_block(language, None);
     let unsupported_lits: Vec<LitStr> = unsupported.iter().map(|s| lit(s)).collect();
     let primary_type = language
         .types
@@ -631,24 +677,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         quote! {}
     };
 
-    // Increment 2 (Step B): for fold-bearing languages, additionally emit the typed op-enum
-    // `<Lang>DovetailOp` (+ its exact-key `SemanticHash` and projection `Display`). It is the
-    // substrate the typed lowering/reconstruction/dispatcher (Steps C–F) build on; emitting it
-    // here keeps the generator wired (no dead code) while leaving the `EGraph<String>` report
-    // body below unchanged until Step F flips fold-bearing languages onto it.
-    let op_enum_decl: TokenStream = if needs_typed_fold_path(language) {
-        let decl = op_enum::generate_dovetail_op_enum(language);
-        quote! {
-            #[cfg(feature = "dovetail-codegen")]
-            #decl
-        }
-    } else {
-        quote! {}
-    };
-
     quote! {
-        #op_enum_decl
-
         #[cfg(feature = "dovetail-codegen")]
         impl #language_struct {
             /// Compile this language's generated typed AST into a checked
@@ -779,7 +808,7 @@ mod tests {
         );
 
         let tokens = generate_dovetail_report(&language).to_string();
-        let (_, unsupported) = rule_block(&language);
+        let (_, unsupported) = rule_block(&language, None);
         assert!(tokens.contains("dovetail_report_for"));
         assert!(tokens.contains("DovetailSmoke"));
         assert!(tokens.contains("AToB"));
@@ -832,7 +861,7 @@ mod tests {
             "#,
         );
 
-        let (_, unsupported) = rule_block(&language);
+        let (_, unsupported) = rule_block(&language, None);
         assert!(
             unsupported.is_empty(),
             "AC bag rewrite must lower, not be rejected: {unsupported:?}"

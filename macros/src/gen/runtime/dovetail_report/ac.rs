@@ -54,7 +54,9 @@ pub(crate) fn lower_ac_collection(
 
     let fixed = elements
         .iter()
-        .map(|elem| super::pattern_to_dovetail(language, elem))
+        // AC collection metapatterns are lowered only on the `EGraph<String>` path (the typed
+        // fold path fails closed before reaching here), so the op label is always a String.
+        .map(|elem| super::pattern_to_dovetail(language, elem, None))
         .collect::<Result<Vec<_>, _>>()?;
 
     let rest_tokens = match rest {
