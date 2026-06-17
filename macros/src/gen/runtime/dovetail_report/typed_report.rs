@@ -103,11 +103,26 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
     out
 }
 
+/// The `mettail_runtime` native-output numeric-cast reductions (generated cast fold bodies
+/// call these). They return `Option<scalar>` — a `None` defers — but carry no `try` segment,
+/// so they are recognized by name in [`body_returns_option`]. Their object-output siblings
+/// (`proc_int_bin`, …) return a `Proc` (not an `Option`) and MUST NOT appear here.
+const NATIVE_NUMERIC_CAST_FNS: &[&str] = &[
+    "numeric_int_bin_i32",
+    "numeric_int_bin_i64",
+    "numeric_uint_bin_u32",
+    "numeric_float_bin",
+    "numeric_fixed_bin",
+    "numeric_bigint_unary",
+    "numeric_bigrat_unary",
+];
+
 /// Whether a fold body's outermost form returns an `Option` that the dispatcher must `?`-unwrap
 /// (a `None` defers the fold). Precise for the fold-body conventions: a `try_*(..)` call or
-/// method, or a bare `Some(..)`/`None`, recursing through a block's tail expression. A body
-/// that `.expect()`s/`.unwrap()`s an inner `Option`, or returns a raw value
-/// (`(-a)`, `a.union(&b)`, `{ … o }`), is NOT an `Option` at the outermost position.
+/// method, or a bare `Some(..)`/`None`, or a `mettail_runtime` native numeric-cast reduction
+/// ([`NATIVE_NUMERIC_CAST_FNS`]), recursing through a block's tail expression. A body that
+/// `.expect()`s/`.unwrap()`s an inner `Option`, or returns a raw value (`(-a)`, `a.union(&b)`,
+/// `{ … o }`, `proc_int_bin(..)`), is NOT an `Option` at the outermost position.
 fn body_returns_option(expr: &syn::Expr) -> bool {
     match expr {
         syn::Expr::Block(b) => match b.block.stmts.last() {
@@ -119,7 +134,14 @@ fn body_returns_option(expr: &syn::Expr) -> bool {
                 let n = s.ident.to_string();
                 // The fallible-fold convention is `<lang>_try_<op>` (e.g. `calc_try_int_bin`,
                 // `rho_try_int_bin`) or a bare `try_*`; match `try` as a `_`-delimited segment.
-                n.split('_').any(|seg| seg == "try") || n == "Some" || n == "None"
+                // The macro-generated numeric-cast adapters instead call the `mettail_runtime`
+                // native-output reductions, which return `Option<scalar>` but carry no `try`
+                // segment, so recognize them by name. Their object-output siblings (`proc_*`)
+                // return a `Proc`, NOT an `Option`, and are deliberately EXCLUDED here.
+                n.split('_').any(|seg| seg == "try")
+                    || n == "Some"
+                    || n == "None"
+                    || NATIVE_NUMERIC_CAST_FNS.contains(&n.as_str())
             }),
             _ => false,
         },
@@ -536,5 +558,52 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::body_returns_option;
+
+    #[test]
+    fn native_numeric_cast_fns_classify_as_option() {
+        // The generated native-output cast bodies (Calculator) call these; they return
+        // `Option<scalar>`, so the dispatcher must `?`-unwrap (a `None` defers).
+        for body in [
+            quote::quote!(mettail_runtime::numeric_int_bin_i32(&a, w)),
+            quote::quote!(mettail_runtime::numeric_int_bin_i64(&a, w)),
+            quote::quote!(mettail_runtime::numeric_uint_bin_u32(&a, w)),
+            quote::quote!(mettail_runtime::numeric_float_bin(&a, w)),
+            quote::quote!(mettail_runtime::numeric_fixed_bin(&a, w)),
+            quote::quote!(mettail_runtime::numeric_bigint_unary(&a)),
+            quote::quote!(mettail_runtime::numeric_bigrat_unary(&a)),
+            quote::quote!({ mettail_runtime::numeric_float_bin(&a, w) }),
+        ] {
+            let e: syn::Expr = syn::parse2(body).expect("parse fold body");
+            assert!(body_returns_option(&e), "native numeric cast must be Option-returning");
+        }
+    }
+
+    #[test]
+    fn object_output_cast_fns_do_not_classify_as_option() {
+        // The generated object-output cast bodies (RhoCalc) call these; they return a `Proc`
+        // directly (`Proc::Err` on failure), so they MUST NOT be `?`-unwrapped.
+        for body in [
+            quote::quote!(mettail_runtime::proc_int_bin(&a, w)),
+            quote::quote!(mettail_runtime::proc_float_bin(&a, w)),
+            quote::quote!(mettail_runtime::proc_bigint_unary(&a)),
+            quote::quote!({ mettail_runtime::proc_int_bin(&a, w) }),
+        ] {
+            let e: syn::Expr = syn::parse2(body).expect("parse fold body");
+            assert!(!body_returns_option(&e), "object-output cast must not be Option-returning");
+        }
+    }
+
+    #[test]
+    fn legacy_try_convention_still_classifies_as_option() {
+        let e: syn::Expr =
+            syn::parse2(quote::quote!(crate::numeric_dispatch::calc_try_int_bin(&a, w)))
+                .expect("parse fold body");
+        assert!(body_returns_option(&e));
     }
 }
