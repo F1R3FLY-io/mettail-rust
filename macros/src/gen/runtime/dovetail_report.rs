@@ -16,6 +16,23 @@ use syn::{Ident, LitStr};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 
 pub(crate) mod ac;
+pub(crate) mod op_enum;
+
+/// Whether a language gets the typed-`L` Dovetail fold path (Increment 2/3): it has at least
+/// one `fold` term rule whose OUTPUT category has no native type (a non-native-output fold,
+/// e.g. RhoCalc's `int(..)`/`+`/`concat` casts that return `Proc`). Such folds reduce nowhere
+/// on the `EGraph<String>` path (their `![{..}]` bodies were emitted only into the retired
+/// Ascent backend), so these languages carry a generated typed op-enum and native-rewrite
+/// dispatcher instead. Non-fold languages (Lambda, BaseMath) and native-output-only fold
+/// languages keep the existing `EGraph<String>` path unchanged.
+pub(crate) fn needs_typed_fold_path(language: &LanguageDef) -> bool {
+    language.terms.iter().any(|rule| {
+        rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold)
+            && language
+                .get_type(&rule.category)
+                .map_or(true, |t| t.native_type.is_none())
+    })
+}
 
 fn to_snake(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
@@ -614,7 +631,24 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         quote! {}
     };
 
+    // Increment 2 (Step B): for fold-bearing languages, additionally emit the typed op-enum
+    // `<Lang>DovetailOp` (+ its exact-key `SemanticHash` and projection `Display`). It is the
+    // substrate the typed lowering/reconstruction/dispatcher (Steps C–F) build on; emitting it
+    // here keeps the generator wired (no dead code) while leaving the `EGraph<String>` report
+    // body below unchanged until Step F flips fold-bearing languages onto it.
+    let op_enum_decl: TokenStream = if needs_typed_fold_path(language) {
+        let decl = op_enum::generate_dovetail_op_enum(language);
+        quote! {
+            #[cfg(feature = "dovetail-codegen")]
+            #decl
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
+        #op_enum_decl
+
         #[cfg(feature = "dovetail-codegen")]
         impl #language_struct {
             /// Compile this language's generated typed AST into a checked
