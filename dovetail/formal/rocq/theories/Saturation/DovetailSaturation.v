@@ -240,4 +240,121 @@ Section DovetailSaturation.
     sat_outcome {| sat_outcome := Converged; sat_stats := stats; sat_state := st |} = Converged.
   Proof. reflexivity. Qed.
 
+  (* ======================================================================= *)
+  (* Native-fold reduction (Increment 3): the native dispatcher adds, for a   *)
+  (* fold redex e-class `redex` whose native body computes the result e-class *)
+  (* `result`, the equality fact `EqFact redex result`. The ONE trust boundary*)
+  (* — that this computed equality is GSLT-valid — is modeled as a PREMISE     *)
+  (* `good (native_fact redex result)`, threaded through the soundness         *)
+  (* theorems, NOT as an `Axiom` (per the project's zero-admission rule).      *)
+  (* ======================================================================= *)
+
+  Definition native_fact (redex result : nat) : Fact := EqFact redex result.
+
+  Definition native_generated (redex result : nat) : State :=
+    fun f => f = native_fact redex result.
+
+  (* Given the native-soundness premise, the native-generated state is sound. *)
+  Theorem native_generated_sound : forall good redex result,
+    good (native_fact redex result) ->
+    sound_state good (native_generated redex result).
+  Proof.
+    unfold sound_state, native_generated. intros good redex result Hgood f Hf.
+    subst f. exact Hgood.
+  Qed.
+
+  (* Saturating a sound state with a sound native fold preserves soundness:    *)
+  (* the saturation/native bridge, composing `saturate_n_sound` with the       *)
+  (* native-soundness premise.                                                 *)
+  Theorem native_fold_saturation_sound : forall n good s redex result,
+    sound_state good s ->
+    good (native_fact redex result) ->
+    sound_state good (saturate_n n (native_generated redex result) s).
+  Proof.
+    intros n good s redex result Hs Hgood.
+    apply saturate_n_sound; [exact Hs |].
+    apply native_generated_sound. exact Hgood.
+  Qed.
+
+  (* `native_refire_is_noop`: a re-fired fold whose result equality is already *)
+  (* present adds nothing — the step is a no-op as a set. The folded normal     *)
+  (* form (a `Cast*` literal) re-matches no fold LHS, so a re-fire produces the *)
+  (* SAME already-present equality and the state does not grow.                *)
+  Theorem native_refire_is_noop : forall s redex result,
+    s (native_fact redex result) ->
+    subset (saturate_step s (native_generated redex result)) s.
+  Proof.
+    unfold subset, saturate_step, union_state, native_generated.
+    intros s redex result Hin f [Hf | Hf].
+    - exact Hf.
+    - subst f. exact Hin.
+  Qed.
+
+  Theorem native_refire_state_unchanged : forall s redex result,
+    s (native_fact redex result) ->
+    subset s (saturate_step s (native_generated redex result)) /\
+    subset (saturate_step s (native_generated redex result)) s.
+  Proof.
+    intros s redex result Hin. split.
+    - apply saturate_step_monotone.
+    - apply native_refire_is_noop. exact Hin.
+  Qed.
+
+  (* ======================================================================= *)
+  (* OSLF funding bridge: a fold transition is funded iff its demand `delta`   *)
+  (* plus a `margin` fits the supply `sigma` (the node budget Sigma). This is  *)
+  (* the OSLF `is_funded` realized at the saturation budget, with its laws.    *)
+  (* ======================================================================= *)
+
+  Definition fold_transition_funded (delta margin sigma : nat) : bool :=
+    delta + margin <=? sigma.
+
+  (* OSLF law `sound`: funded iff supply meets demand + margin. *)
+  Theorem fold_funding_sound : forall delta margin sigma,
+    fold_transition_funded delta margin sigma = true <-> delta + margin <= sigma.
+  Proof. intros. unfold fold_transition_funded. apply Nat.leb_le. Qed.
+
+  (* OSLF law `supply-monotone` (no-contraction): more supply never un-funds. *)
+  Theorem fold_funding_supply_monotone : forall delta margin sigma sigma',
+    sigma <= sigma' ->
+    fold_transition_funded delta margin sigma = true ->
+    fold_transition_funded delta margin sigma' = true.
+  Proof.
+    intros delta margin sigma sigma' Hle Hfund.
+    apply fold_funding_sound in Hfund. apply fold_funding_sound. lia.
+  Qed.
+
+  (* OSLF law `reject-underfunded`: positive demand against zero supply refused. *)
+  Theorem fold_funding_rejects_underfunded : forall delta margin,
+    0 < delta ->
+    fold_transition_funded delta margin 0 = false.
+  Proof.
+    intros delta margin Hpos. unfold fold_transition_funded.
+    apply Nat.leb_gt. lia.
+  Qed.
+
+  Theorem funded_fold_demand_within_supply : forall delta margin sigma,
+    fold_transition_funded delta margin sigma = true ->
+    delta <= sigma.
+  Proof.
+    intros delta margin sigma Hfund. apply fold_funding_sound in Hfund. lia.
+  Qed.
+
+  (* Funding-to-saturation bridge: a funded fold transition (demand within the *)
+  (* supply Sigma) saturates within budget — taking the fold's demand `delta`   *)
+  (* as the fuel, the bounded saturation reaches `Saturated`, never            *)
+  (* `SaturationBudgetOverflow`.                                               *)
+  Theorem funded_fold_saturates_within_budget :
+    forall delta margin sigma max_iters generated s,
+    fold_transition_funded delta margin sigma = true ->
+    delta <= max_iters ->
+    exists out, bounded_saturate delta sigma max_iters generated s = Saturated out.
+  Proof.
+    intros delta margin sigma max_iters generated s Hfund Hiter.
+    apply funded_fold_demand_within_supply in Hfund.
+    unfold bounded_saturate.
+    apply Nat.leb_le in Hfund. apply Nat.leb_le in Hiter.
+    rewrite Hfund, Hiter. eexists. reflexivity.
+  Qed.
+
 End DovetailSaturation.
