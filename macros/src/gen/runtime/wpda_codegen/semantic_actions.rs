@@ -292,6 +292,185 @@ pub fn emit_single_hop_coercion_body(
     }
 }
 
+/// RC-B (2026-06-17): emit the body of
+/// `WpdaEngine::prefix_cast_into(from_cat, to_cat) -> Option<u16>`.
+///
+/// Returns the local rule index in `to_cat` of the TRIGGER-BEARING
+/// single-argument prefix cast `from_cat -> to_cat` — a `kw "(" a ")"` cast
+/// such as `BoolToInt . a:Bool |- "int" "(" a ")" : Int`. This is the EXACT
+/// COMPLEMENT of [`emit_single_hop_coercion_body`]: same "single Simple param
+/// of a foreign Base category" shape, but the syntax pattern is the
+/// terminal-bearing wrapper (it contains `Literal`s — the keyword + brackets)
+/// rather than the span-0 lone-`Param` transparent projection. These casts are
+/// invisible to `single_hop_coercion` (which deliberately excludes them), which
+/// is precisely why the chain-folded cross-cat body cannot be re-wrapped by the
+/// span-anchored coercion drain and needs the RC-B pop-site reconciliation.
+///
+/// One entry per `(from, to)` (the FIRST in source order if a grammar somehow
+/// declares two `from -> to` bracketed casts via the same shape; the walker
+/// re-validates the hit against `action_for` + `min_terminal_span`). Emitted as
+/// a `match (from_cat, to_cat)` returning `Option<u16>`, default `None`. PURE
+/// static lookup — O(1), no runtime state. Sibling of `single_hop_coercion`.
+pub fn emit_prefix_cast_into_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    use mettail_ast::grammar::{SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+    // `(from_cat, to_cat) -> rule_idx` (first match wins per pair).
+    let mut table: std::collections::BTreeMap<(u16, u16), u16> = std::collections::BTreeMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let to_cat = cat_i as u16;
+        for (rule_idx, rule) in rules {
+            // Single Simple param of a foreign Base category (the cast operand).
+            let Some(tc) = rule.term_context.as_ref() else {
+                continue;
+            };
+            if tc.len() != 1 {
+                continue;
+            }
+            let TermParam::Simple { name: param_name, ty } = &tc[0] else {
+                continue;
+            };
+            let TypeExpr::Base(source_ident) = ty else {
+                continue;
+            };
+            let source_cat_name = source_ident.to_string();
+            if source_cat_name == rule.category.to_string() {
+                continue;
+            }
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            // TRIGGER-BEARING wrapper: the syntax pattern references the single
+            // param (so the cast forwards exactly one operand) AND contains at
+            // least one Literal (the keyword / brackets) — i.e. it is NOT the
+            // span-0 lone-`Param` transparent projection that
+            // `single_hop_coercion` captures.
+            let refs_param = sp
+                .iter()
+                .any(|e| matches!(e, SyntaxExpr::Param(syn_name) if syn_name == param_name));
+            let has_literal = sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_)));
+            let is_lone_param = sp.len() == 1
+                && matches!(
+                    sp.first(),
+                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
+                );
+            if !(refs_param && has_literal && !is_lone_param) {
+                continue;
+            }
+            let from_cat = categories
+                .iter()
+                .position(|c| c == &source_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(0);
+            table.entry((from_cat, to_cat)).or_insert(*rule_idx);
+        }
+    }
+    let _ = categories;
+    if table.is_empty() {
+        return quote! { None };
+    }
+    let mut arms: Vec<TokenStream> = Vec::with_capacity(table.len());
+    for ((from_cat, to_cat), rule_idx) in table {
+        arms.push(quote! {
+            (#from_cat, #to_cat) => Some(#rule_idx),
+        });
+    }
+    quote! {
+        match (from_cat, to_cat) {
+            #(#arms)*
+            _ => None,
+        }
+    }
+}
+
+/// RC-B (2026-06-17): emit `WpdaEngine::prefix_cast_keyword(to_cat, rule_idx)
+/// -> Option<&'static str>` — the LEADING keyword literal of each
+/// trigger-bearing prefix-cast rule (the SAME rule set
+/// `emit_prefix_cast_into_body` enumerates). The keyword is the first
+/// `SyntaxExpr::Literal` in the rule's syntax pattern (e.g. `"int"` for
+/// `BoolToInt`, `"|"` for `Len`, `"length"` for `LenList`). The pop-site wrap
+/// synthesis uses this to reject a candidate cast whose keyword does not match
+/// the enclosing `kw "(" .. ")"` frame's keyword — without which a length
+/// operator (also a single-arg trigger-bearing Int producer) would be
+/// synthesized under the frame's `int` keyword and fabricate a token-unsound
+/// parse (`int(a)` -> `|a|`). Keyed by `(to_cat, rule_idx)` so it is unique per
+/// rule. Emitted as a `match (to_cat, rule_idx)`, default `None`. PURE static
+/// lookup. Sibling of `prefix_cast_into`.
+pub fn emit_prefix_cast_keyword_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    use mettail_ast::grammar::{SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+    // `(to_cat, rule_idx) -> keyword` for every trigger-bearing prefix cast.
+    let mut table: std::collections::BTreeMap<(u16, u16), String> =
+        std::collections::BTreeMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let to_cat = cat_i as u16;
+        for (rule_idx, rule) in rules {
+            // SAME filter as emit_prefix_cast_into_body: single Simple param of
+            // a foreign Base category, trigger-bearing wrapper (refs param +
+            // has a Literal + not a lone param).
+            let Some(tc) = rule.term_context.as_ref() else {
+                continue;
+            };
+            if tc.len() != 1 {
+                continue;
+            }
+            let TermParam::Simple { name: param_name, ty } = &tc[0] else {
+                continue;
+            };
+            let TypeExpr::Base(source_ident) = ty else {
+                continue;
+            };
+            if source_ident.to_string() == rule.category.to_string() {
+                continue;
+            }
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            let refs_param = sp
+                .iter()
+                .any(|e| matches!(e, SyntaxExpr::Param(syn_name) if syn_name == param_name));
+            let has_literal = sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_)));
+            let is_lone_param = sp.len() == 1
+                && matches!(
+                    sp.first(),
+                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
+                );
+            if !(refs_param && has_literal && !is_lone_param) {
+                continue;
+            }
+            // The leading keyword = the FIRST Literal in the syntax pattern.
+            let Some(keyword) = sp.iter().find_map(|e| match e {
+                SyntaxExpr::Literal(text) => Some(text.clone()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            table.entry((to_cat, *rule_idx)).or_insert(keyword);
+        }
+    }
+    let _ = categories;
+    if table.is_empty() {
+        return quote! { None };
+    }
+    let mut arms: Vec<TokenStream> = Vec::with_capacity(table.len());
+    for ((to_cat, rule_idx), keyword) in table {
+        arms.push(quote! {
+            (#to_cat, #rule_idx) => Some(#keyword),
+        });
+    }
+    quote! {
+        match (to_cat, rule_idx) {
+            #(#arms)*
+            _ => None,
+        }
+    }
+}
+
 /// D7 fix (2026-05-13): Look up a zero-arity terminal-keyword rule for
 /// `cat_name` whose label can serve as an error-fallback variant for a
 /// failing literal-eval action.

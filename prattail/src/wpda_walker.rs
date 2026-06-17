@@ -470,6 +470,36 @@ pub trait WpdaEngine<W: SemiringRef> {
         &[]
     }
 
+    /// RC-B (2026-06-17): the local rule index in `to_cat` of the
+    /// TRIGGER-BEARING single-argument prefix cast `from_cat -> to_cat`
+    /// (a `kw "(" a ")"` cast such as `BoolToInt`), or `None` if no such cast
+    /// exists. This is the trigger-bearing sibling of [`single_hop_coercion`]
+    /// (which lists only span-0 supertype injections like `ProcBool` and so
+    /// EXCLUDES bracketed casts). Codegen overrides this with the exact
+    /// category-graph table; the walker re-validates every hit against
+    /// `action_for` + `min_terminal_span` so an empty default (or any stale
+    /// table) can only ever SUPPRESS the RC-B pop-site wrap reconciliation,
+    /// never admit a wrong cast. `None` by default (sound fail-closed).
+    fn prefix_cast_into(&self, from_cat: u16, to_cat: u16) -> Option<u16> {
+        let _ = (from_cat, to_cat);
+        None
+    }
+
+    /// RC-B (2026-06-17): the LEADING keyword literal of the trigger-bearing
+    /// prefix-cast rule `(to_cat, rule_idx)` — the first `Literal` in the rule's
+    /// syntax pattern (e.g. `"int"` for `BoolToInt . a:Bool |- "int" "(" a ")"`,
+    /// `"|"` for `Len . s:Str |- "|" s "|"`, `"length"` for `LenList`). Used by
+    /// the pop-site prefix-cast wrap synthesis to REJECT a candidate cast whose
+    /// keyword does NOT match the enclosing `kw "(" .. ")"` frame's keyword:
+    /// without this guard a `length(·)` / `|·|` rule (also a single-arg
+    /// trigger-bearing Int producer) would be synthesized with the enclosing
+    /// `int` keyword, fabricating a token-unsound parse (e.g. `int(a)` yielding
+    /// `|a|`). PURE static lookup, O(1). Default `None` (test engines).
+    fn prefix_cast_keyword(&self, to_cat: u16, rule_idx: u16) -> Option<&'static str> {
+        let _ = (to_cat, rule_idx);
+        None
+    }
+
     /// Grammar-level classification of structural open delimiters.
     ///
     /// This is used only at end-of-input acceptance time to validate an
@@ -902,6 +932,36 @@ enum RealizeLazyAbort {
     Cycle,
 }
 
+/// RC-B (2026-06-17): one pop-site prefix-cast wrap synthesis job. Carries
+/// everything `synthesize_prefix_cast_wrap_cursor` needs to fire the
+/// trigger-bearing prefix cast `C_in -> C_out` (e.g. `BoolToInt`) over a
+/// full-span chain-folded `C_in` body resting at the cast's structural close,
+/// forming `C_out[lo, close_hi)` (the WHOLE `int(...)` span, including the
+/// keyword trigger and the `(` / `)` literals) and surfacing it as an
+/// accepting cursor. See
+/// `docs/design/parser/rc-b-cross-cat-comparison-projection.md` §5.1.
+struct PrefixCastWrapJob<W: SemiringRef> {
+    /// The full-span well-typed `C_in` body symbol (e.g. `Bool[2,12)`).
+    body_sid: crate::sppf::SppfId,
+    /// The cast keyword's input position (the trigger's `lo`; the cast result
+    /// spans `[trigger_lo, close_hi)`).
+    trigger_lo: usize,
+    /// One past the structural close `)` — the cast result's `hi` and the
+    /// synthesized cursor's resting position.
+    close_hi: usize,
+    /// Output category `C_out` of the cast (e.g. `Int`).
+    c_out: u16,
+    /// Local rule index of the cast in `C_out` (e.g. `BoolToInt`).
+    cast_rule: u16,
+    /// The cast keyword text (e.g. `"int"`), for the synthetic trigger.
+    keyword: String,
+    /// A clone of the resolving body cursor, already advanced past the cast's
+    /// delegate projection edge so its GSS node is the OUTER return frame (the
+    /// frame that dispatched the cast). The synthesizer resets its SPPF stack
+    /// to hold only the freshly-formed `C_out` symbol.
+    outer_frame: BranchCursor<W>,
+}
+
 pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     state: WpdaState,
     gss: WpdaGss<W>,
@@ -1226,6 +1286,19 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `merge_equivalent_cursors`, emitting `paused × snapshots`
     /// revived cursors per key.
     pending_cohort_drain_keys: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// RC-B (2026-06-17): pop-site prefix-cast wrap synthesis jobs. Recorded
+    /// by `cursor_gss_pop_via_edge` when a full-span well-typed `C_in` body
+    /// (e.g. a chain-folded `Bool` comparison tree) rests at a trigger-bearing
+    /// prefix cast's structural close `)` but the cast `C_in -> C_out` (e.g.
+    /// `BoolToInt`) is genuinely UNFIRED on this lineage (it landed on a
+    /// sibling cross-cat projection / a different prefix-rule speculation).
+    /// Drained by `step_fanout` (alongside the cohort drain) into ONE
+    /// accepting `C_out` cursor. The vector is EMPTY on every input that
+    /// parses today (the unfired guard is false when the cast already fired
+    /// on its own delegate lineage) and on all cast-free inputs (the recording
+    /// site is gated on a `CrossCatProjection` pop). See
+    /// `docs/design/parser/rc-b-cross-cat-comparison-projection.md` §5.
+    pending_prefix_cast_wrap_jobs: Vec<PrefixCastWrapJob<W>>,
     /// Cohort-revive-rework M1 (2026-05-29): bounded re-drive counter for
     /// EOI orphan revival. `run_to_end_of_input`'s `!progress_made` block
     /// calls `revive_orphaned_cohort_members_once`, which injects
@@ -3862,6 +3935,7 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            pending_prefix_cast_wrap_jobs: Vec::new(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -3956,6 +4030,7 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            pending_prefix_cast_wrap_jobs: Vec::new(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4049,6 +4124,7 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            pending_prefix_cast_wrap_jobs: Vec::new(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4133,6 +4209,7 @@ where
         // SPPF arena and would be unsound to reuse across resets.
         self.dispatch_cohort_cache.clear();
         self.pending_cohort_drain_keys.clear();
+        self.pending_prefix_cast_wrap_jobs.clear();
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
@@ -4242,6 +4319,7 @@ where
         self.dispatch_cohort_cache
             .clear_entries_preserving_diagnostics();
         self.pending_cohort_drain_keys.clear();
+        self.pending_prefix_cast_wrap_jobs.clear();
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
@@ -12512,6 +12590,16 @@ where
                 }
             }
         }
+        // RC-B (2026-06-17): drain pop-site prefix-cast wrap jobs into accepting
+        // `C_out` cursors. Each job fires a trigger-bearing prefix cast (e.g.
+        // `BoolToInt`) over a full-span chain-folded body that resolved a
+        // sibling cross-cat projection but never reached the cast's own
+        // delegate, forming the `C_out[kw, ")"]` result so the cast closes.
+        // Empty (no-op) on every input whose cast already fired on its own
+        // lineage (the +0-cursor "unfired" guard) and on all cast-free inputs.
+        for acc in self.drain_prefix_cast_wrap_jobs(tokens) {
+            new_cursors.push(crate::cohort_lazy::Frame::Concrete(acc));
+        }
         // EP-P1 v3.1 drain (06 §4; R6-4/R7-11): revive CrossCatLhs-
         // parked members at quiescence — OWN set; ONE revive per
         // (body-job, member); NO ×snapshot axis (the consume is
@@ -17674,6 +17762,285 @@ where
     /// sound by construction). Called ONLY by the span-anchored revival when
     /// `body_cat != tgt_cat` (clause-4 matched via a coercion); the depth-1
     /// `single_hop_coercion` table guarantees at most one hop.
+    /// RC-B (2026-06-17): the trigger-bearing prefix cast `C_in -> C_out` for a
+    /// body of category `C_in` whose enclosing prefix-rule frame produces
+    /// `C_out`. Pure category-graph query (the engine's `prefix_cast_into` table,
+    /// the trigger-bearing sibling of `single_hop_coercion`): a UNARY cast whose
+    /// single input cat is `C_in`, whose output is `C_out`, and which carries
+    /// trigger literals (a real `kw "(" a ")"` cast, NOT a span-0 supertype
+    /// injection such as `ProcBool`). Validated against `action_for` +
+    /// `min_terminal_span` so a stale/empty table can never admit a wrong cast.
+    /// Returns the local rule index in `C_out`, or `None`. No comparison/arity
+    /// coupling; works for any single-arg prefix cast.
+    fn prefix_cast_rule_into(&self, c_in: u16, c_out: u16) -> Option<u16> {
+        let rule = self.engine.prefix_cast_into(c_in, c_out)?;
+        let entry = self.engine.action_for(c_out, rule)?;
+        if entry.arity == 1
+            && entry.output_cat == c_out
+            && entry.expected_input_cats == [c_in]
+            && self.engine.min_terminal_span(c_out, rule) > 0
+        {
+            Some(rule)
+        } else {
+            None
+        }
+    }
+
+    /// RC-B (2026-06-17): walk the cursor's incoming-edge stack to the nearest
+    /// enclosing `PrefixRuleEntry { cat_src, rule_idx }` (the prefix-cast frame
+    /// the body sits under). Returns `(cat_src, rule_idx, predecessor_node)`,
+    /// where the predecessor is the GSS node the prefix-rule edge targets (the
+    /// OUTER return frame). `None` if the cursor is not under a prefix-rule
+    /// frame.
+    fn enclosing_prefix_rule_frame(
+        &self,
+        cursor: &BranchCursor<W>,
+    ) -> Option<(u16, u16, crate::gss::GssNodeId)> {
+        let mut sid = cursor.incoming_edge_stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            if let Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, .. }) =
+                self.gss.edge_kind(eid)
+            {
+                let pred = self.gss.edge_target(eid).unwrap_or(crate::gss::GSS_NODE_NONE);
+                return Some((cat_src, rule_idx, pred));
+            }
+            sid = self.incoming_edge_stack_arena.intern_pop(sid);
+        }
+        None
+    }
+
+    /// RC-B (2026-06-17): find the cast keyword text + its input position by
+    /// scanning the cursor's SPPF stack for the `TriggerTerminal` owned by the
+    /// enclosing prefix-rule frame `(owner_cat, owner_rule)`. The synthesized
+    /// cast trigger reuses this keyword (the outer prefix rule and the cast
+    /// share the keyword, e.g. `int`) and starts the cast result span at this
+    /// position. Returns `(keyword, trigger_lo)`.
+    fn enclosing_prefix_trigger(
+        &self,
+        cursor: &BranchCursor<W>,
+        owner_cat: u16,
+        owner_rule: u16,
+    ) -> Option<(String, usize)> {
+        let mut sid = cursor.sppf_stack_id;
+        while let Some(top_sid) = self.sppf_stack_arena.top(sid) {
+            if let Some(crate::sppf::SppfNode::TriggerTerminal {
+                token_kind,
+                pos,
+                owner_cat: oc,
+                owner_rule_idx: orx,
+                ..
+            }) = self.sppf.node(top_sid)
+            {
+                if *oc == owner_cat && *orx == owner_rule {
+                    if let crate::automata::TokenKind::Fixed(kw) = token_kind {
+                        let p = match pos {
+                            crate::sppf::PosOrSynth::Real(p)
+                            | crate::sppf::PosOrSynth::Synthesized(p) => *p as usize,
+                        };
+                        return Some((kw.clone(), p));
+                    }
+                }
+            }
+            sid = self.sppf_stack_arena.intern_pop(sid);
+        }
+        None
+    }
+
+    /// RC-B (2026-06-17): stage a prefix-cast wrap synthesis job at the
+    /// cross-cat projection pop site (§5.1). The body cursor has just resolved
+    /// a `CrossCatProjection { source_src_idx = C_in }` with a full-span
+    /// well-typed `C_in` symbol (`symbol_cat == source_src_idx`). If that body
+    /// also sits under a trigger-bearing prefix cast `C_in -> C_out`, the cast
+    /// landed on THIS projection lineage (e.g. `Proc <- Bool`) rather than its
+    /// own delegate, so it never fired. We stage a job (the predicate's
+    /// `tokens`-dependent conjuncts — structural close + `close_hi` — and the
+    /// +0-cursor "unfired" guard are completed at drain time). The staged
+    /// `outer_frame` is a clone of this cursor advanced past the projection
+    /// edge so its GSS node is the OUTER return frame.
+    fn try_stage_prefix_cast_wrap(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        body_symbol_id: crate::sppf::SppfId,
+        c_in: u16,
+        dispatch_pos: usize,
+        projection_edge_id: crate::gss::GssEdgeId,
+    ) {
+        // The full-span guard: the body's span must start at the projection's
+        // dispatch pos (the cast body start). A shorter/longer symbol on the
+        // sppf top is not the cast's whole body.
+        if self.sppf.span_lo(body_symbol_id).map(|l| l as usize) != Some(dispatch_pos) {
+            return;
+        }
+        // C_out + the prefix-cast frame: the nearest enclosing PrefixRuleEntry.
+        let Some((c_out, outer_rule, _pred)) = self.enclosing_prefix_rule_frame(cursor) else {
+            return;
+        };
+        // Category-graph witness: a trigger-bearing cast C_in -> C_out exists.
+        let Some(cast_rule) = self.prefix_cast_rule_into(c_in, c_out) else {
+            return;
+        };
+        // The cast keyword + its input position (from the outer prefix rule's
+        // trigger; the outer rule and the cast share the keyword).
+        let Some((keyword, trigger_lo)) =
+            self.enclosing_prefix_trigger(cursor, c_out, outer_rule)
+        else {
+            return;
+        };
+        // KEYWORD-AGREEMENT guard (RC-B token-soundness): the candidate cast
+        // `cast_rule` must share the enclosing `kw "(" .. ")"` frame's keyword.
+        // `prefix_cast_rule_into` returns ANY single-arg trigger-bearing
+        // `C_in -> C_out` producer, which in the calculator also matches the
+        // `|·|` (`Len`) and `length(·)` / `maplength(·)` (`LenList`/`LenMap`)
+        // length operators — synthesizing those with the enclosing `int`
+        // keyword fabricates terminals (e.g. `int(a)` -> `|a|`). Reject any
+        // cast whose own leading keyword differs from the frame's. This is the
+        // category-graph witness that the wrap is the SAME wrapper the frame
+        // would have fired, keeping the synthesis token-sound and +0-cursors.
+        match self.engine.prefix_cast_keyword(c_out, cast_rule) {
+            Some(kw) if kw == keyword.as_str() => {},
+            _ => return,
+        }
+        // Build the OUTER-frame cursor: clone, then pop past the projection
+        // edge so cursor.node is the outer return frame and its sppf top no
+        // longer carries the body (the synthesizer pushes the formed C_out).
+        let mut outer = cursor.clone();
+        let outer_target = self
+            .gss
+            .edge_target(projection_edge_id)
+            .unwrap_or(crate::gss::GSS_NODE_NONE);
+        outer.node = outer_target;
+        outer.incoming_edge_stack_id = self
+            .incoming_edge_stack_arena
+            .intern_pop(outer.incoming_edge_stack_id);
+        outer.sppf_stack_id = self.sppf_stack_arena.intern_pop(outer.sppf_stack_id);
+        self.pending_prefix_cast_wrap_jobs.push(PrefixCastWrapJob {
+            body_sid: body_symbol_id,
+            trigger_lo,
+            close_hi: cursor.pos, // refined to next_pos(close) at drain
+            c_out,
+            cast_rule,
+            keyword,
+            outer_frame: outer,
+        });
+    }
+
+    /// RC-B (2026-06-17): drain the staged prefix-cast wrap jobs into accepting
+    /// `C_out` cursors (§5.1). For each job, complete the predicate against the
+    /// token source (the resting `pos` must be a structural close, and the
+    /// cast must be UNFIRED on this lineage — the +0-cursor / parser-identity
+    /// guard), then synthesize the cast: a `kw "(" body ")"` fire forming
+    /// `C_out[trigger_lo, close_hi)`. Returns the accepting cursors. Empty
+    /// unless a job survived the guard (i.e. only on the chain-folded
+    /// cross-cat-cast bug; never for inputs whose cast already fired).
+    fn drain_prefix_cast_wrap_jobs(
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Vec<BranchCursor<W>> {
+        if self.pending_prefix_cast_wrap_jobs.is_empty() {
+            return Vec::new();
+        }
+        let jobs = std::mem::take(&mut self.pending_prefix_cast_wrap_jobs);
+        let mut out = Vec::new();
+        for mut job in jobs {
+            // (a) the resting pos must be the cast's structural close `)`.
+            let resting = job.close_hi;
+            let Some(close_kind) = tokens.peek_kind(resting) else {
+                continue;
+            };
+            if !self
+                .engine
+                .is_structural_close_delimiter(&close_kind, tokens.peek_text(resting))
+            {
+                continue;
+            }
+            // The cast result spans [trigger_lo, hi) where hi is past the `)`.
+            job.close_hi = tokens.next_pos(resting, 0).unwrap_or(resting + 1);
+            if let Some(acc) = self.synthesize_prefix_cast_wrap_cursor(job) {
+                out.push(acc);
+            }
+        }
+        out
+    }
+
+    /// RC-B (2026-06-17): synthesize one accepting `C_out` cursor by firing the
+    /// trigger-bearing prefix cast `C_in -> C_out` over `[synthetic-trigger,
+    /// body]`, forming `C_out[trigger_lo, close_hi)` (the WHOLE `kw "(" ... ")"`
+    /// span). Reuses the proven fire/intern shape of `intern_coercion_over_body`
+    /// + `emit_fire_action`'s success arm. The `outer_frame` cursor (rooted at
+    /// the outer return frame) receives the formed symbol as its sole SPPF-stack
+    /// entry at `pos = close_hi` in `InfixLoop { cur_bp: 0 }` — the exact
+    /// post-cast-fire state a normally-parsed `int(Bool)` reaches, so the next
+    /// engine step accepts at EOI. The +0-cursor "unfired" guard: if the cast
+    /// already fired on its own lineage, the `(C_out << 16 | cast_rule, [trigger,
+    /// body])` packing already exists and we bail (returning `None`), so the
+    /// passing corpus is byte-identical.
+    fn synthesize_prefix_cast_wrap_cursor(
+        &mut self,
+        job: PrefixCastWrapJob<W>,
+    ) -> Option<BranchCursor<W>> {
+        let global_rule_idx: u32 = ((job.c_out as u32) << 16) | (job.cast_rule as u32);
+        let lo = job.trigger_lo as u32;
+        let hi = job.close_hi as u32;
+        // Synthetic cast trigger (owner = C_out:cast_rule, at trigger_lo). The
+        // intern is idempotent: if it already exists AND the packing over
+        // [trigger, body] already exists, the cast already fired on this
+        // lineage — bail (the +0-cursor guard).
+        let trigger_kind = crate::automata::TokenKind::Fixed(job.keyword.clone());
+        let trigger_sid = self.sppf.intern_trigger_terminal(
+            trigger_kind,
+            crate::sppf::PosOrSynth::Real(job.trigger_lo as u32),
+            Some(&job.keyword),
+            job.c_out,
+            job.cast_rule,
+        );
+        let children = vec![trigger_sid, job.body_sid];
+        // +0-cursor "unfired" guard: bail if this exact cast packing exists.
+        if self.sppf.packing_exists(global_rule_idx, &children) {
+            return None;
+        }
+        // Token-soundness: the [lo, hi) span must leave exactly the cast's
+        // literal budget (the `(` and `)`) as slack over the children.
+        if !self.packing_satisfies_min_terminal_span(global_rule_idx, &children, lo, hi) {
+            return None;
+        }
+        // Fire the cast action over [body] (the trigger contributes no arg) via
+        // the read-only transient — the SAME path emit_fire_action uses.
+        let cast_symbol = StackSymbolV2::rule_at(job.c_out, job.cast_rule, 0, None);
+        let probe = self.make_probe_cursor();
+        let (result_arc, output_cat, _drains) =
+            self.fire_action_via_transient(&probe, cast_symbol, &children)?;
+        // Intern Packing(cast_rule, [trigger, body]) + Symbol(C_out, lo, hi),
+        // link, and store the realized term keyed by the new Symbol id.
+        let packing_id = self
+            .sppf
+            .intern_packing(global_rule_idx, children, W::one_ref());
+        let wrapped_symbol_id = self.sppf.intern_symbol(job.c_out as u32, lo, hi);
+        self.sppf
+            .link_packing_to_symbol(wrapped_symbol_id, packing_id);
+        self.sppf_symbol_terms
+            .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
+        // Build the accepting cursor: outer return frame, single-Symbol SPPF
+        // stack, pos past `)`, InfixLoop{0} (the post-cast-fire state).
+        let mut acc = job.outer_frame;
+        acc.sppf_stack_id = self
+            .sppf_stack_arena
+            .intern_push(acc.sppf_stack_id, wrapped_symbol_id);
+        acc.pos = job.close_hi;
+        acc.inner_state = WpdaState::InfixLoop { cur_bp: 0 };
+        if trace_actions_enabled() {
+            eprintln!(
+                "[wpds-action] RC-B prefix-cast wrap: fired ({},{}) over body=sid{} -> {} span=[{},{}]",
+                job.c_out,
+                job.cast_rule,
+                job.body_sid,
+                self.sppf_trace_summary(wrapped_symbol_id),
+                lo,
+                hi,
+            );
+        }
+        Some(acc)
+    }
+
     fn intern_coercion_over_body(
         &mut self,
         body_symbol_id: crate::sppf::SppfId,
@@ -18574,6 +18941,30 @@ where
                                     ..
                                 } => {},
                             }
+                            // RC-B (2026-06-17): a full-span well-typed `C_in`
+                            // body (`symbol_cat == source_src_idx`) resolved
+                            // this cross-cat projection. If it ALSO sits at a
+                            // trigger-bearing prefix cast's structural close
+                            // (`int( ... )`) whose `C_in -> C_out` cast is
+                            // UNFIRED on this lineage, record a synthesis job:
+                            // the chain-folded body landed on THIS projection
+                            // lineage (e.g. `Proc <- Bool`) instead of the cast
+                            // delegate's, so the cast (`BoolToInt`) never fired
+                            // and `)` was never consumed. The job (drained at
+                            // end-of-step, where `tokens` is available) fires
+                            // the cast over the body, forming `C_out[lo, hi)`
+                            // and one accepting cursor. The predicate (incl. the
+                            // +0-cursor "unfired" guard) is fully evaluated at
+                            // drain time; here we only stage the candidate body
+                            // + a cursor rooted at the OUTER frame (popped past
+                            // this projection edge).
+                            self.try_stage_prefix_cast_wrap(
+                                cursor,
+                                symbol_id,
+                                source_src_idx,
+                                dispatch_pos_usize,
+                                eid,
+                            );
                         }
                     }
                 }

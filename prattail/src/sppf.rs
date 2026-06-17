@@ -574,6 +574,17 @@ impl<W: SemiringRef> Sppf<W> {
         id
     }
 
+    /// RC-B (2026-06-17): does a Packing with exactly `(rule_idx, children)`
+    /// already exist? Read-only probe over the same `dedup_packing` key
+    /// `intern_packing` uses. Used as the +0-cursor "unfired" guard for the
+    /// pop-site prefix-cast wrap reconciliation: when the cast already fired on
+    /// its own delegate lineage the packing exists, so the reconciliation bails
+    /// and the passing corpus stays byte-identical.
+    pub fn packing_exists(&self, rule_idx: u32, children: &[SppfId]) -> bool {
+        self.dedup_packing
+            .contains_key(&(rule_idx, children.to_vec()))
+    }
+
     /// Intern an Epsilon (empty production) at the given position.
     pub fn intern_epsilon(&mut self, pos: u32) -> SppfId {
         if let Some(&id) = self.dedup_epsilon.get(&pos) {

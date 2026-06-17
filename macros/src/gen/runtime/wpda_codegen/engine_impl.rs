@@ -150,6 +150,16 @@ pub(crate) fn emit_engine_impl_full(
     // (category compatibility) + §2.4c (interpose the coercion Symbol).
     let single_hop_coercion_body =
         semantic_actions::emit_single_hop_coercion_body(categories, &per_cat_indexed, language);
+    // RC-B (2026-06-17): the trigger-bearing prefix-cast table (the complement
+    // of single_hop_coercion), consumed by the pop-site prefix-cast wrap
+    // reconciliation to fire e.g. `BoolToInt` over a chain-folded `Bool` body.
+    let prefix_cast_into_body =
+        semantic_actions::emit_prefix_cast_into_body(categories, &per_cat_indexed);
+    // RC-B (2026-06-17): the leading keyword of each prefix-cast rule (the
+    // SAME set), so the pop-site wrap synthesis can reject a candidate whose
+    // keyword differs from the enclosing `kw "(" .. ")"` frame's (token-sound).
+    let prefix_cast_keyword_body =
+        semantic_actions::emit_prefix_cast_keyword_body(categories, &per_cat_indexed);
     let (structural_open_body, structural_close_body) =
         emit_structural_delimiter_predicates(language, per_cat);
 
@@ -1988,6 +1998,27 @@ pub(crate) fn emit_engine_impl_full(
                 // (b) interpose the named coercion Symbol before the cast
                 // fires (§2.4c).
                 #single_hop_coercion_body
+            }
+
+            fn prefix_cast_into(&self, from_cat: u16, to_cat: u16) -> Option<u16> {
+                // RC-B (2026-06-17): trigger-bearing prefix cast table — the
+                // local rule index in `to_cat` of the `kw "(" a ")"` cast
+                // `from_cat -> to_cat` (e.g. `BoolToInt`). The COMPLEMENT of
+                // `single_hop_coercion` (which lists only span-0 supertype
+                // injections). `None` when no such bracketed cast exists. The
+                // walker re-validates every hit against `action_for` +
+                // `min_terminal_span`.
+                #prefix_cast_into_body
+            }
+
+            fn prefix_cast_keyword(&self, to_cat: u16, rule_idx: u16) -> Option<&'static str> {
+                // RC-B (2026-06-17): the leading keyword literal of the
+                // trigger-bearing prefix-cast rule `(to_cat, rule_idx)` (e.g.
+                // `"int"` for `BoolToInt`, `"|"` for `Len`). The wrap synthesis
+                // rejects a candidate whose keyword differs from the enclosing
+                // `kw "(" .. ")"` frame's keyword, so a length operator is never
+                // synthesized under the cast frame's `int` keyword.
+                #prefix_cast_keyword_body
             }
 
             fn is_structural_open_delimiter(

@@ -1382,6 +1382,98 @@ fn simulator_regression_cross_cat_dispatch_chaining() {
 }
 
 #[test]
+fn rc_b_bare_balanced_comparison_in_cast_parses() {
+    // RC-B (2026-06-17): a BARE (fully unparenthesized) balanced comparison
+    // tree inside a cast `int( ... )` must parse. The middle operator is a
+    // LATER-declared comparison `{<=, >=, !=}` whose left-associative spine
+    // reading is ill-typed, so the only well-typed reading is the balanced
+    // tree `LtEqBool(GtEqInt(b,2), GtEqInt(b,3))`, then `BoolToInt(...)`.
+    //
+    // The chain-folded full-span `Bool` body lands on a sibling cross-cat
+    // projection lineage (`Proc <- Bool`) rather than the `BoolToInt` delegate,
+    // so the cast never fired and `)` was never consumed. The pop-site
+    // prefix-cast wrap reconciliation (a `+0`-cursor, evidence-gated synthesis
+    // — see `docs/design/parser/rc-b-cross-cat-comparison-projection.md` and
+    // `formal/rocq/prattail_wpda_runtime/theories/ChainAbsorb.v`) fires
+    // `BoolToInt` over the full-span body at `)`, forming the accepting cast.
+    use mettail_languages::calculator::Int;
+    // The middle-op `{<=, >=, !=}` bug class: each input has a valid balanced
+    // typing whose chain-folded full-span `Bool` body lands on a sibling
+    // cross-cat projection lineage. The fix surfaces `BoolToInt(<balanced>)`.
+    // (`int(b >= 2 <= b >= 3)` is the minimal input that drove the re-pin and
+    // the one that exercises the pop-site wrap synthesis directly; the other
+    // permutations have valid balanced typings that the engine reaches via the
+    // cast's own delegate — all must parse to `BoolToInt(...)`.)
+    let must_parse = &[
+        r#"int(b >= 2 <= b >= 3)"#,        // <= middle (drives the synthesis)
+        r#"int(b >= 2039068204 <= b >= -2074699644)"#, // the original report input
+        r#"int(b <= 2 >= b != 3)"#,        // >= middle
+        r#"int(b != 2 <= b >= 3)"#,        // != middle
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "RC-B: failed to parse '{}': {:?}", input, result.err());
+        // The well-typed parse is the cast over the balanced Bool body, never
+        // the ill-typed left-spine reading.
+        let term = result.expect("parsed");
+        let rendered = format!("{:?}", term);
+        assert!(
+            rendered.starts_with("BoolToInt("),
+            "RC-B: '{}' must parse as BoolToInt(<balanced Bool>), got {}",
+            input,
+            rendered
+        );
+    }
+}
+
+#[test]
+fn rc_b_ill_typed_cast_body_still_fails() {
+    // RC-B non-masking guard: a genuinely ill-typed cast body must STAY
+    // failing. `int(2 <= b >= 3)`'s inner `2 <= b` is `Int <= Bool` — no rule —
+    // so no full-span well-typed `Bool` ever rests at `)`, and the pop-site
+    // reconciliation's type-witness predicate never fires. The parse must
+    // collapse exactly as before the fix.
+    use mettail_languages::calculator::Int;
+    let must_fail = &[
+        r#"int(2 <= b >= 3)"#, // Int <= Bool has no rule
+        r#"int(2 >= 3 <= 4)"#, // (2>=3):Bool then Bool<=Int — no rule
+        r#"int(1 <= 2 <= 3)"#, // all Int literals: no Bool body assembles at all
+        r#"int(2 != b <= 3)"#, // leading Int, != side: no full-span Bool body
+    ];
+    for input in must_fail {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(
+            result.is_err(),
+            "RC-B non-masking: '{}' is ill-typed and must NOT parse, got {:?}",
+            input,
+            result.ok()
+        );
+    }
+}
+
+#[test]
+fn rc_b_parenthesized_balanced_comparison_controls_parse() {
+    // RC-B controls: the explicit-paren forms (which parse via the cast's OWN
+    // `BoolToInt` delegate, NOT the pop-site reconciliation) must keep parsing,
+    // and the early-declared `{==, >, <}` middle ops (whose spine reading is
+    // already well-typed) must keep parsing too — confirming the fix is a
+    // strict addition, never a regression of the pre-existing paths.
+    use mettail_languages::calculator::Int;
+    let must_parse = &[
+        r#"int((b >= 2) <= (b >= 3))"#, // explicit-paren balanced (cast's own delegate)
+        r#"int(b >= 2 < b >= 3)"#,      // early-declared middle op `<`
+        r#"int(c == -301055575 <= -1136349513)"#, // early-declared middle op `==`
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(result.is_ok(), "RC-B control: failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+#[test]
 fn simulator_regression_cross_cat_with_strings() {
     use mettail_languages::calculator::Int;
     // Comparisons involving string operands inside int(...).
@@ -1416,6 +1508,32 @@ fn simulator_regression_cross_cat_with_parens() {
         mettail_runtime::clear_var_cache();
         let result = Int::parse(input);
         assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
+    }
+}
+
+/// RC-B token-soundness guard for the prefix-cast wrap synthesis: a bare cast
+/// `int(a)` must NOT fabricate length-operator readings (`|a|` = `Len`,
+/// `length(a)` = `LenList`, `maplength(a)` = `LenMap`) — those are single-arg
+/// trigger-bearing `Int` producers too, but their keyword differs from `int`,
+/// so the keyword-agreement gate must reject them. Every alternative must
+/// re-display to exactly the input (yield == input).
+#[test]
+fn rc_b_prefix_cast_wrap_is_token_sound() {
+    use mettail_languages::calculator::Int;
+    for input in &["int(a)", "int(b >= 2 <= b >= 3)"] {
+        mettail_runtime::clear_var_cache();
+        if let Ok(alts) = Int::parse_via_wpda_all(input) {
+            for (i, t) in alts.iter().enumerate() {
+                let displayed = format!("{}", t);
+                assert_eq!(
+                    displayed, *input,
+                    "RC-B TOKEN-SOUNDNESS VIOLATION: parse_via_wpda_all({:?}) alt #{} \
+                     re-displays as {:?} — the prefix-cast wrap synthesis fabricated \
+                     terminals (a keyword-mismatched cast was synthesized).",
+                    input, i, displayed,
+                );
+            }
+        }
     }
 }
 
