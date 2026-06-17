@@ -28,3 +28,4 @@ theories/ParikhObligationGate.v
 theories/EvidenceGatedDelegates.v
 theories/ForwardOrderOnly.v
 theories/CrossCatLhsParking.v
+theories/DeterministicPosMirror.v
