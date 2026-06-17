@@ -76,6 +76,11 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         "dovetail_report",
         crate::gen::runtime::dovetail_report::generate_dovetail_report(language),
     );
+    let numeric_cast_adapter_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "numeric_cast_adapter",
+        crate::gen::runtime::numeric_cast_adapter::generate_numeric_cast_adapter(language),
+    );
 
     quote! {
         #term_wrapper_include
@@ -83,6 +88,7 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         #language_trait_impl_include
         #rho_scalar_invocation_include
         #dovetail_report_include
+        #numeric_cast_adapter_include
     }
 }
 

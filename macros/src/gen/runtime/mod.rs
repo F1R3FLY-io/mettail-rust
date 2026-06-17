@@ -11,6 +11,7 @@ pub mod environment;
 pub mod guard_codegen;
 pub mod language;
 pub mod metadata;
+pub mod numeric_cast_adapter;
 #[cfg(test)]
 pub mod predicate_lower;
 pub mod rho_invocation;
