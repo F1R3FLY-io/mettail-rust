@@ -30,6 +30,18 @@ impl CanonicalBigInt {
         // SAFETY: `CanonicalBigInt` points at a leaked allocation which is never freed.
         unsafe { self.0.as_ref() }
     }
+
+    /// Deterministic canonical byte serialization that agrees with [`Eq`]: two
+    /// `CanonicalBigInt`s are equal iff their canonical bytes are equal. Used to give a
+    /// generated Dovetail typed op-enum a sound, collision-free `SemanticHash` content key
+    /// for `BigInt`-valued literal leaves (the `runtime` crate does not depend on `dovetail`,
+    /// so the `SemanticHash` impl is emitted in `languages` and frames these bytes).
+    ///
+    /// `BigInt::to_signed_bytes_le` is the minimal two's-complement little-endian form, so
+    /// equal values always produce identical bytes and distinct values distinct bytes.
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        self.get().to_signed_bytes_le()
+    }
 }
 
 impl From<BigInt> for CanonicalBigInt {

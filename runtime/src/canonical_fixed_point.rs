@@ -59,6 +59,26 @@ impl CanonicalFixedPoint {
     pub fn places(&self) -> u32 {
         self.places
     }
+
+    /// Deterministic canonical byte serialization that agrees with [`Eq`]: two
+    /// `CanonicalFixedPoint`s are equal iff their canonical bytes are equal. **Critically,
+    /// this keys on [`value_ratio`](Self::value_ratio) — the reduced rational
+    /// `unscaled / 10^places` — exactly as `PartialEq`/`Hash` do, NOT on the raw
+    /// `(unscaled, places)` pair.** Using the raw pair (or `Debug`, which renders the raw
+    /// pair) would give two `Eq`-equal values (e.g. `15p1` and `150p2`, both `3/2`) distinct
+    /// bytes and break the `SemanticHash`↔`Eq` agreement that the Dovetail e-graph relies on
+    /// to dedup. Used to give a generated typed op-enum a sound `SemanticHash` content key.
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        let r = self.value_ratio();
+        let n = r.numer().to_signed_bytes_le();
+        let d = r.denom().to_signed_bytes_le();
+        let mut out = Vec::with_capacity(n.len() + d.len() + 16);
+        out.extend_from_slice(&(n.len() as u64).to_le_bytes());
+        out.extend_from_slice(&n);
+        out.extend_from_slice(&(d.len() as u64).to_le_bytes());
+        out.extend_from_slice(&d);
+        out
+    }
 }
 
 impl Default for CanonicalFixedPoint {

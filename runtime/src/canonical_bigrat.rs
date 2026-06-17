@@ -39,6 +39,24 @@ impl CanonicalBigRat {
         unsafe { self.0.as_ref() }
     }
 
+    /// Deterministic canonical byte serialization that agrees with [`Eq`]: two
+    /// `CanonicalBigRat`s are equal iff their canonical bytes are equal. The inner
+    /// `Ratio<BigInt>` is kept in reduced form (via `Ratio::new`), so the
+    /// `(numerator, denominator)` pair is canonical; each component is length-framed so
+    /// that, e.g., `1/23` and `12/3` cannot alias. Used to give a generated Dovetail typed
+    /// op-enum a sound `SemanticHash` content key for `BigRat`-valued literal leaves.
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        let r = self.get();
+        let n = r.numer().to_signed_bytes_le();
+        let d = r.denom().to_signed_bytes_le();
+        let mut out = Vec::with_capacity(n.len() + d.len() + 16);
+        out.extend_from_slice(&(n.len() as u64).to_le_bytes());
+        out.extend_from_slice(&n);
+        out.extend_from_slice(&(d.len() as u64).to_le_bytes());
+        out.extend_from_slice(&d);
+        out
+    }
+
     fn lcm_pos(a: &BigInt, b: &BigInt) -> BigInt {
         // Denominators produced by Ratio are positive, but keep this helper robust.
         if a.is_zero() || b.is_zero() {

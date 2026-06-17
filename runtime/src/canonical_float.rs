@@ -64,6 +64,20 @@ impl CanonicalFloat64 {
         self.0
     }
 
+    /// Deterministic canonical byte serialization that agrees with [`Eq`]/[`Hash`]: the
+    /// inner `f64` is already canonicalized at construction (all NaN → one bit pattern,
+    /// `-0.0` → `+0.0`), so the 8-byte little-endian `to_bits` form is collision-free and
+    /// `Eq`-agreeing. Used to give a generated Dovetail typed op-enum a sound `SemanticHash`
+    /// content key for `Float`-valued literal leaves.
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        let bits = if self.0.is_nan() {
+            Self::CANONICAL_NAN.to_bits()
+        } else {
+            self.0.to_bits()
+        };
+        bits.to_le_bytes().to_vec()
+    }
+
     /// Fallible constructor that rejects `NaN`. `±Inf` is accepted (it's a
     /// legitimate extended-real value). Use this when callers want the strict
     /// "finite-only or ±Inf" discipline that `SafeArith` applies internally.
@@ -288,6 +302,17 @@ impl CanonicalFloat32 {
     #[inline]
     pub fn get(self) -> f32 {
         self.0
+    }
+
+    /// Deterministic canonical byte serialization that agrees with [`Eq`]/[`Hash`]; see
+    /// [`CanonicalFloat64::to_canonical_bytes`]. 4-byte little-endian canonical `to_bits`.
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        let bits = if self.0.is_nan() {
+            Self::CANONICAL_NAN.to_bits()
+        } else {
+            self.0.to_bits()
+        };
+        bits.to_le_bytes().to_vec()
     }
 }
 
