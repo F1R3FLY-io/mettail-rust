@@ -580,25 +580,6 @@ fn generate_language_trait_impl(def: &ComposeDef) -> TokenStream {
         })
         .collect();
 
-    // ── run_ascent: match on variant, delegate ──
-    let ascent_arms: Vec<TokenStream> = def
-        .languages
-        .iter()
-        .map(|lang| {
-            let variant = &lang.variant_name;
-            let path = &lang.module_path;
-            let sub_lang = format_ident!("{}Language", variant);
-            quote! {
-                #inner_name::#variant(inner) => {
-                    <#path::#sub_lang as mettail_runtime::Language>::run_ascent(
-                        &#path::#sub_lang,
-                        inner as &dyn mettail_runtime::Term,
-                    )
-                }
-            }
-        })
-        .collect();
-
     // ── try_direct_eval: match on variant, delegate ──
     let eval_arms: Vec<TokenStream> = def
         .languages
@@ -925,16 +906,6 @@ fn generate_language_trait_impl(def: &ComposeDef) -> TokenStream {
                         .collect::<Vec<_>>()
                         .join("\n")
                 ))
-            }
-
-            fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, std::string::String> {
-                let typed_term = term
-                    .as_any()
-                    .downcast_ref::<#term_name>()
-                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                match &typed_term.0 {
-                    #(#ascent_arms),*
-                }
             }
 
             fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {

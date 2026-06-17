@@ -15,7 +15,6 @@
 
 pub mod automaton_walk;
 pub mod equation_tests;
-pub mod operational_tests;
 pub mod rewrite_tests;
 pub mod strategies;
 pub mod unit_tests;
@@ -134,11 +133,6 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) {
         write_test_section(&lang_name, "rewrite", &rewrite_content);
     }
 
-    let op_content = generate_op_section(language, pipeline);
-    if !op_content.is_empty() {
-        write_test_section(&lang_name, "op", &op_content);
-    }
-
     let analytical_content = generate_analytical_section(language, pipeline);
     if !analytical_content.is_empty() {
         write_test_section(&lang_name, "analytical", &analytical_content);
@@ -164,9 +158,6 @@ fn emit_test_file_header(
     ));
     out.push_str("// Regenerated on each compilation of the language definition.\n");
     out.push_str("// Run with: cargo test -p mettail-languages\n\n");
-    if section == "op" {
-        out.push_str("#![cfg(feature = \"oracle-ascent\")]\n");
-    }
     out.push_str("#![allow(unused_imports, dead_code)]\n\n");
     out.push_str(&format!("use mettail_languages::{}::*;\n", lang_name_lower));
     out.push_str("use mettail_runtime::Language;\n");
@@ -314,26 +305,6 @@ fn generate_rewrite_section(language: &LanguageDef, pipeline: &PipelineAnalysis)
         out.push_str(&rewrite_tests::generate_rewrite_tests(language, pipeline));
     }
 
-    out
-}
-
-/// Generate the operational-semantics tests section (all phases;
-/// typically the largest, but helper-free so can stand alone).
-fn generate_op_section(language: &LanguageDef, pipeline: &PipelineAnalysis) -> String {
-    let lang_name = language.name.to_string();
-    let lang_name_lower = lang_name.to_lowercase();
-    let ops = operational_tests::generate_operational_tests(language, pipeline);
-    if ops.trim().is_empty()
-        || ops
-            .trim()
-            .starts_with("// No operational eval tests generated")
-    {
-        return String::new();
-    }
-
-    let mut out = String::with_capacity(ops.len() + 1024);
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "op", None);
-    out.push_str(&ops);
     out
 }
 

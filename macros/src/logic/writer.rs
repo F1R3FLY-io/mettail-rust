@@ -147,25 +147,3 @@ pub fn spill_and_include(lang_name: &str, module_name: &str, tokens: TokenStream
         },
     }
 }
-
-/// Write an Ascent Datalog source file for a theory.
-///
-/// Kept for the existing Ascent-pretty-print-for-inspection pathway which
-/// writes the already-formatted Ascent *rules* (not a complete Rust file)
-/// alongside the per-module files. Unlike `write_lang_module`, this path
-/// writes a plain `.rs` file whose content is not compiled — it is purely
-/// for diffing what Ascent sees.
-pub fn write_ascent_file(
-    grammar_name: &str,
-    theory_name: &str,
-    ascent_content: &str,
-) -> std::io::Result<()> {
-    let dir = lang_generated_dir(theory_name);
-    fs::create_dir_all(&dir)?;
-    let theory_name_lower = theory_name.to_lowercase();
-    let file_path = dir.join(format!("{}-datalog.rs", theory_name_lower));
-    if write_if_changed(&file_path, ascent_content)? {
-        eprintln!("  ({}) Generated Ascent Datalog: {}", grammar_name, file_path.display());
-    }
-    Ok(())
-}

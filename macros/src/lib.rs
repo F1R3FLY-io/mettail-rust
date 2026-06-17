@@ -23,7 +23,7 @@ use gen::{
     write_blockly_blocks, write_blockly_categories,
 };
 use logic::writer::spill_and_include;
-use logic::{generate_ascent_source, rules::generate_freshness_functions};
+use logic::rules::generate_freshness_functions;
 use mettail_ast::compose::ComposeDef;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
@@ -127,37 +127,16 @@ pub fn language(input: TokenStream) -> TokenStream {
     let freshness_fns = generate_freshness_functions(&language_def);
     stage!("generate_freshness_functions.done");
 
-    stage!("generate_ascent_source.start");
-    // Generate Ascent datalog source (includes rewrites as Ascent clauses)
-    // Thread pipeline analysis for WFST-informed optimizations (DCE, rule ordering, etc.)
-    let ascent_output = generate_ascent_source(&language_def, Some(&pipeline_analysis));
-    let ascent_code = ascent_output.full_output;
-    let raw_ascent_content = ascent_output.raw_content;
-    let core_raw_ascent_content = ascent_output.core_raw_content;
-    let pre_stratum_content = ascent_output.pre_stratum_content;
-    let ground_rewrite_seeds = ascent_output.ground_rewrite_seeds;
-    let stratum_contents = ascent_output.stratum_contents;
-    stage!("generate_ascent_source.done");
-
     stage!("generate_metadata.start");
     // Generate metadata for REPL introspection
     let metadata_code = generate_metadata(&language_def, &definition_source_str);
     stage!("generate_metadata.done");
 
     stage!("generate_language_impl.start");
-    // Generate language implementation struct (Term wrapper + Language struct)
-    // Pass raw Ascent content for direct inclusion in ascent! { struct Foo; ... }
-    // Also pass core content for SCC-split struct (if available)
-    // Also pass pre-stratum content for ground rewrite pre-computation (Sprint 5)
-    // Also pass ground rewrite seeds for B-CG04 short-circuit optimization
-    let language_code = generate_language_impl(
-        &language_def,
-        &raw_ascent_content,
-        core_raw_ascent_content.as_ref(),
-        pre_stratum_content.as_ref(),
-        &ground_rewrite_seeds,
-        &stratum_contents,
-    );
+    // Generate language implementation struct (Term wrapper + Language struct).
+    // The legacy Ascent runtime backend was retired (P6); `run_ascent` resolves to
+    // the fail-closed `Language` trait default, so no engine content is threaded here.
+    let language_code = generate_language_impl(&language_def);
     stage!("generate_language_impl.done");
 
     // W7 Stage 6: WPDS-runtime engine for the language.
@@ -218,7 +197,6 @@ pub fn language(input: TokenStream) -> TokenStream {
     // humans readable files to diff and inspect after compilation.
     let ast_include = spill_and_include(&lang_name, "ast", ast_code);
     let freshness_include = spill_and_include(&lang_name, "freshness", freshness_fns);
-    let ascent_include = spill_and_include(&lang_name, "ascent", ascent_code);
     let metadata_include = spill_and_include(&lang_name, "metadata", metadata_code);
     let language_include = spill_and_include(&lang_name, "language", language_code);
     let wpda_include = spill_and_include(&lang_name, "wpda", wpda_engine_code);
@@ -227,8 +205,6 @@ pub fn language(input: TokenStream) -> TokenStream {
     let combined = quote::quote! {
         #ast_include
         #freshness_include
-        #[cfg(feature = "oracle-ascent")]
-        #ascent_include
         #metadata_include
         #language_include
         #wpda_include

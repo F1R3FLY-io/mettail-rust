@@ -104,41 +104,9 @@ pub fn safeify_and_wrap(expr: &Expr) -> TokenStream {
     wrap_in_option_closure(&rewritten)
 }
 
-/// Method-only safeify: rewrite `.expect(...)` / `.unwrap()` / `.pow()` etc.
-/// but leave binary/unary arithmetic operators intact. Use at codegen sites
-/// where the user's rust_code pattern-matches inner reference values
-/// (`&i32`, `&u32`) and does bare arithmetic on them — `SafeArith` requires
-/// owned types, so rewriting `x + y` to `safe_add(x, y)?` would fail to
-/// compile with "SafeArith not implemented for &T".
-///
-/// The returned expression is wrapped in a zero-arg closure that returns
-/// `Option<T>`. Methods that could panic short-circuit via `?`; bare
-/// operators stay as they were.
-pub fn safeify_methods_and_wrap(expr: &Expr) -> TokenStream {
-    let mut cloned = expr.clone();
-    let mut visitor = MethodOnlySafeifier;
-    visitor.visit_expr_mut(&mut cloned);
-    wrap_in_option_closure(&cloned)
-}
-
 // ─── The visitor ────────────────────────────────────────────────────────────
 
 struct Safeifier;
-
-/// Visitor that only rewrites method calls (`.expect`, `.unwrap`, `.pow`…),
-/// leaving binary operators alone. See `safeify_methods_and_wrap`.
-struct MethodOnlySafeifier;
-
-impl VisitMut for MethodOnlySafeifier {
-    fn visit_expr_mut(&mut self, node: &mut Expr) {
-        visit_mut::visit_expr_mut(self, node);
-        if let Expr::MethodCall(mc) = node {
-            if let Some(replacement) = rewrite_method_call(mc) {
-                *node = replacement;
-            }
-        }
-    }
-}
 
 impl VisitMut for Safeifier {
     fn visit_expr_mut(&mut self, node: &mut Expr) {
