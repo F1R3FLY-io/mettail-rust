@@ -57,3 +57,37 @@ fn proc_arithmetic_folds() {
         "1 + 2 must fold to 3 in-engine (NumLit(3)); ops: {ops:?}"
     );
 }
+
+#[test]
+fn free_var_arg_defers() {
+    // `int(x, 8)`: the `a` argument is a free Proc variable — not a value — so the
+    // fold-readiness guard defers the cast (a var never becomes a fold value). The
+    // `IntBinProc` redex stays unreduced and the report still converges (`Complete`).
+    let ops = fold_report_ops("int(x, 8)");
+    assert!(
+        ops.iter().any(|o| o.contains("IntBinProc")),
+        "int(x,8) with a free var must leave the redex unreduced; ops: {ops:?}"
+    );
+}
+
+#[test]
+fn bad_cast_folds_to_err() {
+    // `int("abc", 8)`: the string argument IS a value (`CastStr`) but not numeric, so the
+    // native body folds it to the legitimate `Proc::Err` value (not a deferral).
+    let ops = fold_report_ops(r#"int("abc", 8)"#);
+    assert!(
+        ops.iter().any(|o| o.contains("Err")),
+        "a bad cast folds to Err; ops: {ops:?}"
+    );
+}
+
+#[test]
+fn bare_literal_is_complete_and_unfolded() {
+    // `0` = `CastInt(NumLit 0)`: a normal literal matches no fold LHS (the host-routing
+    // guard), so it lowers and extracts `Complete` without firing any fold.
+    let ops = fold_report_ops("0");
+    assert!(
+        ops.iter().any(|o| o.contains("NumLit(0)")),
+        "the literal 0 lowers unchanged; ops: {ops:?}"
+    );
+}
