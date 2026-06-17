@@ -349,7 +349,7 @@ Dovetail classifies MeTTaIL requirements into:
 | equations | exact e-class closure | preserve canonical identity |
 | directional rewrites | saturation and derivation facts | lower rule firing faithfully |
 | congruence | generated parent rewrites | preserve constructor contexts |
-| folds/native handlers | classify and call contract | execute deterministic handler |
+| folds/native handlers | reduce **non-native-output** folds **in-engine** (the typed-`L` op-enum + native-rewrite dispatcher under funded saturation — see Dovetail [12 - Native-Fold Reduction](../dovetail/12-native-fold-reduction.md)); native-output folds via `try_eval` | surface the folded report (`DeferToDovetailReport` → `RuntimeBackendOutput::Dovetail`) for a native-fold term; execute the host handler for a host-routed one |
 | structural predicated types | exact-key and pattern matching, or explicit SFT/native contract | preserve match/no-match without consuming hidden alternatives |
 | behavioral predicated types | classify dependency and require compatible evidence | implement atomic no-commit on false |
 | EBA-backed guards | record theory obligation and coverage evidence | decide predicates over the declared data domain |

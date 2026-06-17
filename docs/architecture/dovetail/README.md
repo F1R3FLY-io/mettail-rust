@@ -38,8 +38,9 @@ For implementers:
 5. [Cyclic Closure and Boundedness](06-cyclic-closure-and-boundedness.md)
 6. [Runtime-Facing Reports](10-runtime-facing-reports.md)
 7. [Binder-Congruence Handler](11-binder-congruence-handler.md)
-8. [Worked Example](09-worked-example.md)
-9. [Engineering Handoff](08-engineering-handoff.md)
+8. [Native-Fold Reduction](12-native-fold-reduction.md)
+9. [Worked Example](09-worked-example.md)
+10. [Engineering Handoff](08-engineering-handoff.md)
 
 For reviewers checking claims:
 
@@ -90,6 +91,7 @@ the e-graph or extractor internals.
 | [09 - Worked Example](09-worked-example.md) | How does a small rewrite system move through e-graphing, saturation, extraction, and reporting? |
 | [10 - Runtime-Facing Reports](10-runtime-facing-reports.md) | What is a Dovetail report, why does a rewrite engine need one, and what may downstream runtimes rely on? |
 | [11 - Binder-Congruence Handler](11-binder-congruence-handler.md) | How does Dovetail evaluate Ambient's binders and freshness equations capture-safely (float-then-AC-reduce), and why is that in-engine rather than host-routed? |
+| [12 - Native-Fold Reduction](12-native-fold-reduction.md) | How does Dovetail reduce a language's `fold` rules (native-computed RHS) in-engine via the typed-`L` op-enum + native-rewrite dispatcher, and how is that funded and proven? |
 | [References](references.md) | Which local source, test, proof, and design artifacts support the suite? |
 
 ## Architecture at a Glance

@@ -42,6 +42,9 @@ files that are versioned with the implementation and formal artifacts.
 - `languages/tests/ambient_dovetail_flip.rs` (the Ambient flip: Complete reports)
 - `languages/tests/fix_a_alpha_canonical_semantic_key.rs` (FIX-A α-canonical keys)
 - `languages/tests/rhocalc_dovetail_host_routed.rs` (gate excludes host-routed rhocalc)
+- `languages/tests/rhocalc_dovetail_fold.rs` (native-fold reduction: the worked-examples matrix — `int(1+2,8)→3`, var-defer, bad-cast→`Err`, host-guard)
+- `languages/tests/rhocalc_dovetail_op_enum.rs` (typed op-enum exact-key `SemanticHash` distinctness + `Display`)
+- `runtime/tests/canonical_to_bytes.rs` (canonical numeric `to_canonical_bytes` — deterministic, `Eq`-agreeing content-key bytes)
 
 ## Formal Artifacts
 
@@ -54,10 +57,11 @@ files that are versioned with the implementation and formal artifacts.
 - `dovetail/formal/rocq/theories/Extraction/CycleCutBoundary.v`
 - `dovetail/formal/rocq/theories/Extraction/CyclicEnumerationImpossibility.v`
 - `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`
-- `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v`
+- `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v` (saturation soundness + native-fold soundness `native_fold_saturation_sound` / `native_refire_is_noop` + OSLF funding laws `fold_transition_funded` → `funded_fold_saturates_within_budget`)
 - `dovetail/formal/rocq/theories/Requirements/LanguageDefInventory.v`
 - `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v`
 - `dovetail/formal/rocq/theories/Lowering/PatternLoweringSoundness.v`
+- `dovetail/formal/rocq/theories/Lowering/GeneratedReportCompiler.v` (rule-disposition partition incl. the `NativeFoldLowered` native-fold disposition: `native_fold_lowered_requires_structural_support`, `native_fold_requirements_are_exact_key`)
 - `dovetail/formal/rocq/theories/Lowering/AmbientBinderHandler.v` (binder capture-safety)
 - `dovetail/formal/rocq/theories/Lowering/CollectionAcLowering.v` (AC canonicalization soundness)
 - `dovetail/formal/rocq/theories/Refinement/RustModelBridge.v`

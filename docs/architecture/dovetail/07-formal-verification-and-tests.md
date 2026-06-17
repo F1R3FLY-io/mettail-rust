@@ -23,6 +23,9 @@ Graphviz source: [figures/07-verification-dag.dot](figures/07-verification-dag.d
 | productive cyclic enumeration is not finitely exhaustive | `dovetail/formal/rocq/theories/Extraction/CyclicEnumerationImpossibility.v` |
 | SCC lowering preserves inside-weight equations | `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v` |
 | saturation outcomes are explicit and sound | `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v` |
+| native folds preserve soundness; a re-fired fold is a no-op | `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v` (`native_fold_saturation_sound`, `native_refire_is_noop`) |
+| the fold transition's OSLF funding satisfies its four laws + budget bridge | `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v` (`fold_transition_funded`, `funded_fold_saturates_within_budget`) |
+| the native-fold disposition partition is total/exact with exact-key requirements | `dovetail/formal/rocq/theories/Lowering/GeneratedReportCompiler.v` (`NativeFoldLowered`, `native_fold_requirements_are_exact_key`) |
 | MeTTaIL rewrite requirements are classified | `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v` |
 | Rust model bridge matches public result enums | `dovetail/formal/rocq/theories/Refinement/RustModelBridge.v` |
 | report handoff preserves completeness and keys | `dovetail/formal/rocq/theories/Refinement/RuntimeReportBridge.v` and `RhoReportHandoff.v` |
@@ -39,6 +42,8 @@ Graphviz source: [figures/07-verification-dag.dot](figures/07-verification-dag.d
 | `corpus_replay.rs` | replay-shaped regression coverage |
 | `language_inventory.rs` | current language requirement inventory checked against Rocq coverage names |
 | `language_shape_parity.rs` | representative MeTTaIL rewrite shapes: native step, lambda beta, ambient open, Rho COMM |
+| `languages/tests/rhocalc_dovetail_fold.rs` | native-fold reduction matrix: saturation-recursion (`int(1+2,8)→3`), single-cast, bare arithmetic, var-defer, bad-cast→`Err`, host-guard literal |
+| `languages/tests/rhocalc_dovetail_op_enum.rs` | typed op-enum exact-key `SemanticHash`: framed-discriminant non-aliasing, payload distinctness/determinism, `Display` label form |
 
 ## Required Commands
 

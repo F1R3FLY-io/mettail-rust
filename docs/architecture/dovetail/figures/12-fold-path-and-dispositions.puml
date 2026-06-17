@@ -1,0 +1,65 @@
+' Dovetail lowering path selection + the four generated-rule dispositions.
+' Render: plantuml -tsvg 12-fold-path-and-dispositions.puml
+@startuml
+title Dovetail path selection and the four generated-rule dispositions
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+
+|#DBEAFE|Codegen|
+start
+:`language!` -> `LanguageDef`; <<#DBEAFE>>
+if (non-native-output `fold`?\n(`needs_typed_fold_path`)) then (no)
+  |#E5E7EB|String path (unchanged)|
+  :Lower to `EGraph<String>`\n(byte-for-byte unchanged); <<#E5E7EB>>
+  :equations / rewrites -> `RewriteRule<String>`; <<#E5E7EB>>
+  stop
+else (yes)
+  |#EDE9FE|Typed-`L` path|
+  :Generate `<Lang>DovetailOp`\n(+ framed `SemanticHash`, `Display`); <<#EDE9FE>>
+  :Lower to `EGraph<L>`\n(`__add_<cat>`, lossless leaves); <<#EDE9FE>>
+endif
+
+|#EDE9FE|Classify each generated rule|
+:`classify_rule`; <<#EDE9FE>>
+split
+  -[#7C3AED]->
+  |#DCFCE7|Lowered|
+  :`LoweredAsDovetailRule`\n(structural equation/rewrite\n-> `Pattern -> Pattern`); <<#DCFCE7>>
+split again
+  -[#7C3AED]->
+  |#DCFCE7|Congruence|
+  :`SuppliedByEGraphCongruence`\n(auto by `rebuild`); <<#DCFCE7>>
+split again
+  -[#7C3AED]->
+  |#DCFCE7|Native fold|
+  :`NativeFoldLowered`\n(`NativeRule<L>` + dispatcher;\nresult via exact-key `add`); <<#DCFCE7>>
+split again
+  -[#DC2626]->
+  |#FEE2E2|Rejected|
+  :`RejectedByGeneratedCompiler`\n(host-routed / unlowerable;\nNON-FATAL on the fold path); <<#FEE2E2>>
+end split
+
+|#FEF3C7|OSLF-funded saturation|
+:`saturate_with_native`\n(weight ORDERS, never prunes;\nfold-readiness guard defers a fold\nuntil its children are values); <<#FEF3C7>>
+:Funded 1-best extraction\nsurfaces the folded normal form; <<#DCFCE7>>
+stop
+
+legend right
+  |= color |= concept |
+  |<#DBEAFE>| GSLT codegen input |
+  |<#E5E7EB>| String path (unchanged) |
+  |<#EDE9FE>| typed-`L` engine mechanism |
+  |<#FEF3C7>| OSLF funding |
+  |<#DCFCE7>| reduced result / supported disposition |
+  |<#FEE2E2>| rejected / non-fatal |
+endlegend
+@enduml
