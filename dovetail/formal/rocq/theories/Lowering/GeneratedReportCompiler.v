@@ -117,11 +117,18 @@ Section GeneratedReportCompiler.
 
   Inductive GeneratedRuleKind : Type :=
     | GEquation
-    | GRewrite.
+    | GRewrite
+    (* A `fold` term rule (Increment 2/3): its LHS is a structural redex pattern, but its
+       RHS is NOT a `Pattern -> Pattern` rewrite — it is a native-computed term added to the
+       e-graph through the exact-key path by the generated dispatcher. *)
+    | GNativeFold.
 
   Inductive GeneratedRuleDisposition : Type :=
     | LoweredAsDovetailRule
     | SuppliedByEGraphCongruence
+    (* The native-fold disposition: lowered as a `NativeRule` whose computed result is added
+       through the exact-key path (hence its single requirement is `ReqExactContentKey`). *)
+    | NativeFoldLowered
     | RejectedByGeneratedCompiler.
 
   Record GeneratedRule : Type := {
@@ -145,9 +152,13 @@ Section GeneratedReportCompiler.
   Definition classify_rule
       (rule : GeneratedRule) : GeneratedRuleDisposition :=
     if rule_structurally_supported rule then
-      if generated_is_pure_congruence rule
-      then SuppliedByEGraphCongruence
-      else LoweredAsDovetailRule
+      match generated_rule_kind rule with
+      | GNativeFold => NativeFoldLowered
+      | _ =>
+        if generated_is_pure_congruence rule
+        then SuppliedByEGraphCongruence
+        else LoweredAsDovetailRule
+      end
     else RejectedByGeneratedCompiler.
 
   Definition disposition_is_lowered
@@ -161,6 +172,13 @@ Section GeneratedReportCompiler.
       (d : GeneratedRuleDisposition) : bool :=
     match d with
     | SuppliedByEGraphCongruence => true
+    | _ => false
+    end.
+
+  Definition disposition_is_native_fold
+      (d : GeneratedRuleDisposition) : bool :=
+    match d with
+    | NativeFoldLowered => true
     | _ => false
     end.
 
@@ -181,11 +199,18 @@ Section GeneratedReportCompiler.
   Definition rejected_rules (rules : list GeneratedRule) : list GeneratedRule :=
     filter (fun rule => disposition_is_rejected (classify_rule rule)) rules.
 
+  Definition native_fold_rules
+      (rules : list GeneratedRule) : list GeneratedRule :=
+    filter (fun rule => disposition_is_native_fold (classify_rule rule)) rules.
+
   Definition generated_rule_requirements
       (rule : GeneratedRule) : list RewriteRequirement :=
     (match generated_rule_kind rule with
      | GEquation => ReqEquation
      | GRewrite => ReqDirectionalRewrite
+     (* A native fold's result is added through the exact-key path (no directional pattern
+        rewrite); its kind requirement is the exact content key. *)
+     | GNativeFold => ReqExactContentKey
      end)
     :: pattern_requirements (generated_lhs rule)
     ++ pattern_requirements (generated_rhs rule)
@@ -194,11 +219,13 @@ Section GeneratedReportCompiler.
   Theorem rule_classification_total : forall rule,
     classify_rule rule = LoweredAsDovetailRule \/
     classify_rule rule = SuppliedByEGraphCongruence \/
+    classify_rule rule = NativeFoldLowered \/
     classify_rule rule = RejectedByGeneratedCompiler.
   Proof.
     intros rule. unfold classify_rule.
-    destruct (rule_structurally_supported rule);
-      destruct (generated_is_pure_congruence rule);
+    destruct (rule_structurally_supported rule),
+             (generated_rule_kind rule),
+             (generated_is_pure_congruence rule);
       auto.
   Qed.
 
@@ -207,15 +234,11 @@ Section GeneratedReportCompiler.
     rule_structurally_supported rule = true /\
     generated_is_pure_congruence rule = false.
   Proof.
-    intros rule Hclass.
-    unfold classify_rule in Hclass.
-    destruct (rule_structurally_supported rule) eqn:Hsupported.
-    - destruct (generated_is_pure_congruence rule) eqn:Hcong.
-      + discriminate Hclass.
-      + split.
-        * reflexivity.
-        * reflexivity.
-    - discriminate Hclass.
+    intros rule Hclass. unfold classify_rule in Hclass.
+    destruct (rule_structurally_supported rule),
+             (generated_rule_kind rule),
+             (generated_is_pure_congruence rule);
+      try discriminate Hclass; split; reflexivity.
   Qed.
 
   Theorem congruence_rule_requires_structural_support : forall rule,
@@ -223,15 +246,52 @@ Section GeneratedReportCompiler.
     rule_structurally_supported rule = true /\
     generated_is_pure_congruence rule = true.
   Proof.
-    intros rule Hclass.
-    unfold classify_rule in Hclass.
-    destruct (rule_structurally_supported rule) eqn:Hsupported.
-    - destruct (generated_is_pure_congruence rule) eqn:Hcong.
-      + split.
-        * reflexivity.
-        * reflexivity.
-      + discriminate Hclass.
-    - discriminate Hclass.
+    intros rule Hclass. unfold classify_rule in Hclass.
+    destruct (rule_structurally_supported rule),
+             (generated_rule_kind rule),
+             (generated_is_pure_congruence rule);
+      try discriminate Hclass; split; reflexivity.
+  Qed.
+
+  (* A native-fold rule is dispositioned `NativeFoldLowered` exactly when it is a
+     structurally-supported `GNativeFold` (its LHS redex pattern is exact-key lowerable). *)
+  Theorem native_fold_lowered_requires_structural_support : forall rule,
+    classify_rule rule = NativeFoldLowered ->
+    rule_structurally_supported rule = true /\
+    generated_rule_kind rule = GNativeFold.
+  Proof.
+    intros rule Hclass. unfold classify_rule in Hclass.
+    destruct (rule_structurally_supported rule),
+             (generated_rule_kind rule),
+             (generated_is_pure_congruence rule);
+      try discriminate Hclass; split; reflexivity.
+  Qed.
+
+  (* Design-doc §6: the `NativeFoldLowered` disposition carries the SINGLE requirement
+     `ReqExactContentKey`. A structural native fold (redex LHS, structural result RHS, no
+     side-condition premises) has every requirement equal to the exact content key — the
+     native result is added through the exact-key path, never via a directional pattern
+     rewrite or a side-condition the structural saturation cannot model. *)
+  Theorem native_fold_requirements_are_exact_key : forall rule r,
+    generated_rule_kind rule = GNativeFold ->
+    pattern_supported (generated_lhs rule) = true ->
+    pattern_supported (generated_rhs rule) = true ->
+    generated_premises rule = nil ->
+    In r (generated_rule_requirements rule) ->
+    r = ReqExactContentKey.
+  Proof.
+    intros rule r Hkind Hlhs Hrhs Hprem Hin.
+    unfold generated_rule_requirements in Hin.
+    rewrite Hkind, Hprem in Hin. simpl in Hin.
+    destruct Hin as [Heq | Hin].
+    - symmetry. exact Heq.
+    - apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+      + exact (supported_patterns_have_only_exact_key_requirement
+                 (generated_lhs rule) r Hlhs Hin).
+      + apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+        * exact (supported_patterns_have_only_exact_key_requirement
+                   (generated_rhs rule) r Hrhs Hin).
+        * destruct Hin.
   Qed.
 
   Theorem unsupported_rule_rejects : forall rule,
@@ -245,12 +305,13 @@ Section GeneratedReportCompiler.
   Theorem classification_count_exact : forall rules,
     length (lowered_rules rules) +
     length (congruence_rules rules) +
+    length (native_fold_rules rules) +
     length (rejected_rules rules) =
     length rules.
   Proof.
     induction rules as [| rule rest IH].
     - reflexivity.
-    - unfold lowered_rules, congruence_rules, rejected_rules in *.
+    - unfold lowered_rules, congruence_rules, native_fold_rules, rejected_rules in *.
       simpl.
       destruct (classify_rule rule); simpl; lia.
   Qed.
@@ -279,24 +340,28 @@ Section GeneratedReportCompiler.
     apply filter_In in Hin. exact (proj1 Hin).
   Qed.
 
+  Theorem native_fold_rules_are_from_input : forall rules rule,
+    In rule (native_fold_rules rules) -> In rule rules.
+  Proof.
+    intros rules rule Hin.
+    unfold native_fold_rules in Hin.
+    apply filter_In in Hin. exact (proj1 Hin).
+  Qed.
+
   Theorem input_rule_is_classified : forall rules rule,
     In rule rules ->
     In rule (lowered_rules rules) \/
     In rule (congruence_rules rules) \/
+    In rule (native_fold_rules rules) \/
     In rule (rejected_rules rules).
   Proof.
     intros rules rule Hin.
-    unfold lowered_rules, congruence_rules, rejected_rules.
+    unfold lowered_rules, congruence_rules, native_fold_rules, rejected_rules.
     destruct (classify_rule rule) eqn:Hclass.
-    - left. apply filter_In. split.
-      + exact Hin.
-      + rewrite Hclass. reflexivity.
-    - right. left. apply filter_In. split.
-      + exact Hin.
-      + rewrite Hclass. reflexivity.
-    - right. right. apply filter_In. split.
-      + exact Hin.
-      + rewrite Hclass. reflexivity.
+    - left. apply filter_In. split; [exact Hin | rewrite Hclass; reflexivity].
+    - right. left. apply filter_In. split; [exact Hin | rewrite Hclass; reflexivity].
+    - right. right. left. apply filter_In. split; [exact Hin | rewrite Hclass; reflexivity].
+    - right. right. right. apply filter_In. split; [exact Hin | rewrite Hclass; reflexivity].
   Qed.
 
   Theorem lowered_rule_has_no_unsupported_requirements : forall rule req,
@@ -317,7 +382,7 @@ Section GeneratedReportCompiler.
     simpl in Hin.
     destruct Hin as [Hkind | Hin].
     - subst req. destruct (generated_rule_kind rule);
-        [left | right; left]; reflexivity.
+        [left | right; left | right; right; left]; reflexivity.
     - apply in_app_iff in Hin as [Hlhs_req | Hin].
       + right. right. left.
         eapply supported_patterns_have_only_exact_key_requirement.
@@ -402,7 +467,7 @@ Section GeneratedReportCompiler.
      non-congruence-but-empty premise set, classifies as a lowered Dovetail rule.
      This is the Ambient OpenRule shape (PPar AC redex ~> positional PPar). *)
   Theorem ac_structural_lhs_is_lowered :
-    forall kind,
+    forall kind, kind <> GNativeFold ->
       classify_rule
         {| generated_rule_kind := kind;
            generated_lhs := GPatAcStructuralApply;
@@ -410,7 +475,10 @@ Section GeneratedReportCompiler.
            generated_premises := [];
            generated_is_pure_congruence := false |} =
       LoweredAsDovetailRule.
-  Proof. intro kind. reflexivity. Qed.
+  Proof.
+    intros kind Hk. destruct kind; try reflexivity.
+    exfalso. apply Hk. reflexivity.
+  Qed.
 
   (* And the AC bag apply carries ONLY the exact-content-key requirement (its
      identity is exact, like any structural apply — no collection/binder/subst
