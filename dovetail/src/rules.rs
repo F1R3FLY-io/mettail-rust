@@ -158,6 +158,35 @@ pub struct RewriteRule<L> {
     pub label: Option<String>,
 }
 
+/// An opaque, serializable identifier naming a native-computed rewrite's
+/// transition. The Dovetail engine is language-agnostic, so the actual
+/// computation lives in a generated dispatcher (one per language); a
+/// [`NativeRule`] carries only the redex pattern and this tag, keeping the
+/// "rules are DATA" doctrine (see the module docs) intact — no compiled-in
+/// closures live in the rule data itself.
+pub type NativeOpId = u32;
+
+/// A native-computed rewrite rule `lhs ~> ⟨native op⟩`.
+///
+/// Where a [`RewriteRule`] rewrites `lhs` to a *structural* [`Pattern`] RHS, a
+/// `NativeRule` rewrites `lhs` to a result e-class **computed** by the
+/// OSLF-funded dispatcher from the matched substitution — the children extracted
+/// to their current funded-best form. This is how the *fold* fragment of a GSLT
+/// operational semantics (a deterministic native computation such as a numeric
+/// cast `int(a, w)`) reduces *inside* equality saturation, funded like every
+/// other rewrite. A native rule still only ADDS the equality `redex == result`:
+/// nothing is pruned (the substructural no-contraction law), and the node budget
+/// `Σ` bounds it.
+#[derive(Clone, Debug)]
+pub struct NativeRule<L> {
+    /// The redex pattern to match (e.g. `int(?a, ?w)`).
+    pub lhs: Pattern<L>,
+    /// The dispatcher tag naming the native transition (the fold body).
+    pub op: NativeOpId,
+    /// Human-readable label for diagnostics / report provenance.
+    pub label: Option<String>,
+}
+
 /// Terminal outcome of equality saturation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaturationOutcome {
@@ -488,11 +517,46 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// Equality saturation: apply `rules` to a fixpoint, or until the node budget
     /// or `max_iters` is hit. Every fired rule ADDS an equality (merge); nothing
     /// is pruned. Limits are reported in [`SatReport::outcome`].
+    ///
+    /// This is the structural-only entry point (no native-computed rewrites). It
+    /// delegates to [`saturate_with_native`](Self::saturate_with_native) with an
+    /// empty native-rule set and a dispatcher that fires nothing, so every
+    /// existing caller is unchanged.
     pub fn saturate(&mut self, rules: &[RewriteRule<L>], max_iters: usize) -> SatReport {
+        self.saturate_with_native(rules, &[], &|_op, _eg, _subst| None, max_iters)
+    }
+
+    /// Equality saturation over BOTH structural [`RewriteRule`]s and
+    /// native-computed [`NativeRule`]s, to a fixpoint or until the node budget /
+    /// `max_iters` is hit.
+    ///
+    /// Native rules realize the *fold* fragment of GSLT reduction. For each match
+    /// `(root, subst)` of a native rule's `lhs`, `dispatch(op, self, &subst)`
+    /// computes an optional result e-class — the fold body run on the
+    /// funded-best children extracted from the classes in `subst` — which is then
+    /// merged with `root`. `dispatch` returning `None` means the redex does not
+    /// reduce here (a variable or otherwise-stuck child, or the body's funded
+    /// admission failed); the redex is left in place, faithful to a fold premise
+    /// with no solution.
+    ///
+    /// Like a structural rule, a native rule only ADDS the equality
+    /// `redex == result`: nothing is pruned (the substructural no-contraction
+    /// law), and the node budget `Σ` bounds it (`is_funded(Δ, Σ, margin)`). A
+    /// folded redex reduces to a normal form (e.g. a cast literal) that no longer
+    /// matches the redex pattern, so it fires once and saturation still reaches
+    /// `Converged`/`NodeLimit`.
+    pub fn saturate_with_native(
+        &mut self,
+        rules: &[RewriteRule<L>],
+        native_rules: &[NativeRule<L>],
+        dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+        max_iters: usize,
+    ) -> SatReport {
         let mut stats = SatStats::default();
         for iteration in 0..max_iters {
             stats.iterations = iteration + 1;
             let mut iter_merges = 0usize;
+            // ── Structural rules: instantiate the pattern RHS and merge. ──
             for rule in rules {
                 let matches = self.search(&rule.lhs);
                 let mut rule_merges = 0usize;
@@ -514,6 +578,39 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                     }
                     // else: a budgeted add refused a fresh node without setting
                     // the sticky flag; skip defensively.
+                }
+                if rule_merges > 0 {
+                    self.rebuild();
+                }
+                iter_merges += rule_merges;
+                stats.total_merges += rule_merges;
+                if budget_hit {
+                    return SatReport::new(SaturationOutcome::NodeLimit, stats);
+                }
+            }
+            // ── Native rules: dispatch computes the funded result, then merge. ──
+            for nrule in native_rules {
+                let matches = self.search(&nrule.lhs);
+                let mut rule_merges = 0usize;
+                let mut budget_hit = false;
+                for (root, subst) in matches {
+                    match dispatch(nrule.op, self, &subst) {
+                        Some(result_id) => {
+                            if self.find(root) != self.find(result_id) {
+                                self.merge(root, result_id);
+                                rule_merges += 1;
+                            }
+                        }
+                        None if self.node_limit_reached() => {
+                            budget_hit = true;
+                            break;
+                        }
+                        None => {
+                            // The redex does not reduce here (variable / stuck
+                            // child, or unfunded admission); leave it in place,
+                            // faithful to a fold premise with no solution.
+                        }
+                    }
                 }
                 if rule_merges > 0 {
                     self.rebuild();
@@ -828,6 +925,73 @@ mod tests {
         assert_eq!(rep.outcome, SaturationOutcome::Converged);
         assert!(eg.equiv(a, b));
         assert!(eg.equiv(fa, fb), "congruence: f(a) ~ f(b) after a ~ b");
+    }
+
+    #[test]
+    fn native_rule_computes_result_and_converges() {
+        // `double(a) ~> ⟨native: add(x, x)⟩`. The native dispatcher reads the
+        // matched child class `x` from the substitution and ADDS `add(x, x)`,
+        // which saturation merges with the redex. After the fixpoint,
+        // `double(a) == add(a, a)` — the fold fragment reducing inside saturation.
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let dbl = eg.add(ENode::new("double".into(), vec![a]));
+        let native = vec![NativeRule {
+            lhs: Pattern::app("double".to_string(), vec![Pattern::var("x")]),
+            op: 0,
+            label: Some("double".into()),
+        }];
+        let dispatch = |_op: NativeOpId, eg: &mut EGraph<String>, subst: &Subst| -> Option<EClassId> {
+            let x = eg.find(*subst.get("x")?);
+            Some(eg.add(ENode::new("add".into(), vec![x, x])))
+        };
+        let rep = eg.saturate_with_native(&[], &native, &dispatch, 20);
+        assert_eq!(
+            rep.outcome,
+            SaturationOutcome::Converged,
+            "native saturation reaches a fixpoint"
+        );
+        let add_aa = eg.add(ENode::new("add".into(), vec![a, a]));
+        assert!(
+            eg.equiv(dbl, add_aa),
+            "double(a) == add(a, a) after the native rule fires"
+        );
+    }
+
+    #[test]
+    fn native_rule_none_dispatch_is_inert_and_converges() {
+        // A native rule whose dispatcher computes nothing (the funded admission
+        // failed / a stuck child) leaves the graph unchanged — faithful to a
+        // fold premise with no solution. No merge, immediate `Converged`.
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let fa = eg.add(ENode::new("f".into(), vec![a]));
+        let native = vec![NativeRule {
+            lhs: Pattern::app("f".to_string(), vec![Pattern::var("x")]),
+            op: 7,
+            label: None,
+        }];
+        let rep = eg.saturate_with_native(&[], &native, &|_, _, _| None, 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        assert!(!eg.equiv(fa, a), "an inert native rule merges nothing");
+    }
+
+    #[test]
+    fn saturate_delegates_to_native_unchanged() {
+        // The structural-only `saturate` still behaves identically after being
+        // refactored to delegate to `saturate_with_native` (empty native set,
+        // no-op dispatcher) — existing callers are unaffected.
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let fa = eg.add(ENode::new("f".into(), vec![a]));
+        let rule = RewriteRule {
+            lhs: Pattern::app("f".to_string(), vec![Pattern::var("x")]),
+            rhs: Pattern::var("x"),
+            label: Some("unwrap_f".into()),
+        };
+        let rep = eg.saturate(&[rule], 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        assert!(eg.equiv(fa, a));
     }
 
     #[test]
