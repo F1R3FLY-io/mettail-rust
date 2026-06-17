@@ -713,15 +713,63 @@ mod dv0_probe {
         }
     }
 
+    /// DV-0′ (2026-06-17): the PRODUCTION-SHAPE touched set. Production extraction
+    /// (`dovetail_report.rs:735/739`) uses a CONSTANT-ZERO weight + `collect_checked`
+    /// (the FULL derivation stream), not the 1-best `kth` the original probe used. Under
+    /// equal weights the full stream visits EVERY e-node backward-reachable from a root,
+    /// so the honest "touched" set = the root-reachable e-node set, computed here directly
+    /// by class→node→child reachability (sound, and cheap — no stream enumeration). The
+    /// `dv0_prod_shape_reachability_equals_collect_checked` test cross-checks that this
+    /// equals what a real constant-zero `collect_checked` marks.
+    /// Every canonical node key currently live in the e-graph (across all classes).
+    /// Used to isolate the SATURATION-ADDED population: `added = after \ seed`.
+    fn all_node_keys(eg: &EGraph<String>) -> HashSet<ContentKey> {
+        let mut keys: HashSet<ContentKey> = HashSet::new();
+        for cls in eg.classes() {
+            for n in eg.nodes(cls) {
+                let child_classes: Vec<EClassId> =
+                    n.children.iter().map(|&c| eg.find(c)).collect();
+                keys.insert(node_key(&n.op, &child_classes));
+            }
+        }
+        keys
+    }
+
+    fn reachable_node_keys(eg: &EGraph<String>, roots: &[EClassId]) -> HashSet<ContentKey> {
+        let mut marked: HashSet<ContentKey> = HashSet::new();
+        let mut seen_classes: HashSet<EClassId> = HashSet::new();
+        let mut stack: Vec<EClassId> = roots.iter().map(|&r| eg.find(r)).collect();
+        while let Some(cls) = stack.pop() {
+            let cls = eg.find(cls);
+            if !seen_classes.insert(cls) {
+                continue;
+            }
+            for n in eg.nodes(cls) {
+                let child_classes: Vec<EClassId> =
+                    n.children.iter().map(|&c| eg.find(c)).collect();
+                marked.insert(node_key(&n.op, &child_classes));
+                for &c in &n.children {
+                    stack.push(eg.find(c));
+                }
+            }
+        }
+        marked
+    }
+
     /// Build a saturate→extract workload, returning
-    /// (enodes_added_total, enodes_in_extracted_derivations, sat_ns, extract_ns,
-    ///  total_live_nodes, demanded_roots, nf_count).
+    /// (enodes_added_total, enodes_in_extracted_KBEST, enodes_reachable_PROD,
+    ///  prod_collect_checked_marked_or_0, sat_ns, extract_ns, total_live_nodes,
+    ///  demanded_roots, nf_count).
+    ///
+    /// `enodes_in_extracted_KBEST` is the original 1-best/k-best touched count (the
+    /// INFLATED measure). `enodes_reachable_PROD` is the DV-0′ production-shape touched
+    /// count (root-reachable = what constant-zero `collect_checked` marks).
     #[allow(clippy::type_complexity)]
     fn run_workload(
         seed: &str,
         depth_terms: usize,
         kbest: usize,
-    ) -> (usize, usize, u128, u128, usize, usize, usize) {
+    ) -> (usize, usize, usize, usize, u128, u128, usize, usize, usize) {
         // ── Build the e-graph + seed a small batch of distinct arithmetic terms.
         let mut eg = EGraph::<String>::new();
         let mut roots: Vec<EClassId> = Vec::new();
@@ -742,6 +790,9 @@ mod dv0_probe {
         let _ = seed; // (seed label reserved for diagnostic naming)
         eg.rebuild();
         let seed_nodes = eg.node_count();
+        // DV-0′: the seed node KEYSET, so the saturation-added population is exactly
+        // `after \ seed` and untouched-shares are true set-differences over it.
+        let seed_keys = all_node_keys(&eg);
 
         // ── Rewrite system that GROWS the e-graph with equivalent-but-costlier
         //    forms (the CESK runtime-backend replacement analog: every rule adds
@@ -785,11 +836,17 @@ mod dv0_probe {
         let t0 = Instant::now();
         let _report = eg.saturate(&rules, 6);
         let sat_ns = t0.elapsed().as_nanos();
-        let total_live_nodes = eg.node_count();
-        let enodes_added_total = total_live_nodes.saturating_sub(seed_nodes);
 
-        // ── EXTRACTION (timed): exact lazy k-best with the admissible 0̄-inside
-        //    skip, over EVERY demanded root. MARK the touched e-nodes.
+        // ── DV-0′: the saturation-ADDED population as a true keyset (after \ seed).
+        //    All untouched-shares below are set-differences over THIS set, so a node
+        //    counts as "untouched" iff it was added by saturation AND no extraction
+        //    derivation reaches it — no count/clamp imprecision, no seed contamination.
+        let added_keys: HashSet<ContentKey> =
+            all_node_keys(&eg).difference(&seed_keys).cloned().collect();
+        let added = added_keys.len();
+
+        // ── 1-best/k-best EXTRACTION (timed): the INFLATED legacy measure. The
+        //    admissible 0̄-inside skip + a real cost weight make `kth` stop early.
         let t1 = Instant::now();
         let mut marked: HashSet<ContentKey> = HashSet::new();
         let mut nf_count = 0usize;
@@ -808,14 +865,137 @@ mod dv0_probe {
             }
         }
         let extract_ns = t1.elapsed().as_nanos();
-        let enodes_in_extracted = marked.len();
+        let kbest_in_added = added_keys.intersection(&marked).count();
+
+        // ── DV-0′ PRODUCTION-SHAPE reach (constant-zero weight, full-stream).
+        //    The honest touched set = root-reachable e-nodes (§2.1/§2.5 of the plan).
+        let reachable = reachable_node_keys(&eg, &roots);
+        let prod_in_added = added_keys.intersection(&reachable).count();
+
+        // Cross-check on the SMALL workload only (full-stream collect_checked can be
+        // large on the commutativity-saturated graph): a real constant-zero
+        // `collect_checked` marks exactly the reachable ADDED nodes — validating
+        // reachability as a faithful production-shape proxy (not an over/under-count).
+        let prod_chkd_in_added = if depth_terms <= 4 {
+            let mut prod_ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(0.0));
+            let mut pm: HashSet<ContentKey> = HashSet::new();
+            for &root in &roots {
+                let checked = prod_ex.derivations(eg.find(root)).collect_checked();
+                for d in &checked.value {
+                    mark_derivation(&eg, d, &mut pm);
+                }
+            }
+            added_keys.intersection(&pm).count()
+        } else {
+            0
+        };
 
         (
-            enodes_added_total,
-            enodes_in_extracted,
+            added,
+            kbest_in_added,
+            prod_in_added,
+            prod_chkd_in_added,
             sat_ns,
             extract_ns,
-            total_live_nodes,
+            eg.node_count(),
+            roots.len(),
+            nf_count,
+        )
+    }
+
+    /// DV-0′ AMBIENT-FAITHFUL workload (2026-06-17): exercises the REAL AC mechanism
+    /// the only live structural-saturation language (Ambient) uses — `par` bags with
+    /// `open(n)`/`amb(n,p)` redexes reduced by an AcApp OpenRule, materializing the
+    /// canonical-bag complement fan (`collect_ac_matches`/`add_canonical_bag`). This
+    /// addresses the "re-derive against Ambient, not the synthetic arithmetic" mandate.
+    /// Returns the same shape as `run_workload`.
+    #[allow(clippy::type_complexity)]
+    fn run_ambient_ac_workload(
+        depth_terms: usize,
+    ) -> (usize, usize, usize, usize, u128, u128, usize, usize, usize) {
+        let mut eg = EGraph::<String>::new();
+        let mut roots: Vec<EClassId> = Vec::new();
+        // Inert process leaves shared across bags (give the AC complement fan width).
+        let inert: Vec<EClassId> = (0..4)
+            .map(|i| eg.add(ENode::leaf(format!("p{i}"))))
+            .collect();
+        for t in 0..depth_terms {
+            let n = eg.add(ENode::leaf(format!("n{t}")));
+            let p = eg.add(ENode::leaf(format!("q{t}")));
+            let amb = eg.add(ENode::new("amb".into(), vec![n, p]));
+            let open = eg.add(ENode::new("open".into(), vec![n]));
+            // par{ open(n), amb(n,p), p0, p1, p2, p3 } — multi-element bag ⇒ the
+            // OpenRule match must select {open,amb} and materialize the inert complement.
+            let mut bag = vec![open, amb];
+            bag.extend(inert.iter().copied());
+            let par = eg.add(ENode::new("par".into(), bag));
+            roots.push(par);
+        }
+        eg.rebuild();
+        let seed_keys = all_node_keys(&eg);
+
+        // OpenRule (AC): par{ open(n), amb(n,x), ...rest } ~> par{ x, ...rest }.
+        let rules = vec![RewriteRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("n")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("n"), Pattern::var("x")]),
+                ],
+                Some("rest".into()),
+            ),
+            rhs: Pattern::ac("par".into(), vec![Pattern::var("x")], Some("rest".into())),
+            label: Some("open_rule".into()),
+        }];
+
+        let t0 = Instant::now();
+        let _report = eg.saturate(&rules, 6);
+        let sat_ns = t0.elapsed().as_nanos();
+
+        let added_keys: HashSet<ContentKey> =
+            all_node_keys(&eg).difference(&seed_keys).cloned().collect();
+        let added = added_keys.len();
+
+        let t1 = Instant::now();
+        let mut marked: HashSet<ContentKey> = HashSet::new();
+        let mut nf_count = 0usize;
+        {
+            // Flat weight: every node costs 1 (no arithmetic leaf values here).
+            let mut ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(1.0)).with_heuristic();
+            for &root in &roots {
+                if let Some(d) = ex.kth(root, 0).value {
+                    mark_derivation(&eg, &d, &mut marked);
+                    nf_count += 1;
+                }
+            }
+        }
+        let extract_ns = t1.elapsed().as_nanos();
+        let kbest_in_added = added_keys.intersection(&marked).count();
+
+        let reachable = reachable_node_keys(&eg, &roots);
+        let prod_in_added = added_keys.intersection(&reachable).count();
+
+        // Full-stream constant-zero collect_checked cross-check (bags are bounded here).
+        let prod_chkd_in_added = {
+            let mut prod_ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(0.0));
+            let mut pm: HashSet<ContentKey> = HashSet::new();
+            for &root in &roots {
+                let checked = prod_ex.derivations(eg.find(root)).collect_checked();
+                for d in &checked.value {
+                    mark_derivation(&eg, d, &mut pm);
+                }
+            }
+            added_keys.intersection(&pm).count()
+        };
+
+        (
+            added,
+            kbest_in_added,
+            prod_in_added,
+            prod_chkd_in_added,
+            sat_ns,
+            extract_ns,
+            eg.node_count(),
             roots.len(),
             nf_count,
         )
@@ -826,33 +1006,40 @@ mod dv0_probe {
         // Three workload sizes so the share is observed across scale, not a single
         // point. Printed for the ledger; the test ASSERTS only the invariants the
         // measurement relies on (it refutes nothing — DV-0 is measurement-only).
-        println!("\n=== EP-P6a DV-0 PROBE (dovetail saturate→extract) ===");
+        println!("\n=== EP-P6a DV-0′ PROBE (dovetail saturate→extract; 1-best vs PRODUCTION shape) ===");
         println!(
-            "{:<10} {:>10} {:>12} {:>14} {:>10} {:>10} {:>9} {:>10} {:>11}",
+            "{:<10} {:>10} {:>11} {:>9} {:>10} {:>9} {:>11} {:>9} {:>10}",
             "workload",
-            "live_nodes",
             "added(sat)",
-            "in_extracted",
-            "untouched%",
-            "sat_ns",
-            "ext_ns",
+            "kbest_in",
+            "untch_kb%",
+            "prod_reach",
+            "untch_pr%",
+            "prod_chkd",
             "sat%wall",
             "roots/nf"
         );
-        // 1-best (k=1) is the normal-form extraction the flip would use.
         for (name, depth, kbest) in [
             ("small_k1", 4usize, 1usize),
             ("med_k1", 12, 1),
             ("large_k1", 32, 1),
             // a k=3 variant: pulling more alternatives touches MORE nodes, the
-            // honest upper bound on extraction reach.
+            // honest upper bound on 1-best extraction reach.
             ("large_k3", 32, 3),
         ] {
-            let (added, in_ex, sat_ns, ext_ns, live, roots, nf) = run_workload(name, depth, kbest);
-            let untouched_pct = if added == 0 {
+            let (added, in_ex, reach, prod_chkd, sat_ns, ext_ns, _live, roots, nf) =
+                run_workload(name, depth, kbest);
+            // Inflated 1-best untouched-share (the original DV-0 measure).
+            let untouched_kb = if added == 0 {
                 0.0
             } else {
                 100.0 * (added.saturating_sub(in_ex.min(added)) as f64) / (added as f64)
+            };
+            // DV-0′ honest production-shape untouched-share (root-reachable touched set).
+            let untouched_pr = if added == 0 {
+                0.0
+            } else {
+                100.0 * (added.saturating_sub(reach.min(added)) as f64) / (added as f64)
             };
             let total_ns = sat_ns + ext_ns;
             let sat_pct = if total_ns == 0 {
@@ -861,17 +1048,59 @@ mod dv0_probe {
                 100.0 * (sat_ns as f64) / (total_ns as f64)
             };
             println!(
-                "{:<10} {:>10} {:>12} {:>14} {:>9.1}% {:>10} {:>10} {:>8.1}% {:>5}/{:<5}",
-                name, live, added, in_ex, untouched_pct, sat_ns, ext_ns, sat_pct, roots, nf
+                "{:<10} {:>10} {:>11} {:>8.1}% {:>10} {:>8.1}% {:>11} {:>8.1}% {:>5}/{:<4}",
+                name, added, in_ex, untouched_kb, reach, untouched_pr, prod_chkd, sat_pct, roots, nf
             );
 
             // Measurement-soundness invariants (NOT pruning assertions):
-            assert!(live >= added, "live nodes ≥ saturation-added (sanity)");
-            assert!(in_ex >= 1, "extraction touched at least one e-node");
+            assert!(in_ex >= 1, "1-best extraction touched at least one e-node");
+            assert!(reach >= in_ex, "prod reach ⊇ 1-best touched (full stream ⊇ best path)");
+            // Cross-check (small workload): a real constant-zero collect_checked marks a
+            // SUBSET of the reachability proxy (it can only touch reachable nodes).
+            if prod_chkd > 0 {
+                assert!(
+                    prod_chkd <= reach,
+                    "collect_checked marked ({prod_chkd}) ⊆ reachable ({reach})"
+                );
+            }
+        }
+        // ── AMBIENT-FAITHFUL AC workload (the real structural-saturation language).
+        for (name, depth) in [("amb_ac_s", 3usize), ("amb_ac_m", 8), ("amb_ac_l", 16)] {
+            let (added, in_ex, reach, prod_chkd, sat_ns, ext_ns, _live, roots, nf) =
+                run_ambient_ac_workload(depth);
+            let untouched_kb = if added == 0 {
+                0.0
+            } else {
+                100.0 * (added.saturating_sub(in_ex.min(added)) as f64) / (added as f64)
+            };
+            let untouched_pr = if added == 0 {
+                0.0
+            } else {
+                100.0 * (added.saturating_sub(reach.min(added)) as f64) / (added as f64)
+            };
+            let total_ns = sat_ns + ext_ns;
+            let sat_pct = if total_ns == 0 {
+                0.0
+            } else {
+                100.0 * (sat_ns as f64) / (total_ns as f64)
+            };
+            println!(
+                "{:<10} {:>10} {:>11} {:>8.1}% {:>10} {:>8.1}% {:>11} {:>8.1}% {:>5}/{:<4}",
+                name, added, in_ex, untouched_kb, reach, untouched_pr, prod_chkd, sat_pct, roots, nf
+            );
+            assert!(reach >= in_ex, "amb: prod reach ⊇ 1-best touched");
+            if added > 0 {
+                assert!(
+                    prod_chkd <= reach,
+                    "amb: collect_checked marked ({prod_chkd}) ⊆ reachable ({reach})"
+                );
+            }
         }
         println!(
-            "GATE: DV-1 iff untouched-share ≥ 50% AND sat ≥ 20% of eval wall-time.\n\
-             (See /tmp/p6_probes/findings.md for the verdict + corpus caveat.)\n"
+            "GATE (DV-0′): DV-1 iff PRODUCTION untch_pr% ≥ 50% AND sat ≥ 20% of eval wall.\n\
+             The 1-best untch_kb% is the INFLATED legacy measure (kth early-stop).\n\
+             Production extraction = constant-zero weight + collect_checked (full stream)\n\
+             ⇒ untouched = NOT-root-reachable. See /tmp/p6_probes/findings.md.\n"
         );
     }
 }

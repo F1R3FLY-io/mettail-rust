@@ -294,6 +294,31 @@ P6b ⏹ non-goal. Every verdict mechanism-derived; every STOP first-class. **The
 residual waste classes live in the architecture the Dovetail/Rho flip replaces — the
 strategic frame's prediction, now measured. NEXT: M-RHO.1.**
 
+## EP POST-FLIP — DV-0′ (CLOSED 2026-06-17 @ HEAD 75d7c6df): DV-1 STOP, re-derived against Ambient
+
+The 2026-06-12 DV-0 gate-pass (93–96% untouched) was a **1-best `kth` early-stop
+artifact**. DV-0′ rebuilt the probe to the **production extraction shape** (constant-zero
+weight + `collect_checked` full-stream, `dovetail_report.rs:735/739`) with a rigorous
+set-difference over the saturation-added population, and added an **Ambient-faithful AC
+workload** (real `par` bags + AcApp OpenRule) to satisfy the "re-derive against Ambient"
+mandate.
+
+**RESULT (gate: untouched ≥ 50% AND sat ≥ 20% eval-wall):**
+- synthetic worst-case (commutativity+expander): production untouched **0.0%** (1-best
+  reported 97–99% — the artifact); collect_checked cross-check == reachable == added.
+- Ambient AC (OpenRule over `par` bags): `added(sat)` tiny (**4 / 9 / 17** for 3/8/16
+  redexes ≈ 1 node/redex — the canon-bag dedup gate working), production untouched
+  **25% → 11% → 6%** (trending to 0 at scale).
+- Every figure ≪ 50% ⇒ **GATE FAILS ⇒ DV-1 STOP (first-class).**
+
+**Mechanism (corpus-independent):** full-stream `collect_checked` under equal weights
+visits every root-reachable e-node (cross-check proves marked == reachable); saturation
+only adds equalities to reachable classes ⇒ untouched ≈ 0. Ambient's AC fan is
+pre-collapsed by `CollectionAcLowering.v::canon_iff_permutation` + the non-linear `Var`
+re-bind prune; native-folds are funded + idempotent (`native_refire_is_noop`). No
+`SaturationDemandGate.v` / `LabelReachabilityGate.v` is written. Probe:
+`dovetail/src/rules.rs::dv0_probe`; ledger `/tmp/p6_probes/findings.md`.
+
 ## Stage log
 
 - 2026-06-11 P0 opened.
