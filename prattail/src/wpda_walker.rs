@@ -8542,6 +8542,17 @@ where
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
                 let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
                 cursor.pos = next_pos;
+                // RC-A fix sibling (2026-06-17): same deterministic-mode
+                // mirror as `ConsumeAtAndReplace`. `ConsumeAndPop` (the
+                // relative variant) mirrors via its `advance_cursor_pos(.,1)`
+                // call; this `At`/lattice-target variant writes `cursor.pos`
+                // absolutely, and `apply_pop_body_to_cursor` mirrors
+                // `self.top_node`/`self.state` but NOT `self.pos`. Mirror it
+                // here so a deterministic-mode close/sep consume does not leave
+                // the next `engine.step` reading a stale `self.pos`.
+                if self.deterministic {
+                    self.pos = next_pos;
+                }
                 self.apply_pop_body_to_cursor(
                     cursor,
                     pred_id,
@@ -8569,6 +8580,23 @@ where
                 let _ =
                     self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 cursor.pos = next_pos;
+                // RC-A fix (2026-06-17): absolute lattice-target advance must
+                // ALSO mirror `self.pos` in deterministic (singleton) mode,
+                // exactly as `advance_cursor_pos` does for the relative
+                // `ConsumeAndReplace` sibling and `ParsePredicate` does for
+                // its absolute write. Without this, the next non-fanout
+                // `engine.step` reads the STALE `self.pos` while `self.state`
+                // has already advanced (via `set_cursor_inner_state`) — e.g.
+                // single-level unambiguous `1 ? 2 : 3` consumes the `:`
+                // separator (cursor.pos 3→4, state→MixfixLiteralRun{sub_pos:1})
+                // but re-dispatches at the un-consumed `:` (pos 3) and
+                // dead-ends. Ambiguous/multi-level ternaries fork into
+                // `step_fanout`, which uses `cursor.pos` directly, masking the
+                // gap. Mirroring here closes it for every mixfix rule with a
+                // following separator, in any language.
+                if self.deterministic {
+                    self.pos = next_pos;
+                }
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
