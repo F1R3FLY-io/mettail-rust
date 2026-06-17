@@ -132,8 +132,8 @@ fn body_returns_option(expr: &syn::Expr) -> bool {
         syn::Expr::Call(c) => match c.func.as_ref() {
             syn::Expr::Path(p) => p.path.segments.last().is_some_and(|s| {
                 let n = s.ident.to_string();
-                // The fallible-fold convention is `<lang>_try_<op>` (e.g. `calc_try_int_bin`,
-                // `rho_try_int_bin`) or a bare `try_*`; match `try` as a `_`-delimited segment.
+                // The fallible-fold convention is any fn whose name has a `try` segment (a
+                // `<lang>_try_<op>` or bare `try_*`); match `try` as a `_`-delimited segment.
                 // The macro-generated numeric-cast adapters instead call the `mettail_runtime`
                 // native-output reductions, which return `Option<scalar>` but carry no `try`
                 // segment, so recognize them by name. Their object-output siblings (`proc_*`)
@@ -600,10 +600,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_try_convention_still_classifies_as_option() {
-        let e: syn::Expr =
-            syn::parse2(quote::quote!(crate::numeric_dispatch::calc_try_int_bin(&a, w)))
-                .expect("parse fold body");
+    fn try_convention_classifies_as_option() {
+        // Any fold body calling a `try_*`-segment fn is Option-returning (a `None` defers) — a
+        // general Rust idiom, independent of which language wrote the body.
+        let e: syn::Expr = syn::parse2(quote::quote!(try_widen(&a, w))).expect("parse fold body");
         assert!(body_returns_option(&e));
     }
 }

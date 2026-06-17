@@ -1,5 +1,5 @@
 //! Step G of the Dovetail native-fold reduction work (Increments 2/3): end-to-end proof that
-//! RhoCalc's `Proc`-output `fold` rules — whose `![{..}]` bodies (`numeric_dispatch::rho_proc_*`)
+//! RhoCalc's `Proc`-output `fold` rules — whose `![{..}]` bodies (`mettail_runtime::proc_*`)
 //! reduced NOWHERE after the Ascent retirement — now reduce IN-ENGINE via the typed-`L`
 //! native-rewrite dispatcher, surfacing the normal form through funded extraction.
 #![cfg(all(feature = "rhocalc", feature = "dovetail-codegen"))]

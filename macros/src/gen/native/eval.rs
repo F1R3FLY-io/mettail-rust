@@ -140,10 +140,10 @@ fn term_context_params_with_eval(
 /// via `?` through the existing `safeify_and_wrap` pipeline.
 ///
 /// Recognized syntactic shapes:
-/// - **Function call to a `try_*`-prefixed function**: e.g.
-///   `crate::numeric_dispatch::calc_try_int_bin(&a, w)`. The `try_*`
-///   convention is the established Rust idiom for fallible constructors
-///   (cf. `i32::try_from`, `String::try_into`, `num_rational::Ratio::try_from_nd`).
+/// - **Function call to a `try_*`-prefixed function**: e.g. a user fold body
+///   `try_widen(&a, w)`. The `try_*` convention is the established Rust idiom
+///   for fallible constructors (cf. `i32::try_from`, `String::try_into`,
+///   `num_rational::Ratio::try_from_nd`).
 /// - **Explicit `Some(...)` / `None` literals at the outermost position**:
 ///   if the user wrote `if cond { Some(x) } else { None }`, the if's
 ///   value type is `Option<_>`.

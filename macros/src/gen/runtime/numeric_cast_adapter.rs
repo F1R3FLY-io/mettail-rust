@@ -659,3 +659,108 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
         #cast_result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::generate_numeric_cast_adapter;
+    use mettail_ast::language::LanguageDef;
+
+    /// Parse a `language!`-body source into a `LanguageDef` (the proc-macro's own input grammar).
+    fn lang(src: &str) -> LanguageDef {
+        syn::parse_str::<LanguageDef>(src).expect("fixture grammar should parse")
+    }
+
+    /// A brand-new **native-output** cast grammar — neither Calculator nor RhoCalc — exercising the
+    /// fully structural derivation: `Int` (i32) native, a `ProcInt` wrapper, and one binary
+    /// `int(a, w) : Int` cast whose body is the language-agnostic `mettail_runtime` reduction.
+    const NATIVE_CAST_GRAMMAR: &str = r#"
+        name: AnyNativeCast,
+        types {
+            Proc
+            ![i32] as Int
+        }
+        literals {
+            Int {
+                pattern: r"-?[0-9]+";
+                eval: ![ { Ok(0_i32) } ]
+            }
+        }
+        terms {
+            ProcInt . i:Int |- i : Proc ;
+            IntBin . a:Proc, w:Int |- "int" "(" a "," w ")" : Int ![{
+                mettail_runtime::numeric_int_bin_i32(a, w)
+            }] fold;
+        }
+    "#;
+
+    /// A brand-new **object-output** cast grammar — `Proc`-valued casts that build a result `Proc`
+    /// (with an `Err` normal form), exercising the `CastResult` path and the `dovetail-codegen`
+    /// gate. The constructor names differ deliberately (`CastInt`/`IntBinProc`) to prove that
+    /// recognition is structural — keyed on the rule SHAPE, never on the label or keyword.
+    const OBJECT_CAST_GRAMMAR: &str = r#"
+        name: AnyObjectCast,
+        types {
+            Proc
+            ![i64] as Int
+        }
+        literals {
+            Int {
+                pattern: r"-?[0-9]+";
+                eval: ![ { Ok(0_i64) } ]
+            }
+        }
+        terms {
+            CastInt . k:Int |- k : Proc ;
+            Err . |- "error" : Proc ;
+            IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{
+                mettail_runtime::proc_int_bin(a, w)
+            }] fold;
+        }
+    "#;
+
+    /// Zero-glue proof for a native-output language the macro has never seen: the WHOLE adapter is
+    /// derived from the cast/wrapper rule shapes, with no per-language code and no name coupling.
+    #[test]
+    fn any_grammar_derives_native_cast_adapter_with_zero_glue() {
+        let out = generate_numeric_cast_adapter(&lang(NATIVE_CAST_GRAMMAR)).to_string();
+        // Full adapter derived purely from shape:
+        assert!(out.contains("CastWidth"), "native cast must derive CastWidth: {out}");
+        assert!(out.contains("ProcToNumericInput"), "native cast must derive ProcToNumericInput");
+        // The nested arm calls the language-agnostic runtime reduction (no per-language fn):
+        assert!(
+            out.contains("numeric_int_bin_i32"),
+            "native nested arm calls the runtime reduction: {out}"
+        );
+        // Native-output casts return `Option<scalar>` and defer on `None` — they never build a
+        // result `Proc`, so no `CastResult`:
+        assert!(!out.contains("CastResult"), "native cast must NOT emit CastResult");
+        // Native impls are consumed by the always-emitted eval path ⇒ ungated:
+        assert!(!out.contains("dovetail-codegen"), "native cast impls are ungated");
+        // Zero per-language glue: no reference to the retired hand-written dispatch:
+        assert!(!out.contains("numeric_dispatch"), "no per-language numeric glue");
+    }
+
+    /// Zero-glue proof for an object-output language: distinct constructor names still yield the
+    /// `CastResult` builder + gated impls, and — crucially — NO object redex self-arm (nested
+    /// object casts reduce child-first via saturation, so the constructor `IntBinProc` never
+    /// appears in the generated adapter at all).
+    #[test]
+    fn any_grammar_derives_object_cast_adapter_with_zero_glue() {
+        let out = generate_numeric_cast_adapter(&lang(OBJECT_CAST_GRAMMAR)).to_string();
+        assert!(out.contains("CastWidth"), "object cast still derives CastWidth (width category)");
+        assert!(out.contains("ProcToNumericInput"), "object cast derives ProcToNumericInput");
+        // Object-output casts build a result `Proc` via `CastResult` (`Err` on a bad cast):
+        assert!(out.contains("CastResult"), "object cast must emit CastResult: {out}");
+        // Consumed only by the typed dispatcher ⇒ `dovetail-codegen`-gated:
+        assert!(out.contains("dovetail-codegen"), "object cast impls are gated");
+        // No object redex self-arm anywhere: the object cast constructor is never emitted, because
+        // a nested object cast is reduced to a value wrapper child-first via saturation before any
+        // cast body runs (the `nested_int_cast_folds_via_saturation` regression proves this E2E).
+        assert!(
+            !out.contains("IntBinProc"),
+            "object cast must have no to_numeric_input redex self-arm: {out}"
+        );
+        // Zero per-language glue:
+        assert!(!out.contains("numeric_dispatch"), "no per-language numeric glue");
+    }
+}
