@@ -3,6 +3,8 @@
 Approved scope: P6-full. CESK already removed (commit `0a93ee39`). This is the Ascent half.
 Designed by a code-grounded survey (2026-06-16). Checkpoint: `0a93ee39`.
 
+**Status: EXECUTED** — Stage 1 (engine-generator excision) `9d889894`; Stage 2 (oracle-ascent test + feature surface) `c9cea652`. Retained as the execution record.
+
 ## Decisive correction (do NOT over-remove)
 
 `AscentResults` (runtime/src/language.rs:1179) and `Language::run_ascent`/`run_ascent_with_facts`

@@ -138,14 +138,14 @@ uses `mettail_query::run_query_report` over `RuntimeBackendReport`, while
 `run_ascent_oracle_query` is named as an explicit reference-oracle API for raw
 `AscentResults`.
 
-Generated language crates also keep this distinction at build time. Their
-normal parser/AST/Rho-codegen surface does not compile generated Ascent structs,
-`ascent_source!` inspection macros, `eqrel`, or the dual-indexed Ascent BYODS
-provider. Those pieces are available only under `mettail-languages/oracle-ascent`,
-where `run_ascent_typed`, `Language::run_ascent`, and
-`Language::run_ascent_with_facts` become explicit reference-oracle entry points.
-When the feature is absent, the trait methods fail closed with an oracle-disabled
-diagnostic rather than silently selecting the legacy runtime path.
+Generated language crates no longer carry the legacy Ascent engine at all. The
+generated Ascent structs, `ascent_source!` inspection macros, `eqrel`, and the
+dual-indexed Ascent BYODS provider were removed with the `oracle-ascent` feature
+in P6 (commits `9d889894`/`c9cea652`), so the parser/AST/Rho-codegen surface has
+no dependency on `ascent` or `ascent-byods-rels`. The retained
+`Language::run_ascent` and `Language::run_ascent_with_facts` trait hooks now fail
+closed by default with an oracle-disabled diagnostic rather than silently
+selecting the legacy runtime path.
 
 The Rho-native lane has two generation shapes. Rho-shaped or directly covered
 rules lower through a RhoNet plan. Generic call-by-need computations lower

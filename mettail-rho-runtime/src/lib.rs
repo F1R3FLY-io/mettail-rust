@@ -32,16 +32,15 @@
 //! and hosts the M-RHO.1 transport-pure COMM oracle. Hand-authored Rholang
 //! source evaluation helpers are available only behind the `source-oracle`
 //! feature; generated backend execution is always AST-first and enters through
-//! validated `rhoapi::Par` artifacts. Ascent oracle evidence remains available
-//! for per-language flip comparison until a language's coverage,
-//! artifact-validation, and deadlock gates pass. The
+//! validated `rhoapi::Par` artifacts. The Ascent oracle was retired with the
+//! legacy backend in P6 once every target language passed its coverage,
+//! artifact-validation, and deadlock gates. The
 //! default `runtime-report` feature exposes the generic `Language`
 //! report-adapter and Dovetail+Rho installer surface. Generated language
-//! fixtures, the Ascent comparison oracle, the RhoCalc AST-runtime helper, and
-//! source-text oracle helpers remain opt-in through
-//! `oracle-ascent`, `rhocalc-runtime`, and `source-oracle`; the compatibility
-//! `oracle-rhocalc` feature name is retained only as an alias for existing
-//! differential tests.
+//! fixtures, the RhoCalc AST-runtime helper, and source-text oracle helpers
+//! remain opt-in through `rhocalc-runtime` and `source-oracle`; the
+//! compatibility `oracle-rhocalc` feature name is retained only as an alias for
+//! `rhocalc-runtime`.
 
 #![forbid(unsafe_code)]
 

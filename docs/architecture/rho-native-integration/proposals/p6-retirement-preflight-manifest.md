@@ -1,6 +1,6 @@
 # P6 — Retire Ascent/CESK: pre-flight manifest (REQUIRES EXPLICIT APPROVAL)
 
-Status: STAGED, **not executed**. P6 is a destructive step (it deletes code from the
+Status: **EXECUTED** (P6-full, approved) — Stage 1 `9d889894`, Stage 2 `c9cea652`, CESK `0a93ee39`; `rho_vs_ascent.rs`, `rho_language_backend_report.rs`, and the `oracle-ascent` feature were removed. Retained as the decision record; the original staging note follows. P6 is a destructive step (it deletes code from the
 live tree). Per the campaign plan (R7) and the standing "no destructive actions without
 explicit approval" rule, **nothing below is removed until you approve it**. Git history is
 the archive. P5b is complete (all four target languages flipped + verified, CAMP-0 green),

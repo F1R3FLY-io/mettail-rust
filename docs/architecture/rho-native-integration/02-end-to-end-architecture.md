@@ -334,8 +334,9 @@ The Rho backend consumes the Dovetail model and emits:
 - Rholang-text annotations for readers, logs, and documentation;
 - native handler registrations for operations that cannot be rendered as pure
   Rholang expressions;
-- a differential oracle harness that compares Rho observations with Dovetail or
-  Ascent reference behavior.
+- a differential oracle harness that compares Rho observations with Dovetail
+  reference behavior (the Ascent reference path was retired with the legacy
+  backend in P6).
 
 The Rho backend must be total-or-explicit-reject:
 

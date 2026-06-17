@@ -1,5 +1,7 @@
 # P6 Dead-Code Removal Spec — `mettail-macros` (logic/ Ascent-source pipeline)
 
+**Status: EXECUTED** — the `logic/` Ascent-source pipeline and its dead transitive closure were removed in P6 Stage 1 (`9d889894`). Retained as the removal record.
+
 Computed by a code-grounded Plan agent (2026-06-16) after the Ascent **engine
 generation** was excised from `macros/src/gen/runtime/language.rs`,
 `compose_gen.rs`, and `test_gen/`. With `generate_ascent_source` no longer

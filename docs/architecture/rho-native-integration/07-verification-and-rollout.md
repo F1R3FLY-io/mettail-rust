@@ -62,7 +62,7 @@ The current proof and coverage sources are
 | COMM schedule family and guarded joins | `RhoCommScheduleFamily.v`, `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | proves every finite independent-redex Rho reserve/fire schedule erases to the same visible observations as the direct Dovetail fire schedule, full permutation schedules enable completion, missing-redex prefixes reject completion, and permutation schedules preserve the fired-redex set; the generated process-calculus suite independently checks no deadlock, all 24 visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, weak-fair scheduler completion, and guarded-join non-consumption: a failed guard releases data, a valid join can commit afterward, and the rejected bad datum remains observable |
 | runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
 | AST ambiguity witness smoke | `mettail-rho-runtime/tests/rho_ambiguity_ast.rs` | injects receive-less ambiguity witness facts as normalized AST, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet` |
-| differential oracle | `mettail-rho-runtime/tests/rho_vs_ascent.rs` | compares a validated Rho-default backend plan with Ascent results |
+| differential (real-vs-real) | `mettail-rho-runtime/tests/run_calculator.rs` | runs the validated Rho-default backend plan on a live RhoRuntime and checks observed values against the calculator's defined scalar semantics (the legacy Rho-vs-Ascent oracle was retired with the Ascent backend in P6) |
 
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal candidate
@@ -136,11 +136,13 @@ channel only as textual trace markers.
 calculator scalar family currently admitted by the lowerer on the real
 in-memory RhoRuntime: integer arithmetic, integer, boolean, and string
 comparisons, boolean `and`/`or`/`not`, and string concatenation.
-`mettail-rho-runtime/tests/rho_language_backend_report.rs` separately checks
-the generic call-by-need path over a generated scalar case matrix: each planned
-`RhoAstLiteral` payload for supported `Int`, `Bool`, and `Str` operations is
-compared against `CalculatorLanguage::run_ascent` normal forms before the
-representative thunk plans are executed on RhoRuntime.
+`mettail-rho-runtime/tests/rho_call_by_need.rs` separately checks the generic
+call-by-need path: it validates each generated typed thunk artifact and forces
+representative `Int`, `Bool`, and `Str` payloads on RhoRuntime, asserting the
+memoized computed value (a force-miss computes and memoizes; a memo-hit observes
+the value without re-computing). The former scalar-matrix comparison against
+`CalculatorLanguage::run_ascent` normal forms was retired with the Ascent
+reference in P6.
 `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the structured path by
 lowering rhocalc list, map, and bag typed AST payloads directly to `rhoapi::Par`
 and observing recursive runtime values from RSpace.
@@ -201,9 +203,10 @@ expose derivation-graph views, and Rho observation reports expose no graph view.
 Runtime query execution follows that same model: production callers query a
 `RuntimeBackendReport` with `run_query_report`, while raw `AscentResults`
 queries use the explicitly named `run_ascent_oracle_query` reference entry.
-The raw `Language::run_ascent` trait hook also fails closed by default; only a
-generated oracle feature or explicit reference wrapper makes that oracle
-callable.
+The raw `Language::run_ascent` trait hook also fails closed by default,
+returning an oracle-disabled error; only an explicit reference wrapper or the
+named reference helpers (`run_ascent_oracle_query`/`run_ascent_oracle_report`)
+exercise that retained hook.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
 lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,
@@ -405,15 +408,16 @@ Rust/runtime gate:
   `calculator-add`, public channel `RESULT`, and trace channel `TRACE`; runtime
   execution observes `answer` twice on `RESULT` and `calculator-add` once on
   `TRACE`.
-- `rho_language_backend_report::rho_runtime_backed_language_dispatches_call_by_need_thunk_report`
-  parses a Calculator source term, derives a generated-language CBN plan from
-  that typed term, executes it through `RhoRuntimeBackedLanguage`, and observes
-  the computed value twice on `NEED_OUT` plus the evaluation marker once on
-  `NEED_EVAL`.
-- `rho_language_backend_report::call_by_need_plans_match_ascent_golden_for_supported_scalar_families`
-  generates the supported scalar `Int`, `Bool`, and `Str` CBN case matrix,
-  plans each typed thunk payload, and requires the payload display to match a
-  `CalculatorLanguage::run_ascent` normal form for the same source snippet.
+- `rho_call_by_need::call_by_need_force_miss_memoizes_and_repeated_force_reuses_value`
+  forces a thunk whose value is absent, observes the computed value plus the
+  evaluation marker, then forces again and observes the memoized value reused
+  without a second compute.
+- `rho_call_by_need::call_by_need_memo_hit_observes_value_without_compute_marker`
+  seeds an already-memoized value and observes it on the output channel with no
+  evaluation marker; `call_by_need_parameterized_payload_and_channels_observe_generated_values`
+  generates the supported scalar `Int`, `Bool`, and `Str` payload/channel matrix
+  and observes each generated value on RhoRuntime. The former Ascent-golden
+  payload-display comparison was retired with the Ascent reference in P6.
 
 Strong bisimulation is not the contract across force boundaries because the
 target has internal communication steps that the source observation hides.
@@ -588,9 +592,9 @@ rule, not RhoMachine):
 
 | Language | Default backend | How it executes | Status / evidence |
 |---|---|---|---|
-| `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (native folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; big-numeric/cast folds defer to the Dovetail native-handler report | ✅ `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime`; differential oracle `rho_backend_agrees_with_ascent_on_calculator_int_ops` |
+| `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; non-native-output folds (collections, casts) reduce **in-engine** in the Dovetail report (routed by `DeferToDovetailReport`) via the typed-`L` native-fold path (cast-eval gap closed); native-output big-numeric folds surface as native-handler reports | ✅ scalars `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime` (real-vs-real on a live RhoRuntime, `run_calculator.rs`); native-fold path `languages/tests/{rhocalc_dovetail_fold,rhocalc_dovetail_op_enum}.rs`, Dovetail [12](../dovetail/12-native-fold-reduction.md) |
 | `Ambient` | Dovetail (in-engine; host-less) | binder-congruence handler floats `new`s, then AC rules (`In`/`Out`/`OpenRule`) reduce the soup in-engine | ✅ `ambient_dovetail_flip.rs` (Complete reports); `ambient_binder_handler.rs` |
-| `RhoCalc` | RhoMachine (host RSpace) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag | ✅ `rhocalc_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; OOS: one `castbigrat` residual |
+| `RhoCalc` | RhoMachine (host RSpace) + Dovetail (folds) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag; non-native-output folds (`int(a,w)→Proc` casts) reduce **in-engine** via the typed-`L` native-fold path (cast-eval gap closed) | ✅ `rhocalc_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; native-fold reduction `languages/tests/rhocalc_dovetail_fold.rs` (6/6) + `…_op_enum.rs` (4/4); OOS: one `castbigrat` residual |
 | `GuardedRho` | RhoMachine (host RSpace) + guard dispositions | guarded receive host-routed (`RhoNativeJoin`); the behavioral guard over external relations `halts`/`safe` is `RejectSafeApprox` — not `rhoapi::Par`-representable (no guard field on `ReceiveBind`; external relations are not Rholang-computable), so host-routing is *derived-required*, see [proposal](proposals/p5b-residual-completion-plan.md) | ✅ host-routed: plans end-to-end (`guarded_rho_rho_backend.rs`); guarded-receive semantics (non-consuming on failed guard) execute on host RSpace (`rho_guard_oracle`) |
 | `MiniRhoFor` *(doc example — not a generated language)* | — | the end-to-end report→backend **worked example** ([dovetail 10](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example)); there is no `languages/src` crate for it | n/a — illustrative only, not a flip target |
 
@@ -803,12 +807,14 @@ M-RHO.3 guarded-COMM oracle:
 cargo test -p mettail-rho-runtime --test rho_guard_oracle
 ```
 
-The Rho-vs-Ascent differential oracle intentionally compiles the generated
-language suite and should be run as an explicit heavyweight gate:
-
-```text
-cargo test -p mettail-rho-runtime --features oracle-ascent --test rho_vs_ascent
-```
+The Rho-vs-Ascent differential oracle (and the `oracle-ascent` feature it depended
+on) was **retired with the legacy Ascent backend** in the P6 finalization — the
+Ascent reference no longer exists in the live tree, so there is no differential
+gate to run. A flipped language is now gated directly against the live backends:
+the `mettail-rho-{codegen,adapter,runtime}` and `mettail-dovetail-runtime` test
+suites, the COMM/guard oracles above, and — for fold-bearing languages — the
+in-engine native-fold reduction tests (`languages/tests/rhocalc_dovetail_fold.rs`,
+see Dovetail [12 - Native-Fold Reduction](../dovetail/12-native-fold-reduction.md)).
 
 ## pgmcp Evidence
 

@@ -286,14 +286,13 @@ tests route the parsed term through
 `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end chain from
 source snippet through WPDA parsing, typed invocation mapping, validated
 `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
-The call-by-need wrapper test covers the same value domain in two layers:
-cheap planning assertions generate a scalar case matrix for every currently
-supported `Int`, `Bool`, and `Str` arithmetic, predicate, logical, and string
-operation, compare each planned typed `RhoAstLiteral` payload with
-`CalculatorLanguage::run_ascent` normal forms, and then full RhoRuntime
-executions sample representative `Int`, `Bool`, and `Str` payloads to ensure
-the thunked path reports typed values rather than stringifying all computed
-results.
+The call-by-need wrapper test (`mettail-rho-runtime/tests/rho_call_by_need.rs`)
+validates each generated typed thunk artifact and runs representative `Int`,
+`Bool`, and `Str` payloads on RhoRuntime, asserting the thunked path reports
+typed values rather than stringifying all computed results (a force-miss
+computes and memoizes; a memo-hit observes the value without re-computing). The
+former `CalculatorLanguage::run_ascent` scalar-matrix golden was retired with
+the Ascent reference in P6.
 
 Rejected-rule coverage should start from generated inventory, not hand-written
 category lists. The build-time installer should first call
@@ -454,8 +453,8 @@ default, so a normal `mettail-rho-runtime` dependency exposes the direct
 `RhoRuntimeBackedLanguage<L, F>` wrapper for Rho-only plans and the composed
 production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
 has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. That
-default does not pull in generated language crates, `oracle-ascent`,
-`rhocalc-runtime`, or hand-authored source-oracle execution. The direct wrapper
+default does not pull in generated language crates, the retired Ascent
+reference surface, `rhocalc-runtime`, or hand-authored source-oracle execution. The direct wrapper
 is useful for Rho-native fragments and transition tests, but it is not a
 shortcut around identity: `F` is installed as a `RhoInvocationCompilerStage`
 and must carry the same macro-expanded `LanguageDef` fingerprint as `L` and
@@ -571,13 +570,13 @@ report `Ascent`; an advertised Ascent capability is treated as reference/oracle
 metadata and is filtered out of production default selection. The separate
 `run_ascent_oracle_report` test helper is intentionally named as a reference
 oracle and does not participate in production default dispatch.
-Macro-generated language crates now mirror that rule at compile time. Generated
-Ascent structs, `ascent_source!` source-inspection exports, the crate-root
-`eqrel` re-export, and the dual-indexed Ascent relation provider are behind
-`mettail-languages/oracle-ascent`. Without that feature, generated
-`Language::run_ascent*` methods return an oracle-disabled error and the
-parser/AST/Rho-codegen crate surface has no normal dependency on `ascent` or
-`ascent-byods-rels`.
+Macro-generated language crates no longer emit the legacy Ascent engine: the
+generated Ascent structs, `ascent_source!` source-inspection exports, the
+crate-root `eqrel` re-export, and the dual-indexed Ascent relation provider were
+removed with the `oracle-ascent` feature in P6 (commits `9d889894`/`c9cea652`).
+Generated `Language::run_ascent*` methods now return an oracle-disabled error by
+default, and the parser/AST/Rho-codegen crate surface has no dependency on
+`ascent` or `ascent-byods-rels`.
 The base `Language` trait mirrors that generated behavior: its `run_ascent`
 hook has a fail-closed default, so parse-only, Dovetail-backed, and Rho-backed
 language values do not have to provide an Ascent oracle implementation merely
@@ -735,10 +734,10 @@ production REPL path.
 The REPL crate also exposes the bundled generated language registry behind its
 default `bundled-languages` feature. Normal CLI builds keep that feature
 enabled. Focused state tests may disable default features so report-state
-behavior can be checked without compiling every generated language. Ascent
-oracle support is owned by `mettail-languages/oracle-ascent`; the REPL crate no
-longer depends directly on `ascent` or `ascent-byods-rels` just to store or
-display runtime results.
+behavior can be checked without compiling every generated language. The REPL
+crate does not depend on `ascent` or `ascent-byods-rels` to store or display
+runtime results; the Ascent oracle surface was retired with the legacy backend
+in P6.
 
 ## Simulation Runner Boundary
 
@@ -870,7 +869,9 @@ order:
    native-handler rules.
 7. Implement RhoNet lowering to `rhoapi::Par` for each lowerable rule.
 8. Add RhoRuntime observation tests that execute the validated `Par` artifact.
-9. Add differential oracle tests against the Ascent reference path.
+9. Add differential/observation tests against the live backends (RhoRuntime
+   observation tests and, for fold-bearing rules, in-engine native-fold
+   reduction tests); the Ascent reference path was retired in P6.
 10. Add process-calculus and schedule-family checks for the rule's concurrency
    shape when the rule has multiple independent redexes or guarded joins.
 11. Run the language's capped Dovetail/Rho proof and runtime gate suite.

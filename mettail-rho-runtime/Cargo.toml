@@ -4,15 +4,15 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's RhoRuntime/DebruijnInterpreter + native handlers; exposes the RhoBackend seam + the differential oracle vs Ascent. Depends ONE-WAY on f1r3node-rust."
+description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's RhoRuntime/DebruijnInterpreter + native handlers; exposes the RhoBackend seam + real-vs-real differential observation tests. Depends ONE-WAY on f1r3node-rust."
 
 # Binds the mettail-rho-codegen output to a real in-memory f1r3node-rust RhoRuntime
 # (InMemoryStoreManager → RSpace → create_rho_runtime), evaluates the lowered
-# Rholang, and reads results back for the differential oracle. Threading/scheduling
-# are OWNED BY f1r3node (eval_par/RSpace, tokio). Depends ONE-WAY on f1r3node-rust
-# (proven one-way in formal/rocq/rho_bridge/theories/BridgeInertness.v). The
-# runtime is always integrated; only the heavy generated-language Ascent oracle
-# is feature-gated below.
+# Rholang, and reads results back for real-vs-real differential observation.
+# Threading/scheduling are OWNED BY f1r3node (eval_par/RSpace, tokio). Depends
+# ONE-WAY on f1r3node-rust (proven one-way in
+# formal/rocq/rho_bridge/theories/BridgeInertness.v). The runtime is always
+# integrated; only the heavy generated rhocalc language is feature-gated below.
 
 [features]
 default = ["runtime-report"]
