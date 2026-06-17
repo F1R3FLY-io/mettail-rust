@@ -1,9 +1,6 @@
-#![cfg(feature = "oracle-ascent")]
-
 //! Regression coverage for empty and non-empty collection parsing.
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::Language;
-use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
 #[test]
 fn test_parse_non_empty_list() {
@@ -39,31 +36,6 @@ fn test_parse_empty_list() {
         "roundtrip parse of '{}' should succeed: {:?}",
         display,
         roundtrip.err()
-    );
-}
-
-#[test]
-fn test_exec_flow_empty_list() {
-    // Simulate REPL exec flow: parse -> selected backend -> parse_term(display)
-    // for some backend-produced semantic output.
-    mettail_runtime::clear_var_cache();
-    let lang = calc::CalculatorLanguage;
-    let term = lang.parse_term("list()").expect("parse");
-    let report =
-        run_ascent_oracle_report(&lang, term.as_ref(), "empty collection exec flow").expect("run");
-    let display = format!("{}", term);
-    let outputs = report_semantic_outputs(&report);
-    let to_parse = outputs
-        .iter()
-        .find(|candidate| lang.parse_term(candidate).is_ok())
-        .cloned()
-        .unwrap_or(display);
-    let result_term = lang.parse_term(&to_parse);
-    assert!(
-        result_term.is_ok(),
-        "parse_term({:?}) should succeed for exec flow: {:?}",
-        to_parse,
-        result_term.err()
     );
 }
 

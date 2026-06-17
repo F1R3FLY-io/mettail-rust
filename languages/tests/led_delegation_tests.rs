@@ -1,5 +1,3 @@
-#![cfg(feature = "oracle-ascent")]
-
 //! Tests for LED (Left-Denotation) delegation in sum-type categories.
 //!
 //! The LedTest language has operators on constituent categories (Num, Pred) but
@@ -20,30 +18,6 @@
 //! Run with: `cargo test -p mettail-languages --features led-test`
 
 use mettail_languages::led_test::{self as lt, Expr, Num};
-use mettail_runtime::Language;
-
-/// Parse input as the LedTest language term, run Ascent, and check that
-/// `expected_display` is among the normal forms.
-fn led_normal_form(input: &str, expected_display: &str) {
-    mettail_runtime::clear_var_cache();
-    let lang = lt::LedTestLanguage;
-    let term = lang
-        .parse_term(input)
-        .unwrap_or_else(|e| panic!("parse {:?}: {}", input, e));
-    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    let displays: Vec<String> = results
-        .normal_forms()
-        .iter()
-        .map(|nf| nf.display.clone())
-        .collect();
-    assert!(
-        displays.contains(&expected_display.to_string()),
-        "expected normal form {:?} for {:?}, got: {:?}",
-        expected_display,
-        input,
-        displays
-    );
-}
 
 // ============================================================================
 // Phase 1: Known-Variant LED Delegation
@@ -472,30 +446,6 @@ fn test_e5_own_op_with_unknown_variants() {
 // ============================================================================
 // Normalization Tests (via Ascent)
 // ============================================================================
-
-/// N1: "1 + 2" normalizes to "3" via AddNum's step native code
-#[test]
-fn test_n1_add_normalizes() {
-    led_normal_form("1 + 2", "3");
-}
-
-/// N2: "3!" normalizes to "6" via FactNum's step native code
-#[test]
-fn test_n2_factorial_normalizes() {
-    led_normal_form("3!", "6");
-}
-
-/// N3: "1 == 1" normalizes to "true" via EqNum's step native code
-#[test]
-fn test_n3_eq_normalizes() {
-    led_normal_form("1 == 1", "true");
-}
-
-/// N4: "1 + 2 == 3" normalizes to "true" (chained delegation normalizes)
-#[test]
-fn test_n4_chained_normalizes() {
-    led_normal_form("1 + 2 == 3", "true");
-}
 
 // ============================================================================
 // Constituent-Level Parse Tests (verify Num::parse still works independently)

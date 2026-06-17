@@ -21,17 +21,6 @@ default = ["runtime-report"]
 # backend installer wrappers. This does not pull in generated languages or the
 # Ascent oracle; those remain explicit opt-in features below.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
-# Pulls in the generated MeTTaIL language suite for the two-backend
-# Rho-vs-Ascent differential oracle. Kept explicit so source-level Rho machine
-# tests do not compile every generated language.
-oracle-ascent = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/calculator",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/oracle-ascent",
-    "mettail-languages/rho-codegen",
-]
 # Pulls in the generated rhocalc language for the production-shaped AST-first
 # rhocalc-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
 # Rholang source text that has to be reparsed.
@@ -72,16 +61,6 @@ mettail-ast = { path = "../ast" }
 mettail-dovetail-runtime = { path = "../mettail-dovetail-runtime" }
 mettail-rho-adapter = { path = "../mettail-rho-adapter" }
 syn = { workspace = true }
-
-[[test]]
-name = "rho_vs_ascent"
-path = "tests/rho_vs_ascent.rs"
-required-features = ["oracle-ascent"]
-
-[[test]]
-name = "rho_language_backend_report"
-path = "tests/rho_language_backend_report.rs"
-required-features = ["oracle-ascent"]
 
 [[test]]
 name = "rho_rhocalc_ast"

@@ -1,5 +1,3 @@
-#![cfg(feature = "oracle-ascent")]
-
 //! Integration tests for all four DSL composition mechanisms:
 //!
 //! 1. `extends:` — ExtMath inherits BaseMath types+terms+rewrites
@@ -8,32 +6,10 @@
 //! 4. `compose_languages!` — CalcLambda delegates to Calculator + Lambda
 
 use mettail_runtime::Language;
-use mettail_testkit::runtime_report::{report_semantic_outputs, run_ascent_oracle_report};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Parse, run the explicit Ascent reference oracle, assert `expected` is among
-/// the semantic backend outputs.
-fn assert_normal_form(lang: &dyn Language, input: &str, expected: &str) {
-    mettail_runtime::clear_var_cache();
-    let term = lang.parse_term(input).unwrap_or_else(|e| {
-        panic!("parse({:?}) failed: {}", input, e);
-    });
-    let report =
-        run_ascent_oracle_report(lang, term.as_ref(), "composition eval").unwrap_or_else(|e| {
-            panic!("Ascent oracle({:?}) failed: {}", input, e);
-        });
-    let displays: Vec<String> = report_semantic_outputs(&report);
-    assert!(
-        displays.contains(&expected.to_string()),
-        "expected backend output {:?} for {:?}, got: {:?}",
-        expected,
-        input,
-        displays,
-    );
-}
 
 /// Parse succeeds; no runtime backend execution is required.
 fn assert_parses(lang: &dyn Language, input: &str) {
@@ -50,21 +26,6 @@ fn assert_parses(lang: &dyn Language, input: &str) {
 mod ext_math {
     use super::*;
     use mettail_languages::composition::extended_lang::ExtMathLanguage;
-
-    #[test]
-    fn add_literal() {
-        assert_normal_form(&ExtMathLanguage, "1 + 2", "3");
-    }
-
-    #[test]
-    fn sub_literal() {
-        assert_normal_form(&ExtMathLanguage, "10 - 3", "7");
-    }
-
-    #[test]
-    fn nested_expr() {
-        assert_normal_form(&ExtMathLanguage, "(1 + 2) + 3", "6");
-    }
 
     #[test]
     fn variable_parses() {
@@ -99,41 +60,6 @@ mod mixed_math {
     use mettail_languages::composition::mixed_lang::MixedMathLanguage;
 
     #[test]
-    fn add_int() {
-        assert_normal_form(&MixedMathLanguage, "2 + 3", "5");
-    }
-
-    #[test]
-    fn sub_int() {
-        assert_normal_form(&MixedMathLanguage, "7 - 4", "3");
-    }
-
-    #[test]
-    fn mul_int() {
-        assert_normal_form(&MixedMathLanguage, "3 * 4", "12");
-    }
-
-    #[test]
-    fn negation() {
-        assert_normal_form(&MixedMathLanguage, "-5", "-5");
-    }
-
-    #[test]
-    fn bool_and() {
-        assert_normal_form(&MixedMathLanguage, "true and false", "false");
-    }
-
-    #[test]
-    fn bool_or() {
-        assert_normal_form(&MixedMathLanguage, "false or true", "true");
-    }
-
-    #[test]
-    fn bool_not() {
-        assert_normal_form(&MixedMathLanguage, "not false", "true");
-    }
-
-    #[test]
     fn metadata_name() {
         assert_eq!(MixedMathLanguage.name(), "MixedMath");
     }
@@ -148,27 +74,6 @@ mod imported_math {
     use mettail_languages::composition::grammar_import_lang::ImportedMathLanguage;
 
     #[test]
-    fn add_from_base() {
-        assert_normal_form(&ImportedMathLanguage, "1 + 2", "3");
-    }
-
-    #[test]
-    fn sub_from_base() {
-        assert_normal_form(&ImportedMathLanguage, "10 - 4", "6");
-    }
-
-    #[test]
-    fn div_local() {
-        assert_normal_form(&ImportedMathLanguage, "10 / 2", "5");
-    }
-
-    #[test]
-    fn mixed_ops() {
-        // Division is locally defined, addition is imported from BaseMath.
-        assert_normal_form(&ImportedMathLanguage, "(10 / 2) + 1", "6");
-    }
-
-    #[test]
     fn metadata_name() {
         assert_eq!(ImportedMathLanguage.name(), "ImportedMath");
     }
@@ -181,12 +86,6 @@ mod imported_math {
 mod calc_lambda {
     use super::*;
     use mettail_languages::composition::composed_lang::{CalcLambdaLanguage, CalcLambdaTerm};
-
-    #[test]
-    fn parse_calculator_expr() {
-        // Calculator sub-language should handle arithmetic.
-        assert_normal_form(&CalcLambdaLanguage, "1 + 2", "3");
-    }
 
     #[test]
     fn parse_lambda_expr() {

@@ -1,5 +1,3 @@
-#![cfg(feature = "oracle-ascent")]
-
 // Probe: what does Display(Neg(NumLit(0))) actually produce?
 // And what does parse("- 0") + rewrite produce?
 
@@ -65,53 +63,6 @@ fn probe_run_to_nf_dash_space_zero() {
         other => {
             eprintln!("did not reach NF: {:?}", other);
         },
-    }
-}
-
-#[test]
-fn probe_dump_all_terms_dash_space_zero() {
-    use mettail_languages::calculator::{CalculatorTerm, CalculatorTermInner};
-    mettail_runtime::clear_var_cache();
-    let lang = CalculatorLanguage;
-    let parsed = Int::parse_structured("- 0").expect("parse");
-    eprintln!("parsed (Debug)      = {:?}", parsed);
-    eprintln!("parsed (Display)    = {:?}", format!("{}", parsed));
-
-    let wrapped: CalculatorTerm = CalculatorTerm(CalculatorTermInner::Int(parsed.clone()));
-    let arc_term: std::sync::Arc<dyn mettail_runtime::Term> = std::sync::Arc::new(wrapped);
-    let results = {
-        use mettail_runtime::Language;
-        lang.run_ascent(arc_term.as_ref()).expect("ascent")
-    };
-    eprintln!("== all_terms ==");
-    for (i, t) in results.all_terms.iter().enumerate() {
-        eprintln!("  [{}] id={} is_nf={} display={:?}", i, t.term_id, t.is_normal_form, t.display);
-    }
-    eprintln!("== rewrites ==");
-    for rw in results.rewrites.iter() {
-        eprintln!("  from_id={} to_id={} rule={:?}", rw.from_id, rw.to_id, rw.rule_name);
-    }
-    eprintln!("== initial term id = {}", arc_term.term_id());
-}
-
-#[test]
-fn probe_language_parse_dash_space_zero() {
-    use mettail_runtime::Language;
-    mettail_runtime::clear_var_cache();
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term("- 0").expect("Language::parse_term");
-    eprintln!("Language::parse(\"- 0\") display = {:?}", format!("{}", parsed));
-    eprintln!("Language::parse(\"- 0\") term_id = {}", parsed.term_id());
-
-    // Also run ascent on this parsed term.
-    let results = lang.run_ascent(parsed.as_ref()).expect("ascent");
-    eprintln!("== all_terms (via Language::parse) ==");
-    for (i, t) in results.all_terms.iter().enumerate() {
-        eprintln!("  [{}] id={} is_nf={} display={:?}", i, t.term_id, t.is_normal_form, t.display);
-    }
-    eprintln!("== rewrites ==");
-    for rw in results.rewrites.iter() {
-        eprintln!("  from_id={} to_id={} rule={:?}", rw.from_id, rw.to_id, rw.rule_name);
     }
 }
 

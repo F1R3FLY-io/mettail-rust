@@ -1,7 +1,6 @@
 #![cfg(feature = "calculator")]
 
 use mettail_languages::calculator::CalculatorLanguage;
-#[cfg(not(feature = "oracle-ascent"))]
 use mettail_runtime::SeedFacts;
 use mettail_runtime::{Language, RuntimeBackend};
 
@@ -23,7 +22,6 @@ fn generated_language_runtime_backends_are_substrate_neutral() {
     assert!(!language.supports_runtime_backend(RuntimeBackend::RhoMachine));
 }
 
-#[cfg(not(feature = "oracle-ascent"))]
 #[test]
 fn generated_language_ascent_oracle_fails_closed_without_oracle_feature() {
     let language = CalculatorLanguage;
@@ -34,13 +32,16 @@ fn generated_language_ascent_oracle_fails_closed_without_oracle_feature() {
     let ascent_err = language
         .run_ascent(term.as_ref())
         .expect_err("no-oracle generated languages must not run Ascent");
-    assert!(ascent_err.contains("Ascent oracle is disabled for Calculator"), "{ascent_err}");
+    assert!(
+        ascent_err.contains("Ascent oracle for language Calculator is not installed"),
+        "{ascent_err}"
+    );
 
     let seeded_err = language
         .run_ascent_with_facts(term.as_ref(), &SeedFacts::new())
         .expect_err("seeded no-oracle generated languages must not run Ascent");
     assert!(
-        seeded_err.contains("Ascent oracle with seeded facts is disabled for Calculator"),
+        seeded_err.contains("Ascent oracle for language Calculator is not installed"),
         "{seeded_err}"
     );
 

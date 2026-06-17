@@ -7,10 +7,6 @@ license.workspace = true
 description = "PraTTaIL: Pratt + Recursive Descent parser generator with automata-optimized lexing for MeTTaIL"
 
 [features]
-## Ascent parallel fixpoint: switches ascent! → ascent_par! for parallel rewriting.
-## Currently broken by upstream ascent 0.8.0 codegen bug (E0596: mutable borrow
-## in Fn closure). See docs/design/exploring/ascent_parallel_issue.md.
-ascent-parallel = []
 ## SIGUSR1 hang-dump (T4, 2026-05-05): debugging aid that lets the user send
 ## a signal to a running parser to capture a snapshot of walker state. See
 ## `prattail/src/hang_dump.rs` for details. Zero-cost when not enabled at
