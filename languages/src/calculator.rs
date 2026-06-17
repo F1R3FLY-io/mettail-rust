@@ -375,22 +375,22 @@ language! {
         }] fold;
         // Explicit numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
         IntBin . a:Proc, w:Int |- "int" "(" a "," w ")" : Int ![{
-            crate::numeric_dispatch::calc_try_int_bin(&a, w)
+            mettail_runtime::numeric_int_bin_i32(a, w)
         }] fold;
         UIntBin . a:Proc, w:Int |- "uint" "(" a "," w ")" : UInt32 ![{
-            crate::numeric_dispatch::calc_try_uint_bin(&a, w)
+            mettail_runtime::numeric_uint_bin_u32(a, w)
         }] fold;
         FloatBin . a:Proc, w:Int |- "float" "(" a "," w ")" : Float ![{
-            crate::numeric_dispatch::calc_try_float_bin(&a, w)
+            mettail_runtime::numeric_float_bin(a, w)
         }] fold;
         FixedBin . a:Proc, w:Int |- "fixed" "(" a "," w ")" : Fixed ![{
-            crate::numeric_dispatch::calc_try_fixed_bin(&a, w)
+            mettail_runtime::numeric_fixed_bin(a, w)
         }] fold;
         BigintCast . a:Proc |- "bigint" "(" a ")" : BigInt ![{
-            crate::numeric_dispatch::calc_try_bigint_unary(&a)
+            mettail_runtime::numeric_bigint_unary(a)
         }] fold;
         BigratCast . a:Proc |- "bigrat" "(" a ")" : BigRat ![{
-            crate::numeric_dispatch::calc_try_bigrat_unary(&a)
+            mettail_runtime::numeric_bigrat_unary(a)
         }] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
         ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ![

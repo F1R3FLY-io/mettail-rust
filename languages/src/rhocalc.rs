@@ -104,22 +104,22 @@ language! {
 
         // Numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
         IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{
-            crate::numeric_dispatch::rho_proc_int_bin(&a, w)
+            mettail_runtime::proc_int_bin(a, w)
         }] fold;
         UIntBinProc . a:Proc, w:Int |- "uint" "(" a "," w ")" : Proc ![{
-            crate::numeric_dispatch::rho_proc_uint_bin(&a, w)
+            mettail_runtime::proc_uint_bin(a, w)
         }] fold;
         FloatBinProc . a:Proc, w:Int |- "float" "(" a "," w ")" : Proc ![{
-            crate::numeric_dispatch::rho_proc_float_bin(&a, w)
+            mettail_runtime::proc_float_bin(a, w)
         }] fold;
         FixedBinProc . a:Proc, w:Int |- "fixed" "(" a "," w ")" : Proc ![{
-            crate::numeric_dispatch::rho_proc_fixed_bin(&a, w)
+            mettail_runtime::proc_fixed_bin(a, w)
         }] fold;
         BigintCastProc . a:Proc |- "bigint" "(" a ")" : Proc ![{
-            crate::numeric_dispatch::rho_proc_bigint_unary(&a)
+            mettail_runtime::proc_bigint_unary(a)
         }] fold;
         BigratCastProc . a:Proc |- "bigrat" "(" a ")" : Proc ![{
-            crate::numeric_dispatch::rho_proc_bigrat_unary(&a)
+            mettail_runtime::proc_bigrat_unary(a)
         }] fold;
 
         // Unary minus on Int (width args like `int(x, -7)`) and on Proc (`-7`, `-3r/2r`, …).

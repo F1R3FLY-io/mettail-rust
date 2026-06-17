@@ -58,11 +58,6 @@ pub use guarded_rho as guardedrho;
 #[cfg(feature = "led-test")]
 pub use led_test as ledtest;
 
-/// Proc → [`mettail_runtime::NumericInput`] adapters; lives beside `src/` on purpose.
-#[path = "../numeric_dispatch.rs"]
-#[cfg(any(feature = "calculator", feature = "rhocalc"))]
-mod numeric_dispatch;
-
 // Note: Different languages may export types with the same names (e.g., Proc, Term)
 // Users should import from specific modules to avoid ambiguity:
 //   use mettail_languages::rhocalc::*;
