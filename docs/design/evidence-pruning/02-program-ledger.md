@@ -319,6 +319,116 @@ re-bind prune; native-folds are funded + idempotent (`native_refire_is_noop`). N
 `SaturationDemandGate.v` / `LabelReachabilityGate.v` is written. Probe:
 `dovetail/src/rules.rs::dv0_probe`; ledger `/tmp/p6_probes/findings.md`.
 
+## EP POST-FLIP — RHOCOV-0 (CLOSED 2026-06-17): NON-GOAL (no live application surface)
+
+The RHOCOV idea (when backend=Rho, prune extraction derivations rooted in
+Rho-uncoverable rules) is feasible + monotone (coverage is static per-rule:
+`lower_language_def` → `lowered`/`rejected`, `lower.rs:571-608`,
+`RhoLoweringTotalOrRejects.v`). But it has **no live application surface**, by the
+dispatch architecture: `decide_rho_flip` (`flip.rs:56-64`) raises
+`RhoFlipBlocker::Coverage` unless coverage is complete, so a language only runs the Rho
+backend when it has **zero** rejected rules; the rejected-rule ops (BigInt/BigRat/Float/
+cast/collection/ternary/binder/guard) are routed to **Dovetail-direct / native-fold**
+(in-engine), where there is no extract-then-reject-on-Rho step. Host-routed langs
+(RhoCalc/GuardedRho) have no extraction-pruning surface at all. ⇒ there is never a
+"rejected-rooted extraction root on a Rho-backed extraction path" to prune. **NON-GOAL,
+recorded first-class**; the design is banked for a future language that both flips to Rho
+AND routes terms through a Dovetail report containing rejected-rooted roots (none today).
+
+## EP POST-FLIP — TR GHOST FIX IMPLEMENTED (2026-06-17): element-category splice gate at the source
+
+Implemented the source-level prevention (3 edits, NO kill site): (1) `WpdaEngine`
+trait default `collection_element_src_idx(result, rule, slot) -> Option<u16>`
+(`wpda_walker.rs`); (2) codegen override in the generated impl reusing the existing
+`emit_collection_element_src_lookup` body (`engine_impl.rs`); (3) the splice gate at the
+single `emit_splice_into_collection` call in `apply_pop_body_to_cursor`: refute the
+cursor when the spliced top Symbol's `non_terminal_tag` ≠ the rule's element category
+(non-kv collections only — kv-maps excluded via `kv_separator_for_collection` since the
+lookup keys maps on slot 0 and key/value cats may differ). The faithful post-wrap
+Symbol is spliced by a sibling lineage ⇒ no-loss. **GHOSTS GONE** (tr0_ghost_probe:
+`{0|1}`/`{0|1|2}`/`{(1)|2}` all 1 term, was 2/3/2; Proc::parse clean). Battery green:
+rhocalc_tests 10/0, wpda_parity_rhocalc_collections 4/0, edge_case 66/0, prattail lib
+3766/0, gen_rhocalc_{unit 86,rewrite 126,analytical 52}/0, gen_ledtest_{unit 17,
+rewrite 20}/0, gen_calculator_unit 169/0, gen_ambient_{unit 10,rewrite 13}/0,
+gen_class2hashmapsmoke_unit 5/0, gen_class3multi_unit 6/0. (Post-P6 baselines: op-suites
+deleted, counts shifted — rhocalc_tests 126→10, edge 227→66, prattail 3980→3766.)
+ONE prop failure under investigation: `gen_rhocalc_prop::proc_display_parse_roundtrip`
+— `arb_proc` emitted `str({a} <= {a})`, Proc::parse Err "1:5 found Fixed({)". The error
+is at the OPENING `{` (str's argument dispatch), UPSTREAM of the splice gate ⇒ almost
+certainly a PRE-EXISTING generator/grammar mismatch (str-cast arg can't be a collection),
+not the gate. A/B (PRATTAIL_NO_ELEM_GATE env toggle) confirming. If confirmed pre-existing,
+remove the env toggle (plain gate) + commit; the prop generator gap is a separate ticket.
+
+## EP POST-FLIP — TR GHOST ROOT CAUSE FOUND (2026-06-17, empirically validated): cross-cat element spliced PRE-WRAP
+
+Genesis trace (worktree, parse-time instrumentation, agent a7291864) pinned the TRUE
+root cause — correcting BOTH prior hypotheses (kill-site AND per-cursor-arena). The
+faithful `{0|1}` and ghost `{0}` come from the SAME SPPF root (#46), realized by ONE
+`realize_root_to_terms_with_weights` call. Root #46 has THREE PPar packings (rule 0x2)
+whose CollectionId second item is a DIFFERENT-category Symbol:
+`[Proc,Proc]`(faithful), `[Proc,UInt32]`, `[Proc,BigRat]`(ghosts). The PPar finalize
+action `HashBag::<Proc>::from_iter(drained.filter_map(into_term::<Proc>()))` SILENTLY
+DROPS the non-Proc element ⇒ `{0}`. **Upstream genesis:** the collection-element splice
+(`emit_splice_into_collection`, called at `wpda_walker.rs:18627` in
+`apply_pop_body_to_cursor`) records the element's RAW source-category inner Symbol
+(UInt32/BigRat — `1` parses as Int/UInt32/BigInt/BigRat cross-cat) when a competing
+lineage pops the element's `CategoryEntry` frame BEFORE the cross-cat WRAP action fires.
+So a wrong-category element enters the arena → a polluting `rule=0x2` packing is interned.
+WHY GATES MISS IT: ROOT-F G1-G4 govern the fork not element identity; F-2 checks
+Term-ness not category (UInt32 DOES realize to a Term, then dropped by into_term);
+sep-count sees items=2/seps=1 (consistent); min_terminal_span=0 for collections.
+
+**SOURCE-LEVEL PREVENTION (empirically validated, agent's env-flag experiment — ghosts
+gone, suites byte-identical):** gate the splice at `wpda_walker.rs:18627` — refute the
+cursor when the spliced top Symbol's `non_terminal_tag` ≠ the rule's ELEMENT category.
+The element category comes from a NEW codegen-emitted `WpdaEngine` trait method
+`collection_element_src_idx(result_src_idx, rule_idx, slot)` (mirrors
+`kv_separator_for_collection`/`is_class3_collection_per_slot`), value =
+`lookup_element_src_idx` (`collection.rs:272`). MUST use the true element_src (NOT
+`pred_sym.category_src_idx` — that BREAKS List: result cat 8 ≠ element cat 0). Route-
+independent (the only discriminator separating the valid nt=0 splice from the invalid
+nt=2/3/5 on the SAME edge kind — edge-kind exclusion leaves the List ghost). No-loss:
+the post-wrap Proc Symbol is always spliced by a sibling lineage, so the faithful parse
+survives; prevented cursor is out-of-language (`into_term::<element_cat>()` = ∅). FV:
+extend `CollectionForkEvidence.v::gated_run_iff_loop_lang` with an element-category-
+soundness lemma. NEXT: implement (trait default + codegen override + walker gate) →
+full battery (rhocalc 126/0, edge, calc/ledtest op List/Bag/Map, prattail gauntlet) →
+FV → commit.
+
+## EP POST-FLIP — TR FIX REDIRECTED (2026-06-17, USER DIRECTIVE): root-cause + PREVENT at source, NO kill site
+
+The round-2 investigation proposed a downstream kill at `packing_satisfies_min_terminal_span`.
+**Env-gated instrumentation of that function FALSIFIED the hypothesis:** for `{0|1}` NO
+single-item `CollectionId` ever reaches it — only the faithful `[(1,2),(3,4)]` appears.
+So the ghost is NOT a distinct under-populated packing caught at that gate. **Observed
+genesis:** the ghost is PER-ACCEPTING-CURSOR — `resolve_at_end_of_input`
+(`wpda_walker.rs:5726-5740`) yields one root per accepting cursor; `{0|1}` produces ≥2
+accepting cursors (one realizes `{0|1}`, one `{0}`); `Proc::parse` only takes
+`roots.first()` so its cleanliness is INCIDENTAL. The collection-finalize Symbol is
+zero-width `[eof,eof]`, children `[CollectionId]` only. The `kv_phase=0` fork
+(`collection.rs:400-559`, G1-G4) does NOT fire a close after a prefix (G1 requires
+`token==close`), so the ghost's separator-consume takes a route that **BYPASSES G2**
+(`ConsumeCollectionSep`) — advancing past `| 1` without splicing `sym1` into that
+lineage's arena (the #313 splice-divergence; the reverted `ac88faeb` sep-count couldn't
+catch it). **USER DIRECTIVE (2026-06-17): do NOT add a kill site — find the production
+root cause and correct it so the ghost cursor is NEVER produced.** Genesis trace (worktree,
+parse-time instrumentation) in flight to pin the bypass route + the most-upstream sound
+prevention. FV-first (EvidenceComplete: the prevented cursor is token-unsound / out of the
+collection-continuation language, per `CollectionForkEvidence.v::gated_run_iff_loop_lang`).
+
+## EP POST-FLIP — TR-0 (2026-06-17): the `all_alts()` sub-multiset ghost REPRODUCES (fix in progress)
+
+Probe `languages/examples/tr0_ghost_probe.rs` (output `/tmp/p6_probes/tr0_ghost.txt`)
+confirms post-`316c34e1`: `parse_Proc_via_wpda_all*("{0 | 1}")` returns `{0 | 1}` AND
+the spurious `{0}` (same LexWeight); `{0|1|2}` → `{0|1}`,`{0|2}` ghosts; `{(1)|2}` →
+`{1}` ghost. `Proc::parse` is clean (one term) every time. The ghost keeps a PREFIX of
+the bag and drops a suffix element — the prefix-sub-multiset-surviving-EOI pattern
+(`38dcd485`: "token-soundness violation = legal definite kill"). A dedicated read-only
+mechanism investigation (divergence Proc::parse-vs-all_alts, ghost genesis, the
+most-upstream sound definite-kill site, blast radius) is in flight; fix is FV-first
+(EvidenceComplete: killed = token-unsound = not a valid parse). The `{(1)|2}` 867k-step
+spin input parses cleanly here (pos=eof) — the ghost, not a hang, is the live residual.
+
 ## Stage log
 
 - 2026-06-11 P0 opened.

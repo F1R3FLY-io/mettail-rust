@@ -1962,6 +1962,22 @@ pub(crate) fn emit_engine_impl_full(
                 #kv_separator_for_collection_lookup
             }
 
+            fn collection_element_src_idx(
+                &self,
+                result_src_idx: u16,
+                rule_idx: u16,
+                slot_idx: u8,
+            ) -> Option<u16> {
+                // #307 TR ghost (2026-06-17): the declared element-category
+                // src_idx per (result_src_idx, rule_idx, slot_idx). Reuses the
+                // same per-rule lookup the CollectionLoop/CollectionOpenParen
+                // arms use for cross-cat element redirect, now exposed to the
+                // collection-element splice gate so a pre-wrap raw cross-cat
+                // element Symbol is refuted at the source.
+                let _ = (result_src_idx, rule_idx, slot_idx);
+                #collection_element_src_lookup
+            }
+
             fn cat_of_type_name(&self, name: &str) -> Option<u16> {
                 // D8 fix (2026-05-13): map a Rust
                 // `std::any::type_name::<T>()` string to the category

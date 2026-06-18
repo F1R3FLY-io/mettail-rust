@@ -397,6 +397,27 @@ pub trait WpdaEngine<W: SemiringRef> {
         None
     }
 
+    /// Collection element-category soundness (2026-06-17, #307 TR ghost):
+    /// the declared element category `src_idx` for the collection rule's slot.
+    /// `Some(ecat)` for non-kv collection slots whose element category is known
+    /// (Vec/HashBag/HashSet/self-collection); `None` otherwise (and by default).
+    /// Consumed by the collection-element splice gate in
+    /// `apply_pop_body_to_cursor`: a cursor that would splice a Symbol whose
+    /// `non_terminal_tag != ecat` is token-unsound (a raw cross-cat inner Symbol
+    /// spliced PRE-WRAP — the finalize action's `into_term::<ecat>()` maps it to
+    /// ∅, producing a sub-multiset ghost) and is refuted at the source so the
+    /// polluting packing is never interned. kv-maps are excluded by the splice
+    /// gate (per-slot key/value categories may differ).
+    fn collection_element_src_idx(
+        &self,
+        result_src_idx: u16,
+        rule_idx: u16,
+        slot_idx: u8,
+    ) -> Option<u16> {
+        let _ = (result_src_idx, rule_idx, slot_idx);
+        None
+    }
+
     /// D8 fix (2026-05-13): map a Rust `std::any::type_name::<T>()`
     /// string to the category `src_idx` for `T`.
     ///
@@ -18624,6 +18645,64 @@ where
                         None => false,
                     };
                     if should_splice {
+                        // #307 TR ghost (2026-06-17): ELEMENT-CATEGORY SOUNDNESS.
+                        // A collection element of declared category `ecat` must be
+                        // spliced as a Symbol of that category. A cross-cat element
+                        // (`1` parses as Int/UInt32/BigInt/BigRat) whose enclosing
+                        // wrap (e.g. ProcUInt32) has NOT yet fired pops its
+                        // CategoryEntry frame leaving the RAW source-category Symbol
+                        // on top; splicing it yields a packing whose finalize action
+                        // (`into_term::<ecat>()`) maps it to ∅ → a sub-multiset ghost
+                        // (`{0|1}` also realizing `{0}`). Refute the cursor at the
+                        // SOURCE so the polluting packing is never interned; the
+                        // post-wrap `ecat` Symbol is spliced by a sibling lineage, so
+                        // the faithful parse always survives (no-loss). kv-maps are
+                        // excluded (per-slot key/value categories may differ).
+                        let __is_kv = self
+                            .engine
+                            .kv_separator_for_collection(
+                                pred_sym.category_src_idx,
+                                pred_sym.rule_index_in_category,
+                                pred_slot_idx,
+                            )
+                            .is_some();
+                        let __elem_cat = if __is_kv {
+                            None
+                        } else {
+                            self.engine.collection_element_src_idx(
+                                pred_sym.category_src_idx,
+                                pred_sym.rule_index_in_category,
+                                pred_slot_idx,
+                            )
+                        };
+                        if let Some(ecat) = __elem_cat {
+                            if let Some(top_sid) =
+                                self.sppf_stack_arena.top(cursor.sppf_stack_id)
+                            {
+                                if let Some(crate::sppf::SppfNode::Symbol {
+                                    non_terminal_tag,
+                                    ..
+                                }) = self.sppf.node(top_sid)
+                                {
+                                    if *non_terminal_tag as u16 != ecat {
+                                        cursor.inner_state = WpdaState::Error {
+                                            message: format!(
+                                                "collection element-category mismatch: \
+                                                 spliced Symbol nt={} != element cat {} \
+                                                 (rule {}:{} slot {}) — raw cross-cat \
+                                                 element spliced pre-wrap (token-unsound)",
+                                                non_terminal_tag,
+                                                ecat,
+                                                pred_sym.category_src_idx,
+                                                pred_sym.rule_index_in_category,
+                                                pred_slot_idx,
+                                            ),
+                                        };
+                                        return;
+                                    }
+                                }
+                            }
+                        }
                         self.emit_splice_into_collection(cursor, acc_id);
                     }
                 }
