@@ -294,7 +294,13 @@ pub(crate) fn emit_collection_prefix_arms(
                     if __open == #open_token && state_cat_src_idx == #result_src_idx => {
                     return WpdaStepAction::ConsumeAndPush {
                         symbol: StackSymbolV2::collection_marker(
-                            #result_src_idx, #rule_idx, 0,
+                            // str-cast collection-infix fix (2026-06-18): capture the
+                            // enclosing Pratt dispatch bp (*cur_bp) on the marker so
+                            // the collection close resumes InfixLoop at that precedence
+                            // (a finalized collection joins the enclosing Pratt loop
+                            // like an atomic primary). Covers both the synth-paren and
+                            // direct-delimited open paths (shared ConsumeAndPush).
+                            #result_src_idx, #rule_idx, 0, *cur_bp,
                         ),
                         weight: lex_w(
                             0.0, #result_src_idx, #rule_idx,
@@ -354,7 +360,10 @@ pub(crate) fn emit_collection_loop_arm(
                             None => quote! { None },
                         };
                         lookup_arms.push(quote! {
-                            (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep, #kv_sep_expr)),
+                            // is_binder_internal = true: this collection is a binder
+                            // rule slot, NOT a Pratt primary — its close resumes the
+                            // binder rule continuation via Unwinding, not InfixLoop.
+                            (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep, #kv_sep_expr, true)),
                         });
                     }
                 }
@@ -374,7 +383,9 @@ pub(crate) fn emit_collection_loop_arm(
                 None => quote! { None },
             };
             lookup_arms.push(quote! {
-                (#result_src_idx, #rule_idx, 0u8) => Some((#close, #sep, #kv_sep_expr)),
+                // is_binder_internal = false: Class-5 Pratt-primary collection —
+                // its close resumes the enclosing Pratt InfixLoop at the dispatch bp.
+                (#result_src_idx, #rule_idx, 0u8) => Some((#close, #sep, #kv_sep_expr, false)),
             });
         }
     }
@@ -383,14 +394,14 @@ pub(crate) fn emit_collection_loop_arm(
     }
     quote! {
         {
-            // Lookup (close, sep, kv_sep) for this marker's rule + slot.
-            let lookup: Option<(&'static str, &'static str, Option<&'static str>)> = match (*result_src_idx, *rule_idx, *slot_idx) {
+            // Lookup (close, sep, kv_sep, is_binder_internal) for this marker's rule + slot.
+            let lookup: Option<(&'static str, &'static str, Option<&'static str>, bool)> = match (*result_src_idx, *rule_idx, *slot_idx) {
                 #(#lookup_arms)*
                 _ => None,
             };
             let token_text = tokens.peek_text(_pos).unwrap_or("");
             match lookup {
-                Some((close, sep, kv_sep)) => {
+                Some((close, sep, kv_sep, is_binder_internal)) => {
                     // Phase 4 #5b (2026-05-12): three-phase dispatch
                     // keyed on kv_phase. For Vec/HashBag/HashSet
                     // (kv_sep == None), only phase 0 ever runs (the
@@ -455,7 +466,26 @@ pub(crate) fn emit_collection_loop_arm(
                                             weight: lex_w(
                                                 0.0, *result_src_idx, *rule_idx,
                                             ),
-                                            new_state: WpdaState::Unwinding,
+                                            // str-cast collection-infix fix (2026-06-18):
+                                            // resume the enclosing Pratt InfixLoop at the
+                                            // dispatch bp (CollectionLoop.outer_bp, carried
+                                            // from the marker's coll_dispatch_bp) so a
+                                            // finalized collection can attach a following
+                                            // infix operator with l_bp > outer_bp — exactly
+                                            // mirroring the atomic Return-pop path. When no
+                                            // higher-bp operator follows (close/sep/lower-bp
+                                            // op next), InfixLoop falls through to Unwinding
+                                            // (engine_impl CollectionMarker reroute) — no-loss.
+                                            // Binder-internal collections (is_binder_internal)
+                                            // are NOT Pratt primaries: they resume the binder
+                                            // rule continuation via Unwinding (their pre-fix
+                                            // behavior), so a following token is never wrongly
+                                            // consumed as an infix on the collection.
+                                            new_state: if is_binder_internal {
+                                                WpdaState::Unwinding
+                                            } else {
+                                                WpdaState::InfixLoop { cur_bp: *_outer_bp }
+                                            },
                                             action_kind:
                                                 mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
                                                     next_pos: np,
@@ -484,7 +514,16 @@ pub(crate) fn emit_collection_loop_arm(
                                                     weight: lex_w(
                                                         0.0, *result_src_idx, *rule_idx,
                                                     ),
-                                                    new_state: WpdaState::Unwinding,
+                                                    // str-cast collection-infix fix
+                                                    // (2026-06-18): same as the primary close
+                                                    // branch — resume InfixLoop at the dispatch
+                                                    // bp; no-loss fall-through to Unwinding.
+                                                    // Binder-internal collections stay Unwinding.
+                                                    new_state: if is_binder_internal {
+                                                        WpdaState::Unwinding
+                                                    } else {
+                                                        WpdaState::InfixLoop { cur_bp: *_outer_bp }
+                                                    },
                                                     action_kind:
                                                         mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
                                                             next_pos: np,

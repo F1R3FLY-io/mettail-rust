@@ -1410,7 +1410,10 @@ pub(crate) fn emit_binder_rule_body(
                                             // from Class-2 sibling slots.
                                             mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::collection_marker(
-                                                    #result_src_idx, #rule_idx, #slot_idx,
+                                                    // binder-internal collection: dispatch_bp=0
+                                                    // (no enclosing Pratt InfixLoop; close is
+                                                    // driven by the binder rule machinery).
+                                                    #result_src_idx, #rule_idx, #slot_idx, 0u8,
                                                 ),
                                                 weight: lex_w(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
@@ -1603,7 +1606,8 @@ pub(crate) fn emit_binder_rule_body(
                                                 #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                             ),
                                             push_symbol: StackSymbolV2::collection_marker(
-                                                #result_src_idx, #rule_idx, #slot_idx,
+                                                // binder-internal collection: dispatch_bp=0.
+                                                #result_src_idx, #rule_idx, #slot_idx, 0u8,
                                             ),
                                             weight: lex_one(),
                                             new_state: WpdaState::PrefixDispatch {
@@ -2585,7 +2589,8 @@ pub(crate) fn emit_optional_group_body(
                                                     #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                                 ),
                                                 push_symbol: StackSymbolV2::collection_marker(
-                                                    #result_src_idx, #rule_idx, #slot_idx,
+                                                    // binder-internal collection: dispatch_bp=0.
+                                                    #result_src_idx, #rule_idx, #slot_idx, 0u8,
                                                 ),
                                                 weight: lex_one(),
                                                 new_state: WpdaState::PrefixDispatch {

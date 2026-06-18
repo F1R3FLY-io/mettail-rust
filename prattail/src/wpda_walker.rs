@@ -20255,6 +20255,7 @@ mod tests {
                 rule_index_in_category: 0,
                 bp: None,
                 kind: SymbolKind::Return,
+                coll_dispatch_bp: None,
             },
         });
         assert!(
@@ -22226,7 +22227,7 @@ mod tests {
     /// `Term<usize>(0)` in the live builder.
     #[test]
     fn cursor_local_collection_open_push_close() {
-        let coll_marker = StackSymbolV2::collection_marker(1, 0, 0);
+        let coll_marker = StackSymbolV2::collection_marker(1, 0, 0, 0);
         let engine = CollAwareScriptedEngine::new(vec![
             // B6: terminate cleanly via Accept after the Pop reaches InfixLoop.
             WpdaStepAction::Accept,
@@ -22303,7 +22304,7 @@ mod tests {
     /// the empty `collection_stack` debug_assert holds.
     #[test]
     fn cursor_local_collection_in_nested_fork() {
-        let coll_marker = StackSymbolV2::collection_marker(1, 0, 0);
+        let coll_marker = StackSymbolV2::collection_marker(1, 0, 0, 0);
         let engine = CollAwareScriptedEngine::new(vec![
             // Step 4: pops for 2 grandchildren (LIFO).
             WpdaStepAction::ConsumeAndPop {

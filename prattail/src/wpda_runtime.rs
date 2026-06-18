@@ -98,7 +98,7 @@ pub enum SymbolKind {
 
 /// A WPDS stack symbol indexed by integer category and rule position.
 ///
-/// Designed for runtime hot-path use: 8 bytes total (vs. ~96 bytes for
+/// Designed for runtime hot-path use: 10 bytes total (vs. ~96 bytes for
 /// [`crate::wpds::StackSymbol`] which uses two `String`s). Indices reference
 /// the language's source-order arrays:
 ///
@@ -124,6 +124,15 @@ pub struct StackSymbolV2 {
     pub bp: Option<u8>,
     /// What this symbol represents.
     pub kind: SymbolKind,
+    /// Collection-primary dispatch binding power: `Some(cur_bp)` for a
+    /// `CollectionMarker` (the Pratt `cur_bp` at which the open delimiter was
+    /// dispatched as a primary); `None` for every other symbol kind, so it
+    /// never alters their `Eq`/`Hash`/`Ord` identity. On collection close the
+    /// engine resumes `InfixLoop { cur_bp }` from this value so a finalized
+    /// collection joins the enclosing Pratt loop exactly as an atomic primary
+    /// does (mirrors `GroupingMarker`'s `bp`-as-outer_bp, on a distinct slot
+    /// because `bp` already carries the collection's `accumulator_id`/`slot_idx`).
+    pub coll_dispatch_bp: Option<u8>,
 }
 
 impl StackSymbolV2 {
@@ -134,6 +143,7 @@ impl StackSymbolV2 {
             rule_index_in_category: 0,
             bp: None,
             kind: SymbolKind::CategoryEntry,
+            coll_dispatch_bp: None,
         }
     }
 
@@ -149,6 +159,7 @@ impl StackSymbolV2 {
             rule_index_in_category,
             bp,
             kind: SymbolKind::RuleAt(position),
+            coll_dispatch_bp: None,
         }
     }
 
@@ -159,18 +170,29 @@ impl StackSymbolV2 {
             rule_index_in_category,
             bp: Some(bp),
             kind: SymbolKind::InfixContinuation,
+            coll_dispatch_bp: None,
         }
     }
 
     /// Phase 4: construct a collection-marker symbol. `accumulator_id`
     /// is packed into the 8-bit `bp` field (collections never nest more
-    /// than 256 deep in practice).
-    pub fn collection_marker(result_src_idx: u16, rule_idx: u16, accumulator_id: u8) -> Self {
+    /// than 256 deep in practice). `dispatch_bp` is the enclosing Pratt
+    /// `cur_bp` at which the collection's open delimiter was dispatched as a
+    /// primary; it is preserved in `coll_dispatch_bp` so the collection close
+    /// resumes `InfixLoop { cur_bp: dispatch_bp }` (a finalized collection
+    /// participates in the enclosing Pratt loop just like an atomic primary).
+    pub fn collection_marker(
+        result_src_idx: u16,
+        rule_idx: u16,
+        accumulator_id: u8,
+        dispatch_bp: u8,
+    ) -> Self {
         StackSymbolV2 {
             category_src_idx: result_src_idx,
             rule_index_in_category: rule_idx,
             bp: Some(accumulator_id),
             kind: SymbolKind::CollectionMarker,
+            coll_dispatch_bp: Some(dispatch_bp),
         }
     }
 
@@ -184,6 +206,7 @@ impl StackSymbolV2 {
             rule_index_in_category: 0,
             bp: Some(outer_bp),
             kind: SymbolKind::GroupingMarker,
+            coll_dispatch_bp: None,
         }
     }
 
@@ -200,6 +223,7 @@ impl StackSymbolV2 {
             rule_index_in_category: rule_idx,
             bp: Some(operands_completed),
             kind: SymbolKind::MixfixMarker,
+            coll_dispatch_bp: None,
         }
     }
 
@@ -218,6 +242,7 @@ impl StackSymbolV2 {
             rule_index_in_category: rule_idx,
             bp: Some(outer_bp),
             kind: SymbolKind::OptionalGroupAt(sub_pos),
+            coll_dispatch_bp: None,
         }
     }
 
@@ -228,6 +253,7 @@ impl StackSymbolV2 {
             rule_index_in_category,
             bp: None,
             kind: SymbolKind::Return,
+            coll_dispatch_bp: None,
         }
     }
 
@@ -266,8 +292,14 @@ impl fmt::Display for StackSymbolV2 {
             ),
             SymbolKind::CollectionMarker => write!(
                 f,
-                "⟨cat#{}.rule#{}.coll⟩{}",
-                self.category_src_idx, self.rule_index_in_category, bp_suffix
+                "⟨cat#{}.rule#{}.coll⟩{}{}",
+                self.category_src_idx,
+                self.rule_index_in_category,
+                bp_suffix,
+                match self.coll_dispatch_bp {
+                    Some(d) => format!("@d{}", d),
+                    None => String::new(),
+                }
             ),
             SymbolKind::GroupingMarker => {
                 write!(f, "⟨cat#{}.group⟩{}", self.category_src_idx, bp_suffix)
@@ -3472,9 +3504,12 @@ mod tests {
     #[test]
     fn stack_symbol_v2_size_is_compact() {
         // Compact representation is load-bearing for hot-path use.
-        // 8 bytes is the target; assert it does not regress unexpectedly.
+        // The str-cast collection-infix fix (2026-06-18) added the
+        // `coll_dispatch_bp: Option<u8>` carrier (the Pratt dispatch bp at which
+        // a finalized Class-5 collection resumes InfixLoop), taking the struct
+        // from 8 to 10 bytes. Assert it does not regress beyond that.
         // (Actual size depends on enum layout; assert it stays small.)
-        assert!(std::mem::size_of::<StackSymbolV2>() <= 8);
+        assert!(std::mem::size_of::<StackSymbolV2>() <= 10);
     }
 
     #[test]

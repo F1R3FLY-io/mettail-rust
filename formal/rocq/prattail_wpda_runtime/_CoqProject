@@ -30,3 +30,4 @@ theories/ForwardOrderOnly.v
 theories/CrossCatLhsParking.v
 theories/DeterministicPosMirror.v
 theories/BalancedCohortGate.v
+theories/CollectionPrimaryInfix.v

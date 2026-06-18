@@ -217,3 +217,86 @@ mod type_inference {
         assert!(var_types.iter().any(|v| v.name == "y"));
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Collection-primary infix binding power (2026-06-18 fix)
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// Regression for the general defect where a collection primary that is NOT at
+// the parse root (cast argument, list element, any mid-parse frame) could not
+// attach any infix operator. Root cause: a collection finalized by popping its
+// CollectionMarker to `Unwinding`, never re-entering the enclosing Pratt
+// `InfixLoop` (unlike an atomic primary's `Return`-pop). Fix: the collection
+// close resumes `InfixLoop { cur_bp: dispatch_bp }`, where dispatch_bp is the
+// Pratt bp captured on the marker at open. See
+// docs/design/collection-primary-infix-fix.md and
+// formal/rocq/prattail_wpda_runtime/theories/CollectionPrimaryInfix.v.
+mod collection_primary_infix {
+    use super::*;
+
+    #[test]
+    fn ppar_lteq_in_cast() {
+        // THE reported bug: `str({a} <= {a})` was `1:5 no accepting branch ...
+        // Fixed({)`. A PPar collection primary as the LHS of `<=` inside a
+        // same-category `str` cast (invisible to the cross-cat-LHS machinery).
+        let p = parse("str({a} <= {a})");
+        match &p {
+            Proc::ToStr(inner) => assert!(
+                matches!(inner.as_ref(), Proc::LtEq(_, _)),
+                "expected ToStr(LtEq(..)), got ToStr({:?})",
+                inner
+            ),
+            other => panic!("expected ToStr(LtEq(..)), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn collection_comparison_as_list_element() {
+        // A collection-comparison as a list element: `[{a} <= {a}]` — the
+        // collection primary is mid-parse (inside the list element), another
+        // non-root position the fix covers.
+        let p = parse("[{a} <= {a}]");
+        assert!(
+            matches!(&p, Proc::CastList(_)),
+            "expected CastList([LtEq(..)]), got {:?}",
+            p
+        );
+    }
+
+    #[test]
+    fn precedence_lock_collection_in_add_rhs() {
+        // Precedence soundness: `+` binds tighter than `<=`, so the collection
+        // primary {a} must associate with `+`:
+        //   1 + {a} <= {b}  ==  LtEq(Add(1, {a}), {b})   (NOT Add(1, LtEq(..)))
+        // The dispatch-bp threading (not the naive close-branch edit) is what
+        // prevents the inversion: {a} closes at cur_bp = Add.r_bp, and
+        // LtEq.l_bp <= Add.r_bp, so `<=` does NOT attach inside the Add RHS.
+        let p = parse("1 + {a} <= {b}");
+        match &p {
+            Proc::LtEq(lhs, _rhs) => assert!(
+                matches!(lhs.as_ref(), Proc::Add(_, _)),
+                "precedence inversion: expected LtEq(Add(..), ..), got LtEq({:?}, ..)",
+                lhs
+            ),
+            other => panic!("expected top-level LtEq, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn precedence_lock_inside_cast() {
+        // Same precedence law nested in a cast: `str({a} + {b} <= {c})` must be
+        // `str(LtEq(Add({a},{b}), {c}))`, NOT `str(Add({a}, LtEq({b},{c})))`.
+        let p = parse("str({a} + {b} <= {c})");
+        match &p {
+            Proc::ToStr(inner) => match inner.as_ref() {
+                Proc::LtEq(lhs, _) => assert!(
+                    matches!(lhs.as_ref(), Proc::Add(_, _)),
+                    "expected str(LtEq(Add(..), ..)), got str(LtEq({:?}, ..))",
+                    lhs
+                ),
+                other => panic!("expected str(LtEq(..)), got str({:?})", other),
+            },
+            other => panic!("expected ToStr(LtEq(..)), got {:?}", other),
+        }
+    }
+}

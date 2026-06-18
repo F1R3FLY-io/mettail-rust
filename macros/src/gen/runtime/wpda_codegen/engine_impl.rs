@@ -644,6 +644,17 @@ pub(crate) fn emit_engine_impl_full(
                                         #collection_element_src_lookup
                                     };
                                     let element_src_idx = element_src_lookup.unwrap_or(result_src_idx);
+                                    // str-cast collection-infix fix (2026-06-18):
+                                    // recover the Pratt dispatch bp captured on the
+                                    // CollectionMarker at open (coll_dispatch_bp =
+                                    // Some(cur_bp) for Class-5 literals, Some(0) for
+                                    // binder-internal collections). It feeds
+                                    // CollectionLoop.outer_bp so the G1 close branch
+                                    // resumes InfixLoop { cur_bp: outer_bp } — a
+                                    // finalized collection joins the enclosing Pratt
+                                    // loop exactly as an atomic primary does.
+                                    // unwrap_or(0) degrades to the pre-fix behavior.
+                                    let dispatch_bp = node.symbol.coll_dispatch_bp.unwrap_or(0);
                                     // Phase 4 #5b (2026-05-12): emit
                                     // `kv_phase: 0` as the default; the
                                     // walker's `set_cursor_inner_state`
@@ -658,7 +669,7 @@ pub(crate) fn emit_engine_impl_full(
                                         result_src_idx,
                                         rule_idx,
                                         element_src_idx,
-                                        outer_bp: 0,
+                                        outer_bp: dispatch_bp,
                                         accumulator_id,
                                         slot_idx,
                                         kv_phase: 0u8,
