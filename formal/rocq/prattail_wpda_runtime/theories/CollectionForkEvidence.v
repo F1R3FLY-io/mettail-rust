@@ -62,6 +62,7 @@ From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Arith.
 From Stdlib Require Import Bool.
 From Stdlib Require Import List.
+From Stdlib Require Import Lia.
 Import ListNotations.
 
 Section CollectionForkEvidence.
@@ -596,3 +597,144 @@ Section ElementCoverage.
   Qed.
 
 End ElementCoverage.
+
+(* ════════════════════════════════════════════════════════════════════
+   ELEMENT-CATEGORY SOUNDNESS (the #307 TR ghost ROOT CAUSE, 2026-06-17;
+   FIX commit 36353578). The count-based ElementCoverage gate above CANNOT
+   see this defect: the ghost arena has the RIGHT element count
+   (items = seps + 1) but a WRONG element CATEGORY.
+
+   THE DEFECT (parse-time genesis trace, A/B-validated): a cross-category
+   collection element (e.g. `1` parses as Int/UInt32/BigInt/BigRat) whose
+   enclosing cross-cat WRAP action has not yet fired is spliced into the
+   arena as its RAW source-category Symbol when a competing cursor lineage
+   pops the element's CategoryEntry frame first. The generated collection
+   finalize action `HashBag::<C>::from_iter(arena.filter_map(into_term::<C>))`
+   SILENTLY DROPS every element whose category != the declared element
+   category C, realizing a STRICT SUB-MULTISET ghost (`{0|1}` -> `{0}`).
+
+   THE FIX (this spec): the collection-element splice gate
+   (`apply_pop_body_to_cursor`) refutes any cursor whose spliced element
+   Symbol category != C. This section proves that gate SOUND and NO-LOSS:
+     - into_term keeps an element iff its category = C (into_term_*_iff);
+     - a FAITHFUL arena (every element = C) finalizes in full and the gate
+       admits it entirely (faithful_finalizes_in_full, gate_admits_all_faithful)
+       -- no valid parse is lost;
+     - a WRONG-category element is dropped by finalize and STRICTLY shrinks
+       the realized collection (wrong_cat_element_dropped,
+       wrong_cat_strictly_shrinks) -- that is the ghost;
+     - therefore a refuted (wrong-category) arena realizes to a strict
+       sub-multiset, NEVER the faithful collection
+       (refuted_realizes_strict_submultiset): refuting it loses no language
+       derivation, since the faithful full collection is produced by the
+       sibling lineage the gate admits in full.
+
+   Categories are modelled as `nat` src_idx; an arena as the list of its
+   spliced elements' categories; finalize as the filter_map keep test.
+   No Admitted, no Axioms, no Assumptions.
+   ════════════════════════════════════════════════════════════════════ *)
+
+Section ElementCategorySoundness.
+
+  (* The declared element-category src_idx of the collection rule's slot
+     (`WpdaEngine::collection_element_src_idx`). *)
+  Variable elem_cat : nat.
+
+  (* into_term::<elem_cat>() over a spliced element of category `cat`: Some
+     iff the categories match (the finalize filter_map's keep test). *)
+  Definition into_term (cat : nat) : option nat :=
+    if Nat.eqb cat elem_cat then Some cat else None.
+
+  (* finalize = HashBag::<elem_cat>::from_iter(arena.filter_map(into_term)).
+     Since into_term is Some iff matching, this is `filter (= elem_cat)`. *)
+  Definition finalize (arena : list nat) : list nat :=
+    filter (fun cat => Nat.eqb cat elem_cat) arena.
+
+  (* The collection-element splice gate (commit 36353578): admit an element
+     of category `cat` iff it matches the declared element category. *)
+  Definition gate_admits (cat : nat) : Prop := cat = elem_cat.
+
+  (* A faithful arena: every spliced element has the declared category. *)
+  Definition faithful (arena : list nat) : Prop :=
+    Forall (fun cat => cat = elem_cat) arena.
+
+  (* into_term keeps a matching element and drops (None) a mismatching one —
+     the finalize filter_map semantics that silently produces the ghost. *)
+  Lemma into_term_some_iff_match :
+    forall cat, into_term cat = Some cat <-> cat = elem_cat.
+  Proof.
+    intro cat. unfold into_term. destruct (Nat.eqb cat elem_cat) eqn:E.
+    - apply Nat.eqb_eq in E. split; intro; [exact E | reflexivity].
+    - apply Nat.eqb_neq in E. split; [discriminate | intro Heq; contradiction].
+  Qed.
+
+  Lemma into_term_none_iff_mismatch :
+    forall cat, into_term cat = None <-> cat <> elem_cat.
+  Proof.
+    intro cat. unfold into_term. destruct (Nat.eqb cat elem_cat) eqn:E.
+    - apply Nat.eqb_eq in E. split; [discriminate | intro Hne; contradiction].
+    - apply Nat.eqb_neq in E. split; intro; [exact E | reflexivity].
+  Qed.
+
+  (* No-loss part 1: a faithful arena finalizes in full — every
+     correctly-wrapped element survives (the faithful parse is preserved). *)
+  Theorem faithful_finalizes_in_full :
+    forall arena, faithful arena -> finalize arena = arena.
+  Proof.
+    intros arena H. unfold finalize. induction H as [| c rest Hc Hrest IH].
+    - reflexivity.
+    - simpl. rewrite Hc. rewrite Nat.eqb_refl. rewrite IH. reflexivity.
+  Qed.
+
+  (* The ghost mechanism: finalize drops a wrong-category element entirely. *)
+  Theorem wrong_cat_element_dropped :
+    forall pre c post,
+      c <> elem_cat ->
+      finalize (pre ++ c :: post) = finalize pre ++ finalize post.
+  Proof.
+    intros pre c post Hne. unfold finalize.
+    rewrite filter_app. simpl.
+    apply Nat.eqb_neq in Hne. rewrite Hne. reflexivity.
+  Qed.
+
+  (* The ghost is a STRICT sub-multiset: with faithful neighbours, a
+     wrong-category element makes the realized collection strictly shorter
+     than the arena (the dropped element). *)
+  Theorem wrong_cat_strictly_shrinks :
+    forall pre c post,
+      faithful pre -> faithful post -> c <> elem_cat ->
+      length (finalize (pre ++ c :: post)) < length (pre ++ c :: post).
+  Proof.
+    intros pre c post Hpre Hpost Hne.
+    rewrite (wrong_cat_element_dropped pre c post Hne).
+    rewrite (faithful_finalizes_in_full pre Hpre).
+    rewrite (faithful_finalizes_in_full post Hpost).
+    repeat rewrite length_app. simpl. lia.
+  Qed.
+
+  (* No-loss part 2: the gate admits every element of a faithful arena — it
+     never refutes a correctly-wrapped element, so no faithful parse is lost. *)
+  Theorem gate_admits_all_faithful :
+    forall arena, faithful arena -> Forall gate_admits arena.
+  Proof.
+    intros arena H. unfold gate_admits. exact H.
+  Qed.
+
+  (* THE SOUNDNESS CONCLUSION: a cursor the gate REFUTES (its arena has a
+     wrong-category element amid faithful neighbours) realizes to a STRICT
+     sub-multiset, NEVER the faithful full collection. Hence refuting it drops
+     no language derivation — the faithful collection (the all-elem_cat arena)
+     is produced and admitted in full (gate_admits_all_faithful +
+     faithful_finalizes_in_full) by the sibling lineage. *)
+  Theorem refuted_realizes_strict_submultiset :
+    forall pre c post,
+      faithful pre -> faithful post -> c <> elem_cat ->
+      finalize (pre ++ c :: post) <> (pre ++ c :: post).
+  Proof.
+    intros pre c post Hpre Hpost Hne Heq.
+    pose proof (wrong_cat_strictly_shrinks pre c post Hpre Hpost Hne) as Hlt.
+    rewrite Heq in Hlt.
+    exact (Nat.lt_irrefl _ Hlt).
+  Qed.
+
+End ElementCategorySoundness.

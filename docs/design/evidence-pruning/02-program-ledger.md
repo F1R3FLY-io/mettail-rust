@@ -352,12 +352,22 @@ rhocalc_tests 10/0, wpda_parity_rhocalc_collections 4/0, edge_case 66/0, prattai
 rewrite 20}/0, gen_calculator_unit 169/0, gen_ambient_{unit 10,rewrite 13}/0,
 gen_class2hashmapsmoke_unit 5/0, gen_class3multi_unit 6/0. (Post-P6 baselines: op-suites
 deleted, counts shifted — rhocalc_tests 126→10, edge 227→66, prattail 3980→3766.)
-ONE prop failure under investigation: `gen_rhocalc_prop::proc_display_parse_roundtrip`
-— `arb_proc` emitted `str({a} <= {a})`, Proc::parse Err "1:5 found Fixed({)". The error
-is at the OPENING `{` (str's argument dispatch), UPSTREAM of the splice gate ⇒ almost
-certainly a PRE-EXISTING generator/grammar mismatch (str-cast arg can't be a collection),
-not the gate. A/B (PRATTAIL_NO_ELEM_GATE env toggle) confirming. If confirmed pre-existing,
-remove the env toggle (plain gate) + commit; the prop generator gap is a separate ticket.
+ONE prop failure CONFIRMED PRE-EXISTING (A/B): `gen_rhocalc_prop::proc_display_parse_roundtrip`
+— `arb_proc` emitted `str({a} <= {a})`, Proc::parse Err "1:5 found Fixed({)" IDENTICALLY with
+the gate on AND off (the error is at the OPENING `{`, upstream of the splice gate) ⇒ a
+pre-existing generator/grammar mismatch (str-cast arg can't be a collection), NOT this fix.
+Separate ticket. Env toggle removed (plain gate); fix committed `36353578` + regression test
+`010cccc6` (collection_ghost_regression 5/5).
+
+**FV DONE @ (this commit), zero-admission:** `CollectionForkEvidence.v` Section
+`ElementCategorySoundness` — `into_term_{some,none}_iff_*` (filter_map keep/drop), 
+`faithful_finalizes_in_full` (correct parse preserved), `wrong_cat_element_dropped` +
+`wrong_cat_strictly_shrinks` (the ghost = a strict sub-multiset), `gate_admits_all_faithful`
+(no valid element refused), `refuted_realizes_strict_submultiset` (the gate refuses ONLY
+ghosts — no language derivation lost). All 6 `Closed under the global context`; the count-based
+`ElementCoverage` provably cannot see this category defect (right count, wrong category), so the
+two sections are complementary. `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-prattail-wpda`
+success, 0 warnings.
 
 ## EP POST-FLIP — TR GHOST ROOT CAUSE FOUND (2026-06-17, empirically validated): cross-cat element spliced PRE-WRAP
 
