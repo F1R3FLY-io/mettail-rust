@@ -4547,6 +4547,15 @@ where
             .collect()
     }
 
+    #[inline]
+    fn fanout_frontier_all_terminal(&self) -> bool {
+        !self.branch_cursors.is_empty()
+            && self.branch_cursors.iter().all(|frame| match frame {
+                crate::cohort_lazy::Frame::Concrete(cursor) => cursor.inner_state.is_terminal(),
+                crate::cohort_lazy::Frame::Cohort(cohort) => cohort.shell.inner_state.is_terminal(),
+            })
+    }
+
     /// Stage 3.4 (2026-04-30): set the legacy beam-size bound in place.
     ///
     /// Same effect as [`Self::with_beam_size`] but mutates `self` instead
@@ -4875,6 +4884,9 @@ where
             // about the AmbiguityFanout state itself (engine returns Idle
             // for that state).
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
+                if self.fanout_frontier_all_terminal() {
+                    break;
+                }
                 let prev_state = self.state.clone();
                 self.step_fanout(tokens);
                 if self.state == prev_state {
@@ -4988,6 +5000,9 @@ where
                 return Ok(());
             }
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
+                if self.fanout_frontier_all_terminal() {
+                    return Ok(());
+                }
                 // Snapshot pre-step cursor identities (`(node, pos,
                 // weight, inner_state)`) so we can detect whether any
                 // cursor actually progressed. Mid-stream the cursor set
@@ -7322,6 +7337,9 @@ where
         // via step_fanout rather than the per-state engine.step (engine
         // returns Idle for AmbiguityFanout).
         if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
+            if self.fanout_frontier_all_terminal() {
+                return WpdaTransition::NoChange;
+            }
             self.step_fanout(tokens);
             if self.state == from {
                 return WpdaTransition::NoChange;
@@ -21242,6 +21260,67 @@ mod tests {
         assert_eq!(cursors.len(), 1);
         assert_eq!(cursors[0].inner_state, WpdaState::Accepted);
         assert_eq!(cursors[0].pos, tokens.eof_node());
+    }
+
+    #[test]
+    fn fanout_quiesces_accepted_prefix_cursor_without_action_generation() {
+        struct CountingIdleEngine {
+            calls: Rc<Cell<usize>>,
+        }
+
+        impl WpdaEngine<LexicographicWeight> for CountingIdleEngine {
+            fn step(
+                &self,
+                _state: &WpdaState,
+                _gss: &WpdaGss<LexicographicWeight>,
+                _frontier_top: Option<&WpdaGssNode>,
+                _pos: usize,
+                _tokens: &dyn WpdaTokenSource,
+            ) -> WpdaStepAction<LexicographicWeight> {
+                self.calls.set(self.calls.get().saturating_add(1));
+                WpdaStepAction::Idle
+            }
+        }
+
+        let calls = Rc::new(Cell::new(0));
+        let token_kinds = [
+            TokenKind::Ident,
+            TokenKind::Fixed("*".to_string()),
+            TokenKind::Integer,
+            TokenKind::Eof,
+        ];
+        let token_texts = ["x", "*", "3", ""];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let mut w = WpdaWalker::new(CountingIdleEngine { calls: Rc::clone(&calls) }, 0);
+        w.deterministic = false;
+        w.state = WpdaState::AmbiguityFanout {
+            branches: vec![crate::gss::GSS_NODE_NONE],
+        };
+        w.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::Accepted,
+        ))];
+
+        w.run_to_end_of_input(4, &tokens)
+            .expect("accepted prefix fanout cursor must park for EOI resolution");
+
+        assert_eq!(
+            calls.get(),
+            0,
+            "accepted prefix fanout cursors are terminal and must not ask the engine for another action",
+        );
+        match w.state() {
+            WpdaState::AmbiguityFanout { branches } => {
+                assert_eq!(branches.as_slice(), &[crate::gss::GSS_NODE_NONE]);
+            },
+            other => panic!("expected parked AmbiguityFanout, got {:?}", other),
+        }
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].inner_state, WpdaState::Accepted);
+        assert_eq!(cursors[0].pos, 1);
     }
 
     /// Fork plan F4-F6: synthetic test that asserts the
