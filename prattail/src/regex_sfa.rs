@@ -66,15 +66,33 @@ struct EpsNfa<P> {
 
 impl<P: Clone> EpsNfa<P> {
     fn empty() -> Self {
-        EpsNfa { n: 1, eps: Vec::new(), chr: Vec::new(), initials: vec![0], accepts: Vec::new() }
+        EpsNfa {
+            n: 1,
+            eps: Vec::new(),
+            chr: Vec::new(),
+            initials: vec![0],
+            accepts: Vec::new(),
+        }
     }
 
     fn epsilon() -> Self {
-        EpsNfa { n: 1, eps: Vec::new(), chr: Vec::new(), initials: vec![0], accepts: vec![0] }
+        EpsNfa {
+            n: 1,
+            eps: Vec::new(),
+            chr: Vec::new(),
+            initials: vec![0],
+            accepts: vec![0],
+        }
     }
 
     fn elem(class: P) -> Self {
-        EpsNfa { n: 2, eps: Vec::new(), chr: vec![(0, class, 1)], initials: vec![0], accepts: vec![1] }
+        EpsNfa {
+            n: 2,
+            eps: Vec::new(),
+            chr: vec![(0, class, 1)],
+            initials: vec![0],
+            accepts: vec![1],
+        }
     }
 
     fn concat(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
@@ -89,7 +107,13 @@ impl<P: Clone> EpsNfa<P> {
             }
         }
         let accepts = b.accepts.iter().map(|&s| s + off).collect();
-        EpsNfa { n: a.n + b.n, eps, chr, initials: a.initials.clone(), accepts }
+        EpsNfa {
+            n: a.n + b.n,
+            eps,
+            chr,
+            initials: a.initials.clone(),
+            accepts,
+        }
     }
 
     fn alt(a: EpsNfa<P>, b: EpsNfa<P>) -> Self {
@@ -102,7 +126,13 @@ impl<P: Clone> EpsNfa<P> {
         initials.extend(b.initials.iter().map(|&s| s + off));
         let mut accepts = a.accepts.clone();
         accepts.extend(b.accepts.iter().map(|&s| s + off));
-        EpsNfa { n: a.n + b.n, eps, chr, initials, accepts }
+        EpsNfa {
+            n: a.n + b.n,
+            eps,
+            chr,
+            initials,
+            accepts,
+        }
     }
 
     fn star(a: EpsNfa<P>) -> Self {
@@ -114,19 +144,35 @@ impl<P: Clone> EpsNfa<P> {
         for &acc in &a.accepts {
             eps.push((acc, q));
         }
-        EpsNfa { n: a.n + 1, eps, chr: a.chr.clone(), initials: vec![q], accepts: vec![q] }
+        EpsNfa {
+            n: a.n + 1,
+            eps,
+            chr: a.chr.clone(),
+            initials: vec![q],
+            accepts: vec![q],
+        }
     }
 
     fn from_sfa<A>(sfa: &SymbolicAutomaton<A>) -> Self
     where
         A: BooleanAlgebra<Predicate = P>,
     {
-        let chr = sfa.transitions.iter().map(|t| (t.from, t.guard.clone(), t.to)).collect();
+        let chr = sfa
+            .transitions
+            .iter()
+            .map(|t| (t.from, t.guard.clone(), t.to))
+            .collect();
         let mut initials: Vec<usize> = sfa.initial_states.iter().copied().collect();
         initials.sort_unstable();
         let mut accepts: Vec<usize> = sfa.accepting_states.iter().copied().collect();
         accepts.sort_unstable();
-        EpsNfa { n: sfa.states.len().max(1), eps: Vec::new(), chr, initials, accepts }
+        EpsNfa {
+            n: sfa.states.len().max(1),
+            eps: Vec::new(),
+            chr,
+            initials,
+            accepts,
+        }
     }
 
     fn eclosure(&self, seeds: &[usize]) -> HashSet<usize> {

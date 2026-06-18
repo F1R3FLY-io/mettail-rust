@@ -523,6 +523,17 @@ pub trait WpdaEngine<W: SemiringRef> {
         None
     }
 
+    /// Grammar-level operator ownership query.
+    ///
+    /// The walker uses this only to decide whether a transparent projection's
+    /// source category should be re-entered for the current lookahead operator.
+    /// Engines that do not expose Pratt operator tables return `false`, which
+    /// preserves fail-closed behavior for tests and synthetic walkers.
+    fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
+        let _ = (cat, token_text);
+        false
+    }
+
     /// Grammar-level classification of structural open delimiters.
     ///
     /// This is used only at end-of-input acceptance time to validate an
@@ -1530,6 +1541,13 @@ struct ForkTriggerTerminal {
 struct SppfSymbolTerm {
     value: Arc<dyn Any + Send + Sync>,
     output_cat: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TransparentSourceReentry {
+    source_src_idx: u16,
+    target_src_idx: u16,
+    child_symbol_id: crate::sppf::SppfId,
 }
 
 /// Stage 3.12 / Class A.i (2026-05-01): per-Fork-branch action
@@ -6221,12 +6239,7 @@ where
                     memo.insert(id, realized);
                     colors.insert(id, RealizeColor::Black);
                 },
-                LazyFrame::SymbolScan {
-                    id,
-                    cap,
-                    mut next_idx,
-                    mut out,
-                } => {
+                LazyFrame::SymbolScan { id, cap, mut next_idx, mut out } => {
                     if out.len() >= cap {
                         memo.insert(id, out);
                         colors.insert(id, RealizeColor::Black);
@@ -6248,9 +6261,8 @@ where
                     while next_idx < self.sppf.packings_of(id).len() {
                         let packing = self.sppf.packings_of(id)[next_idx];
                         next_idx += 1;
-                        if let Some(crate::sppf::SppfNode::Packing {
-                            rule_idx, children, ..
-                        }) = self.sppf.node(packing)
+                        if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
+                            self.sppf.node(packing)
                         {
                             if !self.packing_satisfies_min_terminal_span(
                                 *rule_idx, children, sym_lo, sym_hi,
@@ -6285,29 +6297,14 @@ where
                         colors.insert(id, RealizeColor::Black);
                     } else if let Some(packing) = pending {
                         let remaining = cap.saturating_sub(out.len());
-                        stack.push(LazyFrame::SymbolCollect {
-                            id,
-                            cap,
-                            next_idx,
-                            out,
-                            packing,
-                        });
-                        stack.push(LazyFrame::Enter {
-                            id: packing,
-                            cap: remaining,
-                        });
+                        stack.push(LazyFrame::SymbolCollect { id, cap, next_idx, out, packing });
+                        stack.push(LazyFrame::Enter { id: packing, cap: remaining });
                     } else {
                         memo.insert(id, out);
                         colors.insert(id, RealizeColor::Black);
                     }
                 },
-                LazyFrame::SymbolCollect {
-                    id,
-                    cap,
-                    next_idx,
-                    mut out,
-                    packing,
-                } => {
+                LazyFrame::SymbolCollect { id, cap, next_idx, mut out, packing } => {
                     if let Some(entries) = memo.get(&packing) {
                         for entry in entries {
                             out.push(entry.clone());
@@ -6320,12 +6317,7 @@ where
                         memo.insert(id, out);
                         colors.insert(id, RealizeColor::Black);
                     } else {
-                        stack.push(LazyFrame::SymbolScan {
-                            id,
-                            cap,
-                            next_idx,
-                            out,
-                        });
+                        stack.push(LazyFrame::SymbolScan { id, cap, next_idx, out });
                     }
                 },
             }
@@ -7609,10 +7601,132 @@ where
         match self.gss.edge_kind(edge_id) {
             Some(
                 crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
-                | crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx },
+                | crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx }
+                | crate::gss::EdgeKind::TransparentSourceReentry { source_src_idx, .. },
             ) if source_src_idx == top.symbol.category_src_idx => Some(source_src_idx),
             _ => None,
         }
+    }
+
+    fn sppf_symbol_category(&self, symbol_id: crate::sppf::SppfId) -> Option<u16> {
+        match self.sppf.node(symbol_id) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                Some(*non_terminal_tag as u16)
+            },
+            _ => None,
+        }
+    }
+
+    fn transparent_projection_reentry_for_operator(
+        &self,
+        cursor: &BranchCursor<W>,
+        token_text: &str,
+    ) -> Option<TransparentSourceReentry> {
+        if token_text.is_empty() {
+            return None;
+        }
+        let top = self.gss.node(cursor.node)?;
+        if top.symbol.kind != SymbolKind::CategoryEntry {
+            return None;
+        }
+        let target_src_idx = top.symbol.category_src_idx;
+        let top_symbol_id = self.sppf_stack_arena.top(cursor.sppf_stack_id)?;
+        if self.sppf_symbol_category(top_symbol_id) != Some(target_src_idx) {
+            return None;
+        }
+
+        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(top_symbol_id).to_vec();
+        for packing_id in packings {
+            let (rule_idx, children) = match self.sppf.node(packing_id) {
+                Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
+                    (*rule_idx, children.clone())
+                },
+                _ => continue,
+            };
+            let cat_src_idx = (rule_idx >> 16) as u16;
+            let local_rule_idx = (rule_idx & 0xFFFF) as u16;
+            if cat_src_idx != target_src_idx {
+                continue;
+            }
+            let Some(entry) = self.engine.action_for(target_src_idx, local_rule_idx) else {
+                continue;
+            };
+            if entry.arity != 1
+                || entry.output_cat != target_src_idx
+                || entry.expected_input_cats.len() != 1
+            {
+                continue;
+            }
+            let source_src_idx = entry.expected_input_cats[0];
+            if source_src_idx == crate::wpda_runtime::ANY_CAT || source_src_idx == target_src_idx {
+                continue;
+            }
+            let is_declared_projection = self
+                .engine
+                .single_hop_coercion(source_src_idx, target_src_idx)
+                .iter()
+                .any(|&(coercion_cat, coercion_rule)| {
+                    coercion_cat == target_src_idx && coercion_rule == local_rule_idx
+                });
+            if !is_declared_projection
+                || !self
+                    .engine
+                    .category_recognizes_operator(source_src_idx, token_text)
+            {
+                continue;
+            }
+            let action_children: Vec<crate::sppf::SppfId> = children
+                .iter()
+                .copied()
+                .filter(|&child| {
+                    !matches!(
+                        self.sppf.node(child),
+                        Some(crate::sppf::SppfNode::TriggerTerminal { .. })
+                    )
+                })
+                .collect();
+            if action_children.len() != 1 {
+                continue;
+            }
+            let child_symbol_id = action_children[0];
+            if self.sppf_symbol_category(child_symbol_id) != Some(source_src_idx) {
+                continue;
+            }
+            if !self.sppf_symbol_terms.contains_key(&child_symbol_id) {
+                continue;
+            }
+            return Some(TransparentSourceReentry {
+                source_src_idx,
+                target_src_idx,
+                child_symbol_id,
+            });
+        }
+        None
+    }
+
+    fn reenter_transparent_projection_source(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        reentry: TransparentSourceReentry,
+        cur_bp: u8,
+    ) {
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+        cursor.sppf_stack_id = self
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, reentry.child_symbol_id);
+        cursor.last_action_output_cat = Some(reentry.source_src_idx);
+        let source_entry = StackSymbolV2::category_entry(reentry.source_src_idx);
+        let _ = self.cursor_gss_push_with_kind(
+            cursor,
+            source_entry,
+            cursor.pos,
+            W::one_ref(),
+            crate::gss::EdgeKind::TransparentSourceReentry {
+                source_src_idx: reentry.source_src_idx,
+                target_src_idx: reentry.target_src_idx,
+            },
+        );
+        self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp });
     }
 
     /// Phase 5A cast-then-compare (2026-06-10): is the cursor's TOP SPPF symbol a
@@ -7864,6 +7978,33 @@ where
         // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
         // record per-variant call counts to identify the dominant
         // apply_action arm for L2-L3 graduation targeting.
+        // Transparent-source continuation: a target-category projection can
+        // finish inside grouping while the next operator still belongs to its
+        // source category. Re-enter the source only when the top target Symbol
+        // proves it is a declared single-hop projection and the source owns
+        // the lookahead operator.
+        if let WpdaStepAction::Advance(WpdaState::Unwinding) = &action {
+            if let WpdaState::InfixLoop { cur_bp } = &cursor.inner_state {
+                let cur_bp = *cur_bp;
+                if let Some(token_text) = tokens.peek_text(cursor.pos) {
+                    if let Some(reentry) =
+                        self.transparent_projection_reentry_for_operator(cursor, token_text)
+                    {
+                        self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
+                        if trace_actions_enabled() {
+                            eprintln!(
+                                "[wpds-action] transparent-source reentry source={} target={} pos={} lookahead={:?}",
+                                reentry.source_src_idx,
+                                reentry.target_src_idx,
+                                cursor.pos,
+                                token_text
+                            );
+                        }
+                        return self.cursor_resolution_check(cursor);
+                    }
+                }
+            }
+        }
         // Phase 5A cast-then-compare (2026-06-10, FV-derived): lookahead-gated
         // hosting synthesis. If `action` is a category-changing infix op:C->D
         // matched on a CAST-RESULT operand that lacks cross-cat-LHS evidence,
@@ -12210,6 +12351,64 @@ where
                 node.shell.pos,
                 tokens,
             );
+            if let WpdaStepAction::Advance(WpdaState::Unwinding) = &action {
+                if let WpdaState::InfixLoop { cur_bp } = &node.shell.inner_state {
+                    if let Some(token_text) = tokens.peek_text(node.shell.pos) {
+                        let cur_bp = *cur_bp;
+                        let mut remaining_arcs = Vec::with_capacity(node.arcs.len());
+                        for arc in std::mem::take(&mut node.arcs) {
+                            let mut cursor =
+                                crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                                    &node.shell,
+                                    &arc,
+                                );
+                            if let Some(reentry) = self
+                                .transparent_projection_reentry_for_operator(&cursor, token_text)
+                            {
+                                self.reenter_transparent_projection_source(
+                                    &mut cursor,
+                                    reentry,
+                                    cur_bp,
+                                );
+                                if trace_actions_enabled() {
+                                    eprintln!(
+                                        "[wpds-action] transparent-source cohort reentry source={} target={} pos={} lookahead={:?}",
+                                        reentry.source_src_idx,
+                                        reentry.target_src_idx,
+                                        cursor.pos,
+                                        token_text
+                                    );
+                                }
+                                match self.cursor_resolution_check(&cursor) {
+                                    CursorOutcome::Drop => {},
+                                    CursorOutcome::Alive => {
+                                        new_cursors
+                                            .push(crate::cohort_lazy::Frame::Concrete(cursor));
+                                    },
+                                    CursorOutcome::Resolved => {
+                                        resolved_indices.push(new_cursors.len());
+                                        new_cursors
+                                            .push(crate::cohort_lazy::Frame::Concrete(cursor));
+                                    },
+                                    CursorOutcome::ForkInto(children) => {
+                                        new_cursors.extend(
+                                            children
+                                                .into_iter()
+                                                .map(crate::cohort_lazy::Frame::Concrete),
+                                        );
+                                    },
+                                }
+                            } else {
+                                remaining_arcs.push(arc);
+                            }
+                        }
+                        node.arcs = remaining_arcs;
+                        if node.arcs.is_empty() {
+                            continue;
+                        }
+                    }
+                }
+            }
             // Phase F.13 Exp 14 Substage 5 (2026-05-27): chain-interior
             // graduation. For Push with a CONVERGENT EdgeKind, apply at
             // the shell level (one GSS push for all arcs at this
@@ -18041,7 +18240,10 @@ where
             if let Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, .. }) =
                 self.gss.edge_kind(eid)
             {
-                let pred = self.gss.edge_target(eid).unwrap_or(crate::gss::GSS_NODE_NONE);
+                let pred = self
+                    .gss
+                    .edge_target(eid)
+                    .unwrap_or(crate::gss::GSS_NODE_NONE);
                 return Some((cat_src, rule_idx, pred));
             }
             sid = self.incoming_edge_stack_arena.intern_pop(sid);
@@ -18121,8 +18323,7 @@ where
         };
         // The cast keyword + its input position (from the outer prefix rule's
         // trigger; the outer rule and the cast share the keyword).
-        let Some((keyword, trigger_lo)) =
-            self.enclosing_prefix_trigger(cursor, c_out, outer_rule)
+        let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, outer_rule)
         else {
             return;
         };
@@ -18316,6 +18517,61 @@ where
         self.sppf_symbol_terms
             .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
         Some(wrapped_symbol_id)
+    }
+
+    fn wrap_transparent_source_reentry_result(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        target_src_idx: u16,
+    ) -> Result<(), String> {
+        let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) else {
+            return Err(format!(
+                "transparent source reentry produced no SPPF body for target {}",
+                target_src_idx
+            ));
+        };
+        let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
+            return Err(format!(
+                "transparent source reentry body is not a Symbol: {}",
+                self.sppf_trace_summary(body_symbol_id)
+            ));
+        };
+        if body_cat == target_src_idx {
+            cursor.last_action_output_cat = Some(target_src_idx);
+            return Ok(());
+        }
+        let Some((coercion_cat, coercion_rule)) = self
+            .engine
+            .single_hop_coercion(body_cat, target_src_idx)
+            .iter()
+            .copied()
+            .find(|(coercion_cat, _)| *coercion_cat == target_src_idx)
+        else {
+            return Err(format!(
+                "transparent source reentry cannot wrap body category {} into target {}",
+                body_cat, target_src_idx
+            ));
+        };
+        let Some(wrapped_symbol_id) =
+            self.intern_coercion_over_body(body_symbol_id, coercion_cat, coercion_rule)
+        else {
+            return Err(format!(
+                "transparent source reentry failed to materialize coercion {}:{} over {}",
+                coercion_cat,
+                coercion_rule,
+                self.sppf_trace_summary(body_symbol_id)
+            ));
+        };
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+        cursor.sppf_stack_id = self
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, wrapped_symbol_id);
+        cursor.last_action_output_cat = self
+            .sppf_symbol_terms
+            .get(&wrapped_symbol_id)
+            .and_then(|term| term.output_cat)
+            .or(Some(target_src_idx));
+        Ok(())
     }
 
     /// Sig-B Blocker-3 §2.4a/§2.4c (2026-06-01, pgmcp experiment #9): drain
@@ -18707,6 +18963,20 @@ where
                 self.emit_fire_action(cursor, symbol);
             }
         }
+        let mut transparent_reentry_error: Option<String> = None;
+        if let (
+            Some(crate::gss::EdgeKind::TransparentSourceReentry { target_src_idx, .. }),
+            Some(popped),
+        ) = (popped_edge_kind, popped_symbol)
+        {
+            if popped.kind == SymbolKind::CategoryEntry {
+                if let Err(message) =
+                    self.wrap_transparent_source_reentry_result(cursor, *target_src_idx)
+                {
+                    transparent_reentry_error = Some(message);
+                }
+            }
+        }
         // Per-child collection splice (keyed on predecessor symbol —
         // differs across children when fan-out lands on different
         // calling contexts).
@@ -18749,7 +19019,7 @@ where
         //     (`cur_bp > 0`) never have CollectionMarker as their
         //     pred — they have Return/MixfixMarker pred — so this
         //     branch only runs at the outermost element-parse level.
-        if pred_id != crate::gss::GSS_NODE_NONE {
+        if transparent_reentry_error.is_none() && pred_id != crate::gss::GSS_NODE_NONE {
             // Capture pred metadata (Copy types) under the immutable
             // borrow, then release the borrow so the engine.step query
             // and the mutable splice call can both run.
@@ -18904,9 +19174,7 @@ where
                             )
                         };
                         if let Some(ecat) = __elem_cat {
-                            if let Some(top_sid) =
-                                self.sppf_stack_arena.top(cursor.sppf_stack_id)
-                            {
+                            if let Some(top_sid) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                                 if let Some(crate::sppf::SppfNode::Symbol {
                                     non_terminal_tag,
                                     ..
@@ -18971,6 +19239,9 @@ where
                     },
                 }
             }
+        }
+        if let Some(message) = transparent_reentry_error {
+            effective_new_state = WpdaState::Error { message };
         }
         if let (Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }), Some(popped)) =
             (popped_edge_kind, popped_symbol)
@@ -19051,12 +19322,36 @@ where
                     if let Some(builder_cat) = cursor.last_action_output_cat {
                         if builder_cat != new_top_cat {
                             let new_sym = StackSymbolV2::category_entry(builder_cat);
-                            let _ = self.cursor_gss_replace_top_auto(
-                                cursor,
-                                new_sym,
-                                cursor.pos,
-                                W::one_ref(),
-                            );
+                            let transparent_reentry_kind = self
+                                .incoming_edge_stack_arena
+                                .top(cursor.incoming_edge_stack_id)
+                                .and_then(|eid| self.gss.edge_kind(eid))
+                                .and_then(|kind| match kind {
+                                    crate::gss::EdgeKind::TransparentSourceReentry {
+                                        target_src_idx,
+                                        ..
+                                    } => Some(crate::gss::EdgeKind::TransparentSourceReentry {
+                                        source_src_idx: builder_cat,
+                                        target_src_idx,
+                                    }),
+                                    _ => None,
+                                });
+                            if let Some(kind) = transparent_reentry_kind {
+                                let _ = self.cursor_gss_replace_top_with_kind(
+                                    cursor,
+                                    new_sym,
+                                    cursor.pos,
+                                    W::one_ref(),
+                                    kind,
+                                );
+                            } else {
+                                let _ = self.cursor_gss_replace_top_auto(
+                                    cursor,
+                                    new_sym,
+                                    cursor.pos,
+                                    W::one_ref(),
+                                );
+                            }
                         }
                     }
                 }

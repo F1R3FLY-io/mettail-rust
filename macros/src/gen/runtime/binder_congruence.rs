@@ -56,16 +56,15 @@ fn has_no_host_disposition(language: &LanguageDef) -> bool {
 /// (`LamProc`, …) are excluded — they are not in `terms`.
 fn surface_single_binder_label(language: &LanguageDef) -> Option<syn::Ident> {
     let proc_cat = &language.types.first()?.name;
-    let user_labels: HashSet<String> =
-        language.terms.iter().map(|r| r.label.to_string()).collect();
+    let user_labels: HashSet<String> = language.terms.iter().map(|r| r.label.to_string()).collect();
     collect_category_variants(proc_cat, language)
         .iter()
         .find_map(|v| match v {
-            VariantKind::Binder {
-                label, body_cat, ..
-            } if user_labels.contains(&label.to_string()) && body_cat == proc_cat => {
+            VariantKind::Binder { label, body_cat, .. }
+                if user_labels.contains(&label.to_string()) && body_cat == proc_cat =>
+            {
                 Some(label.clone())
-            }
+            },
             _ => None,
         })
 }
@@ -85,8 +84,7 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
 
     // Surface (user-declared) constructor labels — the auto-injected HOL
     // machinery (Lam*/Apply*/MApply*) is NOT in `terms` and passes through.
-    let user_labels: HashSet<String> =
-        language.terms.iter().map(|r| r.label.to_string()).collect();
+    let user_labels: HashSet<String> = language.terms.iter().map(|r| r.label.to_string()).collect();
 
     let variants = collect_category_variants(&proc_cat, language);
 
@@ -121,13 +119,11 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                         #proc_cat::__bcn_close_new_run_canonical(__binders, __core)
                     }
                 });
-            }
+            },
             // A surface prefix `C(N.., P)` with exactly one primary-category field:
             // float a `new` out of P iff its (ORIGINAL) binder is fresh in the
             // other fields (FIX-B = the standard `x ∉ fn(N)`).
-            VariantKind::Regular { label, fields }
-                if user_labels.contains(&label.to_string()) =>
-            {
+            VariantKind::Regular { label, fields } if user_labels.contains(&label.to_string()) => {
                 let proc_field_positions: Vec<usize> = fields
                     .iter()
                     .enumerate()
@@ -200,12 +196,12 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                         #proc_cat::#label(#(#rebuild_nf),*)
                     }
                 });
-            }
+            },
             // The parallel bag (`PPar`): scope-extrude a `new` member outward iff
             // its ORIGINAL binder is fresh in the residual multiset.
-            VariantKind::Collection {
-                label, element_cat, ..
-            } if user_labels.contains(&label.to_string()) && *element_cat == proc_cat => {
+            VariantKind::Collection { label, element_cat, .. }
+                if user_labels.contains(&label.to_string()) && *element_cat == proc_cat =>
+            {
                 arms.push(quote! {
                     #proc_cat::#label(__bag) => {
                         // Normalize each distinct member, count-preserving.
@@ -253,8 +249,8 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                         #proc_cat::#label(__all.into_iter().collect())
                     }
                 });
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 

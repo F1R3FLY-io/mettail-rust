@@ -120,7 +120,9 @@ fn rho_lazy(input: &str) {
 // ── Space metric ────────────────────────────────────────────────────────────────
 
 fn calc_space(input: &str) -> (usize, usize) {
-    let eager = calculator::lex_dag(input).map(|d| d.nodes.len()).unwrap_or(0);
+    let eager = calculator::lex_dag(input)
+        .map(|d| d.nodes.len())
+        .unwrap_or(0);
     let lazy_src = calculator::lex_dag_lazy(input);
     let mut pos = 0usize;
     let _ = calculator::parse_Proc_via_wpda_with_source(&lazy_src, &mut pos, 0);
@@ -168,10 +170,7 @@ fn time_arm(
             // Per-replicate datum = mean ns per single lex+parse over `reps`
             // (timer-amortized). Emitted as an integer nanosecond count.
             let per_op = (elapsed as f64 / reps as f64).round() as u128;
-            println!(
-                "kind=time,{},{},{},{},{},{}",
-                lang, class, arm, input_idx, sample, per_op
-            );
+            println!("kind=time,{},{},{},{},{},{}", lang, class, arm, input_idx, sample, per_op);
         }
     }
 }
@@ -213,11 +212,38 @@ fn main() {
     println!("# TIME: kind=time,lang,class,arm,input_idx,sample,lex_build_ns");
     time_arm("calculator", "full", "eager", CALC_FULL, calc_eager, samples, warmups, reps);
     time_arm("calculator", "full", "lazy", CALC_FULL, calc_lazy, samples, warmups, reps);
-    time_arm("calculator", "earlyfail", "eager", CALC_EARLY_FAIL, calc_eager, samples, warmups, reps);
-    time_arm("calculator", "earlyfail", "lazy", CALC_EARLY_FAIL, calc_lazy, samples, warmups, reps);
+    time_arm(
+        "calculator",
+        "earlyfail",
+        "eager",
+        CALC_EARLY_FAIL,
+        calc_eager,
+        samples,
+        warmups,
+        reps,
+    );
+    time_arm(
+        "calculator",
+        "earlyfail",
+        "lazy",
+        CALC_EARLY_FAIL,
+        calc_lazy,
+        samples,
+        warmups,
+        reps,
+    );
     time_arm("rhocalc", "full", "eager", RHO_FULL, rho_eager, samples, warmups, reps);
     time_arm("rhocalc", "full", "lazy", RHO_FULL, rho_lazy, samples, warmups, reps);
-    time_arm("rhocalc", "earlyfail", "eager", RHO_EARLY_FAIL, rho_eager, samples, warmups, reps);
+    time_arm(
+        "rhocalc",
+        "earlyfail",
+        "eager",
+        RHO_EARLY_FAIL,
+        rho_eager,
+        samples,
+        warmups,
+        reps,
+    );
     time_arm("rhocalc", "earlyfail", "lazy", RHO_EARLY_FAIL, rho_lazy, samples, warmups, reps);
 
     eprintln!("lazy_lex_bench: done");

@@ -109,11 +109,7 @@ fn opaque_leaf_expr(label: TokenStream, payload: TokenStream) -> TokenStream {
 /// `bag_expr` must evaluate to a value exposing `len()` and
 /// `iter_elements() -> impl Iterator<Item = &ElemCat>` (the `HashBag` API).
 /// `element_add` is the element category's `__mettail_dovetail_add_<cat>` fn.
-fn ac_bag_lowering(
-    label: &LitStr,
-    element_add: &Ident,
-    bag_expr: TokenStream,
-) -> TokenStream {
+fn ac_bag_lowering(label: &LitStr, element_add: &Ident, bag_expr: TokenStream) -> TokenStream {
     quote! {
         {
             let __bag = #bag_expr;
@@ -417,7 +413,10 @@ fn pattern_term_to_dovetail(
             // collection has no constructor of its own (see `Pattern::Collection`).
             if let [AstPattern::Collection { .. }] = args.as_slice() {
                 if enum_id.is_some() {
-                    return Err("AC collection metapatterns are not yet lowered on the typed fold path".into());
+                    return Err(
+                        "AC collection metapatterns are not yet lowered on the typed fold path"
+                            .into(),
+                    );
                 }
                 let label = constructor_label(language, constructor)?;
                 let label = lit(&label);
@@ -474,18 +473,20 @@ fn lower_equation(
     }
 
     match pattern_to_dovetail(language, &eq.left, enum_id) {
-        Ok(left) if !eq.left.is_just_variable() => match pattern_to_dovetail(language, &eq.right, enum_id) {
-            Ok(right) => {
-                let label = lit(&format!("{}::equation::{}::forward", language.name, eq.name));
-                out.push(quote! {
-                    ::dovetail::rules::RewriteRule {
-                        lhs: #left,
-                        rhs: #right,
-                        label: Some(#label.to_string()),
-                    }
-                });
-            },
-            Err(reason) => unsupported.push(format!("equation `{}` RHS: {reason}", eq.name)),
+        Ok(left) if !eq.left.is_just_variable() => {
+            match pattern_to_dovetail(language, &eq.right, enum_id) {
+                Ok(right) => {
+                    let label = lit(&format!("{}::equation::{}::forward", language.name, eq.name));
+                    out.push(quote! {
+                        ::dovetail::rules::RewriteRule {
+                            lhs: #left,
+                            rhs: #right,
+                            label: Some(#label.to_string()),
+                        }
+                    });
+                },
+                Err(reason) => unsupported.push(format!("equation `{}` RHS: {reason}", eq.name)),
+            }
         },
         Ok(_) => {},
         Err(reason) => unsupported.push(format!("equation `{}` LHS: {reason}", eq.name)),
@@ -891,10 +892,7 @@ mod tests {
         let id = |s: &str| Ident::new(s, Span::call_site());
         // Congruence is the ONLY supported premise; every other variant fails
         // closed (exhaustive match — no catch-all).
-        assert!(premise_supported(&Premise::Congruence {
-            source: id("S"),
-            target: id("T")
-        }));
+        assert!(premise_supported(&Premise::Congruence { source: id("S"), target: id("T") }));
         assert!(!premise_supported(&Premise::Freshness(FreshnessCondition {
             var: id("x"),
             term: FreshnessTarget::Var(id("P")),

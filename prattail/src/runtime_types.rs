@@ -1150,7 +1150,12 @@ pub fn expand_lex_node<'a, T: Clone>(
         }
     }
 
-    Ok(ExpandedLexNode { byte_start: pos, edges, successors, is_eof: false })
+    Ok(ExpandedLexNode {
+        byte_start: pos,
+        edges,
+        successors,
+        is_eof: false,
+    })
 }
 
 pub fn lex_dag_core<'a, T: Clone>(
@@ -1225,7 +1230,10 @@ pub fn lex_dag_core<'a, T: Clone>(
 
         let node_idx = nodes.len();
         byte_to_node.insert(start, node_idx);
-        nodes.push(LexDagNode { byte_start: expanded.byte_start, edges: Vec::new() });
+        nodes.push(LexDagNode {
+            byte_start: expanded.byte_start,
+            edges: Vec::new(),
+        });
         raw_edges.push((node_idx, Vec::new()));
 
         if expanded.is_eof {
@@ -1243,7 +1251,9 @@ pub fn lex_dag_core<'a, T: Clone>(
         // Store the surviving raw edges (longest-first, longest-per-kind;
         // target_node resolved by the fix-up pass below via `byte_to_node`).
         for edge in expanded.edges.into_iter() {
-            raw_edges[node_idx].1.push((edge.kind, edge.text, edge.end_byte, edge.weight));
+            raw_edges[node_idx]
+                .1
+                .push((edge.kind, edge.text, edge.end_byte, edge.weight));
         }
 
         // Queue successors in `expand_lex_node`'s edge order, applying the

@@ -100,7 +100,9 @@ pub struct StringAlgebra {
 impl StringAlgebra {
     /// Construct the algebra.
     pub fn new() -> Self {
-        StringAlgebra { inner: RegexAlgebra::new(CharClassAlgebra::new()) }
+        StringAlgebra {
+            inner: RegexAlgebra::new(CharClassAlgebra::new()),
+        }
     }
 }
 
@@ -139,7 +141,9 @@ impl BooleanAlgebra for StringAlgebra {
     }
 
     fn witness(&self, a: &StrPred) -> Option<String> {
-        self.inner.witness(&a.to_regex()).map(|chars| chars.into_iter().collect())
+        self.inner
+            .witness(&a.to_regex())
+            .map(|chars| chars.into_iter().collect())
     }
 
     fn evaluate(&self, pred: &StrPred, elem: &String) -> bool {

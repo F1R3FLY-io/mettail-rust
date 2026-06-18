@@ -77,7 +77,8 @@ fn calc_parse_eq(input: &str) -> (usize, usize) {
             let node_count = dag.nodes.len();
             let source = LatticeTokenSource::new(dag);
             let mut pos = 0usize;
-            let outcome = format!("{:?}", calculator::parse_Proc_via_wpda_with_source(&source, &mut pos, 0));
+            let outcome =
+                format!("{:?}", calculator::parse_Proc_via_wpda_with_source(&source, &mut pos, 0));
             (outcome, pos, node_count)
         },
         Err(e) => (format!("LEX_ERR({})", e), 0usize, 0usize),
@@ -86,7 +87,8 @@ fn calc_parse_eq(input: &str) -> (usize, usize) {
     // Lazy.
     let lazy = calculator::lex_dag_lazy(input);
     let mut lazy_pos = 0usize;
-    let lazy_outcome = format!("{:?}", calculator::parse_Proc_via_wpda_with_source(&lazy, &mut lazy_pos, 0));
+    let lazy_outcome =
+        format!("{:?}", calculator::parse_Proc_via_wpda_with_source(&lazy, &mut lazy_pos, 0));
     let lazy_nodes = lazy.nodes_materialized();
 
     // For the eager path, a hard lex error means the facade never runs the
@@ -125,7 +127,8 @@ fn rho_parse_eq(input: &str) -> (usize, usize) {
             let node_count = dag.nodes.len();
             let source = LatticeTokenSource::new(dag);
             let mut pos = 0usize;
-            let outcome = format!("{:?}", rhocalc::parse_Proc_via_wpda_with_source(&source, &mut pos, 0));
+            let outcome =
+                format!("{:?}", rhocalc::parse_Proc_via_wpda_with_source(&source, &mut pos, 0));
             (outcome, pos, node_count)
         },
         Err(e) => (format!("LEX_ERR({})", e), 0usize, 0usize),
@@ -133,7 +136,8 @@ fn rho_parse_eq(input: &str) -> (usize, usize) {
 
     let lazy = rhocalc::lex_dag_lazy(input);
     let mut lazy_pos = 0usize;
-    let lazy_outcome = format!("{:?}", rhocalc::parse_Proc_via_wpda_with_source(&lazy, &mut lazy_pos, 0));
+    let lazy_outcome =
+        format!("{:?}", rhocalc::parse_Proc_via_wpda_with_source(&lazy, &mut lazy_pos, 0));
     let lazy_nodes = lazy.nodes_materialized();
 
     if eager_outcome.starts_with("LEX_ERR") {
@@ -241,13 +245,17 @@ fn assert_dag_observations_eq_calc(input: &str) {
                 eager.end_byte(pos, alt_idx),
                 lazy.end_byte(pos, alt_idx),
                 "end_byte mismatch at node {} alt {} for {:?}",
-                pos, alt_idx, input,
+                pos,
+                alt_idx,
+                input,
             );
             assert_eq!(
                 eager.next_pos(pos, alt_idx),
                 lazy.next_pos(pos, alt_idx),
                 "next_pos (target_node) mismatch at node {} alt {} for {:?}",
-                pos, alt_idx, input,
+                pos,
+                alt_idx,
+                input,
             );
         }
     }
@@ -265,7 +273,9 @@ fn calc_full_parse_lazy_eq_eager() {
         assert!(
             lazy_nodes <= eager_nodes,
             "lazy materialized MORE nodes than eager for {:?}: lazy={} eager={}",
-            input, lazy_nodes, eager_nodes,
+            input,
+            lazy_nodes,
+            eager_nodes,
         );
     }
 }
@@ -277,7 +287,9 @@ fn calc_early_fail_lazy_eq_eager() {
         assert!(
             lazy_nodes <= eager_nodes,
             "lazy materialized MORE nodes than eager for {:?}: lazy={} eager={}",
-            input, lazy_nodes, eager_nodes,
+            input,
+            lazy_nodes,
+            eager_nodes,
         );
     }
 }
@@ -306,7 +318,9 @@ fn rho_full_parse_lazy_eq_eager() {
         assert!(
             lazy_nodes <= eager_nodes,
             "lazy materialized MORE nodes than eager for {:?}: lazy={} eager={}",
-            input, lazy_nodes, eager_nodes,
+            input,
+            lazy_nodes,
+            eager_nodes,
         );
     }
 }
@@ -318,7 +332,9 @@ fn rho_early_fail_lazy_eq_eager() {
         assert!(
             lazy_nodes <= eager_nodes,
             "lazy materialized MORE nodes than eager for {:?}: lazy={} eager={}",
-            input, lazy_nodes, eager_nodes,
+            input,
+            lazy_nodes,
+            eager_nodes,
         );
     }
 }
@@ -405,7 +421,13 @@ fn probe_int_cast_compare() {
     let mut pos = 0usize;
     let r = calculator::parse_Proc_via_wpda_with_source(&lazy, &mut pos, 0);
     println!("\n=== LAZY parse result for {:?} ===", input);
-    println!("result={:?}\nfinal_pos={} eof_node={} nodes_materialized={}", r, pos, lazy.eof_node(), lazy.nodes_materialized());
+    println!(
+        "result={:?}\nfinal_pos={} eof_node={} nodes_materialized={}",
+        r,
+        pos,
+        lazy.eof_node(),
+        lazy.nodes_materialized()
+    );
     // Now force-materialize and dump for comparison.
     lazy.force_full_materialization();
     println!("\n=== LAZY DAG (forced full) for {:?} ===", input);

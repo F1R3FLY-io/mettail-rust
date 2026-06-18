@@ -79,12 +79,17 @@ impl FactBase {
 
     /// Add a fact `relation(tuple)`.
     pub fn add_fact(&mut self, relation: impl Into<String>, tuple: Vec<String>) {
-        self.relations.entry(relation.into()).or_default().insert(tuple);
+        self.relations
+            .entry(relation.into())
+            .or_default()
+            .insert(tuple);
     }
 
     /// Whether `relation(tuple)` holds in this snapshot.
     pub fn holds(&self, relation: &str, tuple: &[String]) -> bool {
-        self.relations.get(relation).is_some_and(|s| s.contains(tuple))
+        self.relations
+            .get(relation)
+            .is_some_and(|s| s.contains(tuple))
     }
 
     /// The active domain: every constant appearing in any fact tuple.
@@ -159,9 +164,17 @@ pub enum BehavioralFormula {
     /// A relation atom `name(args)`.
     Relation { name: String, args: Vec<Arg> },
     /// `∀ var ∈ domain. body`.
-    Forall { var: String, domain: QDomain, body: Box<BehavioralFormula> },
+    Forall {
+        var: String,
+        domain: QDomain,
+        body: Box<BehavioralFormula>,
+    },
     /// `∃ var ∈ domain. body`.
-    Exists { var: String, domain: QDomain, body: Box<BehavioralFormula> },
+    Exists {
+        var: String,
+        domain: QDomain,
+        body: Box<BehavioralFormula>,
+    },
     /// A state proposition: the LTS state's `label()` equals this string.
     Atom(String),
     /// `⟨a⟩φ` — some `a`-labeled successor satisfies `φ`.
@@ -237,9 +250,9 @@ impl BehavioralFormula {
             BehavioralFormula::Forall { body, .. } | BehavioralFormula::Exists { body, .. } => {
                 body.has_modal()
             },
-            BehavioralFormula::Top | BehavioralFormula::Bot | BehavioralFormula::Relation { .. } => {
-                false
-            },
+            BehavioralFormula::Top
+            | BehavioralFormula::Bot
+            | BehavioralFormula::Relation { .. } => false,
         }
     }
 }
@@ -335,11 +348,7 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
     /// Evaluate `formula` against the snapshot with the given bindings. Returns
     /// `(result, exact)`; `exact = false` when a bounded quantifier may have
     /// been truncated (so a `false`/`true` could be budget-limited).
-    fn eval(
-        &self,
-        formula: &BehavioralFormula,
-        env: &BTreeMap<String, String>,
-    ) -> (bool, bool) {
+    fn eval(&self, formula: &BehavioralFormula, env: &BTreeMap<String, String>) -> (bool, bool) {
         match formula {
             BehavioralFormula::Top => (true, true),
             BehavioralFormula::Bot => (false, true),
@@ -466,9 +475,9 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
         match formula {
             BehavioralFormula::Top => all(),
             BehavioralFormula::Bot => HashSet::new(),
-            BehavioralFormula::Atom(label) => {
-                (0..states.len()).filter(|&i| states[i].label() == *label).collect()
-            },
+            BehavioralFormula::Atom(label) => (0..states.len())
+                .filter(|&i| states[i].label() == *label)
+                .collect(),
             // State-independent relational atom: holds at all states or none.
             BehavioralFormula::Relation { .. } => {
                 if self.eval(formula, env).0 {
@@ -518,13 +527,21 @@ impl<H: HostTerm> BehavioralAlgebra<H> {
             BehavioralFormula::Diamond(ap, body) => {
                 let b = self.denote(body, states, adj, env, fix);
                 (0..states.len())
-                    .filter(|&i| adj[i].iter().any(|(act, j)| ap.matches(act) && b.contains(j)))
+                    .filter(|&i| {
+                        adj[i]
+                            .iter()
+                            .any(|(act, j)| ap.matches(act) && b.contains(j))
+                    })
                     .collect()
             },
             BehavioralFormula::BoxAll(ap, body) => {
                 let b = self.denote(body, states, adj, env, fix);
                 (0..states.len())
-                    .filter(|&i| adj[i].iter().all(|(act, j)| !ap.matches(act) || b.contains(j)))
+                    .filter(|&i| {
+                        adj[i]
+                            .iter()
+                            .all(|(act, j)| !ap.matches(act) || b.contains(j))
+                    })
                     .collect()
             },
             BehavioralFormula::Mu(x, body) => {
@@ -650,7 +667,11 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
             loop {
                 if i == free.len() {
                     // exhausted all assignments
-                    return if all_exact { Sat3::Unsat } else { Sat3::DontKnow };
+                    return if all_exact {
+                        Sat3::Unsat
+                    } else {
+                        Sat3::DontKnow
+                    };
                 }
                 idx[i] += 1;
                 if idx[i] < domain.len() {
@@ -674,7 +695,8 @@ impl<H: HostTerm> RejectSafeAlgebra for BehavioralAlgebra<H> {
         }
         // Modal/temporal: model-check over the term's reachable LTS.
         let (states, adj) = self.build_lts(&elem.term);
-        self.denote(pred, &states, &adj, &elem.env, &HashMap::new()).contains(&0)
+        self.denote(pred, &states, &adj, &elem.env, &HashMap::new())
+            .contains(&0)
     }
 }
 
@@ -789,15 +811,24 @@ mod tests {
     #[test]
     fn relation_evaluate() {
         let alg = BehavioralAlgebra::<NoTerm>::new(sample_facts());
-        let p = BehavioralFormula::Relation { name: "edge".into(), args: vec![lit("a"), lit("b")] };
+        let p = BehavioralFormula::Relation {
+            name: "edge".into(),
+            args: vec![lit("a"), lit("b")],
+        };
         let mut env = BTreeMap::new();
         let w = BehavioralWorld::with_env(NoTerm, env.clone());
         assert!(alg.evaluate(&p, &w));
-        let q = BehavioralFormula::Relation { name: "edge".into(), args: vec![lit("a"), lit("c")] };
+        let q = BehavioralFormula::Relation {
+            name: "edge".into(),
+            args: vec![lit("a"), lit("c")],
+        };
         assert!(!alg.evaluate(&q, &BehavioralWorld::new(NoTerm)));
         // with a binding
         env.insert("x".into(), "b".into());
-        let r = BehavioralFormula::Relation { name: "edge".into(), args: vec![lit("a"), var("x")] };
+        let r = BehavioralFormula::Relation {
+            name: "edge".into(),
+            args: vec![lit("a"), var("x")],
+        };
         assert!(alg.evaluate(&r, &BehavioralWorld::with_env(NoTerm, env)));
     }
 
@@ -805,10 +836,16 @@ mod tests {
     fn satisfiable_existential() {
         let alg = BehavioralAlgebra::<NoTerm>::new(sample_facts());
         // ∃x. edge(a, x)  → Sat (x=b)
-        let p = BehavioralFormula::Relation { name: "edge".into(), args: vec![lit("a"), var("x")] };
+        let p = BehavioralFormula::Relation {
+            name: "edge".into(),
+            args: vec![lit("a"), var("x")],
+        };
         assert_eq!(alg.is_satisfiable_3v(&p), Sat3::Sat);
         // edge(a, z) with z forced to a value not present → Unsat over active domain
-        let q = BehavioralFormula::Relation { name: "edge".into(), args: vec![lit("z"), lit("z")] };
+        let q = BehavioralFormula::Relation {
+            name: "edge".into(),
+            args: vec![lit("z"), lit("z")],
+        };
         assert_eq!(alg.is_satisfiable_3v(&q), Sat3::Unsat);
     }
 
@@ -847,7 +884,10 @@ mod tests {
                     name: "edge".into(),
                     args: vec![lit("a"), var("y")],
                 }))),
-                Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("y")] }),
+                Box::new(BehavioralFormula::Relation {
+                    name: "safe".into(),
+                    args: vec![var("y")],
+                }),
             )),
         };
         assert!(!alg.evaluate(&univ, &BehavioralWorld::new(NoTerm)));
@@ -856,7 +896,10 @@ mod tests {
     #[test]
     fn heyting_structure_and_safety() {
         let alg = BehavioralAlgebra::<NoTerm>::new(sample_facts());
-        let p = BehavioralFormula::Relation { name: "safe".into(), args: vec![lit("c")] };
+        let p = BehavioralFormula::Relation {
+            name: "safe".into(),
+            args: vec![lit("c")],
+        };
         let np = alg.pseudo_complement(&p);
         let w = BehavioralWorld::new(NoTerm);
         assert!(alg.evaluate(&p, &w));
@@ -869,7 +912,11 @@ mod tests {
         // The safety property: a function bounded on BooleanAlgebra cannot accept
         // BehavioralAlgebra (it only implements HeytingAlgebra). We confirm it is
         // usable through the Heyting tier.
-        fn via_heyting<A: HeytingAlgebra>(alg: &A, a: &A::Predicate, b: &A::Predicate) -> A::Predicate {
+        fn via_heyting<A: HeytingAlgebra>(
+            alg: &A,
+            a: &A::Predicate,
+            b: &A::Predicate,
+        ) -> A::Predicate {
             alg.implies(a, b)
         }
         let _ = via_heyting(&alg, &p, &BehavioralFormula::Top);
@@ -881,8 +928,14 @@ mod tests {
         // exceeds it → DontKnow (honest reject-safe).
         let alg = BehavioralAlgebra::<NoTerm>::new(sample_facts()).with_budget(2);
         let p = BehavioralFormula::And(
-            Box::new(BehavioralFormula::Relation { name: "edge".into(), args: vec![var("x"), var("y")] }),
-            Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("y")] }),
+            Box::new(BehavioralFormula::Relation {
+                name: "edge".into(),
+                args: vec![var("x"), var("y")],
+            }),
+            Box::new(BehavioralFormula::Relation {
+                name: "safe".into(),
+                args: vec![var("y")],
+            }),
         );
         assert_eq!(alg.is_satisfiable_3v(&p), Sat3::DontKnow);
     }
@@ -916,7 +969,7 @@ mod tests {
         );
         assert!(alg.evaluate(&can_step, &BehavioralWorld::new(TestProc(0))));
         assert!(!alg.evaluate(&can_step, &BehavioralWorld::new(TestProc(2)))); // terminal
-        // [step]⊥ at the terminal state: no step successors → vacuously true.
+                                                                               // [step]⊥ at the terminal state: no step successors → vacuously true.
         let no_step = BehavioralFormula::BoxAll(
             ActionPattern::Named("step".into()),
             Box::new(BehavioralFormula::Bot),
@@ -941,7 +994,7 @@ mod tests {
         );
         assert!(alg.evaluate(&eventually, &BehavioralWorld::new(TestProc(0))));
         assert!(alg.evaluate(&eventually, &BehavioralWorld::new(TestProc(2)))); // already done
-        // Modal satisfiability is honestly DontKnow.
+                                                                                // Modal satisfiability is honestly DontKnow.
         assert_eq!(alg.is_satisfiable_3v(&eventually), Sat3::DontKnow);
     }
 
@@ -1002,8 +1055,7 @@ mod tests {
         assert!(!alg.evaluate(&ag(done()), &s0()));
         assert!(alg.evaluate(&ag(done()), &s2()));
         // AG ¬bad — safety with no 'bad' states → true.
-        let no_bad =
-            ag(BehavioralFormula::Not(Box::new(BehavioralFormula::Atom("bad".into()))));
+        let no_bad = ag(BehavioralFormula::Not(Box::new(BehavioralFormula::Atom("bad".into()))));
         assert!(alg.evaluate(&no_bad, &s0()));
         // E(¬done U done) — some run stays ¬done until done.
         let until = eu(BehavioralFormula::Not(Box::new(done())), done());

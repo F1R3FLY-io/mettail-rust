@@ -30,4 +30,3 @@ pub fn generate_freshness_functions(_language: &LanguageDef) -> TokenStream {
         }
     }
 }
-

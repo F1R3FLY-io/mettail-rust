@@ -126,7 +126,9 @@ fn regular_arm_typed(
     fields: &[FieldInfo],
 ) -> TokenStream {
     let variant = op_variant_ident(category, label);
-    let field_vars: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("field_{i}")).collect();
+    let field_vars: Vec<Ident> = (0..fields.len())
+        .map(|i| format_ident!("field_{i}"))
+        .collect();
     let child_exprs: Vec<TokenStream> = fields
         .iter()
         .zip(field_vars.iter())
@@ -149,8 +151,9 @@ fn binder_arm_typed(
     multi: bool,
 ) -> TokenStream {
     let variant = op_variant_ident(category, label);
-    let pre_vars: Vec<Ident> =
-        (0..pre_scope_fields.len()).map(|i| format_ident!("field_{i}")).collect();
+    let pre_vars: Vec<Ident> = (0..pre_scope_fields.len())
+        .map(|i| format_ident!("field_{i}"))
+        .collect();
     let scope_var = format_ident!("scope");
     let pre_child_exprs: Vec<TokenStream> = pre_scope_fields
         .iter()

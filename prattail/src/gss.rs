@@ -437,6 +437,13 @@ pub enum EdgeKind {
     /// category-changing operator is allowed, but popping this edge must not
     /// re-enter again.
     CrossCatLhsReentry { source_src_idx: u16 },
+    /// Transparent projection source continuation. A target-category wrapper
+    /// such as `Expr <- Num` has produced a target Symbol, but the next
+    /// lookahead operator belongs to the source category. The walker unwraps
+    /// the source child, re-enters source-category InfixLoop for one
+    /// continuation, and wraps the final source result back into
+    /// `target_src_idx` when this edge pops.
+    TransparentSourceReentry { source_src_idx: u16, target_src_idx: u16 },
     /// PrefixDispatch consumed a literal and pushed a `RuleAt` frame
     /// to begin parsing the rule's items. Payload = (cat, rule, item position).
     PrefixRuleEntry {

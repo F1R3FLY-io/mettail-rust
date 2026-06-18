@@ -11,10 +11,15 @@ use mettail_runtime::Language;
 /// report, and return every term op-display in the derivation forest.
 fn fold_report_ops(src: &str) -> Vec<String> {
     let lang = RhoCalcLanguage;
-    let term = lang.parse_term(src).unwrap_or_else(|e| panic!("`{src}` must parse: {e:?}"));
+    let term = lang
+        .parse_term(src)
+        .unwrap_or_else(|e| panic!("`{src}` must parse: {e:?}"));
     let report = RhoCalcLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .unwrap_or_else(|e| panic!("`{src}` must compile to a Dovetail report: {e}"));
-    assert!(report.is_complete(), "`{src}` must reduce to a Complete (converged, acyclic) report");
+    assert!(
+        report.is_complete(),
+        "`{src}` must reduce to a Complete (converged, acyclic) report"
+    );
     assert!(!report.roots.is_empty(), "`{src}` must produce at least one root");
     report.terms.iter().map(|t| t.op_display.clone()).collect()
 }
@@ -75,10 +80,7 @@ fn bad_cast_folds_to_err() {
     // `int("abc", 8)`: the string argument IS a value (`CastStr`) but not numeric, so the
     // native body folds it to the legitimate `Proc::Err` value (not a deferral).
     let ops = fold_report_ops(r#"int("abc", 8)"#);
-    assert!(
-        ops.iter().any(|o| o.contains("Err")),
-        "a bad cast folds to Err; ops: {ops:?}"
-    );
+    assert!(ops.iter().any(|o| o.contains("Err")), "a bad cast folds to Err; ops: {ops:?}");
 }
 
 #[test]

@@ -590,8 +590,7 @@ fn generate_semantic_binder_arm(
                 .as_ref()
                 .expect("collection field must carry a CollectionType");
             if field.is_optional {
-                let sem =
-                    semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
+                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
                 hash_stmts.push(quote! {
                     match #name.as_ref() {
                         None => state.write_u8(0u8),
@@ -673,8 +672,7 @@ fn generate_semantic_multi_binder_arm(
                 .as_ref()
                 .expect("collection field must carry a CollectionType");
             if field.is_optional {
-                let sem =
-                    semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
+                let sem = semantic_hash_collection(&quote! { __c }, &field.category, coll_type);
                 hash_stmts.push(quote! {
                     match #name.as_ref() {
                         None => state.write_u8(0u8),

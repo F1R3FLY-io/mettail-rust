@@ -94,7 +94,9 @@ impl LazyAcSelect {
     /// `k`-combination of `[0, n)`, or set it to `None` when exhausted. O(k).
     fn advance(&mut self) {
         let n = self.bag.len();
-        let Some(combo) = self.combo.as_mut() else { return };
+        let Some(combo) = self.combo.as_mut() else {
+            return;
+        };
         if self.k == 0 {
             // The single empty selection has no successor.
             self.combo = None;
@@ -600,16 +602,16 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                                 self.merge(root, result_id);
                                 rule_merges += 1;
                             }
-                        }
+                        },
                         None if self.node_limit_reached() => {
                             budget_hit = true;
                             break;
-                        }
+                        },
                         None => {
                             // The redex does not reduce here (variable / stuck
                             // child, or unfunded admission); leave it in place,
                             // faithful to a fold premise with no solution.
-                        }
+                        },
                     }
                 }
                 if rule_merges > 0 {
@@ -727,8 +729,7 @@ mod dv0_probe {
         let mut keys: HashSet<ContentKey> = HashSet::new();
         for cls in eg.classes() {
             for n in eg.nodes(cls) {
-                let child_classes: Vec<EClassId> =
-                    n.children.iter().map(|&c| eg.find(c)).collect();
+                let child_classes: Vec<EClassId> = n.children.iter().map(|&c| eg.find(c)).collect();
                 keys.insert(node_key(&n.op, &child_classes));
             }
         }
@@ -745,8 +746,7 @@ mod dv0_probe {
                 continue;
             }
             for n in eg.nodes(cls) {
-                let child_classes: Vec<EClassId> =
-                    n.children.iter().map(|&c| eg.find(c)).collect();
+                let child_classes: Vec<EClassId> = n.children.iter().map(|&c| eg.find(c)).collect();
                 marked.insert(node_key(&n.op, &child_classes));
                 for &c in &n.children {
                     stack.push(eg.find(c));
@@ -961,7 +961,8 @@ mod dv0_probe {
         let mut nf_count = 0usize;
         {
             // Flat weight: every node costs 1 (no arithmetic leaf values here).
-            let mut ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(1.0)).with_heuristic();
+            let mut ex =
+                Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(1.0)).with_heuristic();
             for &root in &roots {
                 if let Some(d) = ex.kth(root, 0).value {
                     mark_derivation(&eg, &d, &mut marked);
@@ -1006,7 +1007,9 @@ mod dv0_probe {
         // Three workload sizes so the share is observed across scale, not a single
         // point. Printed for the ledger; the test ASSERTS only the invariants the
         // measurement relies on (it refutes nothing — DV-0 is measurement-only).
-        println!("\n=== EP-P6a DV-0′ PROBE (dovetail saturate→extract; 1-best vs PRODUCTION shape) ===");
+        println!(
+            "\n=== EP-P6a DV-0′ PROBE (dovetail saturate→extract; 1-best vs PRODUCTION shape) ==="
+        );
         println!(
             "{:<10} {:>10} {:>11} {:>9} {:>10} {:>9} {:>11} {:>9} {:>10}",
             "workload",
@@ -1049,7 +1052,16 @@ mod dv0_probe {
             };
             println!(
                 "{:<10} {:>10} {:>11} {:>8.1}% {:>10} {:>8.1}% {:>11} {:>8.1}% {:>5}/{:<4}",
-                name, added, in_ex, untouched_kb, reach, untouched_pr, prod_chkd, sat_pct, roots, nf
+                name,
+                added,
+                in_ex,
+                untouched_kb,
+                reach,
+                untouched_pr,
+                prod_chkd,
+                sat_pct,
+                roots,
+                nf
             );
 
             // Measurement-soundness invariants (NOT pruning assertions):
@@ -1086,7 +1098,16 @@ mod dv0_probe {
             };
             println!(
                 "{:<10} {:>10} {:>11} {:>8.1}% {:>10} {:>8.1}% {:>11} {:>8.1}% {:>5}/{:<4}",
-                name, added, in_ex, untouched_kb, reach, untouched_pr, prod_chkd, sat_pct, roots, nf
+                name,
+                added,
+                in_ex,
+                untouched_kb,
+                reach,
+                untouched_pr,
+                prod_chkd,
+                sat_pct,
+                roots,
+                nf
             );
             assert!(reach >= in_ex, "amb: prod reach ⊇ 1-best touched");
             if added > 0 {
@@ -1170,10 +1191,11 @@ mod tests {
             op: 0,
             label: Some("double".into()),
         }];
-        let dispatch = |_op: NativeOpId, eg: &mut EGraph<String>, subst: &Subst| -> Option<EClassId> {
-            let x = eg.find(*subst.get("x")?);
-            Some(eg.add(ENode::new("add".into(), vec![x, x])))
-        };
+        let dispatch =
+            |_op: NativeOpId, eg: &mut EGraph<String>, subst: &Subst| -> Option<EClassId> {
+                let x = eg.find(*subst.get("x")?);
+                Some(eg.add(ENode::new("add".into(), vec![x, x])))
+            };
         let rep = eg.saturate_with_native(&[], &native, &dispatch, 20);
         assert_eq!(
             rep.outcome,
@@ -1181,10 +1203,7 @@ mod tests {
             "native saturation reaches a fixpoint"
         );
         let add_aa = eg.add(ENode::new("add".into(), vec![a, a]));
-        assert!(
-            eg.equiv(dbl, add_aa),
-            "double(a) == add(a, a) after the native rule fires"
-        );
+        assert!(eg.equiv(dbl, add_aa), "double(a) == add(a, a) after the native rule fires");
     }
 
     #[test]
@@ -1494,10 +1513,7 @@ mod tests {
         let mut flat = vec![eg.find(va), eg.find(vb), eg.find(vc)];
         flat.sort_by_cached_key(|&a| eg.canonical_class_key(a));
         let expected_flat = eg.add(ENode::new("par".into(), flat));
-        assert!(
-            eg.equiv(par, expected_flat),
-            "open(n,A) | n[B|C] ~> A | B | C (one flat bag)"
-        );
+        assert!(eg.equiv(par, expected_flat), "open(n,A) | n[B|C] ~> A | B | C (one flat bag)");
 
         // The NESTED bag-of-bags par{A, par{B,C}} must NOT be the result: it has
         // a distinct canonical key, so associativity must have flattened it away.

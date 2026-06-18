@@ -174,11 +174,12 @@ pub struct RhoGuardDispositionQuality {
 impl RhoGuardDispositionQuality {
     /// Build a disposition+quality from a substrate classification for one
     /// obligation id.
-    pub fn from_classification(
-        obligation: impl Into<String>,
-        c: RhoGuardClassification,
-    ) -> Self {
-        Self { obligation: obligation.into(), kind: c.disposition_kind, quality: classify_quality(c) }
+    pub fn from_classification(obligation: impl Into<String>, c: RhoGuardClassification) -> Self {
+        Self {
+            obligation: obligation.into(),
+            kind: c.disposition_kind,
+            quality: classify_quality(c),
+        }
     }
 }
 
@@ -194,9 +195,13 @@ pub fn default_classification(kind: RhoGuardObligationKind) -> RhoGuardClassific
     use RhoGuardTier::*;
     match kind {
         // Structural shape predicates are decided exactly by Dovetail's core.
-        O::StructuralPattern => RhoGuardClassification::decidable(D::DovetailCoreStructural, T1Exact),
+        O::StructuralPattern => {
+            RhoGuardClassification::decidable(D::DovetailCoreStructural, T1Exact)
+        },
         // A registered theory supplies an exact effective Boolean algebra.
-        O::TheoryRegistration => RhoGuardClassification::decidable(D::EffectiveBooleanAlgebra, T2Decidable),
+        O::TheoryRegistration => {
+            RhoGuardClassification::decidable(D::EffectiveBooleanAlgebra, T2Decidable)
+        },
         // Behavioral predicates are semi-decidable ⇒ the reject-safe leg by
         // default (conservative: may reject, never wrongly admits a Comm).
         O::BehavioralPredicate => RhoGuardClassification {
@@ -250,28 +255,56 @@ mod tests {
     fn tier_drives_decidable_quality() {
         // structural / EBA / SFT decidable legs: tier → quality.
         for kind in [DovetailCoreStructural, EffectiveBooleanAlgebra, SymbolicFiniteTransducer] {
-            assert_eq!(classify_quality(RhoGuardClassification::decidable(kind, T1Exact)), Q::ExactDecidable);
-            assert_eq!(classify_quality(RhoGuardClassification::decidable(kind, T2Decidable)), Q::ExactDecidable);
-            assert_eq!(classify_quality(RhoGuardClassification::decidable(kind, T3Bounded)), Q::BoundedDecidable);
-            assert_eq!(classify_quality(RhoGuardClassification::decidable(kind, T4Asserted)), Q::TrustedNativeGuard);
+            assert_eq!(
+                classify_quality(RhoGuardClassification::decidable(kind, T1Exact)),
+                Q::ExactDecidable
+            );
+            assert_eq!(
+                classify_quality(RhoGuardClassification::decidable(kind, T2Decidable)),
+                Q::ExactDecidable
+            );
+            assert_eq!(
+                classify_quality(RhoGuardClassification::decidable(kind, T3Bounded)),
+                Q::BoundedDecidable
+            );
+            assert_eq!(
+                classify_quality(RhoGuardClassification::decidable(kind, T4Asserted)),
+                Q::TrustedNativeGuard
+            );
         }
     }
 
     #[test]
     fn native_and_join_kinds() {
-        assert_eq!(classify_quality(RhoGuardClassification::decidable(NativeHandler, T1Exact)), Q::TrustedNativeGuard);
-        assert_eq!(classify_quality(RhoGuardClassification::decidable(ExternalContract, T2Decidable)), Q::TrustedNativeGuard);
-        assert_eq!(classify_quality(RhoGuardClassification::decidable(RhoNativeJoin, T1Exact)), Q::RuntimeObservation);
+        assert_eq!(
+            classify_quality(RhoGuardClassification::decidable(NativeHandler, T1Exact)),
+            Q::TrustedNativeGuard
+        );
+        assert_eq!(
+            classify_quality(RhoGuardClassification::decidable(ExternalContract, T2Decidable)),
+            Q::TrustedNativeGuard
+        );
+        assert_eq!(
+            classify_quality(RhoGuardClassification::decidable(RhoNativeJoin, T1Exact)),
+            Q::RuntimeObservation
+        );
     }
 
     #[test]
     fn override_flags_take_precedence() {
         let base = RhoGuardClassification::decidable(EffectiveBooleanAlgebra, T1Exact);
         // reject-safe behavioral leg ⇒ RejectSafeApprox even though tier is exact.
-        assert_eq!(classify_quality(RhoGuardClassification { reject_safe: true, ..base }), Q::RejectSafeApprox);
+        assert_eq!(
+            classify_quality(RhoGuardClassification { reject_safe: true, ..base }),
+            Q::RejectSafeApprox
+        );
         // machine-checked beats reject-safe and tier.
         assert_eq!(
-            classify_quality(RhoGuardClassification { reject_safe: true, machine_checked: true, ..base }),
+            classify_quality(RhoGuardClassification {
+                reject_safe: true,
+                machine_checked: true,
+                ..base
+            }),
             Q::MachineCheckedModel
         );
         // runtime observation beats everything.

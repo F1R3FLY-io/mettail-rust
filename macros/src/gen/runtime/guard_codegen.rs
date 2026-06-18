@@ -291,4 +291,3 @@ pub fn generate_awa_evaluation(guard_idx: usize, is_universal: bool) -> TokenStr
         }
     }
 }
-

@@ -46,9 +46,7 @@ pub(crate) fn lower_ac_collection(
     match coll_type {
         None | Some(CollectionType::HashBag) => {},
         Some(other) => {
-            return Err(format!(
-                "AC collection lowering supports HashBag only, found {other:?}"
-            ));
+            return Err(format!("AC collection lowering supports HashBag only, found {other:?}"));
         },
     }
 

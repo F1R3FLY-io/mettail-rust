@@ -1405,10 +1405,10 @@ fn rc_b_bare_balanced_comparison_in_cast_parses() {
     // permutations have valid balanced typings that the engine reaches via the
     // cast's own delegate — all must parse to `BoolToInt(...)`.)
     let must_parse = &[
-        r#"int(b >= 2 <= b >= 3)"#,        // <= middle (drives the synthesis)
+        r#"int(b >= 2 <= b >= 3)"#, // <= middle (drives the synthesis)
         r#"int(b >= 2039068204 <= b >= -2074699644)"#, // the original report input
-        r#"int(b <= 2 >= b != 3)"#,        // >= middle
-        r#"int(b != 2 <= b >= 3)"#,        // != middle
+        r#"int(b <= 2 >= b != 3)"#, // >= middle
+        r#"int(b != 2 <= b >= 3)"#, // != middle
     ];
     for input in must_parse {
         mettail_runtime::clear_var_cache();

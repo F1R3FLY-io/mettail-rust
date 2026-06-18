@@ -419,9 +419,7 @@ pub fn collect_guard_obligations(def: &LanguageDef) -> Vec<RhoGuardObligation> {
 /// `default_classification` + the `default_quality_per_obligation_kind` test),
 /// so this returns an empty vector — the wiring is real and fail-closed without
 /// changing behavior for the existing obligation kinds.
-pub fn guard_quality_blockers_for(
-    qualities: &[RhoGuardDispositionQuality],
-) -> Vec<RhoFlipBlocker> {
+pub fn guard_quality_blockers_for(qualities: &[RhoGuardDispositionQuality]) -> Vec<RhoFlipBlocker> {
     qualities
         .iter()
         .filter(|disposition| disposition.quality.refuses_production_default())

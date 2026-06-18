@@ -20,8 +20,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::symbolic::BooleanAlgebra;
 use crate::sym_tree::{SymTerm, SymbolicTreeAutomaton, TreeTrans};
+use crate::symbolic::BooleanAlgebra;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Output builders
@@ -43,7 +43,11 @@ pub enum PayloadOut<A: BooleanAlgebra, B: BooleanAlgebra> {
 pub enum OutputBuilder<A: BooleanAlgebra, B: BooleanAlgebra> {
     /// Emit `constructor` with `payload` and the transduced children selected
     /// (and reordered) by `children` (indices into the input node's children).
-    Build { constructor: String, payload: PayloadOut<A, B>, children: Vec<usize> },
+    Build {
+        constructor: String,
+        payload: PayloadOut<A, B>,
+        children: Vec<usize>,
+    },
     /// Emit the `i`-th transduced child directly (delete this node).
     Project(usize),
 }
@@ -141,18 +145,21 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> SymbolicTreeTransducer<A, B> {
                     PayloadOut::Const(d) => Some(d.clone()),
                     PayloadOut::Map(f) => Some(f(input_payload.as_ref()?)),
                 };
-                let kids: Option<Vec<SymTerm<B::Domain>>> =
-                    children.iter().map(|&i| child_outputs.get(i).cloned()).collect();
-                Some(SymTerm { constructor: constructor.clone(), payload: pl, children: kids? })
+                let kids: Option<Vec<SymTerm<B::Domain>>> = children
+                    .iter()
+                    .map(|&i| child_outputs.get(i).cloned())
+                    .collect();
+                Some(SymTerm {
+                    constructor: constructor.clone(),
+                    payload: pl,
+                    children: kids?,
+                })
             },
         }
     }
 
     /// Bottom-up: state → output terms producible at this node in that state.
-    fn run_outputs(
-        &self,
-        node: &SymTerm<A::Domain>,
-    ) -> HashMap<usize, Vec<SymTerm<B::Domain>>> {
+    fn run_outputs(&self, node: &SymTerm<A::Domain>) -> HashMap<usize, Vec<SymTerm<B::Domain>>> {
         let child_maps: Vec<HashMap<usize, Vec<SymTerm<B::Domain>>>> =
             node.children.iter().map(|c| self.run_outputs(c)).collect();
         let mut result: HashMap<usize, Vec<SymTerm<B::Domain>>> = HashMap::new();
@@ -249,7 +256,10 @@ where
     B: BooleanAlgebra,
     C: BooleanAlgebra,
 {
-    t1.transduce(input).iter().flat_map(|mid| t2.transduce(mid)).collect()
+    t1.transduce(input)
+        .iter()
+        .flat_map(|mid| t2.transduce(mid))
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,8 +276,10 @@ mod tests {
 
     /// A transducer that doubles every Lit payload and rebuilds Pairs.
     fn doubler() -> SymbolicTreeTransducer<IntervalAlgebra, IntervalAlgebra> {
-        let mut t =
-            SymbolicTreeTransducer::new(IntervalAlgebra::new(0, 1000), IntervalAlgebra::new(0, 1000));
+        let mut t = SymbolicTreeTransducer::new(
+            IntervalAlgebra::new(0, 1000),
+            IntervalAlgebra::new(0, 1000),
+        );
         t.register("Lit", 0);
         t.register("Pair", 2);
         // A single recursive "term" state so the transducer handles arbitrary
@@ -311,8 +323,10 @@ mod tests {
     #[test]
     fn project_deletes_node() {
         // A transducer that projects Pair(a, b) to its first child.
-        let mut t =
-            SymbolicTreeTransducer::new(IntervalAlgebra::new(0, 1000), IntervalAlgebra::new(0, 1000));
+        let mut t = SymbolicTreeTransducer::new(
+            IntervalAlgebra::new(0, 1000),
+            IntervalAlgebra::new(0, 1000),
+        );
         t.register("Lit", 0);
         t.register("Pair", 2);
         let q = t.add_state();
@@ -351,8 +365,10 @@ mod tests {
     #[test]
     fn not_total_when_guard_restricts() {
         // Only transduces Lits in [0,10); larger Lits have no output.
-        let mut t =
-            SymbolicTreeTransducer::new(IntervalAlgebra::new(0, 1000), IntervalAlgebra::new(0, 1000));
+        let mut t = SymbolicTreeTransducer::new(
+            IntervalAlgebra::new(0, 1000),
+            IntervalAlgebra::new(0, 1000),
+        );
         t.register("Lit", 0);
         let q = t.add_state();
         t.set_accepting(q);

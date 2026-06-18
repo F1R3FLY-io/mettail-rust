@@ -94,7 +94,11 @@ impl<A: BooleanAlgebra> BagAlgebra<A> {
 
     /// `∀ e ∈ bag. e ⊨ p` — equivalently, zero elements satisfy `¬p`.
     pub fn all(&self, p: A::Predicate) -> BagPred<A::Predicate> {
-        BagPred::Count { class: self.elem.not(&p), lo: 0, hi: Some(0) }
+        BagPred::Count {
+            class: self.elem.not(&p),
+            lo: 0,
+            hi: Some(0),
+        }
     }
 
     /// `∃ e ∈ bag. e ⊨ p` — at least one element satisfies `p`.
@@ -125,7 +129,11 @@ impl<A: BooleanAlgebra> BagAlgebra<A> {
     }
 
     /// For each `Count` class, the indices of the minterms it covers.
-    fn covering(&self, classes: &[A::Predicate], ms: &[A::Predicate]) -> HashMap<A::Predicate, Vec<usize>> {
+    fn covering(
+        &self,
+        classes: &[A::Predicate],
+        ms: &[A::Predicate],
+    ) -> HashMap<A::Predicate, Vec<usize>> {
         let mut map = HashMap::new();
         for class in classes {
             let cover: Vec<usize> = ms
@@ -193,7 +201,10 @@ impl<A: BooleanAlgebra> BagAlgebra<A> {
     }
 
     /// Search for a feasible count vector; returns it if one exists.
-    fn feasible_counts(&self, pred: &BagPred<A::Predicate>) -> Option<(Vec<A::Predicate>, Vec<u64>)> {
+    fn feasible_counts(
+        &self,
+        pred: &BagPred<A::Predicate>,
+    ) -> Option<(Vec<A::Predicate>, Vec<u64>)> {
         let mut classes = Vec::new();
         self.collect_classes(pred, &mut classes);
         let ms = minterms(&self.elem, &classes);
@@ -303,7 +314,11 @@ mod tests {
     fn count_and_size() {
         let alg = bag_alg();
         // at least 2 elements in [50,100)
-        let p = BagPred::Count { class: IntervalPred::Range(50, 100), lo: 2, hi: None };
+        let p = BagPred::Count {
+            class: IntervalPred::Range(50, 100),
+            lo: 2,
+            hi: None,
+        };
         assert!(alg.evaluate(&p, &vec![60, 70, 1]));
         assert!(!alg.evaluate(&p, &vec![60, 1]));
         assert!(alg.is_satisfiable(&p));
@@ -332,8 +347,16 @@ mod tests {
         // at least 1 in [0,60) AND at least 1 in [40,100); the overlap [40,60)
         // could satisfy both with a single element, or two disjoint elements.
         let p = alg.and(
-            &BagPred::Count { class: IntervalPred::Range(0, 60), lo: 1, hi: None },
-            &BagPred::Count { class: IntervalPred::Range(40, 100), lo: 1, hi: None },
+            &BagPred::Count {
+                class: IntervalPred::Range(0, 60),
+                lo: 1,
+                hi: None,
+            },
+            &BagPred::Count {
+                class: IntervalPred::Range(40, 100),
+                lo: 1,
+                hi: None,
+            },
         );
         assert!(alg.is_satisfiable(&p));
         assert!(alg.evaluate(&p, &vec![50])); // single element covers both
@@ -348,8 +371,16 @@ mod tests {
         let alg = bag_alg();
         // exactly 0 AND at least 1 in the same class → unsat
         let p = alg.and(
-            &BagPred::Count { class: IntervalPred::Range(0, 100), lo: 0, hi: Some(0) },
-            &BagPred::Count { class: IntervalPred::Range(0, 100), lo: 1, hi: None },
+            &BagPred::Count {
+                class: IntervalPred::Range(0, 100),
+                lo: 0,
+                hi: Some(0),
+            },
+            &BagPred::Count {
+                class: IntervalPred::Range(0, 100),
+                lo: 1,
+                hi: None,
+            },
         );
         assert!(!alg.is_satisfiable(&p));
     }
@@ -390,7 +421,9 @@ impl Singleton for crate::symbolic::CharClassAlgebra {
     }
 }
 
-impl<P: crate::ordered_field::OrderedPoint> Singleton for crate::ordered_field::OrderedFieldAlgebra<P> {
+impl<P: crate::ordered_field::OrderedPoint> Singleton
+    for crate::ordered_field::OrderedFieldAlgebra<P>
+{
     fn point(&self, value: &P) -> crate::ordered_field::OrderedFieldPred<P> {
         crate::ordered_field::OrderedFieldPred::point(value.clone())
     }
@@ -434,7 +467,12 @@ pub enum MapPred<KP, VP> {
     /// Satisfied by no map.
     False,
     /// `lo ≤ #{ (k,v) : k ⊨ key_class ∧ v ⊨ val_class } ≤ hi`.
-    CountEntries { key_class: KP, val_class: VP, lo: u64, hi: Option<u64> },
+    CountEntries {
+        key_class: KP,
+        val_class: VP,
+        lo: u64,
+        hi: Option<u64>,
+    },
     /// Conjunction.
     And(Box<MapPred<KP, VP>>, Box<MapPred<KP, VP>>),
     /// Disjunction.
@@ -470,12 +508,22 @@ impl<K: Singleton, V: BooleanAlgebra> MapAlgebra<K, V> {
 
     /// `∃ (k,_) ∈ map. k ⊨ kp`.
     pub fn has_key(&self, kp: K::Predicate) -> MapPred<K::Predicate, V::Predicate> {
-        MapPred::CountEntries { key_class: kp, val_class: self.val.true_pred(), lo: 1, hi: None }
+        MapPred::CountEntries {
+            key_class: kp,
+            val_class: self.val.true_pred(),
+            lo: 1,
+            hi: None,
+        }
     }
 
     /// `∃ (k,v) ∈ map. k ⊨ kp ∧ v ⊨ vp`.
     pub fn entry(&self, kp: K::Predicate, vp: V::Predicate) -> MapPred<K::Predicate, V::Predicate> {
-        MapPred::CountEntries { key_class: kp, val_class: vp, lo: 1, hi: None }
+        MapPred::CountEntries {
+            key_class: kp,
+            val_class: vp,
+            lo: 1,
+            hi: None,
+        }
     }
 
     /// `∀ (_,v) ∈ map. v ⊨ vp` (no entry has a value satisfying `¬vp`).
@@ -604,8 +652,10 @@ impl<K: Singleton, V: BooleanAlgebra> MapAlgebra<K, V> {
         let vj = val_ms.len();
 
         // Distinct-key availability per key-minterm (capped at `cap`).
-        let avail: Vec<u64> =
-            key_ms.iter().map(|km| self.distinct_keys(km, cap).len() as u64).collect();
+        let avail: Vec<u64> = key_ms
+            .iter()
+            .map(|km| self.distinct_keys(km, cap).len() as u64)
+            .collect();
 
         // Bounded search over the ki×vj count matrix (each cell in [0, cap]),
         // pruned by the per-key-region distinct-key cap.
@@ -613,8 +663,9 @@ impl<K: Singleton, V: BooleanAlgebra> MapAlgebra<K, V> {
         let mut flat = vec![0u64; total_cells];
         loop {
             // Reshape and check the per-key-region cap.
-            let matrix: Vec<Vec<u64>> =
-                (0..ki).map(|i| flat[i * vj..(i + 1) * vj].to_vec()).collect();
+            let matrix: Vec<Vec<u64>> = (0..ki)
+                .map(|i| flat[i * vj..(i + 1) * vj].to_vec())
+                .collect();
             let cap_ok = (0..ki).all(|i| {
                 let used: u64 = matrix[i].iter().sum();
                 used <= avail[i]

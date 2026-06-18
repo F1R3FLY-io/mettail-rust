@@ -375,10 +375,7 @@ mod tests {
 
     #[test]
     fn numeric_string_fast_path() {
-        assert_eq!(
-            numeric_int_bin_i64(&FakeProc::StrLit("42".to_string()), 8i64),
-            Some(42)
-        );
+        assert_eq!(numeric_int_bin_i64(&FakeProc::StrLit("42".to_string()), 8i64), Some(42));
     }
 
     #[test]
@@ -396,10 +393,7 @@ mod tests {
     #[test]
     fn object_output_builds_value_or_err() {
         // good cast → value Proc
-        assert_eq!(
-            proc_int_bin(&FakeProc::IntLit(7), 8i64),
-            FakeProc::IntLit(7)
-        );
+        assert_eq!(proc_int_bin(&FakeProc::IntLit(7), 8i64), FakeProc::IntLit(7));
         // bad cast → Err Proc (NOT a deferral — object folds fold a bad cast to Err)
         assert_eq!(proc_int_bin(&FakeProc::NonNumeric, 8i64), FakeProc::Err);
     }

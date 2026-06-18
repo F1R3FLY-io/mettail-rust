@@ -184,7 +184,8 @@ mod tests {
             obligation: "predicate:mystery".to_string(),
             quality: RhoGuardQuality::Unknown,
         };
-        let decision = decide_rho_flip(passing_gates(), &clean_report(), vec![guard_blocker.clone()]);
+        let decision =
+            decide_rho_flip(passing_gates(), &clean_report(), vec![guard_blocker.clone()]);
 
         assert!(!decision.can_flip_to_rho());
         assert_eq!(decision.blockers, vec![guard_blocker]);

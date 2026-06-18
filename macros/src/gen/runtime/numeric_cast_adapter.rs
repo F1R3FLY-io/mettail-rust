@@ -163,10 +163,7 @@ fn recognize_cast_fold<'a>(
 /// The base category of a `Simple` typed param (`a:Proc` → `Proc`).
 fn simple_param_cat(p: &TermParam) -> Option<&Ident> {
     match p {
-        TermParam::Simple {
-            ty: TypeExpr::Base(c),
-            ..
-        } => Some(c),
+        TermParam::Simple { ty: TypeExpr::Base(c), .. } => Some(c),
         _ => None,
     }
 }
@@ -313,10 +310,16 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
         use std::collections::HashMap;
         let mut counts: HashMap<String, (&Ident, usize)> = HashMap::new();
         for c in &wrap_cands {
-            let e = counts.entry(c.proc_cat.to_string()).or_insert((c.proc_cat, 0));
+            let e = counts
+                .entry(c.proc_cat.to_string())
+                .or_insert((c.proc_cat, 0));
             e.1 += 1;
         }
-        counts.values().max_by_key(|(_, n)| *n).map(|(id, _)| *id).expect("non-empty")
+        counts
+            .values()
+            .max_by_key(|(_, n)| *n)
+            .map(|(id, _)| *id)
+            .expect("non-empty")
     };
     let wrappers: Vec<Wrapper<'_>> = wrap_cands
         .iter()
@@ -332,9 +335,8 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
         })
         .collect();
 
-    let wrapper_for_inner = |inner: &Ident| -> Option<&Wrapper<'_>> {
-        wrappers.iter().find(|w| w.inner_cat == inner)
-    };
+    let wrapper_for_inner =
+        |inner: &Ident| -> Option<&Wrapper<'_>> { wrappers.iter().find(|w| w.inner_cat == inner) };
 
     // 2. Numeric-cast fold rules (the redex constructors), recognized PURELY BY SHAPE — no keyword,
     //    label, or body fn-name is ever read (see `recognize_cast_fold`). Native casts carry an
@@ -373,16 +375,20 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
             .find(|r| &r.label == f.label && &r.category == f.output_cat)?;
         simple_params(rule)?.get(1).copied()
     });
-    let int_kind = int_cat.and_then(|c| kind_of(language, c)).unwrap_or(NativeKind::Int64);
+    let int_kind = int_cat
+        .and_then(|c| kind_of(language, c))
+        .unwrap_or(NativeKind::Int64);
 
     // ── CastWidth impls (only if a binary cast exists, i.e. there is a width category) ──
     let cast_width_impls = match int_cat {
         Some(ic) => {
             let lit = match language.get_type(ic).and_then(|t| t.native_type.as_ref()) {
                 Some(nt) => generate_literal_label(nt),
-                None => return quote!(compile_error!(
+                None => {
+                    return quote!(compile_error!(
                     "numeric-cast width category has no native literal type"
-                );),
+                );)
+                },
             };
             quote! {
                 #gate
@@ -521,21 +527,23 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
     };
 
     // ── as_evaluable_bigrat: iff a BigRat wrapper exists (try_eval on its inner) ──
-    let as_evaluable_bigrat: TokenStream =
-        match wrappers.iter().find(|w| w.kind == NativeKind::CanonicalBigRat) {
-            Some(w) => {
-                let pv = w.proc_variant;
-                quote! {
-                    fn as_evaluable_bigrat(&self) -> ::core::option::Option<::mettail_runtime::CanonicalBigRat> {
-                        match self {
-                            #proc_cat::#pv(r) => r.as_ref().try_eval(),
-                            _ => ::core::option::Option::None,
-                        }
+    let as_evaluable_bigrat: TokenStream = match wrappers
+        .iter()
+        .find(|w| w.kind == NativeKind::CanonicalBigRat)
+    {
+        Some(w) => {
+            let pv = w.proc_variant;
+            quote! {
+                fn as_evaluable_bigrat(&self) -> ::core::option::Option<::mettail_runtime::CanonicalBigRat> {
+                    match self {
+                        #proc_cat::#pv(r) => r.as_ref().try_eval(),
+                        _ => ::core::option::Option::None,
                     }
                 }
-            },
-            None => quote!(),
-        };
+            }
+        },
+        None => quote!(),
+    };
 
     // ── as_int_bin / as_float_bin / as_fixed_bin: the nested same-op fast-path consulted by the
     //    NATIVE reductions. Emitted only for native binary casts of the given arity — the redex
@@ -596,7 +604,10 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
     let has_object = folds.iter().any(|f| f.flavor == Flavor::Object);
     let cast_result: TokenStream = if has_object {
         // builder for an arity → the wrapper constructor + inner literal.
-        let builder = |arity: Arity, kind_filter: &dyn Fn(NativeKind) -> bool, val: &Ident| -> TokenStream {
+        let builder = |arity: Arity,
+                       kind_filter: &dyn Fn(NativeKind) -> bool,
+                       val: &Ident|
+         -> TokenStream {
             match wrappers.iter().find(|w| kind_filter(w.kind)) {
                 Some(w) => {
                     let pv = w.proc_variant;
@@ -614,9 +625,9 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
         let err_ctor = language.terms.iter().find(|r| {
             &r.category == proc_cat
                 && r.label == "Err"
-                && r.term_context.as_ref().map_or(true, |ps| {
-                    ps.iter().all(|p| !matches!(p, TermParam::Simple { .. }))
-                })
+                && r.term_context
+                    .as_ref()
+                    .map_or(true, |ps| ps.iter().all(|p| !matches!(p, TermParam::Simple { .. })))
         });
         let err_expr = match err_ctor {
             Some(r) => {
@@ -629,10 +640,30 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
         };
         let n = Ident::new("n", proc_macro2::Span::call_site());
         let f = Ident::new("f", proc_macro2::Span::call_site());
-        let from_int = builder(Arity::Int, &|k| matches!(k, NativeKind::Int32 | NativeKind::Int64 | NativeKind::Int8 | NativeKind::Int16 | NativeKind::Int128 | NativeKind::Isize), &n);
-        let from_uint = builder(Arity::UInt, &|k| matches!(k, NativeKind::UInt32 | NativeKind::UInt8 | NativeKind::UInt16), &n);
-        let from_float = builder(Arity::Float, &|k| matches!(k, NativeKind::Float64 | NativeKind::Float32), &f);
-        let from_fixed = builder(Arity::Fixed, &|k| matches!(k, NativeKind::CanonicalFixedPoint), &f);
+        let from_int = builder(
+            Arity::Int,
+            &|k| {
+                matches!(
+                    k,
+                    NativeKind::Int32
+                        | NativeKind::Int64
+                        | NativeKind::Int8
+                        | NativeKind::Int16
+                        | NativeKind::Int128
+                        | NativeKind::Isize
+                )
+            },
+            &n,
+        );
+        let from_uint = builder(
+            Arity::UInt,
+            &|k| matches!(k, NativeKind::UInt32 | NativeKind::UInt8 | NativeKind::UInt16),
+            &n,
+        );
+        let from_float =
+            builder(Arity::Float, &|k| matches!(k, NativeKind::Float64 | NativeKind::Float32), &f);
+        let from_fixed =
+            builder(Arity::Fixed, &|k| matches!(k, NativeKind::CanonicalFixedPoint), &f);
         let from_bigint = builder(Arity::BigInt, &|k| matches!(k, NativeKind::CanonicalBigInt), &n);
         let from_bigrat = builder(Arity::BigRat, &|k| matches!(k, NativeKind::CanonicalBigRat), &n);
         quote! {
@@ -747,7 +778,10 @@ mod tests {
     #[test]
     fn any_grammar_derives_object_cast_adapter_with_zero_glue() {
         let out = generate_numeric_cast_adapter(&lang(OBJECT_CAST_GRAMMAR)).to_string();
-        assert!(out.contains("CastWidth"), "object cast still derives CastWidth (width category)");
+        assert!(
+            out.contains("CastWidth"),
+            "object cast still derives CastWidth (width category)"
+        );
         assert!(out.contains("ProcToNumericInput"), "object cast derives ProcToNumericInput");
         // Object-output casts build a result `Proc` via `CastResult` (`Err` on a bad cast):
         assert!(out.contains("CastResult"), "object cast must emit CastResult: {out}");

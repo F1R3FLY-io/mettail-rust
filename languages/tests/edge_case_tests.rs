@@ -52,7 +52,6 @@ fn lang_parses(lang: &dyn Language, input: &str) {
 // cross-category comparison operators.
 
 mod cross_cat_ops_inside_casts {
-    
 
     // 1A: Comparison operators inside str()
 
@@ -63,7 +62,6 @@ mod cross_cat_ops_inside_casts {
     // 1D: Same-category arithmetic inside casts (verify no regression)
 
     // 1E: Complex expressions inside casts
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -134,7 +132,6 @@ mod operator_chains_after_casts {
     fn sin_add_cos() {
         calc_parses("sin(1.0) + cos(1.0)");
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -158,7 +155,6 @@ mod chained_casts_with_operators {
     fn str_of_int_cast_mul_plus() {
         calc_parses("str(int(3.14) * 2 + 1)");
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -177,7 +173,6 @@ mod string_edge_cases {
     fn str_cast_add_str_cast() {
         calc_parses(r#"str(42) + str(43)"#);
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -196,7 +191,6 @@ mod whitespace_variations {
     fn str_cast_inner_spaces() {
         calc_parses("str(  1 + 2  )");
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -402,8 +396,6 @@ mod ambient_edge_cases {
 #[cfg(feature = "rhocalc")]
 mod rhocalc_edge_cases {
     use mettail_languages::rhocalc::Proc;
-    
-    
 
     fn rhocalc_parses(input: &str) {
         mettail_runtime::clear_var_cache();
@@ -483,9 +475,8 @@ mod rhocalc_edge_cases {
 mod composition_edge_cases {
     use super::*;
     use mettail_languages::composition::composed_lang::CalcLambdaLanguage;
-    
+
     use mettail_languages::composition::grammar_import_lang::ImportedMathLanguage;
-    
 
     #[test]
     fn imported_math_div_add_precedence() {
@@ -507,7 +498,6 @@ mod composition_edge_cases {
 mod led_test_edge_cases {
     use mettail_languages::led_test::LedTestLanguage;
     use mettail_runtime::Language;
-    
 
     fn led_parses(input: &str) {
         mettail_runtime::clear_var_cache();
@@ -546,7 +536,6 @@ mod led_test_edge_cases {
 // ════════════════════════════════════════════════════════════════════════════════
 
 mod precedence_associativity_stress {
-    
 
     #[test]
     fn right_assoc_power() {
@@ -558,5 +547,4 @@ mod precedence_associativity_stress {
         let result = Int::parse("2 ^ 3 ^ 2").expect("should parse");
         assert_eq!(result.eval(), 512, "^ should be right-associative");
     }
-
 }

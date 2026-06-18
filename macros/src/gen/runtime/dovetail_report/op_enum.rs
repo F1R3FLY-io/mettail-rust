@@ -67,8 +67,7 @@ fn literal_payload_type(language: &LanguageDef, category: &Ident) -> Option<Toke
     let native_type = lang_type.native_type.as_ref()?;
 
     if let Some(collection_kind) = &lang_type.collection_kind {
-        let elem = collection_element_type(native_type)
-            .unwrap_or_else(|| quote! { #native_type });
+        let elem = collection_element_type(native_type).unwrap_or_else(|| quote! { #native_type });
         return Some(match collection_kind {
             CollectionCategory::List(_) => quote! { #native_type },
             CollectionCategory::Bag(_) => quote! { #native_type },
@@ -176,7 +175,13 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
                     payload: Option<TokenStream>,
                     write_payload: TokenStream,
                     display: String| {
-        let v = OpVariant { ident, payload, disc, write_payload, display };
+        let v = OpVariant {
+            ident,
+            payload,
+            disc,
+            write_payload,
+            display,
+        };
         disc += 1;
         variants.push(v);
     };

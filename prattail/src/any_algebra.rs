@@ -30,9 +30,7 @@ use num_rational::BigRational;
 use crate::collection_algebra::{BagAlgebra, BagPred, MapAlgebra, MapPred, Singleton};
 use crate::kat::BooleanTest;
 use crate::ordered_field::{OrderedF64, OrderedFieldAlgebra, OrderedFieldPred};
-use crate::product_nary::{
-    NaryProductAlgebra, NaryProductPred, SumAlgebra, SumPred, SumValue,
-};
+use crate::product_nary::{NaryProductAlgebra, NaryProductPred, SumAlgebra, SumPred, SumValue};
 use crate::regex_sfa::{RegexAlgebra, RegexPred};
 use crate::string_algebra::{StrPred, StringAlgebra};
 use crate::sym_tree::{SymTerm, TreeAlgebra, TreePred};
@@ -202,9 +200,11 @@ impl AnyPred {
             AnyPred::Bag(_) => Some(Sort::Bag),
             AnyPred::Tree(_) => Some(Sort::Tree),
             AnyPred::Map(_) => Some(Sort::Map),
-            AnyPred::True | AnyPred::False | AnyPred::And(..) | AnyPred::Or(..) | AnyPred::Not(_) => {
-                None
-            },
+            AnyPred::True
+            | AnyPred::False
+            | AnyPred::And(..)
+            | AnyPred::Or(..)
+            | AnyPred::Not(_) => None,
         }
     }
 
@@ -234,46 +234,102 @@ where
 }
 
 fn int_leaf(p: &AnyPred) -> Option<IntervalPred> {
-    if let AnyPred::Int(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::Int(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn char_leaf(p: &AnyPred) -> Option<CharClassPred> {
-    if let AnyPred::Char(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::Char(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn bool_leaf(p: &AnyPred) -> Option<BooleanTest> {
-    if let AnyPred::Bool(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::Bool(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn bigint_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigInt>> {
-    if let AnyPred::BigInt(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::BigInt(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn bigrat_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigRational>> {
-    if let AnyPred::BigRat(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::BigRat(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn fixed_leaf(p: &AnyPred) -> Option<OrderedFieldPred<BigRational>> {
-    if let AnyPred::Fixed(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::Fixed(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn float_leaf(p: &AnyPred) -> Option<OrderedFieldPred<OrderedF64>> {
-    if let AnyPred::Float(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::Float(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn str_leaf(p: &AnyPred) -> Option<StrPred> {
-    if let AnyPred::Str(x) = p { Some(x.clone()) } else { None }
+    if let AnyPred::Str(x) = p {
+        Some(x.clone())
+    } else {
+        None
+    }
 }
 fn product_leaf(p: &AnyPred) -> Option<NaryProductPred<AnyPred>> {
-    if let AnyPred::Product(x) = p { Some((**x).clone()) } else { None }
+    if let AnyPred::Product(x) = p {
+        Some((**x).clone())
+    } else {
+        None
+    }
 }
 fn sum_leaf(p: &AnyPred) -> Option<SumPred<AnyPred>> {
-    if let AnyPred::Sum(x) = p { Some((**x).clone()) } else { None }
+    if let AnyPred::Sum(x) = p {
+        Some((**x).clone())
+    } else {
+        None
+    }
 }
 fn list_leaf(p: &AnyPred) -> Option<RegexPred<AnyPred>> {
-    if let AnyPred::List(x) = p { Some((**x).clone()) } else { None }
+    if let AnyPred::List(x) = p {
+        Some((**x).clone())
+    } else {
+        None
+    }
 }
 fn bag_leaf(p: &AnyPred) -> Option<BagPred<AnyPred>> {
-    if let AnyPred::Bag(x) = p { Some((**x).clone()) } else { None }
+    if let AnyPred::Bag(x) = p {
+        Some((**x).clone())
+    } else {
+        None
+    }
 }
 fn tree_leaf(p: &AnyPred) -> Option<TreePred<AnyPred>> {
-    if let AnyPred::Tree(x) = p { Some((**x).clone()) } else { None }
+    if let AnyPred::Tree(x) = p {
+        Some((**x).clone())
+    } else {
+        None
+    }
 }
 fn map_leaf(p: &AnyPred) -> Option<MapPred<AnyPred, AnyPred>> {
-    if let AnyPred::Map(x) = p { Some((**x).clone()) } else { None }
+    if let AnyPred::Map(x) = p {
+        Some((**x).clone())
+    } else {
+        None
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -491,39 +547,45 @@ impl BooleanAlgebra for AnyAlgebra {
             AnyAlgebra::Int(g) => g.witness(&fold_pred(g, a, &int_leaf)).map(AnyDomain::Int),
             AnyAlgebra::Char(g) => g.witness(&fold_pred(g, a, &char_leaf)).map(AnyDomain::Char),
             AnyAlgebra::Bool(g) => g.witness(&fold_pred(g, a, &bool_leaf)).map(AnyDomain::Bool),
-            AnyAlgebra::BigInt(g) => {
-                g.witness(&fold_pred(g, a, &bigint_leaf)).map(AnyDomain::BigInt)
-            },
-            AnyAlgebra::BigRat(g) => {
-                g.witness(&fold_pred(g, a, &bigrat_leaf)).map(AnyDomain::BigRat)
-            },
-            AnyAlgebra::Fixed(g) => g.witness(&fold_pred(g, a, &fixed_leaf)).map(AnyDomain::Fixed),
-            AnyAlgebra::Float(g) => g.witness(&fold_pred(g, a, &float_leaf)).map(AnyDomain::Float),
+            AnyAlgebra::BigInt(g) => g
+                .witness(&fold_pred(g, a, &bigint_leaf))
+                .map(AnyDomain::BigInt),
+            AnyAlgebra::BigRat(g) => g
+                .witness(&fold_pred(g, a, &bigrat_leaf))
+                .map(AnyDomain::BigRat),
+            AnyAlgebra::Fixed(g) => g
+                .witness(&fold_pred(g, a, &fixed_leaf))
+                .map(AnyDomain::Fixed),
+            AnyAlgebra::Float(g) => g
+                .witness(&fold_pred(g, a, &float_leaf))
+                .map(AnyDomain::Float),
             AnyAlgebra::Str(g) => g.witness(&fold_pred(g, a, &str_leaf)).map(AnyDomain::Str),
-            AnyAlgebra::Product(g) => {
-                g.witness(&fold_pred(g.as_ref(), a, &product_leaf)).map(AnyDomain::Product)
-            },
-            AnyAlgebra::Sum(g) => {
-                g.witness(&fold_pred(g.as_ref(), a, &sum_leaf)).map(|v| AnyDomain::Sum(Box::new(v)))
-            },
-            AnyAlgebra::List(g) => {
-                g.witness(&fold_pred(g.as_ref(), a, &list_leaf)).map(AnyDomain::List)
-            },
-            AnyAlgebra::Bag(g) => {
-                g.witness(&fold_pred(g.as_ref(), a, &bag_leaf)).map(AnyDomain::Bag)
-            },
-            AnyAlgebra::Tree(g) => {
-                g.witness(&fold_pred(g.as_ref(), a, &tree_leaf)).map(|v| AnyDomain::Tree(Box::new(v)))
-            },
-            AnyAlgebra::Map(g) => {
-                g.witness(&fold_pred(g.as_ref(), a, &map_leaf)).map(AnyDomain::Map)
-            },
+            AnyAlgebra::Product(g) => g
+                .witness(&fold_pred(g.as_ref(), a, &product_leaf))
+                .map(AnyDomain::Product),
+            AnyAlgebra::Sum(g) => g
+                .witness(&fold_pred(g.as_ref(), a, &sum_leaf))
+                .map(|v| AnyDomain::Sum(Box::new(v))),
+            AnyAlgebra::List(g) => g
+                .witness(&fold_pred(g.as_ref(), a, &list_leaf))
+                .map(AnyDomain::List),
+            AnyAlgebra::Bag(g) => g
+                .witness(&fold_pred(g.as_ref(), a, &bag_leaf))
+                .map(AnyDomain::Bag),
+            AnyAlgebra::Tree(g) => g
+                .witness(&fold_pred(g.as_ref(), a, &tree_leaf))
+                .map(|v| AnyDomain::Tree(Box::new(v))),
+            AnyAlgebra::Map(g) => g
+                .witness(&fold_pred(g.as_ref(), a, &map_leaf))
+                .map(AnyDomain::Map),
         }
     }
 
     fn evaluate(&self, pred: &AnyPred, elem: &AnyDomain) -> bool {
         match (self, elem) {
-            (AnyAlgebra::Int(g), AnyDomain::Int(v)) => g.evaluate(&fold_pred(g, pred, &int_leaf), v),
+            (AnyAlgebra::Int(g), AnyDomain::Int(v)) => {
+                g.evaluate(&fold_pred(g, pred, &int_leaf), v)
+            },
             (AnyAlgebra::Char(g), AnyDomain::Char(v)) => {
                 g.evaluate(&fold_pred(g, pred, &char_leaf), v)
             },
@@ -542,7 +604,9 @@ impl BooleanAlgebra for AnyAlgebra {
             (AnyAlgebra::Float(g), AnyDomain::Float(v)) => {
                 g.evaluate(&fold_pred(g, pred, &float_leaf), v)
             },
-            (AnyAlgebra::Str(g), AnyDomain::Str(v)) => g.evaluate(&fold_pred(g, pred, &str_leaf), v),
+            (AnyAlgebra::Str(g), AnyDomain::Str(v)) => {
+                g.evaluate(&fold_pred(g, pred, &str_leaf), v)
+            },
             (AnyAlgebra::Product(g), AnyDomain::Product(v)) => {
                 g.evaluate(&fold_pred(g.as_ref(), pred, &product_leaf), v)
             },
@@ -598,12 +662,9 @@ impl Singleton for AnyAlgebra {
                 }
                 AnyPred::Product(Box::new(acc))
             },
-            (AnyAlgebra::Sum(g), AnyDomain::Sum(v)) if v.tag < g.variants.len() => {
-                AnyPred::Sum(Box::new(SumPred::InVariant(
-                    v.tag,
-                    g.variants[v.tag].point(&v.payload),
-                )))
-            },
+            (AnyAlgebra::Sum(g), AnyDomain::Sum(v)) if v.tag < g.variants.len() => AnyPred::Sum(
+                Box::new(SumPred::InVariant(v.tag, g.variants[v.tag].point(&v.payload))),
+            ),
             (AnyAlgebra::List(g), AnyDomain::List(vals)) => {
                 let mut acc = RegexPred::Epsilon;
                 for v in vals {
@@ -633,7 +694,11 @@ impl Singleton for AnyAlgebra {
                     hi: Some(vals.len() as u64),
                 };
                 for (d, count) in groups {
-                    let atom = BagPred::Count { class: g.elem.point(d), lo: count, hi: Some(count) };
+                    let atom = BagPred::Count {
+                        class: g.elem.point(d),
+                        lo: count,
+                        hi: Some(count),
+                    };
                     acc = BagPred::And(Box::new(acc), Box::new(atom));
                 }
                 AnyPred::Bag(Box::new(acc))
@@ -780,18 +845,22 @@ mod tests {
             AnyAlgebra::Str(StringAlgebra::new()),
         ]);
         let any = AnyAlgebra::Sum(Box::new(sum));
-        let p = AnyPred::Sum(Box::new(SumPred::InVariant(
-            0,
-            AnyPred::Int(IntervalPred::Range(0, 10)),
-        )));
-        assert!(
-            any.evaluate(&p, &AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: AnyDomain::Int(5) })))
-        );
-        assert!(!any
-            .evaluate(&p, &AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: AnyDomain::Int(50) }))));
+        let p =
+            AnyPred::Sum(Box::new(SumPred::InVariant(0, AnyPred::Int(IntervalPred::Range(0, 10)))));
+        assert!(any.evaluate(
+            &p,
+            &AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: AnyDomain::Int(5) }))
+        ));
         assert!(!any.evaluate(
             &p,
-            &AnyDomain::Sum(Box::new(SumValue { tag: 1, payload: AnyDomain::Str("x".to_string()) }))
+            &AnyDomain::Sum(Box::new(SumValue { tag: 0, payload: AnyDomain::Int(50) }))
+        ));
+        assert!(!any.evaluate(
+            &p,
+            &AnyDomain::Sum(Box::new(SumValue {
+                tag: 1,
+                payload: AnyDomain::Str("x".to_string())
+            }))
         ));
         assert!(any.is_satisfiable(&p));
     }
@@ -830,8 +899,11 @@ mod tests {
     #[test]
     fn tree_combinator_in_any() {
         let arities: HashMap<String, usize> =
-            [("Lit".to_string(), 0usize), ("Pair".to_string(), 2usize)].into_iter().collect();
-        let payloaded: std::collections::HashSet<String> = ["Lit".to_string()].into_iter().collect();
+            [("Lit".to_string(), 0usize), ("Pair".to_string(), 2usize)]
+                .into_iter()
+                .collect();
+        let payloaded: std::collections::HashSet<String> =
+            ["Lit".to_string()].into_iter().collect();
         let tree =
             TreeAlgebra::new(AnyAlgebra::Int(IntervalAlgebra::new(0, 100)), arities, payloaded);
         let any = AnyAlgebra::Tree(Box::new(tree));
@@ -852,7 +924,8 @@ mod tests {
     #[test]
     fn cross_sort_and_is_unsat() {
         let any_int = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
-        let pred = any_int.and(&AnyPred::Int(IntervalPred::True), &AnyPred::Char(CharClassPred::True));
+        let pred =
+            any_int.and(&AnyPred::Int(IntervalPred::True), &AnyPred::Char(CharClassPred::True));
         assert!(!any_int.is_satisfiable(&pred));
     }
 
@@ -905,7 +978,13 @@ mod tests {
         let r = SortRegistry::scalars(0, 256, vec!["p".to_string()]);
         assert_eq!(r.len(), 8);
         for s in [
-            Sort::Int, Sort::Char, Sort::Bool, Sort::BigInt, Sort::BigRat, Sort::Fixed, Sort::Float,
+            Sort::Int,
+            Sort::Char,
+            Sort::Bool,
+            Sort::BigInt,
+            Sort::BigRat,
+            Sort::Fixed,
+            Sort::Float,
             Sort::Str,
         ] {
             assert!(r.contains(s), "missing {s:?}");

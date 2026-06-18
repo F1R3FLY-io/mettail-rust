@@ -164,12 +164,6 @@ fn guarded_rho_plans_end_to_end_with_all_qualities_non_unknown() {
     };
     assert_eq!(quality_for("channel:Name"), RhoGuardQuality::RuntimeObservation);
     assert_eq!(quality_for("join:PGuardedInput"), RhoGuardQuality::RuntimeObservation);
-    assert_eq!(
-        quality_for("predicate:standard-builtins"),
-        RhoGuardQuality::RejectSafeApprox
-    );
-    assert_eq!(
-        quality_for("term:PGuardedInput:guard:guard"),
-        RhoGuardQuality::RejectSafeApprox
-    );
+    assert_eq!(quality_for("predicate:standard-builtins"), RhoGuardQuality::RejectSafeApprox);
+    assert_eq!(quality_for("term:PGuardedInput:guard:guard"), RhoGuardQuality::RejectSafeApprox);
 }

@@ -62,7 +62,11 @@ impl<A: BooleanAlgebra> NaryProductAlgebra<A> {
     /// field algebra's `not`. Out-of-range field indices are treated as the
     /// unsatisfiable atom (so a positive occurrence is `False`, a negated one is
     /// `True`).
-    fn nnf(&self, p: &NaryProductPred<A::Predicate>, negate: bool) -> NaryProductPred<A::Predicate> {
+    fn nnf(
+        &self,
+        p: &NaryProductPred<A::Predicate>,
+        negate: bool,
+    ) -> NaryProductPred<A::Predicate> {
         use NaryProductPred::*;
         match p {
             True => {
@@ -140,7 +144,10 @@ impl<A: BooleanAlgebra> NaryProductAlgebra<A> {
     /// Collapse a disjunct's atoms into a per-field conjoined predicate
     /// (`None` for unconstrained fields). Returns `None` if any field is
     /// unsatisfiable (so the whole disjunct is unsatisfiable).
-    fn field_constraints(&self, disjunct: &[(usize, A::Predicate)]) -> Option<Vec<Option<A::Predicate>>> {
+    fn field_constraints(
+        &self,
+        disjunct: &[(usize, A::Predicate)],
+    ) -> Option<Vec<Option<A::Predicate>>> {
         let mut acc: Vec<Option<A::Predicate>> = vec![None; self.fields.len()];
         for (i, pi) in disjunct {
             if *i >= self.fields.len() {
@@ -449,7 +456,7 @@ mod tests {
         let p = NaryProductPred::Field(1, IntervalPred::True);
         assert!(alg.evaluate(&p, &vec![5, 7])); // component 1 present
         assert!(!alg.evaluate(&p, &vec![5])); // no component 1 → false
-        // out-of-range field reference is never satisfied
+                                              // out-of-range field reference is never satisfied
         let oob = NaryProductPred::Field(5, IntervalPred::True);
         assert!(!alg.is_satisfiable(&oob));
         assert!(!alg.evaluate(&oob, &vec![1, 2]));
@@ -457,15 +464,9 @@ mod tests {
 
     #[test]
     fn sum_per_variant_projection() {
-        let alg = SumAlgebra::new(vec![
-            IntervalAlgebra::new(0, 100),
-            IntervalAlgebra::new(0, 100),
-        ]);
+        let alg = SumAlgebra::new(vec![IntervalAlgebra::new(0, 100), IntervalAlgebra::new(0, 100)]);
         // variant 0 with payload in [10,20), OR variant 1 (any payload)
-        let p = alg.or(
-            &SumPred::InVariant(0, IntervalPred::Range(10, 20)),
-            &SumPred::TagIs(1),
-        );
+        let p = alg.or(&SumPred::InVariant(0, IntervalPred::Range(10, 20)), &SumPred::TagIs(1));
         assert!(alg.is_satisfiable(&p));
         assert!(alg.evaluate(&p, &SumValue { tag: 0, payload: 15 }));
         assert!(!alg.evaluate(&p, &SumValue { tag: 0, payload: 25 }));
@@ -487,10 +488,7 @@ mod tests {
 
     #[test]
     fn sum_negation() {
-        let alg = SumAlgebra::new(vec![
-            IntervalAlgebra::new(0, 100),
-            IntervalAlgebra::new(0, 100),
-        ]);
+        let alg = SumAlgebra::new(vec![IntervalAlgebra::new(0, 100), IntervalAlgebra::new(0, 100)]);
         let tag0 = SumPred::TagIs(0);
         let not_tag0 = alg.not(&tag0);
         // not-tag0 is satisfiable (variant 1 witnesses it).

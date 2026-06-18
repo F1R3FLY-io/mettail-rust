@@ -356,8 +356,10 @@ where
         // empty DNF is Unsat; a DontKnow on either leg propagates.
         let mut acc = Sat3::Unsat;
         for (sa, ba) in &a.0 {
-            let rect =
-                self.structural.is_satisfiable_3v(sa).and(self.behavioral.is_satisfiable_3v(ba));
+            let rect = self
+                .structural
+                .is_satisfiable_3v(sa)
+                .and(self.behavioral.is_satisfiable_3v(ba));
             acc = acc.or(rect);
         }
         acc
@@ -371,8 +373,7 @@ where
 
     fn witness(&self, a: &Self::Predicate) -> Option<Self::Domain> {
         for (sa, ba) in &a.0 {
-            if let (Some(ds), Some(db)) =
-                (self.structural.witness(sa), self.behavioral.witness(ba))
+            if let (Some(ds), Some(db)) = (self.structural.witness(sa), self.behavioral.witness(ba))
             {
                 return Some((ds, db));
             }
@@ -585,7 +586,7 @@ mod tests {
         let g_dk = MixedPred(vec![(IntervalPred::Range(0, 50), Tri::Unknown)]);
         assert_eq!(p.is_satisfiable_3v(&g_dk), Sat3::DontKnow);
         assert!(!p.evaluate(&g_dk, &(25, ()))); // Unknown accepts nothing ⇒ no fire
-        // ⊥ (empty DNF) is everywhere-false and Unsat.
+                                                // ⊥ (empty DNF) is everywhere-false and Unsat.
         assert!(!p.evaluate(&p.false_pred(), &(10, ())));
         assert_eq!(p.is_satisfiable_3v(&p.false_pred()), Sat3::Unsat);
         // ⊤ is everywhere-true.

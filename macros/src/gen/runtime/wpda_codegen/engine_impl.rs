@@ -179,6 +179,7 @@ pub(crate) fn emit_engine_impl_full(
     // recognize-token lookup for the Unwinding-CategoryEntry's
     // lookahead-conditional GroupingClosePreservingInner branch.
     let category_recognizes_token_dispatch = emit_category_recognizes_token_dispatch(categories);
+    let category_recognizes_operator_body = emit_category_recognizes_operator_body(categories);
     // D8 fix (2026-05-13): per-language `type_name → cat_src_idx`
     // lookup body, consumed by the walker's
     // `GroupingClosePreservingInner` sentinel resolution.
@@ -2043,6 +2044,10 @@ pub(crate) fn emit_engine_impl_full(
                 #prefix_cast_keyword_body
             }
 
+            fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
+                #category_recognizes_operator_body
+            }
+
             fn is_structural_open_delimiter(
                 &self,
                 kind: &mettail_prattail::automata::TokenKind,
@@ -2214,6 +2219,33 @@ fn emit_category_recognizes_token_dispatch(categories: &[String]) -> TokenStream
                 #(#arms,)*
                 _ => false,
             }
+        }
+    }
+}
+
+/// Body for `WpdaEngine::category_recognizes_operator(cat, token_text)`.
+///
+/// This is the same grammar table used by the generated Pratt dispatch, exposed
+/// to the walker for transparent-source continuation. Keeping the query in the
+/// generated engine avoids walker-side token special cases.
+fn emit_category_recognizes_operator_body(categories: &[String]) -> TokenStream {
+    let arms = categories.iter().enumerate().map(|(i, cat)| {
+        let i_u16 = i as u16;
+        let infix_fn = quote::format_ident!("infix_bp_{}", cat.to_lowercase());
+        let postfix_fn = quote::format_ident!("postfix_bp_{}", cat.to_lowercase());
+        let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
+        quote! {
+            #i_u16 => {
+                #infix_fn(token_text).is_some()
+                    || #postfix_fn(token_text).is_some()
+                    || #mixfix_fn(token_text).is_some()
+            }
+        }
+    });
+    quote! {
+        match cat {
+            #(#arms,)*
+            _ => false,
         }
     }
 }

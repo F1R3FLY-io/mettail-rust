@@ -22,8 +22,8 @@ use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
     write_blockly_blocks, write_blockly_categories,
 };
-use logic::writer::spill_and_include;
 use logic::rules::generate_freshness_functions;
+use logic::writer::spill_and_include;
 use mettail_ast::compose::ComposeDef;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};

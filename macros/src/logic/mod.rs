@@ -15,6 +15,6 @@
 pub mod common;
 #[cfg(test)]
 pub mod multi_channel_analysis;
+pub mod rules;
 pub mod stratification;
 pub mod writer;
-pub mod rules;

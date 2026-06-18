@@ -35,7 +35,6 @@ mod comm {
     fn par_with_output_literal() {
         let _ = parse("{ a!(2) | b!(3) }");
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -54,73 +53,41 @@ mod new_and_extrusion {
     fn new_multi_binder_parses() {
         let _p = parse("new(x, y) in { {x!(0) | y!(1)} }");
     }
-
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Congruence (rewrite propagation)
 // ════════════════════════════════════════════════════════════════════════════════
 
-mod congruence {
-    
-
-}
+mod congruence {}
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Exec (drop-quote cancellation)
 // ════════════════════════════════════════════════════════════════════════════════
 
-mod exec {
-    
-
-}
+mod exec {}
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Native operations (embedded Rust code)
 // ════════════════════════════════════════════════════════════════════════════════
 
 mod native_ops {
-    
 
-    mod arithmetic {
-        
+    mod arithmetic {}
 
-    }
+    mod bitwise {}
 
-    mod bitwise {
-        
+    mod comparison {}
 
-    }
+    mod boolean {}
 
-    mod comparison {
-        
+    mod string {}
 
-    }
+    mod bag {}
 
-    mod boolean {
-        
+    mod map {}
 
-    }
-
-    mod string {
-        
-
-    }
-
-    mod bag {
-        
-
-    }
-
-    mod map {
-        
-
-    }
-
-    mod type_conversion {
-        
-
-    }
+    mod type_conversion {}
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -256,11 +223,7 @@ mod collection_primary_infix {
         // collection primary is mid-parse (inside the list element), another
         // non-root position the fix covers.
         let p = parse("[{a} <= {a}]");
-        assert!(
-            matches!(&p, Proc::CastList(_)),
-            "expected CastList([LtEq(..)]), got {:?}",
-            p
-        );
+        assert!(matches!(&p, Proc::CastList(_)), "expected CastList([LtEq(..)]), got {:?}", p);
     }
 
     #[test]

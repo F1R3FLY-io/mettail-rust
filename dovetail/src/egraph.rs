@@ -278,12 +278,7 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
         L: SemanticHash,
     {
         let canon = self.find(class);
-        match self
-            .nodes(canon)
-            .iter()
-            .map(|n| n.content_key())
-            .min()
-        {
+        match self.nodes(canon).iter().map(|n| n.content_key()).min() {
             Some(key) => key,
             None => {
                 let mut out = Vec::new();

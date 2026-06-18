@@ -1895,12 +1895,8 @@ impl WpdaTokenSource for LatticeTokenSource {
 /// closures (`char_class`/`dfa_next`/`is_accepting`/`accept_alternatives`/
 /// `token_to_kind`) baked in, erasing the grammar's `Token` type `T`. Given a
 /// byte `start` and `start_is_primary`, it returns the expanded node.
-type NodeExpander = Box<
-    dyn Fn(
-        usize,
-        bool,
-    ) -> Result<crate::runtime_types::ExpandedLexNode, String>,
->;
+type NodeExpander =
+    Box<dyn Fn(usize, bool) -> Result<crate::runtime_types::ExpandedLexNode, String>>;
 
 /// A [`WpdaTokenSource`] that materializes lex-DAG nodes ON DEMAND, lazily,
 /// instead of building the whole DAG upfront like [`LatticeTokenSource`].
@@ -2124,7 +2120,11 @@ impl LazyLatticeTokenSource {
                 }
             }
         };
-        let start_is_primary = self.worklist_state.borrow().primary_targets.contains(&start);
+        let start_is_primary = self
+            .worklist_state
+            .borrow()
+            .primary_targets
+            .contains(&start);
         let expanded = match (self.expander)(start, start_is_primary) {
             Ok(e) => e,
             Err(_msg) => {
@@ -2157,8 +2157,10 @@ impl LazyLatticeTokenSource {
                 st.eof_node_idx = Some(node_idx);
             }
             // Materialize an empty (EOF sentinel) node.
-            let _ = self.nodes[node_idx]
-                .set(crate::lexer_types::LexDagNode { byte_start: expanded.byte_start, edges: Vec::new() });
+            let _ = self.nodes[node_idx].set(crate::lexer_types::LexDagNode {
+                byte_start: expanded.byte_start,
+                edges: Vec::new(),
+            });
             return true;
         }
 
@@ -2217,7 +2219,12 @@ impl LazyLatticeTokenSource {
             }
             if !self.pump_one() {
                 // Final check after the last pump.
-                return self.worklist_state.borrow().byte_to_node.get(&end_byte).copied();
+                return self
+                    .worklist_state
+                    .borrow()
+                    .byte_to_node
+                    .get(&end_byte)
+                    .copied();
             }
         }
     }

@@ -18,9 +18,8 @@ fn all_alts_displays(input: &str) -> Vec<String> {
     let dag = rhocalc::lex_dag(input).unwrap_or_else(|e| panic!("lex `{input}`: {e}"));
     let source = LatticeTokenSource::new(dag);
     let mut pos = 0usize;
-    let (terms, _weights) =
-        rhocalc::parse_Proc_via_wpda_all_with_source(&source, &mut pos, 0)
-            .unwrap_or_else(|e| panic!("all_alts parse `{input}`: {e}"));
+    let (terms, _weights) = rhocalc::parse_Proc_via_wpda_all_with_source(&source, &mut pos, 0)
+        .unwrap_or_else(|e| panic!("all_alts parse `{input}`: {e}"));
     assert_eq!(pos, source.eof_node(), "`{input}` must consume to EOI");
     terms.iter().map(|t| format!("{t}")).collect()
 }

@@ -64,7 +64,8 @@ impl Lts {
         let n = block.len();
         let mut signatures: Vec<(usize, Vec<(Action, usize)>)> = Vec::with_capacity(n);
         for s in 0..n {
-            let mut sig: Vec<(Action, usize)> = adj[s].iter().map(|&(a, t)| (a, block[t])).collect();
+            let mut sig: Vec<(Action, usize)> =
+                adj[s].iter().map(|&(a, t)| (a, block[t])).collect();
             sig.sort_unstable();
             sig.dedup();
             signatures.push((block[s], sig));
@@ -122,7 +123,9 @@ impl Lts {
         // `s` can match every transition of `t` up to `block_of`.
         let matches = |s: usize, t: usize| -> bool {
             adj[t].iter().all(|&(a, t2)| {
-                adj[s].iter().any(|&(a2, s2)| a2 == a && block_of[s2] == block_of[t2])
+                adj[s]
+                    .iter()
+                    .any(|&(a2, s2)| a2 == a && block_of[s2] == block_of[t2])
             })
         };
         for s in 0..n {

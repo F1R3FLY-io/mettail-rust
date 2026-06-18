@@ -63,8 +63,8 @@ pub use mettail_rho_codegen::RHOCALC_BAG_ABI_TAG;
 #[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
     lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_ints,
-    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values,
-    rhocalc_ast_runtime_def, rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
+    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def,
+    rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
     rhocalc_observe_values_invocation, RhocalcAstLowerError, RhocalcAstRuntimeLanguage,
     RhocalcInvocationMapper, RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
 };

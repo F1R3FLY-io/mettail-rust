@@ -50,10 +50,7 @@ fn prefix_float_does_not_capture_a_shared_name() {
 #[test]
 fn floats_prefix_when_binder_fresh_in_name() {
     // `open(a, new(x, 0))`: floats to `new(x, open(a, 0))`. Progress ⇒ Some.
-    assert!(
-        float("open(a, new(x, 0))").is_some(),
-        "a prefix-enclosed `new` floats out"
-    );
+    assert!(float("open(a, new(x, 0))").is_some(), "a prefix-enclosed `new` floats out");
 }
 
 #[test]
@@ -70,9 +67,7 @@ fn capturing_witness_in_z_new_x_does_not_capture() {
     // captured. The handler must produce a result, and it must round-trip
     // (parse back) to a well-formed term.
     let lang = AmbientLanguage;
-    let term = lang
-        .parse_term("new(z, in(z, new(x, 0)))")
-        .expect("parses");
+    let term = lang.parse_term("new(z, in(z, new(x, 0)))").expect("parses");
     let floated = lang
         .try_direct_eval(term.as_ref())
         .expect("the inner new floats out of the in-prefix");

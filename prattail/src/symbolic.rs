@@ -937,12 +937,17 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
             return None;
         }
         // The empty word is accepted iff some initial state is accepting.
-        if self.initial_states.iter().any(|s| self.accepting_states.contains(s)) {
+        if self
+            .initial_states
+            .iter()
+            .any(|s| self.accepting_states.contains(s))
+        {
             return Some(Vec::new());
         }
         let mut visited = vec![false; self.states.len()];
         // pred[state] = (predecessor state, the element consumed on the edge)
-        let mut pred: Vec<Option<(usize, A::Domain)>> = (0..self.states.len()).map(|_| None).collect();
+        let mut pred: Vec<Option<(usize, A::Domain)>> =
+            (0..self.states.len()).map(|_| None).collect();
         let mut queue = VecDeque::with_capacity(self.initial_states.len());
         for &init in &self.initial_states {
             if !visited[init] {

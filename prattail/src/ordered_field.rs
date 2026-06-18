@@ -218,9 +218,7 @@ impl OrderedPoint for OrderedF64 {
             Bound::NegInf => return None,
         };
         match (lo_min, hi_max) {
-            (Some(a), Some(b)) => {
-                (a.total_cmp(&b) != Ordering::Greater).then_some(OrderedF64(a))
-            },
+            (Some(a), Some(b)) => (a.total_cmp(&b) != Ordering::Greater).then_some(OrderedF64(a)),
             (Some(a), None) => Some(OrderedF64(a)),
             (None, Some(b)) => Some(OrderedF64(b)),
             (None, None) => Some(OrderedF64(0.0)),
@@ -332,7 +330,9 @@ pub struct OrderedFieldPred<P> {
 impl<P: OrderedPoint> OrderedFieldPred<P> {
     /// The everywhere-true predicate.
     pub fn top() -> Self {
-        OrderedFieldPred { intervals: vec![(Bound::NegInf, Bound::PosInf)] }
+        OrderedFieldPred {
+            intervals: vec![(Bound::NegInf, Bound::PosInf)],
+        }
     }
 
     /// The everywhere-false predicate.
@@ -374,11 +374,9 @@ impl<P: OrderedPoint> OrderedFieldPred<P> {
         for iv in raw {
             if let Some(last) = merged.last_mut() {
                 let overlaps = pos_lower_le_upper(&iv.0, &last.1);
-                let gap_empty = P::witness_in(
-                    &flip_upper_to_lower(&last.1),
-                    &flip_lower_to_upper(&iv.0),
-                )
-                .is_none();
+                let gap_empty =
+                    P::witness_in(&flip_upper_to_lower(&last.1), &flip_lower_to_upper(&iv.0))
+                        .is_none();
                 if overlaps || gap_empty {
                     if cmp_upper(&iv.1, &last.1) == Ordering::Greater {
                         last.1 = iv.1;
@@ -441,11 +439,15 @@ impl<P: OrderedPoint> OrderedFieldPred<P> {
     }
 
     fn contains(&self, x: &P) -> bool {
-        self.intervals.iter().any(|(lo, hi)| lower_contains(lo, x) && upper_contains(hi, x))
+        self.intervals
+            .iter()
+            .any(|(lo, hi)| lower_contains(lo, x) && upper_contains(hi, x))
     }
 
     fn first_witness(&self) -> Option<P> {
-        self.intervals.iter().find_map(|(lo, hi)| P::witness_in(lo, hi))
+        self.intervals
+            .iter()
+            .find_map(|(lo, hi)| P::witness_in(lo, hi))
     }
 }
 
@@ -554,8 +556,10 @@ mod tests {
     fn discrete_open_interval_is_empty_but_dense_is_not() {
         // (2, 3): no integer strictly between, but rationals like 5/2 qualify.
         let int_alg = OrderedFieldAlgebra::<BigInt>::new();
-        let open_int =
-            OrderedFieldPred::<BigInt>::from_intervals(vec![(Bound::Excl(bi(2)), Bound::Excl(bi(3)))]);
+        let open_int = OrderedFieldPred::<BigInt>::from_intervals(vec![(
+            Bound::Excl(bi(2)),
+            Bound::Excl(bi(3)),
+        )]);
         assert!(!int_alg.is_satisfiable(&open_int));
 
         let rat_alg = OrderedFieldAlgebra::<BigRational>::new();
@@ -572,10 +576,8 @@ mod tests {
     fn discrete_adjacent_intervals_merge() {
         // [1,2] ∪ [3,4] = [1,4] over the integers (2 and 3 are adjacent).
         let alg = OrderedFieldAlgebra::<BigInt>::new();
-        let merged = alg.or(
-            &OrderedFieldPred::closed(bi(1), bi(2)),
-            &OrderedFieldPred::closed(bi(3), bi(4)),
-        );
+        let merged = alg
+            .or(&OrderedFieldPred::closed(bi(1), bi(2)), &OrderedFieldPred::closed(bi(3), bi(4)));
         // Equivalent to [1,4].
         assert_eq!(merged, OrderedFieldPred::closed(bi(1), bi(4)));
         for v in 1..=4 {

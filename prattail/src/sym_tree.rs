@@ -40,17 +40,29 @@ pub struct SymTerm<D> {
 impl<D> SymTerm<D> {
     /// A structural node `c(children)` with no payload.
     pub fn node(constructor: impl Into<String>, children: Vec<SymTerm<D>>) -> Self {
-        SymTerm { constructor: constructor.into(), payload: None, children }
+        SymTerm {
+            constructor: constructor.into(),
+            payload: None,
+            children,
+        }
     }
 
     /// A scalar leaf `c[payload]`.
     pub fn leaf(constructor: impl Into<String>, payload: D) -> Self {
-        SymTerm { constructor: constructor.into(), payload: Some(payload), children: Vec::new() }
+        SymTerm {
+            constructor: constructor.into(),
+            payload: Some(payload),
+            children: Vec::new(),
+        }
     }
 
     /// A nullary structural constant `c`.
     pub fn constant(constructor: impl Into<String>) -> Self {
-        SymTerm { constructor: constructor.into(), payload: None, children: Vec::new() }
+        SymTerm {
+            constructor: constructor.into(),
+            payload: None,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -225,7 +237,11 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
                     trans.child_states.iter().map(|q| wit[q].clone()).collect();
                 wit.insert(
                     trans.target,
-                    SymTerm { constructor: trans.constructor.clone(), payload, children },
+                    SymTerm {
+                        constructor: trans.constructor.clone(),
+                        payload,
+                        children,
+                    },
                 );
                 changed = true;
             }
@@ -233,7 +249,11 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
                 break;
             }
         }
-        self.accepting.iter().filter_map(|s| wit.get(s)).cloned().min_by_key(term_size)
+        self.accepting
+            .iter()
+            .filter_map(|s| wit.get(s))
+            .cloned()
+            .min_by_key(term_size)
     }
 
     /// Disjoint union: accepts `L(self) ∪ L(other)`.
@@ -366,12 +386,17 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
     fn constructor_minterms(&self) -> HashMap<String, Vec<Option<A::Predicate>>> {
         let mut map = HashMap::new();
         for c in self.arities.keys() {
-            let trans_c: Vec<&TreeTrans<A::Predicate>> =
-                self.transitions.iter().filter(|t| &t.constructor == c).collect();
+            let trans_c: Vec<&TreeTrans<A::Predicate>> = self
+                .transitions
+                .iter()
+                .filter(|t| &t.constructor == c)
+                .collect();
             let scalar = trans_c.iter().any(|t| t.payload_guard.is_some());
             let mts = if scalar {
-                let guards: Vec<A::Predicate> =
-                    trans_c.iter().filter_map(|t| t.payload_guard.clone()).collect();
+                let guards: Vec<A::Predicate> = trans_c
+                    .iter()
+                    .filter_map(|t| t.payload_guard.clone())
+                    .collect();
                 crate::collection_algebra::minterms(&self.algebra, &guards)
                     .into_iter()
                     .map(Some)
@@ -405,7 +430,11 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
             if !compat {
                 continue;
             }
-            if t.child_states.iter().zip(child_dets).all(|(q, d)| d.contains(q)) {
+            if t.child_states
+                .iter()
+                .zip(child_dets)
+                .all(|(q, d)| d.contains(q))
+            {
                 target.insert(t.target);
             }
         }
@@ -445,8 +474,11 @@ impl<A: BooleanAlgebra> SymbolicTreeAutomaton<A> {
         }
 
         // Phase 2 — build the deterministic, complete automaton.
-        let id_of: HashMap<BTreeSet<usize>, usize> =
-            discovered.iter().enumerate().map(|(i, d)| (d.clone(), i)).collect();
+        let id_of: HashMap<BTreeSet<usize>, usize> = discovered
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.clone(), i))
+            .collect();
         let mut result = SymbolicTreeAutomaton::new(self.algebra.clone());
         result.num_states = discovered.len();
         result.arities = self.arities.clone();
@@ -503,7 +535,11 @@ pub enum TreePred<P> {
     Wild,
     /// Matches `constructor(children...)` whose payload satisfies `payload_guard`
     /// (`None` = structural) and whose children match the child patterns.
-    Node { constructor: String, payload_guard: Option<P>, children: Vec<TreePred<P>> },
+    Node {
+        constructor: String,
+        payload_guard: Option<P>,
+        children: Vec<TreePred<P>>,
+    },
     /// Conjunction.
     And(Box<TreePred<P>>, Box<TreePred<P>>),
     /// Disjunction.
@@ -537,7 +573,11 @@ impl<A: BooleanAlgebra> TreeAlgebra<A> {
         let u = a.add_state();
         a.set_accepting(u);
         for (c, &k) in &self.arities {
-            let pg = if self.payloaded.contains(c) { Some(self.elem.true_pred()) } else { None };
+            let pg = if self.payloaded.contains(c) {
+                Some(self.elem.true_pred())
+            } else {
+                None
+            };
             a.add_transition(TreeTrans {
                 constructor: c.clone(),
                 payload_guard: pg,
@@ -803,7 +843,9 @@ mod tree_algebra_tests {
     // Term language: Lit[int] (scalar) and Pair(a, b).
     fn tree_alg() -> TreeAlgebra<IntervalAlgebra> {
         let arities: HashMap<String, usize> =
-            [("Lit".to_string(), 0usize), ("Pair".to_string(), 2usize)].into_iter().collect();
+            [("Lit".to_string(), 0usize), ("Pair".to_string(), 2usize)]
+                .into_iter()
+                .collect();
         let payloaded: HashSet<String> = ["Lit".to_string()].into_iter().collect();
         TreeAlgebra::new(IntervalAlgebra::new(0, 100), arities, payloaded)
     }

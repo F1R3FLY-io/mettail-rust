@@ -443,7 +443,7 @@ pub struct WalkerStats {
     /// LexAltLiteral, OptionalGroupAt). If the dominant bucket falls
     /// outside that set (e.g., Generic, ReturnFrame, CollectionElement),
     /// L2 is misdesigned and needs re-architecture.
-    pub pop_kind_histogram: [u64; 13],
+    pub pop_kind_histogram: [u64; 14],
 
     /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
     /// `apply_action_to_cursor` variant histogram. 19 buckets for the
@@ -836,14 +836,15 @@ pub fn pop_kind_bucket_index(kind: &crate::gss::EdgeKind) -> usize {
         EdgeKind::CrossCatProjection { .. } => 2,
         EdgeKind::CrossCatLhs { .. } => 3,
         EdgeKind::CrossCatLhsReentry { .. } => 4,
-        EdgeKind::PrefixRuleEntry { .. } => 5,
-        EdgeKind::InfixContinuation { .. } => 6,
-        EdgeKind::LexAltLiteral { .. } => 7,
-        EdgeKind::OptionalGroupAt { .. } => 8,
-        EdgeKind::CollectionElement { .. } => 9,
-        EdgeKind::GroupingMarker { .. } => 10,
-        EdgeKind::MixfixMarker { .. } => 11,
-        EdgeKind::ReturnFrame { .. } => 12,
+        EdgeKind::TransparentSourceReentry { .. } => 5,
+        EdgeKind::PrefixRuleEntry { .. } => 6,
+        EdgeKind::InfixContinuation { .. } => 7,
+        EdgeKind::LexAltLiteral { .. } => 8,
+        EdgeKind::OptionalGroupAt { .. } => 9,
+        EdgeKind::CollectionElement { .. } => 10,
+        EdgeKind::GroupingMarker { .. } => 11,
+        EdgeKind::MixfixMarker { .. } => 12,
+        EdgeKind::ReturnFrame { .. } => 13,
     }
 }
 
@@ -856,6 +857,7 @@ pub fn pop_kind_label(idx: usize) -> &'static str {
         "CrossCatProjection",
         "CrossCatLhs",
         "CrossCatLhsReentry",
+        "TransparentSourceReentry",
         "PrefixRuleEntry",
         "InfixContinuation",
         "LexAltLiteral",
@@ -864,7 +866,7 @@ pub fn pop_kind_label(idx: usize) -> &'static str {
         "GroupingMarker",
         "MixfixMarker",
         "ReturnFrame",
-    ][idx.min(12)]
+    ][idx.min(13)]
 }
 
 /// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
@@ -2292,10 +2294,10 @@ impl fmt::Display for WalkerStats {
             // CrossCatLhsReentry are identity-strict and intentionally excluded.
             let convergent: u64 = self.pop_kind_histogram[1]
                 + self.pop_kind_histogram[2]
-                + self.pop_kind_histogram[5]
                 + self.pop_kind_histogram[6]
                 + self.pop_kind_histogram[7]
-                + self.pop_kind_histogram[8];
+                + self.pop_kind_histogram[8]
+                + self.pop_kind_histogram[9];
             let convergent_pct = 100.0 * (convergent as f64) / (pop_total as f64);
             writeln!(
                 f,
@@ -3064,7 +3066,7 @@ mod tests {
             // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27).
             thunk_force_projection: ThunkForceRatioProjection::default(),
             // Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27).
-            pop_kind_histogram: [0; 13],
+            pop_kind_histogram: [0; 14],
             // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27).
             apply_action_variant_histogram: [0; 21],
             // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27).
