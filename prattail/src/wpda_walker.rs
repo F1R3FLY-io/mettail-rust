@@ -407,7 +407,9 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// spliced PRE-WRAP — the finalize action's `into_term::<ecat>()` maps it to
     /// ∅, producing a sub-multiset ghost) and is refuted at the source so the
     /// polluting packing is never interned. kv-maps are excluded by the splice
-    /// gate (per-slot key/value categories may differ).
+    /// gate (per-slot key/value categories may differ); this hides no ghost —
+    /// no shipped grammar parses a kv-map with cross-cat keys/values (verified;
+    /// see the gate-site comment in `apply_pop_body_to_cursor`).
     fn collection_element_src_idx(
         &self,
         result_src_idx: u16,
@@ -18657,7 +18659,16 @@ where
                         // SOURCE so the polluting packing is never interned; the
                         // post-wrap `ecat` Symbol is spliced by a sibling lineage, so
                         // the faithful parse always survives (no-loss). kv-maps are
-                        // excluded (per-slot key/value categories may differ).
+                        // excluded because a single element-cat cannot speak for both
+                        // the key and value slots (per-slot key/value categories may
+                        // differ). This loses no shipped coverage and hides no ghost:
+                        // VERIFIED 2026-06-18 — no shipped grammar can ghost a map. The
+                        // only grammar that PARSES a kv-map literal is Class2HashMapSmoke,
+                        // whose `HashMap(Proc,Proc)` is single-category (no cross-cat
+                        // element source ⇒ no pre-wrap raw splice); rhocalc/calculator
+                        // maps are op-built (PutMap/GetMap), never parsed as literals.
+                        // A future kv-map with cross-cat keys/values would need per-slot
+                        // element-cat gating added + a regression grammar to exercise it.
                         let __is_kv = self
                             .engine
                             .kv_separator_for_collection(
