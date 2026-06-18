@@ -230,10 +230,9 @@ pub(crate) fn classify_collection(
 /// Phase 4: emit prefix-dispatch arms that recognize the open delimiter
 /// of each collection-shaped rule. On match, the arm pushes a
 /// `CollectionMarker` symbol carrying `(result_src_idx, rule_idx,
-/// accumulator_id)`. The walker overrides the symbol's `bp` field with
-/// a freshly-allocated accumulator id from `SemanticBuilder::start_collection`,
-/// and pushes an `ActionArg::CollectionId` arg that the finalize action
-/// will consume.
+/// slot_idx)`. The walker allocates a fresh runtime accumulator id when the
+/// marker is pushed and carries that id through the CollectionId action
+/// argument that the finalize action consumes.
 ///
 /// After the open delim, the new_state is `PrefixDispatch{cur_bp:0}`. The
 /// frontier_top is the marker, whose `category_src_idx == result_src_idx`.
@@ -450,10 +449,14 @@ pub(crate) fn emit_collection_loop_arm(
                             //   sep.is_empty() is a per-slot compile-time
                             //   constant from the lookup (the ENTRY separator;
                             //   Map kv_sep never governs this fork).
-                            // G4 advance-or-die: zero licensed branches ⇒
-                            //   WpdaStepAction::Error (no_branch_no_word +
-                            //   advance_or_die_emits_error: an empty Fork
-                            //   would silently delete the cursor).
+                            // G4 advance-or-recover: zero licensed normal
+                            //   branches means the collection continuation
+                            //   cannot consume the live token. For explicit
+                            //   close-delimited slots, synthesize a bounded
+                            //   recovery close insertion and pop the marker
+                            //   through the same finalize path as a real
+                            //   close. Empty-close grammars still error:
+                            //   there is no concrete token to insert.
                             let mut __branches: Vec<
                                 mettail_prattail::wpda_walker::ForkBranch<_>,
                             > = Vec::with_capacity(3);
@@ -582,12 +585,42 @@ pub(crate) fn emit_collection_loop_arm(
                                     },
                                 );
                             }
-                            // G4: advance-or-die.
+                            // G4: advance-or-recover.
                             if __branches.is_empty() {
-                                WpdaStepAction::Error(format!(
-                                    "collection continuation mismatch at pos {}:                                      expected close {:?} or separator {:?}                                      (rule {}:{}) — no lattice edge matches",
-                                    _pos, close, sep, result_src_idx, rule_idx,
-                                ))
+                                if close.is_empty() {
+                                    WpdaStepAction::Error(format!(
+                                        "collection continuation mismatch at pos {}:                                      expected close {:?} or separator {:?}                                      (rule {}:{}) — no lattice edge matches",
+                                        _pos, close, sep, result_src_idx, rule_idx,
+                                    ))
+                                } else {
+                                    WpdaStepAction::Fork {
+                                        branches: vec![
+                                            mettail_prattail::wpda_walker::ForkBranch {
+                                                symbol: StackSymbolV2::category_entry(0),
+                                                weight: lex_w(
+                                                    mettail_prattail::recovery::costs::INSERT.value(),
+                                                    *result_src_idx,
+                                                    *rule_idx,
+                                                ),
+                                                new_state: if is_binder_internal {
+                                                    WpdaState::Unwinding
+                                                } else {
+                                                    WpdaState::InfixLoop { cur_bp: *_outer_bp }
+                                                },
+                                                action_kind:
+                                                    mettail_prattail::wpda_walker::ForkActionKind::PopWithEffect {
+                                                        effect:
+                                                            mettail_prattail::wpda_walker::BuilderDelta::InsertToken {
+                                                                pos: _pos,
+                                                                kind: mettail_prattail::automata::TokenKind::Fixed(close.to_string()),
+                                                                text: close.to_string(),
+                                                            },
+                                                    },
+                                            },
+                                        ],
+                                        consume_trigger: false,
+                                    }
+                                }
                             } else {
                                 WpdaStepAction::Fork {
                                     branches: __branches,
@@ -757,10 +790,9 @@ pub(crate) fn emit_collection_close_lookup(
                 // Phase 4 #1.B (2026-05-11): iterate ALL collection slots
                 // (not just `find`) and emit one arm per slot keyed on
                 // 3-tuple `(src, rule, slot_idx)`. The walker passes
-                // `slot_idx` from `node.symbol.bp` at lookup time. In
-                // the supported subset (no outer collection nesting),
-                // accumulator_id == slot_idx, so the codegen-stamped
-                // value matches the walker's post-overwrite `bp`.
+                // the codegen-stamped `slot_idx` from `node.symbol.bp`
+                // at lookup time; runtime accumulator ids flow through
+                // CollectionId action arguments.
                 if let Some(shape) = classify_binder(rule) {
                     for info in binder_collection_infos(&shape) {
                         let result_src_idx = cat_i as u16;

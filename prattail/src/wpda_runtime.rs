@@ -62,8 +62,10 @@ pub enum SymbolKind {
     /// Phase 4: marker pushed at collection-literal open delimiter so the
     /// engine knows we're inside a collection scope. The symbol's
     /// `(category_src_idx, rule_index_in_category)` pair identifies the
-    /// collection rule; `bp` carries an 8-bit accumulator id pointing into
-    /// `SemanticBuilder.collection_stack`.
+    /// collection rule; `bp` carries the rule-local collection slot id used
+    /// by generated close/separator/element lookup tables. The live runtime
+    /// accumulator id is allocated by the walker and carried through the
+    /// associated CollectionId action argument.
     CollectionMarker,
     /// B7 Pattern 2: marker pushed at a grouping `(` so the engine knows
     /// we're inside a precedence-reset sub-parse. The symbol's
@@ -131,7 +133,7 @@ pub struct StackSymbolV2 {
     /// engine resumes `InfixLoop { cur_bp }` from this value so a finalized
     /// collection joins the enclosing Pratt loop exactly as an atomic primary
     /// does (mirrors `GroupingMarker`'s `bp`-as-outer_bp, on a distinct slot
-    /// because `bp` already carries the collection's `accumulator_id`/`slot_idx`).
+    /// because `bp` already carries the collection's static slot_idx).
     pub coll_dispatch_bp: Option<u8>,
 }
 
@@ -174,9 +176,10 @@ impl StackSymbolV2 {
         }
     }
 
-    /// Phase 4: construct a collection-marker symbol. `accumulator_id`
-    /// is packed into the 8-bit `bp` field (collections never nest more
-    /// than 256 deep in practice). `dispatch_bp` is the enclosing Pratt
+    /// Phase 4: construct a collection-marker symbol. `slot_idx` is packed
+    /// into the 8-bit `bp` field. Runtime accumulator ids are allocated by
+    /// the walker when this marker is pushed, not stored on the symbol.
+    /// `dispatch_bp` is the enclosing Pratt
     /// `cur_bp` at which the collection's open delimiter was dispatched as a
     /// primary; it is preserved in `coll_dispatch_bp` so the collection close
     /// resumes `InfixLoop { cur_bp: dispatch_bp }` (a finalized collection
@@ -184,13 +187,13 @@ impl StackSymbolV2 {
     pub fn collection_marker(
         result_src_idx: u16,
         rule_idx: u16,
-        accumulator_id: u8,
+        slot_idx: u8,
         dispatch_bp: u8,
     ) -> Self {
         StackSymbolV2 {
             category_src_idx: result_src_idx,
             rule_index_in_category: rule_idx,
-            bp: Some(accumulator_id),
+            bp: Some(slot_idx),
             kind: SymbolKind::CollectionMarker,
             coll_dispatch_bp: Some(dispatch_bp),
         }
@@ -380,15 +383,14 @@ pub enum WpdaState {
         element_src_idx: u16,
         /// Outer Pratt cur_bp to restore on close-delimiter consumption.
         outer_bp: u8,
-        /// Index into `SemanticBuilder.collection_stack` identifying this
-        /// in-flight accumulator.
+        /// Legacy state-carried accumulator field. Generated engines seed
+        /// this from the marker's static slot id; cursor-aware walker paths
+        /// recover the live runtime accumulator from active collection depth.
+        /// It is retained for compatibility with existing state constructors.
         accumulator_id: u8,
         /// Phase 4 #1.B (2026-05-11): codegen-stamped slot identifier
-        /// within the rule. For Class-5 single-slot rules and Phase-4-
-        /// #1 multi-slot rules without outer collection nesting,
-        /// `slot_idx == accumulator_id`. The CollectionMarker's `bp`
-        /// field carries this value at push time. Used by the
-        /// 3-tuple-keyed `(close, sep)` lookup in
+        /// within the rule. The CollectionMarker's `bp` field carries this
+        /// value at push time. Used by the 3-tuple-keyed `(close, sep)` lookup in
         /// `emit_collection_loop_arm` to disambiguate sibling slots
         /// within the same rule.
         slot_idx: u8,

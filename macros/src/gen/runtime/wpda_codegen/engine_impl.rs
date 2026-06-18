@@ -290,10 +290,9 @@ pub(crate) fn emit_engine_impl_full(
                                 // collection rules and Phase-4-#1's
                                 // top-level Class-2 multi-slot rules
                                 // (no outer collection nesting), the
-                                // walker's emit_push_side_effects sets
-                                // bp = accumulator_id which equals
-                                // slot_idx, so the 3-tuple lookups
-                                // resolve correctly.
+                                // marker bp is the codegen-stamped slot_idx;
+                                // runtime accumulator ids flow separately
+                                // through the CollectionId action argument.
                                 let slot_idx = node.symbol.bp.unwrap_or(0u8);
                                 let close_lookup: Option<&'static str> = #collection_close_lookup;
                                 let token_text = tokens.peek_text(*pos).unwrap_or("");
@@ -617,26 +616,22 @@ pub(crate) fn emit_engine_impl_full(
                                             new_state: WpdaState::Unwinding,
                                         };
                                     }
-                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
-                                    // 2026-05-06): CollectionMarker symbols ALWAYS
-                                    // carry `bp = Some(accumulator_id)` per the
-                                    // codegen invariant in
-                                    // StackSymbolV2::collection_marker. expect()
-                                    // surfaces invariant violations instead of
-                                    // silently substituting 0.
-                                    let accumulator_id = node.symbol.bp.expect(
+                                    // CollectionMarker symbols carry the
+                                    // codegen-stamped static slot_idx in bp.
+                                    // Runtime accumulator identity is
+                                    // cursor-local and recovered by the
+                                    // walker from active collection depth
+                                    // when it needs to splice or push a
+                                    // CollectionId.
+                                    let slot_idx = node.symbol.bp.expect(
                                         "CollectionMarker invariant: bp must be \
-                                         Some(accumulator_id) set at construction"
+                                         Some(slot_idx) set at construction"
                                     );
-                                    // Phase 4 #1.B (2026-05-11): in the
-                                    // supported subset (no outer collection
-                                    // nesting), slot_idx == accumulator_id.
-                                    // Walker's emit_push_side_effects
-                                    // overwrites symbol.bp with the
-                                    // allocator-assigned accumulator_id,
-                                    // and in the non-nested case this
-                                    // equals the codegen-stamped slot_idx.
-                                    let slot_idx = accumulator_id;
+                                    // The CollectionLoop field remains for
+                                    // compatibility with existing state
+                                    // constructors; cursor-aware walker
+                                    // paths treat it as non-authoritative.
+                                    let accumulator_id = slot_idx;
                                     let element_src_lookup: Option<u16> = {
                                         let result_src_idx = result_src_idx;
                                         let rule_idx = rule_idx;

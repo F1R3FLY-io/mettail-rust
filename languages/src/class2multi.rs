@@ -4,10 +4,9 @@
 //! per-language lookups (close, sep, element_src) are now 3-tuple
 //! keyed on `(result_src_idx, rule_idx, slot_idx)` so the two
 //! collection slots can have distinct close delimiters parsed in
-//! sequence. The walker's emit_push_side_effects continues to
-//! overwrite `symbol.bp` with the allocator-assigned accumulator_id
-//! at push time; in the supported subset (no outer collection
-//! nesting), accumulator_id == slot_idx.
+//! sequence. The marker `bp` stores the static `slot_idx`; the walker
+//! carries runtime accumulator ids separately through CollectionId
+//! action arguments.
 
 #![allow(
     non_local_definitions,

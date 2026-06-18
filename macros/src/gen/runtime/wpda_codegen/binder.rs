@@ -923,15 +923,10 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     // each rule. classify_binder tracks `collection_slots_so_far` and
     // stamps `CollectionSepInfo.slot_idx` per slot. The
     // CollectionMarker pushed at each slot's dispatch carries slot_idx
-    // in its `bp` field; the walker's emit_push_side_effects overwrites
-    // `bp` with the allocator-assigned accumulator_id (equal to
-    // slot_idx in the no-outer-collection-nesting supported subset).
-    //
-    // Limitation: nested multi-slot rules (a Class-2 multi-slot rule
-    // whose result_cat is the element_cat of another collection rule)
-    // would break the slot_idx/accumulator_id correspondence. Such
-    // rules are currently undetected; if they arise in future
-    // grammars, a static-rejection guard should be added here.
+    // in its `bp` field. Runtime accumulator ids are allocated by the
+    // walker and flow through the pushed CollectionId action argument,
+    // keeping static slot lookup separate from dynamic accumulator
+    // addressing even when collections are nested.
 
     let action_arity: u8 = action_args.len() as u8;
 
@@ -983,6 +978,24 @@ fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> 
         }
     }
     None
+}
+
+fn required_top_cat_after_position(
+    position: Option<&BinderPosition>,
+    categories: &[String],
+) -> Option<u16> {
+    match position {
+        Some(BinderPosition::ParamParse { cat, collection: None }) => {
+            lookup_src_idx(cat, categories)
+        },
+        Some(BinderPosition::ParamParse { collection: Some(_), .. }) => {
+            // Collection ParamParse slots leave a CollectionId action argument
+            // on the stack until the enclosing binder action drains it. They
+            // do not leave a term Symbol for literal guards to inspect.
+            None
+        },
+        _ => None,
+    }
 }
 
 /// Category carried in the initial `BinderRule` state.
@@ -1205,16 +1218,13 @@ pub(crate) fn emit_binder_rule_body(
                 let next_pos = pos + 1;
                 let arm = match position {
                     BinderPosition::Literal(text) => {
-                        let required_top_cat = if idx > 0 {
-                            match &shape.positions[idx - 1] {
-                                BinderPosition::ParamParse { cat, .. } => {
-                                    lookup_src_idx(cat, categories)
-                                },
-                                _ => None,
-                            }
+                        let previous_position = if idx > 0 {
+                            shape.positions.get(idx - 1)
                         } else {
                             None
                         };
+                        let required_top_cat =
+                            required_top_cat_after_position(previous_position, categories);
                         let required_top_cat_tokens = match required_top_cat {
                             Some(cat) => quote! { Some(#cat) },
                             None => quote! { None },
@@ -1366,18 +1376,12 @@ pub(crate) fn emit_binder_rule_body(
                                                         expected_text: #close.to_string(),
                                                         effects: vec![
                                                             mettail_prattail::wpda_walker::BuilderDelta::StartCollection,
-                                                            // Phase 4 #2 (2026-05-12): use the
-                                                            // BinderListLoop's `slot_idx` (was
-                                                            // hardcoded 0u8). In the no-outer-
-                                                            // collection-nesting supported subset,
-                                                            // slot_idx == accumulator_id at the
-                                                            // point of empty-list bootstrap. For
-                                                            // multi-slot Class-3 rules
-                                                            // (TaggedInputs), this matches the
-                                                            // names accumulator's runtime id
-                                                            // (which is 1 if a sibling Class-2
-                                                            // SimpleCollection at slot 0
-                                                            // occupied accumulator 0 first).
+                                                            // Phase 4 #2 (2026-05-12): carry the
+                                                            // BinderListLoop's static slot_idx
+                                                            // (was hardcoded 0u8). The walker
+                                                            // resolves the live accumulator id
+                                                            // from the current collection depth
+                                                            // when applying this effect.
                                                             mettail_prattail::wpda_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
                                                             mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
                                                                 names: Vec::new(),
@@ -1724,7 +1728,7 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
 }
 
 /// B8 / Issue C (2026-05-09): emit a per-(rule, sub_pos) lookup that
-/// returns `Some(accumulator_id)` when the just-completed inner step
+/// returns `Some(slot_idx)` when the just-completed inner step
 /// was a `ParamParse { collection: Some(_) }` whose parsed term
 /// must be spliced into the Names accumulator. Returns `None` for
 /// all other (rule, sub_pos) combinations.
@@ -1764,17 +1768,14 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(
                             let cat = cat_i as u16;
                             let rule_idx = rule_i as u16;
                             let target_sub_pos = (i + 2) as u8;
-                            // Phase 4 #2 (2026-05-12): splice into the
-                            // BinderListLoop's names accumulator at its
-                            // runtime accumulator_id. In the no-outer-
-                            // collection-nesting supported subset,
-                            // slot_idx == accumulator_id at the point
-                            // the splice fires. Pre-Phase-4-#2 this
-                            // hardcoded Some(0u8) — correct only for
-                            // single-slot Class-3 rules. For multi-slot
-                            // (PInputsTagged: tags at slot 0 + names at
-                            // slot 1), the names accumulator is at
-                            // accumulator_id=1.
+                            // Phase 4 #2 (2026-05-12): carry the
+                            // BinderListLoop's static names slot_idx.
+                            // apply_effect_to_cursor resolves the runtime
+                            // accumulator id from active collection depth,
+                            // so this remains correct inside outer
+                            // collections. Pre-Phase-4-#2 this hardcoded
+                            // Some(0u8), which could not distinguish
+                            // multi-slot Class-3 rules.
                             let slot_idx_lit = *slot_idx;
                             arms.push(quote! {
                                 (#cat, #rule_idx, #target_sub_pos) => Some(#slot_idx_lit),
@@ -3280,6 +3281,43 @@ mod tests {
         assert!(!shape.has_binder);
         assert_eq!(shape.action_arity, 2);
         assert_eq!(shape.param_cats, vec!["BigInt", "BigInt"]);
+    }
+
+    #[test]
+    fn literal_top_guard_only_follows_term_producing_params() {
+        let categories = vec!["Proc".to_string()];
+        let term_param = BinderPosition::ParamParse {
+            cat: "Proc".to_string(),
+            collection: None,
+        };
+        let collection_param = BinderPosition::ParamParse {
+            cat: "Proc".to_string(),
+            collection: Some(CollectionSepInfo {
+                separator: "|".to_string(),
+                close: ")".to_string(),
+                elem_cat: "Proc".to_string(),
+                key_val_separator: None,
+                slot_idx: 0,
+            }),
+        };
+
+        assert_eq!(
+            required_top_cat_after_position(Some(&term_param), &categories),
+            Some(0),
+            "ordinary ParamParse leaves a term symbol for the following literal guard",
+        );
+        assert_eq!(
+            required_top_cat_after_position(Some(&collection_param), &categories),
+            None,
+            "collection ParamParse leaves CollectionId, not a term symbol",
+        );
+        assert_eq!(
+            required_top_cat_after_position(
+                Some(&BinderPosition::Literal("(".into())),
+                &categories
+            ),
+            None,
+        );
     }
 
     #[test]

@@ -1622,6 +1622,10 @@ pub enum ForkActionKind {
     /// but advancing along the MATCHED edge's `next_pos` instead of the
     /// alt-0 `child_next_pos`. Fork must emit `consume_trigger: false`.
     ConsumeAtAndPop { next_pos: usize },
+    /// Recovery close path for non-consuming synthetic delimiters. Applies a
+    /// recovery effect, journals it if needed, then pops the top GSS frame via
+    /// the same pop body as real close delimiters. Does not advance input pos.
+    PopWithEffect { effect: BuilderDelta },
     /// #307 ROOT-F coverage backstop (2026-06-11): the collection
     /// SEPARATOR consume — `Consume` semantics plus a per-slot separator
     /// count increment on the child (the fire-time coverage gate's
@@ -2970,8 +2974,8 @@ pub enum ResolvedRepairAction {
 /// (StartBinderScope, EndBinderScope, StartCollection, PushCollectionId,
 /// SpliceIntoCollection) are still active because codegen wraps them in
 /// `*WithEffect`/`*WithMultipleEffects` payloads on `ForkBranch`/`WpdaStepAction`.
-/// Those flow through `apply_effect_to_builder` on the cursor.builder side;
-/// they no longer reach `cursor.recovery_deltas` (5.6-tail-D gated them).
+/// Those flow through `apply_effect_to_cursor`; they no longer reach
+/// `cursor.recovery_deltas` (5.6-tail-D gated them).
 ///
 /// The 5 recovery variants (RecoveryEvent, SubstituteToken, InsertToken,
 /// CommitLexAlternative, ApplyRecoverySequence) mutate state OUTSIDE
@@ -2991,28 +2995,19 @@ pub enum BuilderDelta {
     /// close and BinderScope args never reach the action — affecting
     /// PNew, PInputs, and any binder rule with a multi-binder list.
     EndBinderScope,
-    /// Option A (2026-04-28): a cursor opened a collection. The id was
-    /// allocated from the cursor's local `collection_stack` mirror; on
-    /// commit, replay pushes the corresponding `CollectionId(id)` arg
-    /// onto the live builder stack (the cursor's accumulators were
-    /// donated en bloc via `adopt_collection_stack` BEFORE delta replay).
+    /// Cursor-side collection id push. The payload is the static slot_idx
+    /// supplied by codegen; `apply_effect_to_cursor` resolves the live
+    /// runtime accumulator id from the current collection depth, so nested
+    /// empty Class-3 bootstraps use the same dynamic id as marker-pushed
+    /// collections.
     PushCollectionId {
         id: u8,
     },
     /// Cleanup 1 (Option A refinement, 2026-04-28): a cursor popped a
-    /// frame whose new GSS top is a `CollectionMarker`. Splice the
-    /// just-built top of the builder stack (the constructed element or
-    /// nested container) into the enclosing accumulator identified by
-    /// `id`. The id is captured at log time directly from the
-    /// predecessor's `symbol.bp`, so replay is pure:
-    /// `builder.push_to_collection(id)` — no GSS walk, no walker-state
-    /// mutation. Replaces the prior `MaybeSpliceCollection { gss_top_at_log }`
-    /// design which threaded a GSS node id through the delta and required
-    /// `commit_winner` to mutate `top_node` mid-replay. The new design
-    /// only emits this delta when the popped frame's predecessor IS a
-    /// CollectionMarker — when there's no enclosing collection, no delta
-    /// is logged at all (the old code logged unconditionally and let the
-    /// helper no-op).
+    /// frame whose new GSS top is a `CollectionMarker`. The payload is the
+    /// static slot_idx captured at codegen; `apply_effect_to_cursor` splices
+    /// into the innermost active runtime accumulator so outer collection
+    /// nesting cannot mis-route elements.
     SpliceIntoCollection {
         id: u8,
     },
@@ -3383,6 +3378,12 @@ fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
                     | BuilderDelta::SubstituteToken { .. }
                     | BuilderDelta::SwapTokens { .. }
                     | BuilderDelta::ApplyRecoverySequence { .. }
+            } | ForkActionKind::PopWithEffect {
+                effect: BuilderDelta::RecoveryEvent { .. }
+                    | BuilderDelta::InsertToken { .. }
+                    | BuilderDelta::SubstituteToken { .. }
+                    | BuilderDelta::SwapTokens { .. }
+                    | BuilderDelta::ApplyRecoverySequence { .. },
             }
         )
     })
@@ -3423,6 +3424,12 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
             } => actions
                 .iter()
                 .any(|action| matches!(action, ResolvedRepairAction::InsertToken { .. })),
+            ForkActionKind::PopWithEffect { effect: BuilderDelta::InsertToken { .. } } => true,
+            ForkActionKind::PopWithEffect {
+                effect: BuilderDelta::ApplyRecoverySequence { actions, .. },
+            } => actions
+                .iter()
+                .any(|action| matches!(action, ResolvedRepairAction::InsertToken { .. })),
             _ => false,
         }
 }
@@ -3434,8 +3441,10 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
 /// walker still consumes arbitrary `WpdaEngine` forks, so it validates the
 /// same invariant before allocating children.
 fn recovery_effect_target_matches_branch_state<W: SemiringRef>(branch: &ForkBranch<W>) -> bool {
-    let ForkActionKind::ConsumeAndReplaceWithEffect { effect } = &branch.action_kind else {
-        return true;
+    let effect = match &branch.action_kind {
+        ForkActionKind::ConsumeAndReplaceWithEffect { effect }
+        | ForkActionKind::PopWithEffect { effect } => effect,
+        _ => return true,
     };
     let WpdaState::PrefixDispatch { pos: state_target, .. } = &branch.new_state else {
         return true;
@@ -8804,6 +8813,7 @@ where
                             | ForkActionKind::ConsumeIdentAndReplace { .. }
                             | ForkActionKind::ConsumeAndPop { .. }
                             | ForkActionKind::ConsumeAtAndPop { .. }
+                            | ForkActionKind::PopWithEffect { .. }
                             | ForkActionKind::ConsumeAndReplaceWithEffect { .. }
                             | ForkActionKind::ConsumeAndCaptureAndPush { .. }
                             | ForkActionKind::ConsumeIdentAndPop { .. } => {
@@ -10099,6 +10109,43 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        },
+
+                        ForkActionKind::PopWithEffect { effect } => {
+                            let mut child = BranchCursor::fork_child(
+                                cursor,
+                                pos_after,
+                                cursor.weight.times_ref(&branch.weight),
+                                branch.weight.clone(),
+                                branch.new_state.clone(),
+                                child_source_priority,
+                            );
+                            child.recovery_depth = child_recovery_depth;
+                            child.visited_recovery = child_visited_recovery.clone();
+                            child.visited_dispatch = child_visited_dispatch.clone();
+                            child.visited_proj_descriptors = child_visited_proj_descriptors.clone();
+                            self.apply_effect_to_cursor(&mut child, &effect);
+                            if Self::is_recovery_delta(&effect) {
+                                Arc::make_mut(&mut child.recovery_deltas).push(effect);
+                            }
+                            let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
+                            let (pred_id, popped_edge_kind) =
+                                self.cursor_gss_pop_via_edge(&mut child);
+                            self.apply_pop_body_to_cursor(
+                                &mut child,
+                                pred_id,
+                                popped_edge_kind.as_ref(),
+                                popped_symbol,
+                                &branch.weight,
+                                branch.new_state.clone(),
+                                tokens,
+                            );
+                            children.push(child);
                             crate::stats_thunk_created!(
                                 self,
                                 crate::walker_stats::fork_kind_index::OTHER
@@ -11993,6 +12040,19 @@ where
                         );
                     }
                 }
+            }
+            if matches!(node.shell.inner_state, WpdaState::Accepted)
+                && self.is_logical_eoi(node.shell.pos, tokens)
+            {
+                for arc in &node.arcs {
+                    let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                        &node.shell,
+                        arc,
+                    );
+                    resolved_indices.push(new_cursors.len());
+                    new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                }
+                continue;
             }
             // ONE engine.step call per frontier.
             let frontier_top = self.gss.node(node.shell.node).cloned();
@@ -14331,15 +14391,25 @@ where
             },
             BuilderDelta::PushCollectionId { id } => {
                 // H4 (2026-05-18): mirror emit_push_collection_id's
-                // sppf_stack push. The builder-side already pushed
-                // `ActionArg::CollectionId(id)` via push_collection_id;
-                // mirror by interning the CollectionId leaf on the SPPF
-                // side and pushing the SppfId onto sppf_stack so the
-                // subsequent emit_fire_action's arity check passes.
+                // sppf_stack push. Resolve the target id at runtime as the
+                // innermost active collection, matching
+                // BuilderDelta::SpliceIntoCollection below. The payload `id`
+                // is the codegen-stamped static slot_idx retained as a debug
+                // witness; it is not authoritative when this effect fires
+                // inside an outer collection.
                 // Collection-accumulation fix (2026-05-29): EMPTY items here
                 // — elements are spliced separately into the per-cursor arena
                 // and snapshotted into the node at the fire site.
-                let sid = self.sppf.intern_collection_id(*id as u32, Vec::new());
+                let acc_id = cursor.collection_stack_depth.saturating_sub(1) as usize;
+                debug_assert!(
+                    *id as usize <= acc_id,
+                    "PushCollectionId: static slot_idx {} exceeds runtime \
+                     innermost slot {} (collection_stack_depth = {})",
+                    id,
+                    acc_id,
+                    cursor.collection_stack_depth,
+                );
+                let sid = self.sppf.intern_collection_id(acc_id as u32, Vec::new());
                 // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                 // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
                 cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
@@ -19949,7 +20019,8 @@ mod tests {
     use crate::automata::lex_weight::LexicographicWeight;
     use crate::automata::semiring::Semiring;
     use crate::automata::TokenKind;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     fn lex(c: f64, s: u16, r: u16) -> LexicographicWeight {
         LexicographicWeight::from_cost(c, s, r)
@@ -20994,6 +21065,54 @@ mod tests {
             },
             other => panic!("expected AmbiguityFanout after Fork, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn fanout_parks_accepted_eoi_cursor_without_action_generation() {
+        struct CountingIdleEngine {
+            calls: Rc<Cell<usize>>,
+        }
+
+        impl WpdaEngine<LexicographicWeight> for CountingIdleEngine {
+            fn step(
+                &self,
+                _state: &WpdaState,
+                _gss: &WpdaGss<LexicographicWeight>,
+                _frontier_top: Option<&WpdaGssNode>,
+                _pos: usize,
+                _tokens: &dyn WpdaTokenSource,
+            ) -> WpdaStepAction<LexicographicWeight> {
+                self.calls.set(self.calls.get().saturating_add(1));
+                WpdaStepAction::Idle
+            }
+        }
+
+        let calls = Rc::new(Cell::new(0));
+        let tokens = empty_tokens();
+        let mut w = WpdaWalker::new(CountingIdleEngine { calls: Rc::clone(&calls) }, 0);
+        w.deterministic = false;
+        w.state = WpdaState::AmbiguityFanout {
+            branches: vec![crate::gss::GSS_NODE_NONE],
+        };
+        w.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            tokens.eof_node(),
+            LexicographicWeight::one(),
+            WpdaState::Accepted,
+        ))];
+
+        w.run_to_end_of_input(2, &tokens)
+            .expect("accepted EOI fanout cursor must park at a fixed point");
+
+        assert_eq!(
+            calls.get(),
+            0,
+            "accepted EOI fanout cursors are terminal and must not ask the engine for another action",
+        );
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].inner_state, WpdaState::Accepted);
+        assert_eq!(cursors[0].pos, tokens.eof_node());
     }
 
     /// Fork plan F4-F6: synthetic test that asserts the
@@ -23590,6 +23709,22 @@ mod tests {
             is_recovery_fork(&[insert_branch]),
             "InsertToken effect must be classified as recovery Fork"
         );
+        let pop_insert_branch = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            action_kind: ForkActionKind::PopWithEffect {
+                effect: BuilderDelta::InsertToken {
+                    pos: 0,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            is_recovery_fork(&[pop_insert_branch]),
+            "PopWithEffect InsertToken branch must be classified as a recovery Fork"
+        );
         let plain_push_branch: ForkBranch<LexicographicWeight> = ForkBranch::push(
             StackSymbolV2::category_entry(0),
             lex(0.0, 0, 0),
@@ -23671,6 +23806,22 @@ mod tests {
             forward_progress_or_insert(&non_advancing_insert, 3),
             "branch with new_state.pos==base_pos AND InsertToken effect must \
              pass filter (synthetic splice — live stream mutates at commit)"
+        );
+        let non_advancing_pop_insert: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            action_kind: ForkActionKind::PopWithEffect {
+                effect: BuilderDelta::InsertToken {
+                    pos: 3,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            forward_progress_or_insert(&non_advancing_pop_insert, 3),
+            "PopWithEffect InsertToken must use the same synthetic-splice loop exemption",
         );
 
         let non_advancing_insert_sequence: ForkBranch<LexicographicWeight> = ForkBranch {
@@ -23772,6 +23923,23 @@ mod tests {
             },
         };
         assert!(recovery_effect_target_matches_branch_state(&matching_sequence));
+
+        let matching_pop_insert: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 6, cur_bp: 0 },
+            action_kind: ForkActionKind::PopWithEffect {
+                effect: BuilderDelta::InsertToken {
+                    pos: 6,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            recovery_effect_target_matches_branch_state(&matching_pop_insert),
+            "PopWithEffect validates recovery effect targets through the same branch-state mirror",
+        );
 
         let mismatched_sequence: ForkBranch<LexicographicWeight> = ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
