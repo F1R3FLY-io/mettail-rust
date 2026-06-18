@@ -6133,61 +6133,190 @@ where
         if cap == 0 {
             return Ok(Vec::new());
         }
-        match colors.get(&id).copied() {
-            Some(RealizeColor::Black) => return Ok(memo.get(&id).cloned().unwrap_or_default()),
-            Some(RealizeColor::Gray) => return Err(RealizeLazyAbort::Cycle),
-            None => {},
+
+        enum LazyFrame<W: StarSemiringRef> {
+            Enter {
+                id: crate::sppf::SppfId,
+                cap: usize,
+            },
+            Leave {
+                id: crate::sppf::SppfId,
+                cap: usize,
+            },
+            SymbolScan {
+                id: crate::sppf::SppfId,
+                cap: usize,
+                next_idx: usize,
+                out: Vec<(ActionArg, W)>,
+            },
+            SymbolCollect {
+                id: crate::sppf::SppfId,
+                cap: usize,
+                next_idx: usize,
+                out: Vec<(ActionArg, W)>,
+                packing: crate::sppf::SppfId,
+            },
         }
-        colors.insert(id, RealizeColor::Gray);
-        let realized = match self.sppf.node(id) {
-            Some(crate::sppf::SppfNode::Symbol { lo_pos: sym_lo, hi_pos: sym_hi, .. }) => {
-                let mut out: Vec<(ActionArg, W)> = Vec::new();
-                for &packing in self.sppf.packings_of(id) {
+
+        let mut stack = vec![LazyFrame::Enter { id, cap }];
+        while let Some(frame) = stack.pop() {
+            match frame {
+                LazyFrame::Enter { id, cap } => {
+                    if cap == 0 {
+                        memo.entry(id).or_default();
+                        colors.insert(id, RealizeColor::Black);
+                        continue;
+                    }
+                    match colors.get(&id).copied() {
+                        Some(RealizeColor::Black) => continue,
+                        Some(RealizeColor::Gray) => return Err(RealizeLazyAbort::Cycle),
+                        None => {},
+                    }
+                    colors.insert(id, RealizeColor::Gray);
+                    match self.sppf.node(id) {
+                        Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                            stack.push(LazyFrame::SymbolScan {
+                                id,
+                                cap,
+                                next_idx: 0,
+                                out: Vec::new(),
+                            });
+                        },
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                            stack.push(LazyFrame::Leave { id, cap });
+                            for &child in children.iter().rev() {
+                                if colors.get(&child) != Some(&RealizeColor::Black) {
+                                    stack.push(LazyFrame::Enter { id: child, cap });
+                                }
+                            }
+                        },
+                        Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                            stack.push(LazyFrame::Leave { id, cap });
+                            for &item in items.iter().rev() {
+                                if colors.get(&item) != Some(&RealizeColor::Black) {
+                                    stack.push(LazyFrame::Enter { id: item, cap });
+                                }
+                            }
+                        },
+                        Some(_) | None => stack.push(LazyFrame::Leave { id, cap }),
+                    }
+                },
+                LazyFrame::Leave { id, cap } => {
+                    let realized = self.realize_node_leave(id, memo, colors, Some(cap));
+                    memo.insert(id, realized);
+                    colors.insert(id, RealizeColor::Black);
+                },
+                LazyFrame::SymbolScan {
+                    id,
+                    cap,
+                    mut next_idx,
+                    mut out,
+                } => {
                     if out.len() >= cap {
-                        break;
+                        memo.insert(id, out);
+                        colors.insert(id, RealizeColor::Black);
+                        continue;
                     }
-                    if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
-                        self.sppf.node(packing)
-                    {
-                        if !self.packing_satisfies_min_terminal_span(
-                            *rule_idx, children, *sym_lo, *sym_hi,
-                        ) {
+                    let (sym_lo, sym_hi) = match self.sppf.node(id) {
+                        Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) => {
+                            (*lo_pos, *hi_pos)
+                        },
+                        _ => {
+                            let realized = self.realize_node_leave(id, memo, colors, Some(cap));
+                            memo.insert(id, realized);
+                            colors.insert(id, RealizeColor::Black);
                             continue;
+                        },
+                    };
+
+                    let mut pending = None;
+                    while next_idx < self.sppf.packings_of(id).len() {
+                        let packing = self.sppf.packings_of(id)[next_idx];
+                        next_idx += 1;
+                        if let Some(crate::sppf::SppfNode::Packing {
+                            rule_idx, children, ..
+                        }) = self.sppf.node(packing)
+                        {
+                            if !self.packing_satisfies_min_terminal_span(
+                                *rule_idx, children, sym_lo, sym_hi,
+                            ) {
+                                continue;
+                            }
+                        }
+                        match colors.get(&packing).copied() {
+                            Some(RealizeColor::Black) => {
+                                if let Some(entries) = memo.get(&packing) {
+                                    for entry in entries {
+                                        out.push(entry.clone());
+                                        if out.len() >= cap {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if out.len() >= cap {
+                                    break;
+                                }
+                            },
+                            Some(RealizeColor::Gray) => return Err(RealizeLazyAbort::Cycle),
+                            None => {
+                                pending = Some(packing);
+                                break;
+                            },
                         }
                     }
-                    let remaining = cap.saturating_sub(out.len());
-                    let packing_results =
-                        self.realize_node_lazy_prefix(packing, remaining, memo, colors)?;
-                    for entry in packing_results {
-                        out.push(entry);
-                        if out.len() >= cap {
-                            break;
+
+                    if out.len() >= cap {
+                        memo.insert(id, out);
+                        colors.insert(id, RealizeColor::Black);
+                    } else if let Some(packing) = pending {
+                        let remaining = cap.saturating_sub(out.len());
+                        stack.push(LazyFrame::SymbolCollect {
+                            id,
+                            cap,
+                            next_idx,
+                            out,
+                            packing,
+                        });
+                        stack.push(LazyFrame::Enter {
+                            id: packing,
+                            cap: remaining,
+                        });
+                    } else {
+                        memo.insert(id, out);
+                        colors.insert(id, RealizeColor::Black);
+                    }
+                },
+                LazyFrame::SymbolCollect {
+                    id,
+                    cap,
+                    next_idx,
+                    mut out,
+                    packing,
+                } => {
+                    if let Some(entries) = memo.get(&packing) {
+                        for entry in entries {
+                            out.push(entry.clone());
+                            if out.len() >= cap {
+                                break;
+                            }
                         }
                     }
-                }
-                out
-            },
-            Some(crate::sppf::SppfNode::Packing { children, .. }) => {
-                for &child in children {
-                    if colors.get(&child) != Some(&RealizeColor::Black) {
-                        let _ = self.realize_node_lazy_prefix(child, cap, memo, colors)?;
+                    if out.len() >= cap {
+                        memo.insert(id, out);
+                        colors.insert(id, RealizeColor::Black);
+                    } else {
+                        stack.push(LazyFrame::SymbolScan {
+                            id,
+                            cap,
+                            next_idx,
+                            out,
+                        });
                     }
-                }
-                self.realize_node_leave(id, memo, colors, Some(cap))
-            },
-            Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
-                for &item in items {
-                    if colors.get(&item) != Some(&RealizeColor::Black) {
-                        let _ = self.realize_node_lazy_prefix(item, cap, memo, colors)?;
-                    }
-                }
-                self.realize_node_leave(id, memo, colors, Some(cap))
-            },
-            Some(_) | None => self.realize_node_leave(id, memo, colors, Some(cap)),
-        };
-        memo.insert(id, realized.clone());
-        colors.insert(id, RealizeColor::Black);
-        Ok(realized)
+                },
+            }
+        }
+
+        Ok(memo.get(&id).cloned().unwrap_or_default())
     }
 
     fn packing_satisfies_min_terminal_span(
