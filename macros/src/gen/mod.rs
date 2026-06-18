@@ -417,11 +417,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// existing token-slice path.
                 pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
-                    let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
-                        expected: Cow::Owned(msg),
-                        range: Range::from_byte_offsets(input, input.len(), input.len()),
-                        hint: None,
-                    })?;
+                    let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
@@ -609,11 +605,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     // only errors on TRUE primary-chain dead-ends —
                     // same conditions where `lex` also errors. So `?`
                     // is safe; we no longer need the `.ok()` band-aid.
-                    let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
-                        expected: Cow::Owned(msg),
-                        range: Range::from_byte_offsets(input, input.len(), input.len()),
-                        hint: None,
-                    })?;
+                    let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
@@ -815,11 +807,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     ParseError,
                 > {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
-                    let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
-                        expected: Cow::Owned(msg),
-                        range: Range::from_byte_offsets(input, input.len(), input.len()),
-                        hint: None,
-                    })?;
+                    let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
