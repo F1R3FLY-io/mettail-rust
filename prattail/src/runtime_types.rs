@@ -919,6 +919,240 @@ pub fn lex_stream_core<'a, T: Clone>(
 /// The `token_to_kind` callback converts the language-specific `Token<'a>`
 /// (from `accept_alternatives`) to the kind-only `TokenKind` carried by
 /// `LexDagEdge`.
+/// A raw (target-unresolved) outgoing edge produced by [`expand_lex_node`].
+///
+/// Carries everything a [`crate::lexer_types::LexDagEdge`] needs EXCEPT the
+/// `target_node` index. The target is resolved by the caller (eager
+/// `lex_dag_core`'s fix-up pass, or the lazy token source's on-demand
+/// `byte_to_node` lookup) once the node at `end_byte` has been allocated.
+#[derive(Debug, Clone)]
+pub struct RawLexEdge {
+    /// Token kind for this alternative.
+    pub kind: crate::automata::TokenKind,
+    /// Owned text of the matched bytes (`input[byte_start..end_byte]`).
+    pub text: String,
+    /// Byte position AFTER consuming this alt's bytes (= the successor
+    /// node's enqueued `start`).
+    pub end_byte: usize,
+    /// Priority weight (lower = higher priority).
+    pub weight: crate::automata::semiring::TropicalWeight,
+    /// Sibling-edge ordinal at this node (matches the `alt_idx` convention
+    /// of [`crate::lexer_types::LexDagEdge`] / `LexAlternative`).
+    pub alt_idx: u16,
+}
+
+/// The outcome of expanding ONE byte position into a [`crate::lexer_types::LexDagNode`].
+///
+/// Produced by [`expand_lex_node`]; consumed by both the eager
+/// [`lex_dag_core`] worklist and the lazy `LazyLatticeTokenSource`. It
+/// carries the post-whitespace-skip `byte_start`, the surviving (raw)
+/// outgoing edges (longest-first, per-kind deduped), the SUCCESSOR byte
+/// positions the caller must enqueue (in edge order, the SAME order the
+/// eager worklist would push them), and an `is_eof` flag set when the
+/// position sits at `input.len()` (the EOF sentinel).
+#[derive(Debug, Clone)]
+pub struct ExpandedLexNode {
+    /// Post-whitespace-skip byte offset where the node begins.
+    pub byte_start: usize,
+    /// Surviving raw outgoing edges (longest-first, longest-per-kind).
+    pub edges: Vec<RawLexEdge>,
+    /// Successor byte positions to enqueue, in the exact order the eager
+    /// worklist pushes them (one per surviving accept whose edge set is
+    /// non-empty, longest-first, deduped against already-enqueued bytes by
+    /// the caller). For each successor, `is_primary` marks whether it is the
+    /// maximal-munch (longest) target — used by the caller to propagate
+    /// primary-chain status into `primary_targets` (M6c.7.1 soft-fail).
+    pub successors: Vec<LexSuccessor>,
+    /// Whether this node is the EOF sentinel (`byte_start == input.len()`).
+    pub is_eof: bool,
+}
+
+/// A successor byte position emitted by [`expand_lex_node`], tagged with
+/// whether it lies on the primary maximal-munch chain (M6c.7.1).
+#[derive(Debug, Clone, Copy)]
+pub struct LexSuccessor {
+    /// The successor byte position (= the edge's `end_byte`, the enqueued
+    /// `start` for the next node).
+    pub byte: usize,
+    /// Whether this successor is the longest (maximal-munch) accept of the
+    /// node — propagates primary-chain status for soft-fail semantics.
+    pub is_primary: bool,
+}
+
+/// Expand a SINGLE byte position into a lex-DAG node — the per-node body of
+/// the [`lex_dag_core`] worklist scan, factored out so the eager DAG builder
+/// and the lazy `LazyLatticeTokenSource` share byte-identical node-expansion
+/// logic.
+///
+/// **Inputs**:
+/// - `input` / `start`: the byte position to expand (the raw, pre-WS-skip
+///   worklist `start`).
+/// - the lexer closures (`char_class`, `dfa_next`, `is_accepting`,
+///   `accept_alternatives`, `token_to_kind`) — identical to those passed to
+///   [`lex_dag_core`].
+/// - `start_is_primary`: whether `start` was reached via a primary
+///   (maximal-munch) accept of some already-expanded node (or is byte 0).
+///   This is the M6c.7.1 soft-fail discriminator: a DFA dead-end at a
+///   primary position is a TRUE input error (hard-fail, `lex` parity); a
+///   dead-end at a secondary-only position is a structural rule-out
+///   (soft-fail: an orphan node with empty edges).
+///
+/// **Output**: `Ok(ExpandedLexNode)` describing the node (post-WS `byte_start`,
+/// surviving longest-per-kind edges, ordered successors with primary flags,
+/// `is_eof`). A soft-fail (secondary dead-end) yields an EMPTY-edge node with
+/// no successors. A hard-fail (primary dead-end) returns `Err`.
+///
+/// **Determinism / equivalence**: the edge survival filter (longest-per-kind),
+/// edge ordering (longest-first), and successor ordering are IDENTICAL to the
+/// inline worklist body, so a caller that drives `expand_lex_node` in the same
+/// FIFO worklist discipline (seed `[0]`, skip already-allocated `start`s,
+/// enqueue `successors` in order) reconstructs the exact same node-id
+/// allocation order — hence byte-identical `LexDag` output (verified by
+/// `lex_dag_core`'s own unit tests, which now route through this function).
+pub fn expand_lex_node<'a, T: Clone>(
+    input: &'a str,
+    start: usize,
+    char_class: &[u8; 256],
+    dfa_next: &impl Fn(u32, u8) -> u32,
+    is_accepting: &impl Fn(u32) -> bool,
+    accept_alternatives: &impl Fn(u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
+    start_is_primary: bool,
+) -> Result<ExpandedLexNode, String> {
+    use crate::automata::semiring::TropicalWeight;
+
+    let bytes = input.as_bytes();
+
+    // Skip whitespace at this position; the resulting `pos` becomes the
+    // actual node's byte_start. This keeps the DAG semantically aligned with
+    // `lex_stream_core` (whitespace is non-token). line/col tracking is not
+    // needed here — the DAG only carries byte positions; error reporting
+    // upstream handles line/col.
+    let mut pos = start;
+    {
+        let result = skip_whitespace_simd(bytes, pos, 0, 0);
+        pos = result.pos;
+    }
+    while pos < bytes.len() && bytes[pos] >= 0x80 {
+        match decode_char_at(input, pos) {
+            Some((ch, ch_len)) if ch.is_whitespace() => {
+                pos += ch_len;
+            },
+            _ => break,
+        }
+    }
+
+    if pos >= bytes.len() {
+        // EOF sentinel: no edges, no successors. M6c.8.1: the caller
+        // captures the EOF index when it allocates this node.
+        return Ok(ExpandedLexNode {
+            byte_start: pos,
+            edges: Vec::new(),
+            successors: Vec::new(),
+            is_eof: true,
+        });
+    }
+
+    // Walk the DFA from `pos`, recording every accepting state.
+    let mut walk_pos = pos;
+    let mut state: u32 = 0;
+    let mut accepts: Vec<(u32, usize)> = Vec::new();
+    if is_accepting(0) {
+        accepts.push((0, walk_pos));
+    }
+    while walk_pos < bytes.len() {
+        let class = char_class[bytes[walk_pos] as usize];
+        let next = dfa_next(state, class);
+        if next == u32::MAX {
+            break;
+        }
+        state = next;
+        walk_pos += 1;
+        if is_accepting(state) {
+            accepts.push((state, walk_pos));
+        }
+    }
+
+    if accepts.is_empty() {
+        // M6c.7.1 (2026-05-14): soft-fail for secondary-alt dead-ends.
+        // If this position is reachable ONLY via a non-primary
+        // (shorter-than-maximal-munch) alt's downstream, the failure is
+        // structural rule-out by evidence: the alt cannot contribute to any
+        // valid parse, so the corresponding lex-Fork branch in the walker
+        // spawns a cursor that lands at the orphan node (empty edges →
+        // peek_kind = Eof), fails to dispatch, dies naturally.
+        //
+        // If `start` IS on the primary maximal-munch chain (reachable via
+        // the longest-end accept of some node), this is a true input error
+        // that `lex` would ALSO fail on. Preserve the hard-fail surface.
+        if !start_is_primary {
+            // Orphan node: empty edges, no successors.
+            return Ok(ExpandedLexNode {
+                byte_start: pos,
+                edges: Vec::new(),
+                successors: Vec::new(),
+                is_eof: false,
+            });
+        }
+        let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
+        return Err(format!("unexpected character '{}' at byte {}", ch.escape_debug(), pos));
+    }
+
+    // For each accept, emit an edge (target resolved later). Order by
+    // end_byte DESCENDING (longest-first) so edges[0] is the canonical
+    // primary.
+    accepts.sort_by(|a, b| b.1.cmp(&a.1));
+    // M6c.4-bugfix (2026-05-14): apply longest-match-per-kind filtering HERE
+    // (during edge collection) so node ids stay dense and aligned with token
+    // positions. Without this, the DAG gets ORPHAN intermediate nodes for
+    // same-kind prefix accepts (e.g. `merge` accepting Ident at end=1..5).
+    let mut seen_kinds_this_node: std::collections::HashSet<crate::automata::TokenKind> =
+        std::collections::HashSet::new();
+    // M6c.7.1: the longest end_byte is the primary maximal-munch target.
+    let primary_end_byte = accepts.first().map(|a| a.1);
+    let mut edges: Vec<RawLexEdge> = Vec::new();
+    let mut successors: Vec<LexSuccessor> = Vec::new();
+    let mut enqueued_bytes: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut alt_idx_counter: u16 = 0;
+    for (accept_state, end_byte) in accepts.iter() {
+        let text = &input[pos..*end_byte];
+        let alt_tokens = accept_alternatives(*accept_state, text);
+        let mut emitted_any_for_this_accept = false;
+        for (token, weight) in alt_tokens {
+            let kind = token_to_kind(&token);
+            if !seen_kinds_this_node.insert(kind.clone()) {
+                // Already have a longer-or-equal edge for this kind at this
+                // node — drop the redundant shorter accept.
+                continue;
+            }
+            edges.push(RawLexEdge {
+                kind,
+                text: text.to_string(),
+                end_byte: *end_byte,
+                weight: TropicalWeight(weight),
+                alt_idx: alt_idx_counter,
+            });
+            alt_idx_counter += 1;
+            emitted_any_for_this_accept = true;
+        }
+        // Emit the successor ONLY if at least one edge survived the
+        // longest-per-kind filter for this accept (mirrors the eager
+        // worklist's `emitted_any_for_this_accept` gate), and only once per
+        // distinct end_byte (the eager worklist dedups via `byte_to_node`;
+        // here we dedup the WITHIN-node successor list — the caller does the
+        // global `byte_to_node` dedup so a position already allocated by a
+        // sibling node is not re-enqueued).
+        if emitted_any_for_this_accept && enqueued_bytes.insert(*end_byte) {
+            successors.push(LexSuccessor {
+                byte: *end_byte,
+                is_primary: Some(*end_byte) == primary_end_byte,
+            });
+        }
+    }
+
+    Ok(ExpandedLexNode { byte_start: pos, edges, successors, is_eof: false })
+}
+
 pub fn lex_dag_core<'a, T: Clone>(
     input: &'a str,
     file_id: Option<u32>,
@@ -933,7 +1167,6 @@ pub fn lex_dag_core<'a, T: Clone>(
     use std::collections::{BTreeMap, VecDeque};
 
     let _ = file_id;
-    let bytes = input.as_bytes();
     let mut byte_to_node: BTreeMap<usize, usize> = BTreeMap::new();
     let mut nodes: Vec<LexDagNode> = Vec::new();
     // (raw edges with `target_byte` instead of `target_node` — fix up after
@@ -968,35 +1201,34 @@ pub fn lex_dag_core<'a, T: Clone>(
     // instead.
     let mut eof_node_idx: Option<usize> = None;
 
+    // M2L (2026-06-17): the per-node DFA-walk + edge-survival + successor
+    // discovery is factored into `expand_lex_node` so the eager builder and
+    // the lazy `LazyLatticeTokenSource` share byte-identical node expansion.
+    // The worklist discipline (seed `[0]`, skip already-allocated `start`s,
+    // FIFO order, global `byte_to_node` enqueue dedup, EOF-first-writer-wins,
+    // M6c.7.1 primary-chain propagation) stays HERE in the eager driver.
     while let Some(start) = worklist.pop_front() {
         if byte_to_node.contains_key(&start) {
             continue;
         }
-        // Skip whitespace at this position; the resulting `pos` becomes
-        // the actual node's byte_start. This keeps the DAG semantically
-        // aligned with `lex_stream_core` (whitespace is non-token).
-        // line/col tracking is not needed here — the DAG only carries
-        // byte positions; error reporting upstream handles line/col.
-        let mut pos = start;
-        {
-            let result = skip_whitespace_simd(bytes, pos, 0, 0);
-            pos = result.pos;
-        }
-        while pos < bytes.len() && bytes[pos] >= 0x80 {
-            match decode_char_at(input, pos) {
-                Some((ch, ch_len)) if ch.is_whitespace() => {
-                    pos += ch_len;
-                },
-                _ => break,
-            }
-        }
+        let start_is_primary = primary_targets.contains(&start);
+        let expanded = expand_lex_node(
+            input,
+            start,
+            char_class,
+            &dfa_next,
+            &is_accepting,
+            &accept_alternatives,
+            &token_to_kind,
+            start_is_primary,
+        )?;
 
         let node_idx = nodes.len();
         byte_to_node.insert(start, node_idx);
-        nodes.push(LexDagNode { byte_start: pos, edges: Vec::new() });
+        nodes.push(LexDagNode { byte_start: expanded.byte_start, edges: Vec::new() });
         raw_edges.push((node_idx, Vec::new()));
 
-        if pos >= bytes.len() {
+        if expanded.is_eof {
             // EOF sentinel: no edges, but still allocated so callers can
             // observe the node. M6c.8.1: capture the EOF index for
             // `LexDag.eof_node`. Multiple worklist starts may reach
@@ -1008,115 +1240,21 @@ pub fn lex_dag_core<'a, T: Clone>(
             continue;
         }
 
-        // Walk the DFA from `pos`, recording every accepting state.
-        let mut walk_pos = pos;
-        let mut state: u32 = 0;
-        let mut accepts: Vec<(u32, usize)> = Vec::new();
-        if is_accepting(0) {
-            accepts.push((0, walk_pos));
-        }
-        while walk_pos < bytes.len() {
-            let class = char_class[bytes[walk_pos] as usize];
-            let next = dfa_next(state, class);
-            if next == u32::MAX {
-                break;
-            }
-            state = next;
-            walk_pos += 1;
-            if is_accepting(state) {
-                accepts.push((state, walk_pos));
-            }
+        // Store the surviving raw edges (longest-first, longest-per-kind;
+        // target_node resolved by the fix-up pass below via `byte_to_node`).
+        for edge in expanded.edges.into_iter() {
+            raw_edges[node_idx].1.push((edge.kind, edge.text, edge.end_byte, edge.weight));
         }
 
-        if accepts.is_empty() {
-            // M6c.7.1 (2026-05-14): soft-fail for secondary-alt dead-ends.
-            // If this position is reachable ONLY via a non-primary
-            // (shorter-than-maximal-munch) alt's downstream, the
-            // failure is structural rule-out by evidence: the alt
-            // cannot contribute to any valid parse, so the
-            // corresponding lex-Fork branch in the walker spawns a
-            // cursor that lands at the orphan node (empty edges →
-            // peek_kind = Eof), fails to dispatch, dies naturally.
-            //
-            // If `start` IS on the primary maximal-munch chain
-            // (reachable via the longest-end accept of some node),
-            // this is a true input error that `lex` would ALSO fail
-            // on. Preserve the hard-fail surface.
-            if !primary_targets.contains(&start) {
-                // Orphan node: already allocated at line 977 with
-                // empty `edges`. raw_edges[node_idx] stays empty;
-                // fixup loop below emits no edges for this node.
-                continue;
-            }
-            let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
-            return Err(format!("unexpected character '{}' at byte {}", ch.escape_debug(), pos));
-        }
-
-        // For each accept, emit a raw edge (target_byte = end_byte).
-        // Order by end_byte DESCENDING (longest-first) so edges[0] is
-        // the canonical primary.
-        accepts.sort_by(|a, b| b.1.cmp(&a.1));
-        // M6c.4-bugfix (2026-05-14): apply longest-match-per-kind
-        // filtering HERE (during edge collection) rather than only at
-        // the edge-fixup step below. This is critical for cursor
-        // pos-advancement correctness: the walker's
-        // `advance_cursor_pos(cursor, 1)` increments `cursor.pos` by 1,
-        // which (for LatticeTokenSource) is the NEXT node id. If we
-        // queue intermediate accept end_bytes to the worklist
-        // unconditionally, the DAG gets ORPHAN intermediate nodes (no
-        // incoming edges after dedup) interleaved with real nodes.
-        // E.g., for `merge` (Ident accepts at end=1, 2, 3, 4, 5), the
-        // worklist allocates 5 intermediate nodes before reaching the
-        // longest accept at end=5. After edge dedup keeps only the
-        // longest per kind, those 4 intermediate nodes are orphans —
-        // but they're still indexed in `dag.nodes`. The walker's
-        // `pos += 1` then advances into orphan territory, producing
-        // bogus peek_kind/peek_text values and walker termination
-        // beyond the legitimate input boundary (e.g., pos=10 for a
-        // 9-byte input).
-        //
-        // The fix: filter accepts to LONGEST per kind BEFORE queueing
-        // their end_bytes to the worklist. This keeps node IDs dense
-        // and aligned with token positions.
-        let mut seen_kinds_this_node: std::collections::HashSet<crate::automata::TokenKind> =
-            std::collections::HashSet::new();
-        // M6c.7.1: the longest end_byte is the primary maximal-munch
-        // target. Track it to propagate primary-chain status through
-        // the worklist; secondary alts (shorter end_bytes) get
-        // soft-fail semantics when their downstream can't lex.
-        let primary_end_byte = accepts.first().map(|a| a.1);
-        for (accept_state, end_byte) in accepts.iter() {
-            let text = &input[pos..*end_byte];
-            let alt_tokens = accept_alternatives(*accept_state, text);
-            let mut emitted_any_for_this_accept = false;
-            for (token, weight) in alt_tokens {
-                let kind = token_to_kind(&token);
-                if !seen_kinds_this_node.insert(kind.clone()) {
-                    // Already have a longer-or-equal edge for this kind
-                    // at this node — drop the redundant shorter accept.
-                    continue;
-                }
-                raw_edges[node_idx].1.push((
-                    kind,
-                    text.to_string(),
-                    *end_byte,
-                    TropicalWeight(weight),
-                ));
-                emitted_any_for_this_accept = true;
-            }
-            // Queue the target byte position for scanning ONLY if at
-            // least one edge survived the longest-per-kind filter for
-            // this accept. Otherwise the accept is fully redundant and
-            // creating an orphan node would just confuse the walker's
-            // pos-advancement.
-            if emitted_any_for_this_accept && !byte_to_node.contains_key(end_byte) {
-                worklist.push_back(*end_byte);
-                // M6c.7.1: mark primary-chain targets so soft-fail
-                // logic at the worklist pop above can distinguish
-                // dead-end secondaries (soft-fail) from primary-chain
-                // dead-ends (hard-fail, preserves `lex` parity).
-                if Some(*end_byte) == primary_end_byte {
-                    primary_targets.insert(*end_byte);
+        // Queue successors in `expand_lex_node`'s edge order, applying the
+        // GLOBAL `byte_to_node` dedup (a position already allocated by a
+        // sibling node is not re-enqueued) and propagating M6c.7.1
+        // primary-chain status.
+        for succ in expanded.successors.into_iter() {
+            if !byte_to_node.contains_key(&succ.byte) {
+                worklist.push_back(succ.byte);
+                if succ.is_primary {
+                    primary_targets.insert(succ.byte);
                 }
             }
         }

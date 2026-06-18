@@ -1566,6 +1566,26 @@ fn write_lex_stream_via_core(buf: &mut String) {
          -> Result<mettail_prattail::lexer_types::LexDag, String> { \
          mettail_prattail::runtime_types::lex_dag_core( \
          input, None, &CHAR_CLASS, dfa_next, is_accepting_state, accept_alternatives, token_to_kind) \
+         }\n\
+         // M2L (2026-06-17): build a LAZY lattice token source over `input` — \n\
+         // mirrors `lex_dag` but materializes DAG nodes ON DEMAND (memoized) as \n\
+         // the WPDS walker reads positions, so positions the parser never reaches \n\
+         // are never lexed. Observationally identical to a `LatticeTokenSource` \n\
+         // over `lex_dag(input)` for every reachable position. The expander \n\
+         // closure owns its own copy of `input` so the borrowed `Token<'a>` \n\
+         // produced inside each `expand_lex_node` call never escapes (it is \n\
+         // consumed immediately by `token_to_kind`). \n\
+         pub fn lex_dag_lazy(input: &str) \
+         -> mettail_prattail::wpda_runtime::LazyLatticeTokenSource { \
+         let expander_input: String = input.to_string(); \
+         let expander: Box<dyn Fn(usize, bool) \
+         -> Result<mettail_prattail::runtime_types::ExpandedLexNode, String>> = \
+         Box::new(move |start: usize, start_is_primary: bool| { \
+         mettail_prattail::runtime_types::expand_lex_node( \
+         expander_input.as_str(), start, &CHAR_CLASS, &dfa_next, &is_accepting_state, \
+         &accept_alternatives, &token_to_kind, start_is_primary) }); \
+         mettail_prattail::wpda_runtime::LazyLatticeTokenSource::from_expander( \
+         input.to_string(), expander) \
          }",
     );
 }

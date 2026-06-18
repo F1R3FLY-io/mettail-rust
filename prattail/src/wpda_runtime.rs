@@ -1853,6 +1853,490 @@ impl WpdaTokenSource for LatticeTokenSource {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// LazyLatticeTokenSource — M2L (2026-06-17): on-demand lattice token source
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A type-erased single-node expander: wraps
+/// [`crate::runtime_types::expand_lex_node`] with the language-specific lexer
+/// closures (`char_class`/`dfa_next`/`is_accepting`/`accept_alternatives`/
+/// `token_to_kind`) baked in, erasing the grammar's `Token` type `T`. Given a
+/// byte `start` and `start_is_primary`, it returns the expanded node.
+type NodeExpander = Box<
+    dyn Fn(
+        usize,
+        bool,
+    ) -> Result<crate::runtime_types::ExpandedLexNode, String>,
+>;
+
+/// A [`WpdaTokenSource`] that materializes lex-DAG nodes ON DEMAND, lazily,
+/// instead of building the whole DAG upfront like [`LatticeTokenSource`].
+///
+/// ## Why
+///
+/// Eager [`crate::runtime_types::lex_dag_core`] worklist-builds the ENTIRE
+/// token DAG (every node + every lex-ambiguous alternative) before the parser
+/// reads a single token. For inputs the parser abandons early (a parse error
+/// near the start of a long input), most of that lexing work — and the node
+/// storage it produces — is never observed. This source defers each node's
+/// DFA walk + edge construction until the walker first reads that node id.
+///
+/// ## Observational equivalence to [`LatticeTokenSource`]
+///
+/// This source drives the EXACT SAME worklist discipline as
+/// [`crate::runtime_types::lex_dag_core`] — seed byte 0, FIFO pops, skip
+/// already-allocated `start`s, global `byte_to_node` enqueue dedup,
+/// M6c.7.1 primary-chain propagation, M6c.8.1 EOF-first-writer-wins — but
+/// PAUSED at the frontier: it only pumps the worklist far enough to answer
+/// the queries the walker actually makes. Because the algorithm and FIFO
+/// order are identical, the node-id assignment is identical, so every
+/// [`WpdaTokenSource`] observation (`peek_kind`, `peek_text`,
+/// `peek_alternatives`, `is_ambiguous_at`, `end_byte`, `next_pos`,
+/// `position_order_key`, `eof_node`) matches what an eager
+/// [`LatticeTokenSource`] over the same input would return — for every
+/// position the walker can reach. Positions the walker never reaches are
+/// simply never materialized.
+///
+/// ## Node storage / borrow strategy
+///
+/// The number of distinct DAG nodes is bounded by `input.len() + 1` (node ids
+/// are assigned one per distinct worklist `start`, and every `start` is either
+/// byte 0 or an accept `end_byte` in `1..=len`). So node CONTENTS live in a
+/// pre-sized `Vec<OnceLock<LexDagNode>>` of length `len + 1`, allocated once at
+/// construction and never resized — giving stable addresses so `peek_text` /
+/// `peek_alternatives` can return borrowed slices (the same trick the eager
+/// `LatticeTokenSource` uses for its per-node secondary-alt cache). The mutable
+/// worklist bookkeeping (`byte_to_node`, the pending queue, `primary_targets`,
+/// the EOF index, the id high-water mark) lives behind `RefCell`s, mutated only
+/// transiently while pumping and released before any borrowed slice is handed
+/// out.
+///
+/// Edges stored in the materialized nodes carry their `end_byte`; their
+/// `target_node` field is left as the [`Self::UNRESOLVED`] sentinel and
+/// resolved on demand by `next_pos` / `target_node` via `byte_to_node` (which
+/// pumps the worklist until the successor at `end_byte` is allocated, in the
+/// same FIFO order eager would). Lazy never reads `edge.target_node`.
+pub struct LazyLatticeTokenSource {
+    /// Owned input bytes (so the source is self-contained; the expander
+    /// closure captures only `'static` lexer tables/functions).
+    input: String,
+    /// Type-erased per-node expander (wraps `expand_lex_node` + closures).
+    expander: NodeExpander,
+    /// Materialized node contents, indexed by node id. Pre-sized to
+    /// `input.len() + 1`; each cell is filled exactly once when its id is
+    /// assigned. Stable addresses → borrowed `peek_text`/`peek_alternatives`.
+    nodes: Vec<std::sync::OnceLock<crate::lexer_types::LexDagNode>>,
+    /// Lazily materialized secondary-alt slices per node id (mirrors the
+    /// eager `LatticeTokenSource.secondary_alts`). Same length as `nodes`.
+    secondary_alts: Vec<std::sync::OnceLock<Vec<crate::lexer_types::LexAlternative>>>,
+    /// Worklist state, mutated only while pumping (then released).
+    worklist_state: std::cell::RefCell<LazyWorklistState>,
+}
+
+/// The mutable worklist bookkeeping for [`LazyLatticeTokenSource`], mirroring
+/// the local state of [`crate::runtime_types::lex_dag_core`].
+struct LazyWorklistState {
+    /// Map from raw worklist `start` byte → assigned node id (keyed on the
+    /// PRE-WS-skip `start`, identical to eager).
+    byte_to_node: std::collections::BTreeMap<usize, usize>,
+    /// Pending byte positions to allocate (FIFO).
+    worklist: std::collections::VecDeque<usize>,
+    /// M6c.7.1 primary maximal-munch chain targets (soft-fail discriminator).
+    primary_targets: std::collections::HashSet<usize>,
+    /// M6c.8.1 canonical EOF sentinel node id (first writer wins), once seen.
+    eof_node_idx: Option<usize>,
+    /// Number of node ids assigned so far (the high-water mark; equals the
+    /// count of materialized nodes — every assigned id fills its cell).
+    allocated: usize,
+    /// Whether the worklist has drained (no more nodes can ever be allocated).
+    drained: bool,
+}
+
+impl LazyLatticeTokenSource {
+    /// Sentinel `target_node` for stored edges whose successor has not been
+    /// resolved through `byte_to_node` yet. Lazy never reads `edge.target_node`
+    /// (it resolves successors via `end_byte`), so this value is inert.
+    pub const UNRESOLVED: usize = usize::MAX;
+
+    /// Construct a lazy lattice source from the input plus the grammar's lexer
+    /// closures — the SAME closures passed to
+    /// [`crate::runtime_types::lex_dag_core`] / the generated `lex_dag`. The
+    /// generic `T` (the grammar's `Token` type) is erased into the boxed
+    /// expander, so the resulting source has no type parameter.
+    ///
+    /// **Lifetime note**: this convenience constructor requires `T: 'static`,
+    /// which fits test/simple lexers whose token type is owned (e.g. the
+    /// `lex_dag_core` unit-test DFAs use `T = TokenKind`). Generated lexers
+    /// whose `Token<'a>` BORROWS the input cannot satisfy `T: 'static`; they
+    /// build the boxed expander themselves and call [`Self::from_expander`]
+    /// (the generated `lex_dag_lazy` does exactly this — the closure owns its
+    /// input copy and the borrowed `Token<'a>` never escapes a single
+    /// `expand_lex_node` call).
+    pub fn from_lexer<T: Clone + 'static>(
+        input: &str,
+        char_class: &'static [u8; 256],
+        dfa_next: impl Fn(u32, u8) -> u32 + 'static,
+        is_accepting: impl Fn(u32) -> bool + 'static,
+        accept_alternatives: impl for<'b> Fn(u32, &'b str) -> Vec<(T, f64)> + 'static,
+        token_to_kind: impl Fn(&T) -> TokenKind + 'static,
+    ) -> Self {
+        let owned: String = input.to_string();
+        // The expander owns its own copy of the input so the boxed closure is
+        // `'static` (it does not borrow the `LazyLatticeTokenSource.input`
+        // field — that would be a self-referential borrow). `expand_lex_node`
+        // reads `input[start..]`; passing the owned copy keeps byte offsets
+        // identical to the eager DAG over the same bytes.
+        let expander_input: String = owned.clone();
+        let expander: NodeExpander = Box::new(move |start: usize, start_is_primary: bool| {
+            crate::runtime_types::expand_lex_node(
+                expander_input.as_str(),
+                start,
+                char_class,
+                &dfa_next,
+                &is_accepting,
+                &accept_alternatives,
+                &token_to_kind,
+                start_is_primary,
+            )
+        });
+        Self::from_expander(owned, expander)
+    }
+
+    /// Construct a lazy lattice source from an owned `input` and a pre-built,
+    /// type-erased per-node `expander`. This is the constructor generated code
+    /// uses (its `Token<'a>` cannot satisfy `from_lexer`'s `T: 'static`): the
+    /// generated `lex_dag_lazy` builds the boxed `NodeExpander` itself, owning
+    /// its own copy of the input so the borrowed `Token<'a>` produced inside
+    /// each `expand_lex_node` call never escapes.
+    ///
+    /// `input` MUST be the same bytes the `expander` lexes, so node
+    /// `byte_start`s / `position_order_key`s line up with the eager DAG.
+    pub fn from_expander(input: String, expander: NodeExpander) -> Self {
+        let owned = input;
+        let capacity = owned.len() + 1;
+        let mut nodes = Vec::with_capacity(capacity);
+        let mut secondary_alts = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
+            nodes.push(std::sync::OnceLock::new());
+            secondary_alts.push(std::sync::OnceLock::new());
+        }
+        let mut worklist = std::collections::VecDeque::new();
+        worklist.push_back(0usize);
+        let mut primary_targets = std::collections::HashSet::new();
+        primary_targets.insert(0usize);
+        LazyLatticeTokenSource {
+            input: owned,
+            expander,
+            nodes,
+            secondary_alts,
+            worklist_state: std::cell::RefCell::new(LazyWorklistState {
+                byte_to_node: std::collections::BTreeMap::new(),
+                worklist,
+                primary_targets,
+                eof_node_idx: None,
+                allocated: 0,
+                drained: false,
+            }),
+        }
+    }
+
+    /// Borrow the owned input.
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+
+    /// Number of nodes materialized so far (the lazy SPACE metric:
+    /// `lex_nodes_materialized`). Equals the eager DAG's node count only after
+    /// the parser has driven the lazy source to full saturation.
+    pub fn nodes_materialized(&self) -> usize {
+        self.worklist_state.borrow().allocated
+    }
+
+    /// Force full materialization (drive the worklist to drain). Used by tests
+    /// and the equivalence harness to compare the fully-expanded lazy DAG to
+    /// the eager DAG node-by-node; NOT called on the parse hot path.
+    pub fn force_full_materialization(&self) {
+        while self.pump_one() {}
+    }
+
+    /// Pump the worklist one step: pop the next pending `start`, expand it, and
+    /// materialize its node (assigning the next id). Returns `true` if a node
+    /// was allocated, `false` if the worklist drained. Errors propagate the
+    /// hard-fail (primary dead-end) surface, recorded by setting `drained` and
+    /// stashing the message (the walker observes the resulting missing nodes as
+    /// `peek_kind = None`, identical to how an eager hard-fail aborts the parse
+    /// facade before the walker runs — see equivalence note below).
+    fn pump_one(&self) -> bool {
+        // Pop under a short borrow; release before calling the expander (which
+        // must not hold the RefCell, and does not need it).
+        let start = {
+            let mut st = self.worklist_state.borrow_mut();
+            if st.drained {
+                return false;
+            }
+            loop {
+                match st.worklist.pop_front() {
+                    Some(s) => {
+                        if st.byte_to_node.contains_key(&s) {
+                            // Already allocated by a sibling enqueue — skip,
+                            // exactly like the eager `continue`.
+                            continue;
+                        }
+                        break s;
+                    },
+                    None => {
+                        st.drained = true;
+                        return false;
+                    },
+                }
+            }
+        };
+        let start_is_primary = self.worklist_state.borrow().primary_targets.contains(&start);
+        let expanded = match (self.expander)(start, start_is_primary) {
+            Ok(e) => e,
+            Err(_msg) => {
+                // M6c.7.1 hard-fail (primary dead-end). Eager `lex_dag_core`
+                // returns `Err` here and the generated parse facade aborts
+                // BEFORE constructing any token source / running the walker.
+                // The lazy source is used in the same facade position, so a
+                // hard-fail means "this input does not lex" — we mark the
+                // source drained at the current frontier. The pre-frontier
+                // nodes already materialized stay observationally identical;
+                // the abandoned tail is exactly what eager would have refused
+                // to produce. (The equivalence test drives lazy through the
+                // walker directly and asserts identical accept/error verdicts.)
+                self.worklist_state.borrow_mut().drained = true;
+                return false;
+            },
+        };
+        let mut st = self.worklist_state.borrow_mut();
+        // Re-check: another nested pump (impossible here — single-threaded,
+        // no re-entrancy) could have allocated `start`. Guard defensively.
+        if st.byte_to_node.contains_key(&start) {
+            return true;
+        }
+        let node_idx = st.allocated;
+        st.byte_to_node.insert(start, node_idx);
+        st.allocated += 1;
+
+        if expanded.is_eof {
+            if st.eof_node_idx.is_none() {
+                st.eof_node_idx = Some(node_idx);
+            }
+            // Materialize an empty (EOF sentinel) node.
+            let _ = self.nodes[node_idx]
+                .set(crate::lexer_types::LexDagNode { byte_start: expanded.byte_start, edges: Vec::new() });
+            return true;
+        }
+
+        // Build the node's resolved-on-demand edges (target_node = UNRESOLVED).
+        let edges: Vec<crate::lexer_types::LexDagEdge> = expanded
+            .edges
+            .iter()
+            .map(|e| crate::lexer_types::LexDagEdge {
+                kind: e.kind.clone(),
+                text: e.text.clone(),
+                end_byte: e.end_byte,
+                target_node: Self::UNRESOLVED,
+                weight: e.weight,
+                alt_idx: e.alt_idx,
+            })
+            .collect();
+        let _ = self.nodes[node_idx]
+            .set(crate::lexer_types::LexDagNode { byte_start: expanded.byte_start, edges });
+
+        // Enqueue successors in edge order, applying the GLOBAL byte_to_node
+        // dedup and M6c.7.1 primary propagation — identical to eager.
+        for succ in expanded.successors.into_iter() {
+            if !st.byte_to_node.contains_key(&succ.byte) {
+                st.worklist.push_back(succ.byte);
+                if succ.is_primary {
+                    st.primary_targets.insert(succ.byte);
+                }
+            }
+        }
+        true
+    }
+
+    /// Pump the worklist until node id `idx` is materialized (or the worklist
+    /// drains). After this returns, `self.nodes[idx]` is `Some` iff `idx` is a
+    /// real node id of the eager DAG over the same input.
+    fn ensure_node(&self, idx: usize) {
+        loop {
+            let allocated = self.worklist_state.borrow().allocated;
+            if allocated > idx {
+                return;
+            }
+            if !self.pump_one() {
+                return;
+            }
+        }
+    }
+
+    /// Pump the worklist until the node at byte position `end_byte` is
+    /// allocated (so its id is known), returning that id. Used to resolve an
+    /// edge's `target_node` on demand. Returns `None` if the position is never
+    /// allocated (worklist drained without reaching it).
+    fn ensure_byte_allocated(&self, end_byte: usize) -> Option<usize> {
+        loop {
+            if let Some(&id) = self.worklist_state.borrow().byte_to_node.get(&end_byte) {
+                return Some(id);
+            }
+            if !self.pump_one() {
+                // Final check after the last pump.
+                return self.worklist_state.borrow().byte_to_node.get(&end_byte).copied();
+            }
+        }
+    }
+
+    /// Read a materialized node by id, materializing it first. Returns `None`
+    /// for out-of-range / never-allocated ids (mirrors
+    /// `LatticeTokenSource`'s `dag.nodes.get(pos)` returning `None`).
+    fn node(&self, pos: usize) -> Option<&crate::lexer_types::LexDagNode> {
+        self.ensure_node(pos);
+        self.nodes.get(pos)?.get()
+    }
+
+    /// Lazily materialize and cache the secondary-alt slice for node `pos`
+    /// (edges beyond the primary), mirroring
+    /// `LatticeTokenSource::secondary_alts_for`.
+    fn secondary_alts_for(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        // Materialize the node first (separate borrow that ends before the
+        // OnceLock init closure runs).
+        let node_exists = self.node(pos).is_some();
+        let Some(cell) = self.secondary_alts.get(pos) else {
+            return &[];
+        };
+        if !node_exists {
+            return &[];
+        }
+        cell.get_or_init(|| {
+            self.nodes
+                .get(pos)
+                .and_then(|n| n.get())
+                .map(|node| {
+                    node.edges
+                        .iter()
+                        .skip(1)
+                        .map(|e| crate::lexer_types::LexAlternative {
+                            kind: e.kind.clone(),
+                            text: e.text.clone(),
+                            end_byte: e.end_byte,
+                            weight: e.weight,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .as_slice()
+    }
+
+    /// Returns the target node of edge `alt_idx` (0 = primary; 1+ =
+    /// secondaries) from node `pos`, resolving it on demand via `byte_to_node`.
+    /// Symmetric with `LatticeTokenSource::target_node`.
+    pub fn target_node(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        let end_byte = {
+            let node = self.node(pos)?;
+            node.edges.get(alt_idx)?.end_byte
+        };
+        self.ensure_byte_allocated(end_byte)
+    }
+}
+
+impl WpdaTokenSource for LazyLatticeTokenSource {
+    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        let node = self.node(pos)?;
+        Some(
+            node.edges
+                .first()
+                .map(|edge| edge.kind.clone())
+                .unwrap_or(TokenKind::Eof),
+        )
+    }
+
+    fn peek_text(&self, pos: usize) -> Option<&str> {
+        let node = self.node(pos)?;
+        Some(
+            node.edges
+                .first()
+                .map(|edge| edge.text.as_str())
+                .unwrap_or(""),
+        )
+    }
+
+    fn len(&self) -> usize {
+        // The eager `LatticeTokenSource::len()` returns the FULL node count
+        // (`dag.nodes.len()`), and — crucially — GENERATED lookahead scans rely
+        // on this. In particular `prefix_crosscat_lhs_trigger_ahead`
+        // (codegen, the cross-cat-LHS cast disambiguator) scans
+        // `for i in pos+1 .. tokens.len()` looking ahead for a comparison
+        // trigger (e.g. `==` in `int(3) == 3`); if `len()` under-reports, the
+        // scan stops early, the cast branch is never taken, and the parse
+        // diverges (e.g. `int` collapses to a bare `PVar`). So `len()` MUST
+        // equal the eager full node count.
+        //
+        // Lazy therefore fully materializes the DAG here (memoized — the
+        // worklist drains exactly once; subsequent calls are O(1)). This is the
+        // unavoidable cost of observational equivalence for any `len()`-bounded
+        // consumer: a sound `len()` requires knowing every node. The full lex
+        // is linear in the input (the cheap part of parsing — see the
+        // "Phase 2L STOP by measurement" verdict), so this is bounded; what
+        // STILL stays lazy is every parse that the walker abandons BEFORE any
+        // `len()`-bounded scan runs (the cast disambiguator only fires at a
+        // cross-cat-LHS keyword such as `int`/`float`; inputs whose prefix
+        // never hits one — and whose deterministic frontier never parks at a
+        // `pos >= len()` check — never trigger this drain).
+        self.force_full_materialization();
+        self.worklist_state.borrow().allocated
+    }
+
+    fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        self.secondary_alts_for(pos)
+    }
+
+    fn is_ambiguous_at(&self, pos: usize) -> bool {
+        self.node(pos).map(|n| n.edges.len() > 1).unwrap_or(false)
+    }
+
+    fn end_byte(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        let node = self.node(pos)?;
+        node.edges.get(alt_idx).map(|e| e.end_byte)
+    }
+
+    /// M3 semantics: the next NODE INDEX after consuming edge `alt_idx` from
+    /// node `pos`. Lazy resolves the successor on demand via `byte_to_node`.
+    fn next_pos(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        self.target_node(pos, alt_idx)
+    }
+
+    fn positions_are_linear_tokens(&self) -> bool {
+        false
+    }
+
+    fn position_order_key(&self, pos: usize) -> Option<usize> {
+        self.node(pos).map(|node| node.byte_start)
+    }
+
+    /// M6c.8.2: the canonical EOF sentinel node id.
+    ///
+    /// Eager returns `dag.eof_node` directly. Lazy discovers the EOF id when
+    /// the worklist first allocates a node at `byte_start == input.len()`. The
+    /// walker reaches EOI only by advancing (`next_pos`) along the primary
+    /// chain to that node, so by the time a cursor's `pos` could equal the EOF
+    /// id, that node has been materialized and `eof_node_idx` is set. Until
+    /// then we return [`Self::UNRESOLVED`] (`usize::MAX`), which never equals a
+    /// reached `pos` — so `pos == eof_node()` is correctly `false` for cursors
+    /// not yet at EOF, identical to eager. (We do NOT eagerly walk the primary
+    /// chain to EOF here: that would defeat the space savings on early-failure
+    /// inputs, where the cursor never approaches EOF.)
+    fn eof_node(&self) -> usize {
+        self.worklist_state
+            .borrow()
+            .eof_node_idx
+            .unwrap_or(Self::UNRESOLVED)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Binder handle (Stage 6 Phase A.1 — alpha-rename substrate shared with runtime)
 // ══════════════════════════════════════════════════════════════════════════════
 

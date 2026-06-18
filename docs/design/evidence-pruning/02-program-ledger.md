@@ -439,11 +439,43 @@ most-upstream sound definite-kill site, blast radius) is in flight; fix is FV-fi
 (EvidenceComplete: killed = token-unsound = not a valid parse). The `{(1)|2}` 867k-step
 spin input parses cleanly here (pos=eof) — the ghost, not a hang, is the live residual.
 
-## EP — Phase 2L (lazy token frontier, measure-first): STOP (2026-06-18)
+## EP — Phase 2L (lazy token frontier): IMPLEMENTED + ACCEPTED (experiment 69, 2026-06-18)
 
-Measure-first verdict (probe `languages/examples/lex_cost_probe.rs`, release, 2000
-reps/input, since deleted). Eager-lex (the materialized token DAG) vs full parse,
-per input:
+**Final verdict: IMPLEMENTED + ACCEPTED.** A prior coarse probe (below) was recorded
+as a STOP; the rigorous pgmcp experiment 69 (Welch t, pre-registered, n=60/arm)
+**REFUTED that STOP** and accepted lazy lexing. The implementation ships:
+`runtime_types.rs::expand_lex_node` (per-node expander extracted from the eager
+`lex_dag_core` worklist), `wpda_runtime.rs::LazyLatticeTokenSource`
+(`Vec<OnceLock<LexDagNode>>` memoization + a `RefCell` on-demand worklist, computed
+when the parser first reads a position), and `automata/codegen.rs::lex_dag_lazy`
+(emits a boxed `NodeExpander`). Proven equivalent to eager by `lazy_lex_equivalence.rs`
+(7/7 lazy ≡ eager); zero regression (prattail lib 3766, gen_calculator_unit 169,
+gen_rhocalc_unit 86, collection_ghost_regression 5).
+
+### Experiment 69 result (the binding verdict)
+
+Primary metric `lex_build_ns`, decided on the **conservative typical-success workload**
+(calculator full-parse, not the most-favorable early-failure case, to pre-empt
+cherry-picking):
+
+| class | eager → lazy | Δ | test |
+|---|---|---|---|
+| calculator full-parse (all 8 inputs) | — | **−4.3…−5.0%** | t=−13.09, p=5.5e-21, d=2.39 → ACCEPT |
+| early-failure `}}}` / `* 1 +` | 37.5µs → 10.2µs | **−72.7…−79.3%** | + 97% fewer nodes (37→1) |
+| rhocalc early-failure | — | **−9…−71.7%** | + 90% fewer nodes |
+| rhocalc full-to-EOI (CAVEAT) | 7.97ms → 8.05ms | **+1.0%** | OnceLock overhead when all tokens consumed |
+
+Space (`lex_nodes_materialized`, deterministic): **0% saved on full-parse** (correct —
+every token is needed), **90–97% saved on early-failure** (unreached positions never
+lexed). Non-parametric robustness on the primary: Mann-Whitney p=6.2e-14, Cliff's
+δ=−0.79 ("large"). Net: lazy is a real win concentrated on early-failure/malformed
+inputs and small full parses; neutral-to-+1% only on large rhocalc full-to-EOI parses.
+
+### Why the prior STOP was wrong (superseded, retained for the record)
+
+The original coarse probe (`languages/examples/lex_cost_probe.rs`, since deleted,
+2000 reps/input) measured eager-lex vs full parse **only on inputs that parse to
+EOI**:
 
 | input | lex_ns | parse_ns | lex% |
 |---|---|---|---|
@@ -452,14 +484,13 @@ per input:
 | `float(float(10,64),64)` | 8,733 | 4,124,289 | 0.2% |
 | `int(...) ^ int(2) ? y ~ int(...) : int(...)` | 25,675 | 12,892,885 | 0.2% |
 
-Lexing is **0.1–0.5% of parse time** (rho collections incl.; `{0|1|2}` 0.5%, the max),
-**OVERALL = 0.16%** (500–1000× smaller) across arithmetic, cast, comparison, ternary,
-chain, send, and collection inputs; the WPDA walk dominates entirely. The mechanism is
-corpus-independent (lex = linear DAG construction; parse = the cohort/fork/budget
-walk). A lazy/demand token frontier could save at most a fraction of that 0.2% — far
-below any worthwhile gate (>~20%). **Phase 2L STOP, first-class; eager lexing is
-negligible.** (Coverage-matrix lexer-laziness row was already `active-parser-risk`,
-not a runtime-flip gate; this measurement closes it as a recorded non-goal.)
+It concluded "lex is 0.16% of parse, lazy buys nothing." **The error: it measured
+only the full-parse case** — where lazy's benefit is genuinely small (~−4.5% of a tiny
+fraction) — and **never measured early-failure/malformed inputs**, exactly where lazy
+avoids materializing the unreached token tail (−72…−79% time, 90–97% fewer nodes).
+The lesson (logged against [feedback_prove_root_before_claiming]): a measure-first
+STOP is only as sound as the input classes it measures; the canonical workload set
+must include the early-exit path, not just the happy path.
 
 ## EP — Phase 6 (residual dedup/factoring, measure-first) + Phase S (subsumption): STOP (2026-06-18)
 

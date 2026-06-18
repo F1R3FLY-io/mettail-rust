@@ -427,11 +427,14 @@ languages — both prune extraction roots, RC by Rho-rejection, TR by token-unso
 
 ## 5. PL — Parser-side leftovers that survive the flip
 
-- **2L — lazy token frontier** (`facade.rs`/`runtime_types.rs` eager `Vec`; coverage
-  matrix `active-parser-risk`). Independent of the backend; measure-first. Defer
-  lexically-ambiguous forks until a downstream dispatch demands the distinction.
-  Lowest priority; only pursued if a measurement shows eager lexing is a real cost
-  on the corpus.
+- **2L — lazy token frontier — ✅ DONE (IMPLEMENTED + ACCEPTED, experiment 69, 2026-06-18).**
+  Lazy on-demand lex-node materialization shipped (`runtime_types.rs::expand_lex_node`,
+  `wpda_runtime.rs::LazyLatticeTokenSource`, `automata/codegen.rs::lex_dag_lazy`), proven
+  lazy ≡ eager (`lazy_lex_equivalence.rs` 7/7), accepted by rigorous pgmcp Welch
+  (calc full-parse −4.6% p=5.5e-21 d=2.39; early-failure −72…−79% time + 90–97% fewer
+  nodes; rhocalc full-to-EOI +1% caveat). A prior coarse probe STOP'd this as a
+  "0.16% non-goal" — that probe measured only the full-parse path and missed the
+  early-failure win; experiment 69 refuted it. See `02-program-ledger.md` §2L.
 - **STOP re-confirmation (cheap, 1 probe):** P2 (Parikh) and P3 (pre*) STOP'd on the
   pre-ROOT-A corpus. ROOT-A made the comm tests non-vacuous (new token sequences
   reach the recognizer). Re-run the P2 `would_refute` counter and the P3 must-add

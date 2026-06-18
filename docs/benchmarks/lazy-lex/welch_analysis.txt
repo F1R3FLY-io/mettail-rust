@@ -1,0 +1,93 @@
+==============================================================================
+SPACE: lex_nodes_materialized — eager(control) vs lazy(treatment)
+==============================================================================
+
+[calculator / full]
+  input[0]: eager=   6  lazy=   6  saved=   0  (0%)
+  input[1]: eager=   7  lazy=   7  saved=   0  (0%)
+  input[2]: eager=   6  lazy=   6  saved=   0  (0%)
+  input[3]: eager=   4  lazy=   4  saved=   0  (0%)
+  input[4]: eager=  12  lazy=  12  saved=   0  (0%)
+  input[5]: eager=  10  lazy=  10  saved=   0  (0%)
+  input[6]: eager=  10  lazy=  10  saved=   0  (0%)
+  input[7]: eager=  40  lazy=  40  saved=   0  (0%)
+  TOTAL: eager=95  lazy=95  saved=0 (0.0%)
+
+[calculator / earlyfail]
+  input[0]: eager=  40  lazy=  40  saved=   0  (0%)
+  input[1]: eager=  37  lazy=   1  saved=  36  (97%)
+  input[2]: eager=  39  lazy=  39  saved=   0  (0%)
+  input[3]: eager=  37  lazy=   1  saved=  36  (97%)
+  TOTAL: eager=153  lazy=81  saved=72 (47.1%)
+
+[rhocalc / full]
+  input[0]: eager=   8  lazy=   8  saved=   0  (0%)
+  input[1]: eager=  23  lazy=  23  saved=   0  (0%)
+  input[2]: eager=   4  lazy=   4  saved=   0  (0%)
+  input[3]: eager=  42  lazy=  42  saved=   0  (0%)
+  TOTAL: eager=77  lazy=77  saved=0 (0.0%)
+
+[rhocalc / earlyfail]
+  input[0]: eager=  38  lazy=  38  saved=   0  (0%)
+  input[1]: eager=  40  lazy=   4  saved=  36  (90%)
+  input[2]: eager=  21  lazy=   2  saved=  19  (90%)
+  TOTAL: eager=99  lazy=44  saved=55 (55.6%)
+
+==============================================================================
+TIME: lex_build_ns — Welch t-test H1: lazy < eager (tail=less), per (lang,class)
+==============================================================================
+
+[calculator / full]  n_eager=480 n_lazy=480
+  eager: mean=2910152.0ns median=1407237.5ns
+  lazy:  mean=2774397.0ns median=1341001.0ns
+  delta(lazy-eager): -135755.0ns (-4.7%)
+  Welch t=-0.556  p(one-sided, lazy<eager)=0.2893  NS
+
+[calculator / earlyfail]  n_eager=240 n_lazy=240
+  eager: mean=356383.7ns median=252380.0ns
+  lazy:  mean=340407.8ns median=241534.0ns
+  delta(lazy-eager): -15975.9ns (-4.5%)
+  Welch t=-0.495  p(one-sided, lazy<eager)=0.3105  NS
+
+[rhocalc / full]  n_eager=240 n_lazy=240
+  eager: mean=3087072.2ns median=1990284.0ns
+  lazy:  mean=3111045.0ns median=1940991.0ns
+  delta(lazy-eager): +23972.9ns (+0.8%)
+  Welch t=0.088  p(one-sided, lazy<eager)=0.5552  no win
+
+[rhocalc / earlyfail]  n_eager=180 n_lazy=180
+  eager: mean=127183.8ns median=41010.0ns
+  lazy:  mean=108209.8ns median=37320.0ns
+  delta(lazy-eager): -18974.0ns (-14.9%)
+  Welch t=-1.439  p(one-sided, lazy<eager)=0.07547  NS
+
+==============================================================================
+TIME per-input medians (ns)
+==============================================================================
+
+[calculator / full]
+  input[0]: eager_med= 1360356  lazy_med= 1288346  delta=  -72010 (-5.3%)
+  input[1]: eager_med= 2783042  lazy_med= 2635894  delta= -147148 (-5.3%)
+  input[2]: eager_med= 1396249  lazy_med= 1333156  delta=  -63092 (-4.5%)
+  input[3]: eager_med= 1412301  lazy_med= 1338959  delta=  -73342 (-5.2%)
+  input[4]: eager_med=  853414  lazy_med=  816619  delta=  -36796 (-4.3%)
+  input[5]: eager_med= 1921162  lazy_med= 1827440  delta=  -93722 (-4.9%)
+  input[6]: eager_med=  513071  lazy_med=  490005  delta=  -23066 (-4.5%)
+  input[7]: eager_med=12963976  lazy_med=12282958  delta= -681018 (-5.3%)
+
+[calculator / earlyfail]
+  input[0]: eager_med=  461927  lazy_med=  462695  delta=    +768 (+0.2%)
+  input[1]: eager_med=   37264  lazy_med=    9837  delta=  -27428 (-73.6%)
+  input[2]: eager_med=  873304  lazy_med=  874490  delta=   +1186 (+0.1%)
+  input[3]: eager_med=   49813  lazy_med=   10152  delta=  -39661 (-79.6%)
+
+[rhocalc / full]
+  input[0]: eager_med= 1059772  lazy_med= 1072017  delta=  +12246 (+1.2%)
+  input[1]: eager_med= 2931447  lazy_med= 2950994  delta=  +19548 (+0.7%)
+  input[2]: eager_med=  379812  lazy_med=  383576  delta=   +3763 (+1.0%)
+  input[3]: eager_med= 7967644  lazy_med= 8072692  delta= +105048 (+1.3%)
+
+[rhocalc / earlyfail]
+  input[0]: eager_med=   41010  lazy_med=   37320  delta=   -3690 (-9.0%)
+  input[1]: eager_med=  309034  lazy_med=  278488  delta=  -30546 (-9.9%)
+  input[2]: eager_med=   31723  lazy_med=    8992  delta=  -22731 (-71.7%)

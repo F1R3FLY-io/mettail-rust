@@ -1,0 +1,30 @@
+==============================================================================
+PER-INPUT Welch t-test, H1: lazy < eager (tail=less)
+==============================================================================
+
+[calculator / full]
+  input[0]: n=60 eager_mean=  1361958 lazy_mean=  1299419 delta=   -62539(-4.6%) t=-12.83 p=4.99e-20 WIN(p<0.05)
+  input[1]: n=60 eager_mean=  2790683 lazy_mean=  2661822 delta=  -128860(-4.6%) t=-13.09 p=5.474e-21 WIN(p<0.05)
+  input[2]: n=60 eager_mean=  1399804 lazy_mean=  1339950 delta=   -59854(-4.3%) t=-11.95 p=7.358e-19 WIN(p<0.05)
+  input[3]: n=60 eager_mean=  1419561 lazy_mean=  1349240 delta=   -70320(-5.0%) t=-9.74 p=4.219e-17 WIN(p<0.05)
+  input[4]: n=60 eager_mean=   856780 lazy_mean=   820052 delta=   -36727(-4.3%) t=-12.28 p=1.451e-20 WIN(p<0.05)
+  input[5]: n=60 eager_mean=  1930067 lazy_mean=  1838835 delta=   -91232(-4.7%) t=-12.84 p=1.235e-22 WIN(p<0.05)
+  input[6]: n=60 eager_mean=   514761 lazy_mean=   491526 delta=   -23236(-4.5%) t=-11.17 p=3.69e-19 WIN(p<0.05)
+  input[7]: n=60 eager_mean= 13007603 lazy_mean= 12394332 delta=  -613271(-4.7%) t=-13.58 p=2.918e-22 WIN(p<0.05)
+
+[calculator / earlyfail]
+  input[0]: n=60 eager_mean=   462682 lazy_mean=   465851 delta=    +3168(+0.7%) t=1.13 p=0.8698 NS
+  input[1]: n=60 eager_mean=    37522 lazy_mean=    10236 delta=   -27286(-72.7%) t=-78.16 p=2.672e-71 WIN(p<0.05)
+  input[2]: n=60 eager_mean=   875404 lazy_mean=   875195 delta=     -209(-0.0%) t=-0.14 p=0.4446 NS
+  input[3]: n=60 eager_mean=    49927 lazy_mean=    10350 delta=   -39577(-79.3%) t=-172.02 p=6.279e-127 WIN(p<0.05)
+
+[rhocalc / full]
+  input[0]: n=60 eager_mean=  1060344 lazy_mean=  1069881 delta=    +9537(+0.9%) t=4.95 p=1 NS
+  input[1]: n=60 eager_mean=  2940085 lazy_mean=  2943534 delta=    +3449(+0.1%) t=0.34 p=0.6338 NS
+  input[2]: n=60 eager_mean=   379807 lazy_mean=   382860 delta=    +3053(+0.8%) t=3.46 p=0.9996 NS
+  input[3]: n=60 eager_mean=  7968052 lazy_mean=  8047904 delta=   +79852(+1.0%) t=5.43 p=1 NS
+
+[rhocalc / earlyfail]
+  input[0]: n=60 eager_mean=    41038 lazy_mean=    37340 delta=    -3698(-9.0%) t=-41.88 p=1.809e-68 WIN(p<0.05)
+  input[1]: n=60 eager_mean=   308763 lazy_mean=   278312 delta=   -30450(-9.9%) t=-62.79 p=2.034e-89 WIN(p<0.05)
+  input[2]: n=60 eager_mean=    31751 lazy_mean=     8978 delta=   -22773(-71.7%) t=-387.24 p=3.003e-128 WIN(p<0.05)
