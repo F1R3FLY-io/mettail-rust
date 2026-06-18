@@ -439,6 +439,52 @@ most-upstream sound definite-kill site, blast radius) is in flight; fix is FV-fi
 (EvidenceComplete: killed = token-unsound = not a valid parse). The `{(1)|2}` 867k-step
 spin input parses cleanly here (pos=eof) — the ghost, not a hang, is the live residual.
 
+## EP — Phase 2L (lazy token frontier, measure-first): STOP (2026-06-18)
+
+Measure-first verdict (probe `languages/examples/lex_cost_probe.rs`, release, 2000
+reps/input, since deleted). Eager-lex (the materialized token DAG) vs full parse,
+per input:
+
+| input | lex_ns | parse_ns | lex% |
+|---|---|---|---|
+| `1 + 2 * 3` | 3,062 | 2,353,406 | 0.1% |
+| `int(3) == 3` | 5,260 | 2,845,199 | 0.2% |
+| `float(float(10,64),64)` | 8,733 | 4,124,289 | 0.2% |
+| `int(...) ^ int(2) ? y ~ int(...) : int(...)` | 25,675 | 12,892,885 | 0.2% |
+
+Lexing is **0.1–0.5% of parse time** (rho collections incl.; `{0|1|2}` 0.5%, the max),
+**OVERALL = 0.16%** (500–1000× smaller) across arithmetic, cast, comparison, ternary,
+chain, send, and collection inputs; the WPDA walk dominates entirely. The mechanism is
+corpus-independent (lex = linear DAG construction; parse = the cohort/fork/budget
+walk). A lazy/demand token frontier could save at most a fraction of that 0.2% — far
+below any worthwhile gate (>~20%). **Phase 2L STOP, first-class; eager lexing is
+negligible.** (Coverage-matrix lexer-laziness row was already `active-parser-risk`,
+not a runtime-flip gate; this measurement closes it as a recorded non-goal.)
+
+## EP — Phase 6 (residual dedup/factoring, measure-first) + Phase S (subsumption): STOP (2026-06-18)
+
+Measure-first verdict, grounded in the committed CD-series (the residual-dedup
+measurement surface is exactly CD02/CD05/CD06/CD07):
+- **CD02 disjoint-FIRST dispatch** (`decision_tree.rs:842-886`, `all_disjoint`): the
+  parser dispatches on pairwise-disjoint FIRST sets — it never *constructs* the
+  ambiguity that residual dedup would collapse, so dispatch is already deterministic
+  (one rule per leading literal). There is no residual PARSE-work to save by dedup.
+- **CD05 prefix CSE** (`detect_shared_nonterminal_prefixes:1059`) + **CD06 suffix
+  factoring** (`measure_shared_nonterminal_suffixes:1195`): both measured (CD06 I17:
+  calc d2=0.19, rhocalc d2=0.42, Ambient d2=0.57) and both reached **diagnostic-only /
+  STOP** — the depth-2 buckets are leading-literal-disjoint under CD02, so factoring is
+  code-size-only (zero parse-work savings) and not worth the fresh-nonterminal grammar
+  churn (`CD06_SuffixFactor.v` proves the transform sound for any future non-disjoint
+  grammar). Phase 6 = the union of these; its verdict is CD06's, generalized: **no
+  residual dedup/factoring saves parse work on the production grammars ⇒ STOP.**
+- **Phase S subsumption** = the dead-rule mechanism (`decision_tree.rs:364` `dead_rules`,
+  consumed by the CD07 dead-rule lint): a rule whose language is subsumed by another is
+  *dead* and already detected/reported. There is no separate subsumption-dedup lever
+  beyond dead-rule reporting ⇒ **negative result recorded.**
+Disposition: Phase 6 + Phase S STOP, first-class, consistent with the CD06 verdict; the
+measurement infrastructure (CD05/CD06 + the I17 diagnostic + dead-rule lint) is the
+shipped artifact. No further dedup/factoring is wired.
+
 ## Stage log
 
 - 2026-06-11 P0 opened.
