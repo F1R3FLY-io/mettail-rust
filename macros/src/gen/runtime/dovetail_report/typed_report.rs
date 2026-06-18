@@ -31,6 +31,11 @@ struct FoldRule<'a> {
     op_variant: Ident,
     params: Vec<FoldParam>,
     body: &'a syn::Expr,
+    /// True when every param is native-scalar AND the output is native-scalar (e.g.
+    /// `AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;`). The body is written
+    /// against the native values, so the dispatcher binds operands via `try_eval()`
+    /// (not `&Cat`) and `safeify`s the body (overflow / div-by-zero → `None` → defer).
+    is_pure_native_arith: bool,
 }
 
 /// How a fold body wants its input bound.
@@ -86,17 +91,28 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
                 },
             }
         }
-        // Lower a fold iff at least one param needs reconstruction (object or collection) —
-        // pure-scalar folds (`-a : Int`) keep the existing `try_eval` path.
-        if !all_simple || !params.iter().any(|p| !matches!(p.bind, BindKind::Scalar)) {
+        // Lower every fold whose params are all `Simple`/`Base` typed parameters. Post-P6
+        // (Ascent retired), native-OUTPUT folds — including PURE-SCALAR arithmetic like
+        // `AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;` — must reduce on the Dovetail
+        // path too: their `![..]` bodies previously ran only in the retired Ascent backend, so
+        // they evaluated nowhere after P6. (The old gate required at least one non-scalar param,
+        // which skipped exactly these arithmetic folds.) A fold whose params are ALL native-scalar
+        // with native-scalar output is `is_pure_native_arith`; the dispatcher binds its operands
+        // via `try_eval()` and `safeify`s the body. Mixed / object / collection folds keep the
+        // existing `&Cat` + `body_returns_option` path unchanged.
+        if !all_simple || params.is_empty() {
             continue;
         }
+        let out_lt = language.get_type(&rule.category);
+        let is_pure_native_arith = params.iter().all(|p| matches!(p.bind, BindKind::Scalar))
+            && out_lt.map_or(false, |t| t.native_type.is_some() && t.collection_kind.is_none());
         out.push(FoldRule {
             op_id,
             output_cat: rule.category.clone(),
             op_variant: op_variant_ident(&rule.category, &rule.label),
             params,
             body,
+            is_pure_native_arith,
         });
         op_id += 1;
     }
@@ -305,6 +321,13 @@ fn generate_native_rules_and_dispatch(
                     let pname = &p.name;
                     let pcat = &p.category;
                     let bfn = build_fn(&p.category);
+                    // Pure-native-arith fold: bind the NATIVE value the body needs (`a + b` on
+                    // `i32`/…). `try_eval()` recurses through unfolded subterms (so a single root
+                    // fold computes nested arithmetic); the trailing `?` defers the fold if a
+                    // child is not yet reducible to a value. Mirrors the interpreter eval binding.
+                    if f.is_pure_native_arith {
+                        return quote! { let #pname = #bfn(&#dv)?.try_eval()?; };
+                    }
                     match &p.bind {
                         // Scalar (`Int`/…) and object (`Proc`) params bind a REFERENCE to the
                         // reconstructed category (`&Cat`, temporary-lifetime-extended). The fold
@@ -344,7 +367,16 @@ fn generate_native_rules_and_dispatch(
             // Some fold bodies are fallible (`try_*` returning `Option`, e.g. a Calculator cast
             // that may not be representable); `?` unwraps them — a `None` defers the fold (the
             // redex stays unreduced) rather than fabricating a value.
-            let body_value = if body_returns_option(body) {
+            // Pure-native-arith bodies are `safeify`d: arithmetic operators become
+            // `SafeArith::safe_*(..)?` and the whole body is wrapped in an `Option`-returning
+            // closure, so overflow / div-by-zero / NaN yields `None` → the fold defers (the redex
+            // is left unreduced, the report stays Complete) instead of panicking inside the engine
+            // closure. This matches the interpreter's `safeify_and_wrap` body handling. Other
+            // folds keep the raw / `try_*` body convention.
+            let body_value = if f.is_pure_native_arith {
+                let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap(body);
+                quote! { (#safeified)? }
+            } else if body_returns_option(body) {
                 quote! { ({ #body })? }
             } else {
                 quote! { { #body } }

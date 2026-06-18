@@ -44,7 +44,13 @@ fn probe_run_to_nf_dash_space_zero() {
     use mettail_simulation::trace::TraceOutcome;
 
     mettail_runtime::clear_var_cache();
-    let lang = CalculatorLanguage;
+    // Post-P6: wrap the raw Calculator in its checked Dovetail runtime backend
+    // so the simulation runner can execute (raw languages advertise no backend).
+    let lang = mettail_dovetail_runtime::DovetailRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        CalculatorLanguage::dovetail_compiler_stage(),
+    )
+    .expect("install Dovetail runtime backend on Calculator");
     let lang_ref: &dyn mettail_runtime::Language = &lang;
     let config = SimulationConfig {
         max_steps: 100,
@@ -72,7 +78,13 @@ fn probe_run_to_nf_dash_zero() {
     use mettail_simulation::trace::TraceOutcome;
 
     mettail_runtime::clear_var_cache();
-    let lang = CalculatorLanguage;
+    // Post-P6: wrap the raw Calculator in its checked Dovetail runtime backend
+    // so the simulation runner can execute (raw languages advertise no backend).
+    let lang = mettail_dovetail_runtime::DovetailRuntimeBackedLanguage::new(
+        CalculatorLanguage,
+        CalculatorLanguage::dovetail_compiler_stage(),
+    )
+    .expect("install Dovetail runtime backend on Calculator");
     let lang_ref: &dyn mettail_runtime::Language = &lang;
     let config = SimulationConfig {
         max_steps: 100,

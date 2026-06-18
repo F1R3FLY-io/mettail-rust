@@ -40,8 +40,6 @@ proc-macro-error = "1.0"
 regex = "1.0"
 rand = "0.8"
 
-ascent = { version = "0.8" }
-ascent-byods-rels = { version = "0.8" }
 moniker = { version = "0.5", features = ["moniker-derive"] }
 indexmap = "2.0"
 
@@ -65,6 +63,18 @@ rho-pure-eval = { path = "../f1r3node-rust/rho-pure-eval" }
 rspace_plus_plus = { path = "../f1r3node-rust/rspace++" }
 crypto = { path = "../f1r3node-rust/crypto" }
 tokio = { version = "1", features = ["full"] }
+
+# ── rholang-parser override (TEMPORARY) — mirrors f1r3node-rust's root [patch] ────
+# MeTTaIL has NO direct dependency on `rholang_parser`; it never parses Rholang text
+# (it builds `rhoapi::Par` AST directly). The dep is purely transitive: the bridge
+# crates use f1r3node-rust's `rholang` runtime crate, which depends on `rholang_parser`.
+# f1r3node-rust's `rholang` is mid-migration onto the cost-accounting parser worktree
+# (carries Proc::SignedTerm / TokenStack / Bind::Signed); its published pin
+# (rholang/Cargo.toml rev=c163755) REMOVED those, so building `rholang` from THIS
+# workspace needs the same git-worktree override f1r3node-rust uses. Remove this stanza
+# once the cost-accounting work merges to the rholang-rs master branch.
+[patch."https://github.com/F1R3FLY-io/rholang-rs"]
+rholang-parser = { path = "../rholang-rs-cost-accounting-transpiler/rholang-parser" }
 
 [profile.dev]
 codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)

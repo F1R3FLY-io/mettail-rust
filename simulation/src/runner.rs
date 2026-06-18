@@ -233,6 +233,44 @@ fn dovetail_report_summary(report: &RuntimeDovetailRunReport) -> String {
     )
 }
 
+/// Extract the funded normal-form term display from a Dovetail report, if the input reduced to a
+/// literal value. Post-P6 the Dovetail backend reduces native folds in-engine (e.g. `AddInt(1,2)`
+/// is merged into the same e-class as `NumLit(3)`), so the normal form of an input root is the
+/// literal term sharing the root's `class_id`. Returns the literal's rendered value (e.g. "3"),
+/// or `None` when no root reduced to a literal (free variables, unlowerable folds) — the caller
+/// then keeps the raw `RuntimeReport` outcome.
+fn dovetail_extract_normal_form(report: &RuntimeDovetailRunReport) -> Option<String> {
+    for &ordinal in &report.root_ordinals {
+        let class = report.terms.get(ordinal)?.class_id;
+        if let Some(value) = report
+            .terms
+            .iter()
+            .filter(|t| t.class_id == class)
+            .find_map(|t| literal_display_value(&t.op_display))
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// If `op_display` is a literal-constructor term — `<Lang>::<Cat>::<Ctor>Lit(<payload>)`, e.g.
+/// `Calculator::Int::NumLit(3)` — return the rendered payload (`"3"`). For the integer literals
+/// the simulation tests assert, the `{:?}` payload equals the category's own Display of the
+/// literal (`NumLit(3)` displays "3"). Non-literal ops (`…::AddInt`, no payload) return `None`.
+fn literal_display_value(op_display: &str) -> Option<String> {
+    let open = op_display.find('(')?;
+    let ctor = op_display[..open].rsplit("::").next()?;
+    if !ctor.ends_with("Lit") {
+        return None;
+    }
+    let close = op_display.rfind(')')?;
+    if close <= open + 1 {
+        return None;
+    }
+    Some(op_display[open + 1..close].to_string())
+}
+
 fn has_normal_form_reachable_invariant(config: &SimulationConfig) -> bool {
     config
         .invariants
@@ -490,10 +528,15 @@ impl<'a> SimulationRunner<'a> {
                     metrics: Some(metrics),
                 });
 
-                let outcome = TraceOutcome::RuntimeReport {
-                    backend: backend.to_string(),
-                    artifact: artifact.to_string(),
-                    summary,
+                // Present the reduced normal form when the input folded to a literal (post-P6
+                // Dovetail reduces native folds in-engine); otherwise keep the raw report.
+                let outcome = match dovetail_extract_normal_form(&dovetail_report) {
+                    Some(term) => TraceOutcome::NormalForm { term, steps: step_index },
+                    None => TraceOutcome::RuntimeReport {
+                        backend: backend.to_string(),
+                        artifact: artifact.to_string(),
+                        summary,
+                    },
                 };
                 let morphology = morphology_tracker.as_ref().map(|t| t.summary());
 

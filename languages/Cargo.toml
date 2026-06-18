@@ -7,7 +7,12 @@ edition = "2021"
 # Tests use separate test binaries.
 
 [features]
-default = ["all-languages", "rho-codegen"]
+# dovetail-codegen is in default post-P6: Dovetail is the general-purpose
+# runtime backend (Ascent retired). Without it, non-Rho generated languages
+# (e.g. Calculator) advertise no runtime backend, so runtime-execution tests
+# (simulation_integration, probe_neg_zero) cannot run. It joins rho-codegen
+# (already default) to give the default build a complete runtime surface.
+default = ["all-languages", "rho-codegen", "dovetail-codegen"]
 all-languages = [
     "ambient",
     "calculator",

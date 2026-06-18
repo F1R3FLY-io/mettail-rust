@@ -79,6 +79,7 @@ target/tests/trybuild/
 *.plan.md
 
 .claude/projects/*
+.claude/worktrees/*
 .claude/scheduled_tasks.lock
 
 # Rocq/Coq build artifacts

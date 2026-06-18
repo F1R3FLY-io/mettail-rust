@@ -18,11 +18,25 @@ use mettail_simulation::trace::{self, TraceOutcome};
 // Helper: run Calculator to normal form
 // =============================================================================
 
+/// Calculator wrapped in its checked Dovetail runtime backend.
+///
+/// Post-P6 (Ascent retired), raw generated languages are parse/introspection
+/// substrates that advertise NO runtime backend; runtime execution requires
+/// installing a Dovetail (or Rho) wrapper. `dovetail_compiler_stage()` is
+/// generated under the `dovetail-codegen` feature (now in default).
+fn dovetail_calc() -> &'static dyn Language {
+    Box::leak(Box::new(
+        mettail_dovetail_runtime::DovetailRuntimeBackedLanguage::new(
+            calc::CalculatorLanguage,
+            calc::CalculatorLanguage::dovetail_compiler_stage(),
+        )
+        .expect("install Dovetail runtime backend on Calculator"),
+    ))
+}
+
 fn calc_runner(config: SimulationConfig) -> SimulationRunner<'static> {
-    // Use a leaked static reference for the language since integration tests
-    // need 'static lifetime for the runner.
-    let lang: &'static dyn Language = Box::leak(Box::new(calc::CalculatorLanguage));
-    SimulationRunner::new(lang, config)
+    // The runner needs a 'static language that advertises a runtime backend.
+    SimulationRunner::new(dovetail_calc(), config)
 }
 
 // =============================================================================
@@ -431,7 +445,7 @@ use mettail_simulation::coverage::CoverageGuidedCampaign;
 fn test_coverage_guided_basic() {
     use proptest::prelude::*;
 
-    let lang: &'static dyn Language = Box::leak(Box::new(calc::CalculatorLanguage));
+    let lang: &'static dyn Language = dovetail_calc();
 
     // Strategy factory: generate a variety of arithmetic expressions to exercise
     // multiple rewrite rules (AddInt, SubInt, MulInt, fold operations).
@@ -514,7 +528,7 @@ fn test_coverage_guided_basic() {
 fn test_coverage_guided_plateau() {
     use proptest::prelude::*;
 
-    let lang: &'static dyn Language = Box::leak(Box::new(calc::CalculatorLanguage));
+    let lang: &'static dyn Language = dovetail_calc();
 
     // Only addition: this will fire AddInt rules but nothing else.
     // Coverage should plateau quickly.
