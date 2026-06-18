@@ -53,6 +53,17 @@ fn replay_calculator_step_native_handler_shape() {
         let best = best_result.value.expect("native result derivation");
         assert_eq!(best.op, format!("Int({expected_value})"));
         assert_eq!(best.weight, TropicalWeight::new(0.0));
+
+        let mut funded_extractor = Extractor::new(&eg, semantic_weight);
+        let funded_best = funded_extractor.funded_best(root);
+        assert_eq!(funded_best.completeness, ExtractionCompleteness::Complete);
+        assert_eq!(
+            funded_best
+                .value
+                .expect("funded native result derivation")
+                .op,
+            format!("Int({expected_value})")
+        );
     }
 }
 

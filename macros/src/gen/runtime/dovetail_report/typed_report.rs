@@ -68,8 +68,12 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
         if rule.eval_mode != Some(EvalMode::Fold) {
             continue;
         }
-        let Some(body) = rule.rust_code.as_ref().map(|rc| &rc.code) else { continue };
-        let Some(ctx) = rule.term_context.as_ref() else { continue };
+        let Some(body) = rule.rust_code.as_ref().map(|rc| &rc.code) else {
+            continue;
+        };
+        let Some(ctx) = rule.term_context.as_ref() else {
+            continue;
+        };
         let mut params = Vec::new();
         let mut all_simple = true;
         for p in ctx {
@@ -79,11 +83,17 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
                     let native_type = lt.and_then(|t| t.native_type.as_ref());
                     let is_collection = lt.and_then(|t| t.collection_kind.as_ref()).is_some();
                     let bind = match (native_type, is_collection) {
-                        (Some(nt), true) => BindKind::Collection(crate::gen::generate_literal_label(nt)),
+                        (Some(nt), true) => {
+                            BindKind::Collection(crate::gen::generate_literal_label(nt))
+                        },
                         (Some(_), false) => BindKind::Scalar,
                         (None, _) => BindKind::Object,
                     };
-                    params.push(FoldParam { name: name.clone(), category: category.clone(), bind });
+                    params.push(FoldParam {
+                        name: name.clone(),
+                        category: category.clone(),
+                        bind,
+                    });
                 },
                 _ => {
                     all_simple = false;
@@ -274,10 +284,16 @@ fn generate_native_rules_and_dispatch(
             let out_add = category_lowering_fn(&f.output_cat);
             let body = f.body;
 
-            let cls_vars: Vec<Ident> =
-                f.params.iter().map(|p| format_ident!("__cls_{}", p.name)).collect();
-            let d_vars: Vec<Ident> =
-                f.params.iter().map(|p| format_ident!("__d_{}", p.name)).collect();
+            let cls_vars: Vec<Ident> = f
+                .params
+                .iter()
+                .map(|p| format_ident!("__cls_{}", p.name))
+                .collect();
+            let d_vars: Vec<Ident> = f
+                .params
+                .iter()
+                .map(|p| format_ident!("__d_{}", p.name))
+                .collect();
 
             // 1. bind each param's class + gate object params on fold-readiness.
             let class_bindings: Vec<TokenStream> = f
@@ -544,18 +560,20 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     ));
                 }
 
-                let mut extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
                 let mut __derivations = Vec::new();
                 let mut __completeness = ::dovetail::extract::ExtractionCompleteness::Complete;
                 for __root in __roots {
-                    let __extracted = extractor.derivations(eg.find(__root)).collect_checked();
+                    let mut extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
+                    let __extracted = extractor.funded_best(eg.find(__root));
                     if __extracted.completeness
                         == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
                     {
                         __completeness =
                             ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut;
                     }
-                    __derivations.extend(__extracted.value);
+                    if let ::core::option::Option::Some(__derivation) = __extracted.value {
+                        __derivations.push(__derivation);
+                    }
                 }
 
                 let report = ::dovetail::report::report_from_extraction(

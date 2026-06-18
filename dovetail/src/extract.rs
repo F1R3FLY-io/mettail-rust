@@ -250,6 +250,41 @@ where
         }
     }
 
+    /// The funded 1-best derivation of `root`, with completeness scoped to the
+    /// selected derivation rather than to exhaustive enumeration of every
+    /// cyclic expansion.
+    ///
+    /// This is the runtime-report contract for normal-form extraction. A
+    /// productive cyclic class can have infinitely many expanded derivations, so
+    /// [`Extractor::derivations`] must honestly report
+    /// [`ExtractionCompleteness::BoundedByCycleCut`] for full-stream
+    /// enumeration. For a funded runtime report, however, the question is
+    /// narrower: did we emit a cycle-free derivation whose cost is the exact
+    /// closed inside weight of the root class? If yes, the selected normal form
+    /// is complete even when unchosen cyclic expansions were cut.
+    pub fn funded_best(&mut self, root: EClassId) -> Extraction<Option<Rc<Derivation<L, W>>>>
+    where
+        W: crate::wta::CommutativeStarSemiring,
+    {
+        let q = self.egraph.find(root);
+        if self.inside.is_none() {
+            self.inside = Some(crate::wta::compute_inside_closed(self.egraph, &self.weigh));
+        }
+
+        let value = self.kth_raw(q, 0);
+        let completeness = match &value {
+            Some(derivation) if self.completeness() == ExtractionCompleteness::Complete => {
+                let _ = derivation;
+                ExtractionCompleteness::Complete
+            },
+            Some(derivation) if self.funded_derivation_is_certified(q, derivation) => {
+                ExtractionCompleteness::Complete
+            },
+            _ => self.completeness(),
+        };
+        Extraction::new(value, completeness)
+    }
+
     /// The k-th best (0-indexed) derivation of `root`, plus the current
     /// completeness status. `value == None` means no such derivation was found
     /// under the current completeness status.
@@ -442,6 +477,47 @@ where
         let (op, w, key, children) = self.compose(q, edge_idx, ranks)?;
         Some(Rc::new(Derivation { op, class: q, children, weight: w, key }))
     }
+
+    fn funded_derivation_is_certified(
+        &self,
+        root: EClassId,
+        derivation: &Rc<Derivation<L, W>>,
+    ) -> bool {
+        let Some(inside) = &self.inside else {
+            return false;
+        };
+        let Some(closed_weight) = inside.get(&root) else {
+            return false;
+        };
+        derivation.weight == *closed_weight && !derivation_has_class_cycle(derivation)
+    }
+}
+
+fn derivation_has_class_cycle<L, W>(root: &Rc<Derivation<L, W>>) -> bool {
+    enum Frame<L, W> {
+        Enter(Rc<Derivation<L, W>>),
+        Exit(EClassId),
+    }
+
+    let mut active = HashSet::new();
+    let mut stack = vec![Frame::Enter(root.clone())];
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Enter(derivation) => {
+                if !active.insert(derivation.class) {
+                    return true;
+                }
+                stack.push(Frame::Exit(derivation.class));
+                for child in derivation.children.iter().rev() {
+                    stack.push(Frame::Enter(child.clone()));
+                }
+            },
+            Frame::Exit(class) => {
+                active.remove(&class);
+            },
+        }
+    }
+    false
 }
 
 /// Lazy derivation stream with explicit checked stepping.
@@ -751,6 +827,56 @@ mod tests {
     }
 
     #[test]
+    fn funded_best_certifies_unchosen_self_referential_expansion() {
+        // P = value | f(P). Full enumeration is bounded because f can unroll
+        // forever, but the selected funded normal form is the cycle-free value
+        // and its cost is the closed inside weight for P.
+        let mut eg = EGraph::<String>::new();
+        let value = eg.add(ENode::leaf("x".into()));
+        let f = eg.add(ENode::new("f".into(), vec![value]));
+        eg.merge(value, f);
+        eg.rebuild();
+        let p = eg.find(value);
+
+        let mut stream_ex = Extractor::new(&eg, weigh);
+        let stream = stream_ex.derivations(p).collect_checked();
+        assert_eq!(stream.completeness, ExtractionCompleteness::BoundedByCycleCut);
+
+        let mut funded_ex = Extractor::new(&eg, weigh);
+        let best = funded_ex.funded_best(p);
+        assert_eq!(best.completeness, ExtractionCompleteness::Complete);
+        assert_eq!(best.value.expect("funded best exists").op, "x");
+        assert!(
+            funded_ex.had_cycle_cut(),
+            "the complete funded result may still observe unchosen cyclic expansions"
+        );
+    }
+
+    #[test]
+    fn funded_best_certifies_fold_result_equal_to_operand() {
+        // Generic shape of idempotent/native folds like 0 + 0 = 0 and -0 = 0:
+        // the result value is congruence-merged with a fold operand, so the
+        // retained fold redex points back at its own class.
+        let mut eg = EGraph::<String>::new();
+        let value = eg.add(ENode::leaf("x".into()));
+        let fold = eg.add(ENode::new("fold".into(), vec![value, value]));
+        eg.merge(value, fold);
+        eg.rebuild();
+        let p = eg.find(value);
+
+        let mut stream_ex = Extractor::new(&eg, weigh);
+        assert_eq!(
+            stream_ex.derivations(p).collect_checked().completeness,
+            ExtractionCompleteness::BoundedByCycleCut
+        );
+
+        let mut funded_ex = Extractor::new(&eg, weigh);
+        let best = funded_ex.funded_best(p);
+        assert_eq!(best.completeness, ExtractionCompleteness::Complete);
+        assert_eq!(best.value.expect("funded best exists").op, "x");
+    }
+
+    #[test]
     fn t10_cyclic_1best_equals_newton_inside() {
         // P = a(5) | f(P). The extractor's 1-best (acyclic; the back-edge is cut)
         // equals the Newton-closed inside weight (Increment 6).
@@ -767,6 +893,10 @@ mod tests {
         let d0 = d0_result.value.expect("a 1-best exists");
         assert_eq!(prim(d0.weight), 5.0);
         assert_eq!(d0.weight, inside[&p], "extractor 1-best == Newton-closed inside");
+
+        let mut funded = Extractor::new(&eg, weigh);
+        let funded_result = funded.funded_best(p);
+        assert_eq!(funded_result.completeness, ExtractionCompleteness::Complete);
     }
 
     #[test]

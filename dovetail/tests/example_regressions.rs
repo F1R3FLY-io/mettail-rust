@@ -80,6 +80,15 @@ fn saturation_then_extraction_keeps_expanded_forms_but_prefers_normal_form() {
         extractor.had_cycle_cut(),
         "root~value makes retained add forms cyclic, so extraction should report the cut"
     );
+
+    let mut funded_extractor = Extractor::new(&eg, semantic_weight);
+    let funded_best = funded_extractor.funded_best(root);
+    assert_eq!(funded_best.completeness, ExtractionCompleteness::Complete);
+    assert_eq!(
+        funded_best.value.expect("funded normal form derivation").op,
+        "value",
+        "funded extraction certifies the compact normal form despite retained cyclic expansions"
+    );
 }
 
 #[test]
