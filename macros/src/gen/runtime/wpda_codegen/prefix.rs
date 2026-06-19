@@ -1369,17 +1369,18 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 let source_src_idx = *source_src_idx;
                 quote! {
                     #pat if #guard => {
-                        // Cross-category LHS delegation is an alternate view
-                        // of the same Pratt operand slot, not a fresh grouped
-                        // expression body. Preserve the active floor so lower
-                        // binding operators cannot be swallowed by the
-                        // delegated source category.
+                        // Cross-category LHS delegation parses a source-category
+                        // atom that may later produce the target category via a
+                        // category-changing infix. The target Pratt floor is
+                        // captured by the runtime edge; the source parse starts
+                        // at its own root floor so target-context precedence
+                        // does not reject source-internal operators.
                         return WpdaStepAction::PushWithEdgeKind {
                             symbol: StackSymbolV2::category_entry(#source_src_idx),
                             weight: lex_one(),
                             new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
-                                cur_bp: *cur_bp,
+                                cur_bp: 0,
                             },
                             edge_kind: mettail_prattail::gss::EdgeKind::CrossCatLhs {
                                 source_src_idx: #source_src_idx,
@@ -1434,12 +1435,11 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
                                 #category_src_idx, #src_idx,
                             ),
-                            // Preserve the caller's Pratt floor for the same
-                            // delegated operand-context reason as the
-                            // singleton CrossCatLhs arm above.
+                            // The runtime edge stores the caller's target floor;
+                            // the delegated source parse starts at source root.
                             new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
-                                cur_bp: *cur_bp,
+                                cur_bp: 0,
                             },
                             action_kind:
                                 mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,

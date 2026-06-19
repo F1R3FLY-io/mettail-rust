@@ -115,6 +115,7 @@ fn derive_frame_kind(frontier_top: Option<&WpdaGssNode>) -> FrameKind {
             SymbolKind::Return => FrameKind::InfixRHS,
             SymbolKind::CollectionMarker => FrameKind::Collection,
             SymbolKind::OptionalGroupAt(_) => FrameKind::Other,
+            SymbolKind::BinderListLoopAt(_) => FrameKind::Other,
             SymbolKind::MixfixMarker => FrameKind::Mixfix,
             SymbolKind::GroupingMarker => FrameKind::Group,
             _ => FrameKind::Other,

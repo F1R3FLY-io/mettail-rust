@@ -305,7 +305,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     ),
                                     new_state: WpdaState::PrefixDispatch {
                                         pos: *pos,
-                                        cur_bp: *cur_bp,
+                                        cur_bp: 0,
                                     },
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
@@ -414,7 +414,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     ),
                                     new_state: WpdaState::PrefixDispatch {
                                         pos: *pos,
-                                        cur_bp: *cur_bp,
+                                        cur_bp: 0,
                                     },
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,

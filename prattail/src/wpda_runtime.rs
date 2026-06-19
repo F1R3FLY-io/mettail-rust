@@ -96,6 +96,11 @@ pub enum SymbolKind {
     /// On Unwinding when this is on top, the engine transitions to
     /// `WpdaState::OptionalGroup { sub_pos: payload }`.
     OptionalGroupAt(u8),
+    /// Class-3 binder-list inner-walk marker. The `u8` payload is the
+    /// `sub_pos` used by `WpdaState::BinderListLoop`, but unlike
+    /// `OptionalGroupAt`, this marker never opens or finalizes an
+    /// optional-argument scope.
+    BinderListLoopAt(u8),
 }
 
 /// A WPDS stack symbol indexed by integer category and rule position.
@@ -249,6 +254,25 @@ impl StackSymbolV2 {
         }
     }
 
+    /// Construct a Class-3 binder-list inner-walk marker. This carries the
+    /// same payload shape as `optional_group_at`, but its distinct
+    /// `SymbolKind` prevents real `*opt(...)` groups and binder-loop inner
+    /// walks from aliasing in rules that contain both.
+    pub fn binder_list_loop_at(
+        result_src_idx: u16,
+        rule_idx: u16,
+        sub_pos: u8,
+        outer_bp: u8,
+    ) -> Self {
+        StackSymbolV2 {
+            category_src_idx: result_src_idx,
+            rule_index_in_category: rule_idx,
+            bp: Some(outer_bp),
+            kind: SymbolKind::BinderListLoopAt(sub_pos),
+            coll_dispatch_bp: None,
+        }
+    }
+
     /// Construct a return symbol (pop pending).
     pub fn return_symbol(category_src_idx: u16, rule_index_in_category: u16) -> Self {
         StackSymbolV2 {
@@ -315,6 +339,11 @@ impl fmt::Display for StackSymbolV2 {
             SymbolKind::OptionalGroupAt(sub_pos) => write!(
                 f,
                 "⟨cat#{}.rule#{}.opt@{}⟩{}",
+                self.category_src_idx, self.rule_index_in_category, sub_pos, bp_suffix
+            ),
+            SymbolKind::BinderListLoopAt(sub_pos) => write!(
+                f,
+                "⟨cat#{}.rule#{}.binder-loop@{}⟩{}",
                 self.category_src_idx, self.rule_index_in_category, sub_pos, bp_suffix
             ),
         }

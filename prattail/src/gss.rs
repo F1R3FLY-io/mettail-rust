@@ -443,11 +443,22 @@ pub enum EdgeKind {
     /// category-changing operator is allowed, but popping this edge must not
     /// re-enter again.
     CrossCatLhsReentry { source_src_idx: u16, min_bp: u8 },
-    /// Runtime-normalized CrossCatLhs edge whose identity includes the
-    /// binding-power floor of the delegated source parse. Generated code may
-    /// still emit `CrossCatLhs`; the walker upgrades it before GSS insertion
-    /// so edge dedup cannot merge different Pratt continuations.
-    CrossCatLhsScoped { source_src_idx: u16, min_bp: u8 },
+    /// Runtime-normalized CrossCatLhs edge whose identity includes both Pratt
+    /// floors involved in the handoff. `min_bp` is the delegated source
+    /// category's resume floor after its prefix body has completed. This is
+    /// deliberately the caller's active Pratt floor, not the source
+    /// `PrefixDispatch` start floor, so a delegated RHS at high precedence
+    /// cannot later consume lower-precedence source operators. `resume_bp` is
+    /// the enclosing target category's floor, restored after the
+    /// category-changing atom has completed.
+    /// Generated code may still emit `CrossCatLhs`; the walker upgrades it
+    /// before GSS insertion so edge dedup cannot merge different Pratt
+    /// continuations.
+    CrossCatLhsScoped {
+        source_src_idx: u16,
+        min_bp: u8,
+        resume_bp: u8,
+    },
     /// Transparent projection source continuation. A target-category wrapper
     /// such as `Expr <- Num` has produced a target Symbol, but the next
     /// lookahead operator belongs to the source category. The walker unwraps
@@ -474,6 +485,14 @@ pub enum EdgeKind {
     /// Optional-group `OptionalGroupAt(sub_pos)` marker. Payload =
     /// (cat, rule, sub_pos, outer_bp).
     OptionalGroupAt {
+        cat_src: u16,
+        rule_idx: u16,
+        sub_pos: u8,
+        outer_bp: u8,
+    },
+    /// Class-3 binder-list inner-walk marker. Payload =
+    /// (cat, rule, sub_pos, outer_bp).
+    BinderListLoopAt {
         cat_src: u16,
         rule_idx: u16,
         sub_pos: u8,
@@ -545,6 +564,12 @@ impl EdgeKind {
                 sub_pos,
                 outer_bp: sym.bp.unwrap_or(0),
             },
+            SymbolKind::BinderListLoopAt(sub_pos) => EdgeKind::BinderListLoopAt {
+                cat_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+                sub_pos,
+                outer_bp: sym.bp.unwrap_or(0),
+            },
             SymbolKind::Return => EdgeKind::ReturnFrame {
                 cat_src: sym.category_src_idx,
                 rule_idx: sym.rule_index_in_category,
@@ -565,6 +590,7 @@ impl EdgeKind {
                 | EdgeKind::InfixContinuation { .. }
                 | EdgeKind::LexAltLiteral { .. }
                 | EdgeKind::OptionalGroupAt { .. }
+                | EdgeKind::BinderListLoopAt { .. }
         )
     }
 }

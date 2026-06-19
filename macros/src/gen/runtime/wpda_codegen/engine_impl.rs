@@ -92,12 +92,9 @@ pub(crate) fn emit_engine_impl_full(
         super::binder::emit_binder_rule_body(categories, per_cat, &prefix_bp_map);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body = super::binder::emit_binder_list_loop_body(categories, per_cat);
-    // B8 / Path P1 (2026-05-08): per-rule predicate for routing
-    // OptionalGroupAt symbols to BinderListLoop when the rule is Class 3.
-    let is_binderlist_inner_lookup = super::binder::emit_binderlist_inner_lookup(per_cat);
     // B8 / Issue A' (2026-05-09): per-rule lookup for outer-slot
     // coordinates (marker_pos, next_pos, body_src_idx) used at
-    // Unwinding-OptionalGroupAt routing for Class 3 rules.
+    // Unwinding-BinderListLoopAt routing for Class 3 rules.
     let binderlist_inner_metadata = super::binder::emit_binderlist_inner_metadata(per_cat);
     // B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
     // slot_idx) predicate for Class 3 CollectionMarker pushes that should
@@ -106,13 +103,9 @@ pub(crate) fn emit_engine_impl_full(
     // sibling (e.g. PInputsTagged) — the per-rule predicate (pre-Phase-4-#2)
     // incorrectly opened a BinderScope for the Class-2 sibling too.
     let is_class3_collection_lookup = super::binder::emit_is_class3_collection_per_slot(per_cat);
-    // B8 / Issue 2 (2026-05-10): per-(src, rule, sub_pos) lookup
-    // distinguishing Class 3 inner-walk OptionalGroupAt from genuine
-    // *opt(...) OptionalGroup. Replaces the prior alias to
-    // emit_is_class3_collection (per-rule only) — alias was correct
-    // for shipped grammars but incorrect for the supported feature
-    // combination of Class 3 BinderListLoop + real *opt(...) in same
-    // rule.
+    // Compatibility predicate retained for the WpdaEngine trait. Runtime
+    // routing no longer depends on it: Class-3 binder walks use
+    // BinderListLoopAt while real `*opt(...)` groups use OptionalGroupAt.
     let is_class3_inner_marker_lookup =
         super::binder::emit_is_class3_inner_marker_per_subpos(per_cat);
     // B8 / Issue C (2026-05-09): per-(rule, sub_pos) splice lookup
@@ -860,57 +853,61 @@ pub(crate) fn emit_engine_impl_full(
                                         },
                                     );
                                 }
+                                mettail_prattail::wpda_runtime::SymbolKind::BinderListLoopAt(sub_pos) => {
+                                    // Class-3 binder-list inner ParamParse /
+                                    // Literal / BinderIdent just returned to
+                                    // the binder-list marker. This is
+                                    // intentionally distinct from
+                                    // OptionalGroupAt because rules can contain
+                                    // both a Class-3 binder loop and a real
+                                    // `*opt(...)` whose sub_pos values overlap.
+                                    let result_src_idx = node.symbol.category_src_idx;
+                                    let rule_idx = node.symbol.rule_index_in_category;
+                                    let outer_bp = node.symbol.bp.expect(
+                                        "BinderListLoopAt invariant: bp must be \
+                                         Some(outer_bp) — preserved across the binder-list walk"
+                                    );
+                                    // B8 / Issue A' (2026-05-09): per-rule
+                                    // metadata lookup recovers outer-slot
+                                    // coordinates so sub_pos=N arms can
+                                    // reference the BinderListLoop's
+                                    // marker_pos correctly.
+                                    let (marker_pos, next_pos, body_src_idx): (u8, u8, u16) =
+                                        #binderlist_inner_metadata;
+                                    let new_state = WpdaState::BinderListLoop {
+                                        result_src_idx,
+                                        rule_idx,
+                                        body_src_idx,
+                                        outer_bp,
+                                        marker_pos,
+                                        next_pos,
+                                        sub_pos,
+                                    };
+                                    // B8 / Issue C (2026-05-09): when the
+                                    // just-completed inner step was a
+                                    // ParamParse{collection:Some}, splice
+                                    // the parsed term into the Names
+                                    // accumulator.
+                                    let splice_id: Option<u8> =
+                                        #binderlist_inner_post_splice_lookup;
+                                    if let Some(id) = splice_id {
+                                        return WpdaStepAction::AdvanceWithEffect {
+                                            new_state,
+                                            effect: mettail_prattail::wpda_walker::BuilderDelta::SpliceIntoCollection { id },
+                                        };
+                                    }
+                                    return WpdaStepAction::Advance(new_state);
+                                }
                                 mettail_prattail::wpda_runtime::SymbolKind::OptionalGroupAt(sub_pos) => {
                                     // Opt-Group: inner ParamParse / Literal /
                                     // BinderIdent / GuardSlot just returned to
-                                    // the optional-group marker.
-                                    //
-                                    // B8 / Path P1 (2026-05-08): when the rule
-                                    // is a Class 3 BinderListLoop (per the
-                                    // is_binderlist_inner lookup), route to
-                                    // BinderListLoop{sub_pos} instead of
-                                    // OptionalGroup. The OptionalGroupAt symbol
-                                    // is reused as a pluggable inner-walk
-                                    // marker; the per-rule lookup disambiguates.
+                                    // a real optional-group marker.
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
                                     let outer_bp = node.symbol.bp.expect(
                                         "OptionalGroupAt invariant: bp must be \
                                          Some(outer_bp) — preserved across the group"
                                     );
-                                    let is_binderlist_inner: bool = #is_binderlist_inner_lookup;
-                                    if is_binderlist_inner {
-                                        // B8 / Issue A' (2026-05-09): per-rule
-                                        // metadata lookup recovers outer-slot
-                                        // coordinates so sub_pos=N arms can
-                                        // reference the BinderListLoop's
-                                        // marker_pos correctly.
-                                        let (marker_pos, next_pos, body_src_idx): (u8, u8, u16) =
-                                            #binderlist_inner_metadata;
-                                        let new_state = WpdaState::BinderListLoop {
-                                            result_src_idx,
-                                            rule_idx,
-                                            body_src_idx,
-                                            outer_bp,
-                                            marker_pos,
-                                            next_pos,
-                                            sub_pos,
-                                        };
-                                        // B8 / Issue C (2026-05-09): when the
-                                        // just-completed inner step was a
-                                        // ParamParse{collection:Some}, splice
-                                        // the parsed term into the Names
-                                        // accumulator (id=0).
-                                        let splice_id: Option<u8> =
-                                            #binderlist_inner_post_splice_lookup;
-                                        if let Some(id) = splice_id {
-                                            return WpdaStepAction::AdvanceWithEffect {
-                                                new_state,
-                                                effect: mettail_prattail::wpda_walker::BuilderDelta::SpliceIntoCollection { id },
-                                            };
-                                        }
-                                        return WpdaStepAction::Advance(new_state);
-                                    }
                                     return WpdaStepAction::Advance(
                                         WpdaState::OptionalGroup {
                                             result_src_idx,
@@ -924,7 +921,7 @@ pub(crate) fn emit_engine_impl_full(
                                 other => WpdaStepAction::Error(format!(
                                     "Unwinding: unrecognized symbol kind {:?} at pos {} \
                                      (expected CollectionMarker / RuleAt / GroupingMarker / \
-                                     MixfixMarker / OptionalGroupAt) — codegen invariant violated",
+                                     MixfixMarker / OptionalGroupAt / BinderListLoopAt) — codegen invariant violated",
                                     other, _pos,
                                 )),
                             }
@@ -954,7 +951,7 @@ pub(crate) fn emit_engine_impl_full(
                         // to CollectionLoop for close/sep/bare dispatch —
                         // preserving the close-on-`}` and sep-on-`|`
                         // semantics. The marker-skip remains for RuleAt /
-                        // MixfixMarker / OptionalGroupAt because those
+                        // OptionalGroupAt / BinderListLoopAt because those
                         // indicate mid-rule contexts where the next tokens
                         // are rule-internal literals.
                         //
@@ -973,10 +970,11 @@ pub(crate) fn emit_engine_impl_full(
                         if let Some(node) = frontier_top {
                             match node.symbol.kind {
                                 mettail_prattail::wpda_runtime::SymbolKind::RuleAt(_)
-                                | mettail_prattail::wpda_runtime::SymbolKind::OptionalGroupAt(_) => {
-                                    // Opt-Group: an OptionalGroupAt marker
-                                    // indicates we're mid-group; defer to
-                                    // Unwinding so the OptionalGroup state
+                                | mettail_prattail::wpda_runtime::SymbolKind::OptionalGroupAt(_)
+                                | mettail_prattail::wpda_runtime::SymbolKind::BinderListLoopAt(_) => {
+                                    // Rule/optional/binder-list inner markers
+                                    // indicate a mid-rule context; defer to
+                                    // Unwinding so the appropriate state
                                     // resumes at the recorded sub_pos.
                                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                                 }

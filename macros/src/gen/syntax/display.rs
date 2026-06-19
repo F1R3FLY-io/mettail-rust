@@ -44,6 +44,9 @@ struct DisplayBpInfo {
     is_postfix: bool,
     /// Whether this is a mixfix operator.
     is_mixfix: bool,
+    /// Whether this operator's surface token is also accepted by a category
+    /// that can syntaxlessly project into this operator's result category.
+    shadowed_by_syntaxless_projection: bool,
 }
 
 /// Binding power information for a unary prefix operator.
@@ -132,6 +135,12 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
     // The local max_infix_bp HashMap was removed.
 
     let mut lookup = BpLookup::empty();
+    let syntaxless_projection_sources = syntaxless_projection_sources_for_display(language);
+    let operator_terminals_by_category: HashSet<(String, String)> = bp_table
+        .operators
+        .iter()
+        .map(|op| (op.category.clone(), op.terminal.clone()))
+        .collect();
 
     // Build a terminal→same-operand-category BP map so cross-category operators
     // can share a threshold with a same-category operator on the same operand
@@ -159,6 +168,15 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
         } else {
             (op.left_bp, op.right_bp)
         };
+        let shadowed_by_syntaxless_projection = syntaxless_projection_sources
+            .get(&op.result_category)
+            .map_or(false, |sources| {
+                sources.iter().any(|source| {
+                    source != &op.category
+                        && operator_terminals_by_category
+                            .contains(&(source.clone(), op.terminal.clone()))
+                })
+            });
         lookup.infix.insert(
             op.label.clone(),
             DisplayBpInfo {
@@ -166,6 +184,7 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
                 right_bp: display_right_bp,
                 is_postfix: op.is_postfix,
                 is_mixfix: op.is_mixfix,
+                shadowed_by_syntaxless_projection,
             },
         );
         let own_bp = display_left_bp.max(display_right_bp);
@@ -192,6 +211,20 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
     }
 
     lookup
+}
+
+fn syntaxless_projection_sources_for_display(
+    language: &LanguageDef,
+) -> HashMap<String, HashSet<String>> {
+    let mut sources_by_target: HashMap<String, HashSet<String>> = HashMap::new();
+    for rule in &language.terms {
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        if let Some((source, target)) = simple_projection_shape_for_display(&normalized) {
+            sources_by_target.entry(target).or_default().insert(source);
+        }
+    }
+    sources_by_target
 }
 
 fn first_nonterminal_category_for_display(syntax: &[SyntaxItemSpec]) -> Option<String> {
@@ -668,6 +701,9 @@ fn is_syntaxless_single_child_projection(rule: &GrammarRule) -> bool {
 }
 
 fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, String)> {
+    if rule.is_auto_injected {
+        return None;
+    }
     if let Some(shape) = classify_simple_projection_shape(rule) {
         return Some((shape.source_category, shape.target_category));
     }
@@ -681,6 +717,20 @@ fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, St
         }
     }
     None
+}
+
+fn single_base_param(rule: &GrammarRule) -> Option<(String, String)> {
+    let tc = rule.term_context.as_ref()?;
+    if tc.len() != 1 {
+        return None;
+    }
+    let TermParam::Simple { name, ty } = &tc[0] else {
+        return None;
+    };
+    let TypeExpr::Base(cat) = ty else {
+        return None;
+    };
+    Some((name.to_string(), cat.to_string()))
 }
 
 fn display_projection_reaches(language: &LanguageDef, source_cat: &str, target_cat: &str) -> bool {
@@ -711,22 +761,56 @@ fn display_projection_reaches(language: &LanguageDef, source_cat: &str, target_c
     false
 }
 
-fn simple_projection_variants_to(
-    language: &LanguageDef,
+fn find_projection_surface_wrapper<'a>(
+    language: &'a LanguageDef,
+    source_cat: &str,
     target_cat: &str,
-) -> Vec<(String, syn::Ident)> {
-    language
-        .terms
+) -> Option<(&'a GrammarRule, String)> {
+    language.terms.iter().find_map(|rule| {
+        if rule.is_auto_injected || rule.category.to_string() != target_cat {
+            return None;
+        }
+        let syntax_pattern = rule.syntax_pattern.as_ref()?;
+        let (param_name, param_cat) = single_base_param(rule)?;
+        let param_occurrences = syntax_pattern
+            .iter()
+            .filter(|expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == param_name))
+            .count();
+        let has_literal = syntax_pattern
+            .iter()
+            .any(|expr| matches!(expr, SyntaxExpr::Literal(_)));
+        if param_occurrences != 1 || !has_literal {
+            return None;
+        }
+        if !is_delimited_projection_surface_pattern(syntax_pattern, &param_name) {
+            return None;
+        }
+        if !display_projection_reaches(language, source_cat, &param_cat) {
+            return None;
+        }
+        Some((rule, param_name))
+    })
+}
+
+fn is_delimited_projection_surface_pattern(
+    syntax_pattern: &[SyntaxExpr],
+    param_name: &str,
+) -> bool {
+    let Some(param_idx) = syntax_pattern
         .iter()
-        .filter_map(|rule| {
-            let (source, target) = simple_projection_shape_for_display(rule)?;
-            if target == target_cat {
-                Some((source, rule.label.clone()))
-            } else {
-                None
-            }
-        })
-        .collect()
+        .position(|expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == param_name))
+    else {
+        return false;
+    };
+
+    let has_left_literal = syntax_pattern[..param_idx]
+        .iter()
+        .any(|expr| matches!(expr, SyntaxExpr::Literal(s) if !s.is_empty()));
+    let has_right_literal = syntax_pattern[param_idx + 1..]
+        .iter()
+        .any(|expr| matches!(expr, SyntaxExpr::Literal(s) if !s.is_empty()));
+
+    has_left_literal && has_right_literal
 }
 
 fn simple_literal_param_pattern_ops(
@@ -771,6 +855,42 @@ fn simple_literal_param_pattern_ops(
     Some(forward_ops)
 }
 
+fn generate_projection_surface_display_arm_for_field(
+    rule: &GrammarRule,
+    field_name: &syn::Ident,
+    language: &LanguageDef,
+) -> Option<TokenStream> {
+    if !rule.is_auto_injected {
+        return None;
+    }
+    let shape = classify_simple_projection_shape(rule)?;
+    let source_task_variant = format_ident!("Display{}", shape.source_category);
+    let (wrapper, param_name) =
+        find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
+    let syntax_pattern = wrapper.syntax_pattern.as_ref()?;
+    let forward_ops = simple_literal_param_pattern_ops(
+        syntax_pattern,
+        &param_name,
+        &source_task_variant,
+        field_name,
+    )?;
+    let category = &rule.category;
+    let label = &rule.label;
+    Some(quote! {
+        #category::#label(#field_name) => {
+            #(#forward_ops)*
+        }
+    })
+}
+
+fn generate_projection_surface_display_arm(
+    rule: &GrammarRule,
+    field_names: &[syn::Ident],
+    language: &LanguageDef,
+) -> Option<TokenStream> {
+    generate_projection_surface_display_arm_for_field(rule, field_names.first()?, language)
+}
+
 /// Generate arm for regular rules (no Var fields, no binders, no syntax_pattern).
 ///
 /// Precedence-aware: for infix/postfix/prefix operators, wraps the output in
@@ -792,6 +912,11 @@ fn generate_engine_regular_arm(
     let label = &rule.label;
     let label_str = label.to_string();
     let category_str = category.to_string();
+    if let Some(auto_projection_arm) =
+        generate_projection_surface_display_arm(rule, field_names, _language)
+    {
+        return auto_projection_arm;
+    }
     let forwards_projection_min_bp = is_syntaxless_single_child_projection(rule);
 
     // Check if this rule is an infix/postfix/mixfix operator
@@ -949,9 +1074,11 @@ fn generate_engine_regular_arm(
     // Wrap in parenthesization logic for infix/prefix/postfix operators
     if let Some(info) = infix_info {
         let own_left_bp = info.left_bp;
+        let shadowed_by_syntaxless_projection = info.shadowed_by_syntaxless_projection;
         quote! {
             #category::#label(#(#field_names),*) => {
-                let needs_parens = #own_left_bp < min_bp;
+                let needs_parens = #own_left_bp < min_bp
+                    || (#shadowed_by_syntaxless_projection && min_bp != 0);
                 if needs_parens {
                     stack.push(DisplayTask::WriteLiteral(")"));
                 }
@@ -1243,6 +1370,15 @@ fn generate_engine_syntax_pattern_arm(
         }
     }
 
+    if !has_abstraction && param_names.len() == 1 {
+        let field_ident = syn::Ident::new(&param_names[0], proc_macro2::Span::call_site());
+        if let Some(surface_projection_arm) =
+            generate_projection_surface_display_arm_for_field(rule, &field_ident, _language)
+        {
+            return surface_projection_arm;
+        }
+    }
+
     let forwards_projection_param = if !has_abstraction && syntax_pattern.len() == 1 {
         if let SyntaxExpr::Param(id) = &syntax_pattern[0] {
             let name = id.to_string();
@@ -1260,71 +1396,6 @@ fn generate_engine_syntax_pattern_arm(
     } else {
         None
     };
-
-    if !has_abstraction && param_names.len() == 1 {
-        let param_name = &param_names[0];
-        if let Some(TypeExpr::Base(param_cat_ident)) = param_types.get(param_name.as_str()) {
-            let param_cat = param_cat_ident.to_string();
-            let target_cat = category.to_string();
-            let param_occurrences = syntax_pattern
-                .iter()
-                .filter(
-                    |expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == *param_name),
-                )
-                .count();
-            let has_literal = syntax_pattern
-                .iter()
-                .any(|expr| matches!(expr, SyntaxExpr::Literal(_)));
-            if param_cat != target_cat && param_occurrences == 1 && has_literal {
-                let field_ident = syn::Ident::new(param_name, proc_macro2::Span::call_site());
-                let param_task_variant = format_ident!("Display{}", param_cat);
-                if let Some(fallback_ops) = simple_literal_param_pattern_ops(
-                    syntax_pattern,
-                    param_name,
-                    &param_task_variant,
-                    &field_ident,
-                ) {
-                    let canonical_arms: Vec<TokenStream> =
-                        simple_projection_variants_to(_language, &param_cat)
-                            .into_iter()
-                            .filter(|(source_cat, _)| {
-                                display_projection_reaches(_language, source_cat, &target_cat)
-                            })
-                            .map(|(source_cat, wrapper_label)| {
-                                let source_task_variant = format_ident!("Display{}", source_cat);
-                                let child_bp = if source_cat == target_cat {
-                                    quote! { min_bp }
-                                } else {
-                                    let atomic_bp = bp_lookup.atomic_child_bp(&source_cat);
-                                    quote! { if min_bp == 0 { 0 } else { #atomic_bp } }
-                                };
-                                quote! {
-                                    #param_cat_ident::#wrapper_label(__inner) => {
-                                        stack.push(DisplayTask::#source_task_variant(&**__inner as *const _, #child_bp));
-                                    }
-                                }
-                            })
-                            .collect();
-                    if !canonical_arms.is_empty() {
-                        let field_idents: Vec<syn::Ident> = param_names
-                            .iter()
-                            .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
-                            .collect();
-                        return quote! {
-                            #category::#label(#(#field_idents),*) => {
-                                match #field_ident.as_ref() {
-                                    #(#canonical_arms,)*
-                                    _ => {
-                                        #(#fallback_ops)*
-                                    }
-                                }
-                            }
-                        };
-                    }
-                }
-            }
-        }
-    }
 
     // Count non-terminal parameters for infix position tracking
     // For new-style syntax, params appearing in the syntax_pattern as base-category
@@ -1541,6 +1612,8 @@ fn generate_engine_syntax_pattern_arm(
     } else {
         0
     };
+    let shadowed_by_syntaxless_projection =
+        infix_info.map_or(false, |info| info.shadowed_by_syntaxless_projection);
 
     if has_abstraction {
         field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
@@ -1606,7 +1679,8 @@ fn generate_engine_syntax_pattern_arm(
         {
             quote! {
                 #category::#label(#(#field_idents),*) => {
-                    let needs_parens = #own_bp < min_bp;
+                    let needs_parens = #own_bp < min_bp
+                        || (#shadowed_by_syntaxless_projection && min_bp != 0);
                     if needs_parens {
                         stack.push(DisplayTask::WriteLiteral(")"));
                     }
@@ -2387,5 +2461,135 @@ fn extract_base_category_ident(ty: &TypeExpr) -> syn::Ident {
         TypeExpr::MultiBinder(inner) => extract_base_category_ident(inner),
         TypeExpr::Refined { base, .. } => extract_base_category_ident(base),
         TypeExpr::Map { value, .. } => extract_base_category_ident(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_ast::language::LanguageDef;
+    use proc_macro2::Span;
+    use std::collections::HashMap;
+
+    fn ident(name: &str) -> syn::Ident {
+        syn::Ident::new(name, Span::call_site())
+    }
+
+    fn simple_param(name: &str, cat: &str) -> TermParam {
+        TermParam::Simple {
+            name: ident(name),
+            ty: TypeExpr::Base(ident(cat)),
+        }
+    }
+
+    fn syntaxless_projection(label: &str, source: &str, target: &str, auto: bool) -> GrammarRule {
+        let param = "v";
+        rule(
+            label,
+            target,
+            vec![simple_param(param, source)],
+            vec![SyntaxExpr::Param(ident(param))],
+            auto,
+        )
+    }
+
+    fn rule(
+        label: &str,
+        target: &str,
+        term_context: Vec<TermParam>,
+        syntax_pattern: Vec<SyntaxExpr>,
+        auto: bool,
+    ) -> GrammarRule {
+        GrammarRule {
+            label: ident(label),
+            category: ident(target),
+            items: Vec::new(),
+            bindings: Vec::new(),
+            term_context: Some(term_context),
+            syntax_pattern: Some(syntax_pattern),
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+            is_auto_injected: auto,
+            doc_comment: None,
+        }
+    }
+
+    fn language(terms: Vec<GrammarRule>) -> LanguageDef {
+        LanguageDef {
+            name: ident("DisplayProjectionTest"),
+            options: HashMap::new(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms,
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
+    #[test]
+    fn projection_wrapper_search_rejects_unary_operators() {
+        let projection = syntaxless_projection("BoolToBigInt", "Bool", "BigInt", true);
+        let proc_bool = syntaxless_projection("ProcBool", "Bool", "Proc", false);
+        let neg_bigint = rule(
+            "NegBigInt",
+            "BigInt",
+            vec![simple_param("a", "BigInt")],
+            vec![SyntaxExpr::Literal("-".to_string()), SyntaxExpr::Param(ident("a"))],
+            false,
+        );
+        let bigint_cast = rule(
+            "BigintCast",
+            "BigInt",
+            vec![simple_param("a", "Proc")],
+            vec![
+                SyntaxExpr::Literal("bigint".to_string()),
+                SyntaxExpr::Literal("(".to_string()),
+                SyntaxExpr::Param(ident("a")),
+                SyntaxExpr::Literal(")".to_string()),
+            ],
+            false,
+        );
+        let lang = language(vec![projection, proc_bool, neg_bigint, bigint_cast]);
+
+        let (wrapper, param_name) =
+            find_projection_surface_wrapper(&lang, "Bool", "BigInt").unwrap();
+
+        assert_eq!(wrapper.label.to_string(), "BigintCast");
+        assert_eq!(param_name, "a");
+    }
+
+    #[test]
+    fn explicit_syntaxless_projection_stays_transparent() {
+        let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
+        let bigint_cast = rule(
+            "BigintCast",
+            "BigInt",
+            vec![simple_param("a", "Proc")],
+            vec![
+                SyntaxExpr::Literal("bigint".to_string()),
+                SyntaxExpr::Literal("(".to_string()),
+                SyntaxExpr::Param(ident("a")),
+                SyntaxExpr::Literal(")".to_string()),
+            ],
+            false,
+        );
+        let lang = language(vec![projection.clone(), bigint_cast]);
+
+        assert!(
+            generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
+                .is_none()
+        );
     }
 }

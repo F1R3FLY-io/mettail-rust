@@ -431,7 +431,7 @@ pub struct WalkerStats {
 
     /// Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27): Pop
     /// EdgeKind histogram. Bucket index matches `pop_kind_bucket_index`
-    /// helper below — 13 buckets, one per `EdgeKind` variant. Sampled
+    /// helper below, one bucket per `EdgeKind` variant. Sampled
     /// at every `WpdaStepAction::Pop` entry by deriving the EdgeKind
     /// from the popped GSS node's symbol via `EdgeKind::from_symbol`.
     ///
@@ -440,10 +440,10 @@ pub struct WalkerStats {
     /// the broadcast helper. The Plan v2's L2 substage targets the
     /// single-predecessor convergent EdgeKinds (CategoryEntryRoot,
     /// CrossCatProjection, PrefixRuleEntry, InfixContinuation,
-    /// LexAltLiteral, OptionalGroupAt). If the dominant bucket falls
+    /// LexAltLiteral, OptionalGroupAt, BinderListLoopAt). If the dominant bucket falls
     /// outside that set (e.g., Generic, ReturnFrame, CollectionElement),
     /// L2 is misdesigned and needs re-architecture.
-    pub pop_kind_histogram: [u64; 14],
+    pub pop_kind_histogram: [u64; 16],
 
     /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
     /// `apply_action_to_cursor` variant histogram. 19 buckets for the
@@ -470,7 +470,7 @@ pub struct WalkerStats {
     /// OptionalGroupAt sum ≥ 80% of residual Push volume. If below
     /// threshold, the L2a broadcast targets are wrong and re-targeting
     /// is required.
-    pub push_kind_histogram: [u64; 13],
+    pub push_kind_histogram: [u64; 16],
 
     /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): cumulative count of
     /// distinct `DispatchKey` values observed across all
@@ -842,10 +842,11 @@ pub fn pop_kind_bucket_index(kind: &crate::gss::EdgeKind) -> usize {
         EdgeKind::InfixContinuation { .. } => 8,
         EdgeKind::LexAltLiteral { .. } => 9,
         EdgeKind::OptionalGroupAt { .. } => 10,
-        EdgeKind::CollectionElement { .. } => 11,
-        EdgeKind::GroupingMarker { .. } => 12,
-        EdgeKind::MixfixMarker { .. } => 13,
-        EdgeKind::ReturnFrame { .. } => 14,
+        EdgeKind::BinderListLoopAt { .. } => 11,
+        EdgeKind::CollectionElement { .. } => 12,
+        EdgeKind::GroupingMarker { .. } => 13,
+        EdgeKind::MixfixMarker { .. } => 14,
+        EdgeKind::ReturnFrame { .. } => 15,
     }
 }
 
@@ -864,11 +865,12 @@ pub fn pop_kind_label(idx: usize) -> &'static str {
         "InfixContinuation",
         "LexAltLiteral",
         "OptionalGroupAt",
+        "BinderListLoopAt",
         "CollectionElement",
         "GroupingMarker",
         "MixfixMarker",
         "ReturnFrame",
-    ][idx.min(14)]
+    ][idx.min(15)]
 }
 
 /// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
@@ -2256,16 +2258,18 @@ impl fmt::Display for WalkerStats {
                     pct,
                 )?;
             }
-            // L2a gate: buckets [1] CategoryEntryRoot + [2] CrossCatProjection
-            // + [8] OptionalGroupAt are the L2a targets. CrossCatLhs and
-            // CrossCatLhsReentry are identity-strict and intentionally excluded.
+            // L2a gate: CategoryEntryRoot + CrossCatProjection +
+            // optional/binder-loop inner markers are the L2a targets.
+            // CrossCatLhs and CrossCatLhsReentry are identity-strict and
+            // intentionally excluded.
             let l2a_target: u64 = self.push_kind_histogram[1]
-                + self.push_kind_histogram[2]
-                + self.push_kind_histogram[8];
+                + self.push_kind_histogram[3]
+                + self.push_kind_histogram[10]
+                + self.push_kind_histogram[11];
             let l2a_pct = 100.0 * (l2a_target as f64) / (push_total as f64);
             writeln!(
                 f,
-                "    L2a_target_share (CategoryEntryRoot+CrossCatProj+OptGroupAt): {} / {} ({:.1}%) — gate (≥ 80%): {}",
+                "    L2a_target_share (CategoryEntryRoot+CrossCatProj+Opt/BinderLoop): {} / {} ({:.1}%) — gate (≥ 80%): {}",
                 l2a_target,
                 push_total,
                 l2a_pct,
@@ -2296,10 +2300,12 @@ impl fmt::Display for WalkerStats {
             // CrossCatLhsReentry are identity-strict and intentionally excluded.
             let convergent: u64 = self.pop_kind_histogram[1]
                 + self.pop_kind_histogram[2]
-                + self.pop_kind_histogram[6]
+                + self.pop_kind_histogram[3]
                 + self.pop_kind_histogram[7]
                 + self.pop_kind_histogram[8]
-                + self.pop_kind_histogram[9];
+                + self.pop_kind_histogram[9]
+                + self.pop_kind_histogram[10]
+                + self.pop_kind_histogram[11];
             let convergent_pct = 100.0 * (convergent as f64) / (pop_total as f64);
             writeln!(
                 f,
@@ -3068,11 +3074,11 @@ mod tests {
             // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27).
             thunk_force_projection: ThunkForceRatioProjection::default(),
             // Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27).
-            pop_kind_histogram: [0; 14],
+            pop_kind_histogram: [0; 16],
             // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27).
             apply_action_variant_histogram: [0; 21],
             // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27).
-            push_kind_histogram: [0; 13],
+            push_kind_histogram: [0; 16],
             // Phase F.13 chain_10000 COQ-S0 (2026-05-27).
             cohort_origin_dispatch_keys_seen: rustc_hash::FxHashSet::default(),
             cohort_origin_equiv_keys_seen: rustc_hash::FxHashSet::default(),

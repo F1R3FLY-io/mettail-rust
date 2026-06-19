@@ -1,4 +1,4 @@
-use mettail_languages::calculator::{BigInt, BigRat, Bool, Fixed, Float, Str, UInt32};
+use mettail_languages::calculator::{BigInt, BigRat, Bool, Fixed, Float, Proc, Str, UInt32};
 use mettail_prattail::automata::TokenKind;
 use std::sync::Arc;
 
@@ -57,6 +57,40 @@ fn calculator_bigrat_grouped_rhs_continues_after_outer_plus() {
 }
 
 #[test]
+fn calculator_bigrat_bitand_bitor_canonical_display_is_idempotent() {
+    mettail_runtime::clear_var_cache();
+
+    let term = BigRat::BitAndBigRat(
+        Arc::new(BigRat::BitOrBigRat(
+            Arc::new(BigRat::BitOrBigRat(
+                Arc::new(BigRat::IntToBigRat(Arc::new(
+                    mettail_languages::calculator::Int::NumLit(-1431143609),
+                ))),
+                Arc::new(BigRat::Err),
+            )),
+            Arc::new(BigRat::DivBigRat(
+                Arc::new(BigRat::IntToBigRat(Arc::new(
+                    mettail_languages::calculator::Int::NumLit(777437875),
+                ))),
+                Arc::new(BigRat::Err),
+            )),
+        )),
+        Arc::new(BigRat::BigratCast(Arc::new(Proc::ProcFloat(Arc::new(Float::CastErrFloat))))),
+    );
+
+    let displayed = format!("{}", term);
+    let parsed = BigRat::parse(&displayed).expect("displayed BigRat should parse");
+    let canonical = format!("{}", parsed);
+    let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
+    let recanonical = format!("{}", reparsed);
+
+    assert_eq!(
+        canonical, recanonical,
+        "canonical BigRat display must be stable after parsing; displayed={displayed:?}"
+    );
+}
+
+#[test]
 fn calculator_bigrat_projected_prefix_lhs_continues_to_bitand() {
     mettail_runtime::clear_var_cache();
 
@@ -82,14 +116,22 @@ fn calculator_cast_wrapper_surfaces_parse_at_root_categories() {
 }
 
 #[test]
-fn calculator_projection_display_canonicalizes_to_parseable_surface() {
+fn calculator_projection_display_distinguishes_casts_from_syntaxless_injections() {
     mettail_runtime::clear_var_cache();
 
     let parsed = BigRat::parse("bigrat(352326912)").expect("BigratCast should admit ProcInt");
-    assert_eq!(format!("{}", parsed), "352326912");
+    assert_eq!(format!("{}", parsed), "bigrat(352326912)");
 
     let reparsed = BigRat::parse(&format!("{}", parsed)).expect("canonical BigRat display parses");
-    assert_eq!(format!("{}", reparsed), "352326912");
+    assert_eq!(format!("{}", reparsed), "bigrat(352326912)");
+
+    let syntaxless_projection =
+        BigRat::IntToBigRat(Arc::new(mettail_languages::calculator::Int::NumLit(352326912)));
+    let projected_display = format!("{}", syntaxless_projection);
+    assert_eq!(projected_display, "352326912");
+    let reparsed_projection =
+        BigRat::parse(&projected_display).expect("syntaxless BigRat display parses");
+    assert_eq!(format!("{}", reparsed_projection), "352326912");
 
     let lhs = Str::Concat(
         Arc::new(Str::BoolToStr(Arc::new(Bool::BoolLit(true)))),

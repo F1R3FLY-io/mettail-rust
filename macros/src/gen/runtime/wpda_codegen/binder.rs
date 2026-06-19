@@ -1693,40 +1693,6 @@ pub(crate) fn emit_binder_rule_body(
     }
 }
 
-/// B8 / Class 3 (2026-05-08): emit a per-rule predicate `is_binderlist_inner(rule_idx)`
-/// that returns `true` when the rule is a Class 3 ZIP-MAP-SEP rule (its
-/// BinderListLoop has more than one inner position). Used by the Unwinding-
-/// OptionalGroupAt arm to route back to BinderListLoop instead of
-/// OptionalGroup state when the symbol belongs to a Class 3 rule.
-pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
-    let mut arms = Vec::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
-                continue;
-            };
-            let is_class3 = shape.positions.iter().any(|p| {
-                matches!(p, BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. })
-            });
-            if is_class3 {
-                let cat = cat_i as u16;
-                let rule_idx = rule_i as u16;
-                arms.push(quote! { (#cat, #rule_idx) => true, });
-            }
-        }
-    }
-    if arms.is_empty() {
-        quote! { false }
-    } else {
-        quote! {
-            match (result_src_idx, rule_idx) {
-                #(#arms)*
-                _ => false,
-            }
-        }
-    }
-}
-
 /// B8 / Issue C (2026-05-09): emit a per-(rule, sub_pos) lookup that
 /// returns `Some(slot_idx)` when the just-completed inner step
 /// was a `ParamParse { collection: Some(_) }` whose parsed term
@@ -1734,7 +1700,7 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
 /// all other (rule, sub_pos) combinations.
 ///
 /// The sub_pos value here is the sub_pos baked into the
-/// OptionalGroupAt symbol — i.e. the NEXT sub_pos to dispatch after
+/// BinderListLoopAt symbol — i.e. the NEXT sub_pos to dispatch after
 /// the inner step landed. The just-completed step was
 /// `inner_positions[sub_pos - 2]`.
 ///
@@ -2117,7 +2083,7 @@ pub(crate) fn emit_binder_list_loop_body(
                         let inner_count = inner_positions.len() as u8;
                         // sub_pos=0: 3-branch fork over close / sep / first-
                         // inner-dispatch. The first-inner branch pushes
-                        // OptionalGroupAt(rule, 1, outer_bp) without
+                        // BinderListLoopAt(rule, 1, outer_bp) without
                         // consuming a token; transitions to BinderListLoop
                         // {sub_pos:1}, where the inner walk dispatches the
                         // first inner_position.
@@ -2172,12 +2138,12 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 },
                                         },
                                         // BRANCH 3: first-inner — Push
-                                        // OptionalGroupAt(rule, 1, outer_bp)
+                                        // BinderListLoopAt(rule, 1, outer_bp)
                                         // and transition to sub_pos:1 where
                                         // the inner walk takes over. No
                                         // token consumed at this branch.
                                         mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::optional_group_at(
+                                            symbol: StackSymbolV2::binder_list_loop_at(
                                                 #result_src_idx, #rule_idx,
                                                 1u8, *outer_bp,
                                             ),
@@ -2219,7 +2185,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             return WpdaStepAction::Fork {
                                                 branches: vec![
                                                     mettail_prattail::wpda_walker::ForkBranch {
-                                                        symbol: StackSymbolV2::optional_group_at(
+                                                        symbol: StackSymbolV2::binder_list_loop_at(
                                                             #result_src_idx, #rule_idx,
                                                             #next_sp, *outer_bp,
                                                         ),
@@ -2300,7 +2266,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 return WpdaStepAction::Fork {
                                                     branches: vec![
                                                         mettail_prattail::wpda_walker::ForkBranch {
-                                                            symbol: StackSymbolV2::optional_group_at(
+                                                            symbol: StackSymbolV2::binder_list_loop_at(
                                                                 #result_src_idx, #rule_idx,
                                                                 #next_sp, *outer_bp,
                                                             ),
@@ -2331,8 +2297,8 @@ pub(crate) fn emit_binder_list_loop_body(
                                 BinderPosition::ParamParse { cat, collection: _ } => {
                                     // Push CategoryEntry, transition to
                                     // PrefixDispatch. The current top is
-                                    // OptionalGroupAt(rule, cur_sp); we
-                                    // replace it with OptionalGroupAt(rule,
+                                    // BinderListLoopAt(rule, cur_sp); we
+                                    // replace it with BinderListLoopAt(rule,
                                     // next_sp) so on Unwinding we land at
                                     // sub_pos=next_sp.
                                     //
@@ -2352,7 +2318,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                     quote! {
                                         (#result_src_idx, #rule_idx, #cur_sp) => {
                                             return WpdaStepAction::ReplaceAndPush {
-                                                replace_symbol: StackSymbolV2::optional_group_at(
+                                                replace_symbol: StackSymbolV2::binder_list_loop_at(
                                                     #result_src_idx, #rule_idx,
                                                     #next_sp, *outer_bp,
                                                 ),

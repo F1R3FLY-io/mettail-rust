@@ -166,51 +166,37 @@ fn pred2_opt_skipped_single_binder_via_wpds() {
     }
 }
 
-// Phase 4 #4 (2026-05-12): the opt-taken (Some) cases share the parse-side
-// caveat from Phase 4 #3. The codegen here (term-ops + AST construct) is
-// correct for *opt-taken: all the ast_pinputsopttagged_qs_some_* tests above
-// exercise that. What's still pending is the parser→builder wiring for the
-// *opt-taken case to deliver `Some(vec![..])` from the surface syntax
-// `( ... ) . { ... } with [ 0 ]`. Once that lands, the tests below should
-// uncomment and pass.
-//
-// #[test]
-// fn pred3_opt_taken_empty_inner_via_wpds() {
-//     let result = Proc::parse_via_wpda("( ) . { 0 } with [ ]")
-//         .expect("'( ) . { 0 } with [ ]' parses");
-//     match &result {
-//         Proc::PInputsOptTagged(ns, qs, _scope) => {
-//             assert_eq!(ns.len(), 0, "ns should be empty");
-//             match qs {
-//                 Some(v) => assert_eq!(v.len(), 0, "qs Some should be empty"),
-//                 None => panic!("qs should be Some when *opt taken"),
-//             }
-//         }
-//         other => panic!(
-//             "expected Proc::PInputsOptTagged([], Some([]), _), got {:?}",
-//             other
-//         ),
-//     }
-// }
-//
-// #[test]
-// fn pred4_opt_taken_nonempty_via_wpds() {
-//     let result = Proc::parse_via_wpda("( @(0) ? x ) . { 0 } with [ 0 ]")
-//         .expect("'( @(0) ? x ) . { 0 } with [ 0 ]' parses");
-//     match &result {
-//         Proc::PInputsOptTagged(ns, qs, _scope) => {
-//             assert_eq!(ns.len(), 1, "ns should have 1 element");
-//             match qs {
-//                 Some(v) => {
-//                     assert_eq!(v.len(), 1, "qs Some should have 1 element");
-//                     assert!(matches!(&v[0], Proc::PZero));
-//                 }
-//                 None => panic!("qs should be Some when *opt taken"),
-//             }
-//         }
-//         other => panic!(
-//             "expected Proc::PInputsOptTagged([_], Some([_]), _), got {:?}",
-//             other
-//         ),
-//     }
-// }
+#[test]
+fn pred3_opt_taken_empty_inner_via_wpds() {
+    let result =
+        Proc::parse_via_wpda("( ) . { 0 } with [ ]").expect("'( ) . { 0 } with [ ]' parses");
+    match &result {
+        Proc::PInputsOptTagged(ns, qs, _scope) => {
+            assert_eq!(ns.len(), 0, "ns should be empty");
+            match qs {
+                Some(v) => assert_eq!(v.len(), 0, "qs Some should be empty"),
+                None => panic!("qs should be Some when *opt taken"),
+            }
+        },
+        other => panic!("expected Proc::PInputsOptTagged([], Some([]), _), got {:?}", other),
+    }
+}
+
+#[test]
+fn pred4_opt_taken_nonempty_via_wpds() {
+    let result = Proc::parse_via_wpda("( @(0) ? x ) . { 0 } with [ 0 ]")
+        .expect("'( @(0) ? x ) . { 0 } with [ 0 ]' parses");
+    match &result {
+        Proc::PInputsOptTagged(ns, qs, _scope) => {
+            assert_eq!(ns.len(), 1, "ns should have 1 element");
+            match qs {
+                Some(v) => {
+                    assert_eq!(v.len(), 1, "qs Some should have 1 element");
+                    assert!(matches!(&v[0], Proc::PZero));
+                },
+                None => panic!("qs should be Some when *opt taken"),
+            }
+        },
+        other => panic!("expected Proc::PInputsOptTagged([_], Some([_]), _), got {:?}", other),
+    }
+}

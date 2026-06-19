@@ -171,6 +171,72 @@ fn test_p1_8_cross_cat_ne() {
     }
 }
 
+/// P1.8b: Cross-category RHS projection keeps the pending Pred continuation.
+#[test]
+fn test_p1_8b_cross_cat_rhs_projection_continuation() {
+    for input in ["1 != to_num(2)", "-1 != to_num(2)"] {
+        mettail_runtime::clear_var_cache();
+        let result = lt::Pred::parse(input)
+            .unwrap_or_else(|err| panic!("should parse {input:?} as Pred: {err:?}"));
+        if let lt::Pred::NeNum(left, right) = &result {
+            assert!(
+                matches!(right.as_ref(), Num::ExprToNum(_)),
+                "expected projection on RHS for {input:?}, got: {:?}",
+                right
+            );
+            if input.starts_with('-') {
+                assert!(
+                    matches!(left.as_ref(), Num::NegNum(_)),
+                    "expected unary LHS to survive for {input:?}, got: {:?}",
+                    left
+                );
+            }
+        } else {
+            panic!("expected NeNum for {input:?}, got: {:?}", result);
+        }
+    }
+}
+
+/// P1.8c: Postfix Num LHS remains available to a following Pred comparison.
+#[test]
+fn test_p1_8c_postfix_lhs_comparison_continuation() {
+    for input in ["3! == to_num(a)", "3! == to_num(a) and -4 != to_num(true)"] {
+        mettail_runtime::clear_var_cache();
+        let result = lt::Pred::parse(input)
+            .unwrap_or_else(|err| panic!("should parse {input:?} as Pred: {err:?}"));
+        match &result {
+            lt::Pred::EqNum(left, right) => {
+                assert!(
+                    matches!(left.as_ref(), Num::FactNum(_)),
+                    "expected postfix LHS to survive for {input:?}, got: {:?}",
+                    left
+                );
+                assert!(
+                    matches!(right.as_ref(), Num::ExprToNum(_)),
+                    "expected projected RHS for {input:?}, got: {:?}",
+                    right
+                );
+            },
+            lt::Pred::AndPred(left, _) => match left.as_ref() {
+                lt::Pred::EqNum(eq_left, eq_right) => {
+                    assert!(
+                        matches!(eq_left.as_ref(), Num::FactNum(_)),
+                        "expected postfix LHS inside conjunction for {input:?}, got: {:?}",
+                        eq_left
+                    );
+                    assert!(
+                        matches!(eq_right.as_ref(), Num::ExprToNum(_)),
+                        "expected projected RHS inside conjunction for {input:?}, got: {:?}",
+                        eq_right
+                    );
+                },
+                other => panic!("expected EqNum left conjunct for {input:?}, got: {:?}", other),
+            },
+            other => panic!("expected EqNum/AndPred for {input:?}, got: {:?}", other),
+        }
+    }
+}
+
 /// P1.9: Own operator + delegation — "1 + 2 | 3 + 4" → EPar(CastNum(AddNum(1,2)), CastNum(AddNum(3,4)))
 #[test]
 fn test_p1_9_own_op_plus_delegation() {
