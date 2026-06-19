@@ -1,4 +1,4 @@
-use mettail_languages::calculator::{BigInt, BigRat, Bool, Fixed, Float, Proc, Str, UInt32};
+use mettail_languages::calculator::{BigInt, BigRat, Bool, Fixed, Float, Int, Proc, Str, UInt32};
 use mettail_prattail::automata::TokenKind;
 use std::sync::Arc;
 
@@ -281,6 +281,21 @@ fn calculator_nextest_property_counterexamples_parse() {
         .expect("Float should admit call-style operands with nested Bool/Bag evidence");
     Str::parse("\"as\" + \"flruphu\" ++ str(a) ++ (str(a) ++ (\"i\" ++ \"as\"))")
         .expect("Str should continue through mixed +/++ and prefix casts");
+}
+
+#[test]
+fn calculator_int_cast_surface_admits_int_addition_operand() {
+    mettail_runtime::clear_var_cache();
+
+    Int::parse("int(error + error)").expect("Int cast surface should admit Int addition operands");
+}
+
+#[test]
+fn calculator_bigint_syntaxless_projection_admits_int_cast_surface() {
+    mettail_runtime::clear_var_cache();
+
+    BigInt::parse("int(error + error)")
+        .expect("BigInt syntaxless IntToBigInt projection should admit Int cast surfaces");
 }
 
 #[test]

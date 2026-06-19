@@ -556,6 +556,11 @@ impl<W: SemiringRef> Sppf<W> {
         id
     }
 
+    /// Look up an already-interned Symbol identity node without allocating.
+    pub fn symbol_id(&self, nt_tag: u32, lo_pos: u32, hi_pos: u32) -> Option<SppfId> {
+        self.dedup_symbol.get(&(nt_tag, lo_pos, hi_pos)).copied()
+    }
+
     /// Intern a Packing (one derivation). Returns the existing id if a
     /// structurally identical Packing was already interned, else allocates.
     ///

@@ -1012,6 +1012,27 @@ struct PrefixCastWrapJob<W: SemiringRef> {
     outer_frame: BranchCursor<W>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PrefixCastWrapJobKey {
+    body_sid: crate::sppf::SppfId,
+    trigger_lo: usize,
+    close_hi: usize,
+    c_out: u16,
+    cast_rule: u16,
+    resume_bp: u8,
+    outer_node: crate::gss::GssNodeId,
+    outer_pos: usize,
+    outer_incoming_edge_stack: crate::edge_stack_arena::EdgeStackId,
+    outer_collection_depth: usize,
+    outer_cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
+    outer_sppf_stack: crate::sppf_stack_arena::StackId,
+    outer_source_priority: u32,
+    outer_lex_alt_idx: u16,
+    outer_weight_src_idx: u16,
+    outer_weight_rule_idx: u16,
+    outer_lex_fork_stamp: Option<LexForkStamp>,
+}
+
 /// Stack-safe continuation parked when a direct trigger-bearing prefix cast
 /// launches its body with `ReplaceAndPush(CategoryEntry(C_in))`.
 ///
@@ -1037,6 +1058,27 @@ struct PrefixCastWaiter<W: SemiringRef> {
     /// Prefix continuation after popping the wrapper frame and trigger. The
     /// body weight is multiplied in only when a concrete body symbol matches.
     outer_frame: BranchCursor<W>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PrefixCastWaiterKey {
+    body_cat: u16,
+    body_start_pos: usize,
+    trigger_lo: usize,
+    c_out: u16,
+    cast_rule: u16,
+    resume_bp: u8,
+    outer_node: crate::gss::GssNodeId,
+    outer_pos: usize,
+    outer_incoming_edge_stack: crate::edge_stack_arena::EdgeStackId,
+    outer_collection_depth: usize,
+    outer_cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
+    outer_sppf_stack: crate::sppf_stack_arena::StackId,
+    outer_source_priority: u32,
+    outer_lex_alt_idx: u16,
+    outer_weight_src_idx: u16,
+    outer_weight_rule_idx: u16,
+    outer_lex_fork_stamp: Option<LexForkStamp>,
 }
 
 pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
@@ -1410,6 +1452,24 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// preserves ambiguity additively: waiters only add sound continuations
     /// after evidence appears; they never prune candidate parses.
     parked_prefix_cast_waiters: Vec<PrefixCastWaiter<W>>,
+    /// Idempotence index for `pending_prefix_cast_wrap_jobs`.
+    ///
+    /// Prefix-cast reconciliation is an additive join between a parked
+    /// continuation and an evidenced SPPF body. The same join can be observed
+    /// repeatedly through cohort revives and duplicate snapshots; recording it
+    /// once is the GLL descriptor-set analogue for this stack-safe continuation.
+    pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet<PrefixCastWrapJobKey>,
+    /// Idempotence index for direct-prefix waiters. Same continuation, same
+    /// trigger, and same structural outer frame need only be parked once.
+    parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet<PrefixCastWaiterKey>,
+    /// Idempotence index for transparent projection source reentries.
+    ///
+    /// A target-category projection may expose a source-owned operator after
+    /// the target wrapper has already produced a Symbol. Reentering the
+    /// source is an additive WPDA descriptor; the same `(source, target,
+    /// child, context)` descriptor must be emitted once even if Tomita/cohort
+    /// materialization observes the same boundary repeatedly.
+    transparent_source_reentry_keys: rustc_hash::FxHashSet<TransparentSourceReentryKey>,
     /// Cohort-revive-rework M1 (2026-05-29): bounded re-drive counter for
     /// EOI orphan revival. `run_to_end_of_input`'s `!progress_made` block
     /// calls `revive_orphaned_cohort_members_once`, which injects
@@ -1616,6 +1676,7 @@ struct ForkTriggerTerminal {
 struct SppfSymbolTerm {
     value: Arc<dyn Any + Send + Sync>,
     output_cat: Option<u16>,
+    drains_count: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1623,6 +1684,32 @@ struct TransparentSourceReentry {
     source_src_idx: u16,
     target_src_idx: u16,
     child_symbol_id: crate::sppf::SppfId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TransparentSourceReentryKey {
+    source_src_idx: u16,
+    target_src_idx: u16,
+    child_symbol_id: crate::sppf::SppfId,
+    cur_bp: u8,
+    node: crate::gss::GssNodeId,
+    pos: usize,
+    incoming_edge_stack: crate::edge_stack_arena::EdgeStackId,
+    collection_depth: usize,
+    cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
+    sppf_stack: crate::sppf_stack_arena::StackId,
+    source_priority: u32,
+    lex_alt_idx: u16,
+    weight_src_idx: u16,
+    weight_rule_idx: u16,
+    lex_fork_stamp: Option<LexForkStamp>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TransparentSourceReentryDecision {
+    Reenter(TransparentSourceReentry),
+    AlreadyQueued,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4091,6 +4178,9 @@ where
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
+            pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
+            parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
+            transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4192,6 +4282,9 @@ where
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
+            pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
+            parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
+            transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4292,6 +4385,9 @@ where
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
+            pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
+            parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
+            transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4379,6 +4475,9 @@ where
         self.pending_cohort_drain_keys.clear();
         self.pending_prefix_cast_wrap_jobs.clear();
         self.parked_prefix_cast_waiters.clear();
+        self.pending_prefix_cast_wrap_job_keys.clear();
+        self.parked_prefix_cast_waiter_keys.clear();
+        self.transparent_source_reentry_keys.clear();
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
@@ -4492,6 +4591,9 @@ where
         self.pending_cohort_drain_keys.clear();
         self.pending_prefix_cast_wrap_jobs.clear();
         self.parked_prefix_cast_waiters.clear();
+        self.pending_prefix_cast_wrap_job_keys.clear();
+        self.parked_prefix_cast_waiter_keys.clear();
+        self.transparent_source_reentry_keys.clear();
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
@@ -8539,6 +8641,60 @@ where
         None
     }
 
+    fn transparent_source_reentry_key(
+        &self,
+        cursor: &BranchCursor<W>,
+        reentry: TransparentSourceReentry,
+        cur_bp: u8,
+    ) -> TransparentSourceReentryKey {
+        TransparentSourceReentryKey {
+            source_src_idx: reentry.source_src_idx,
+            target_src_idx: reentry.target_src_idx,
+            child_symbol_id: reentry.child_symbol_id,
+            cur_bp,
+            node: cursor.node,
+            pos: cursor.pos,
+            incoming_edge_stack: cursor.incoming_edge_stack_id,
+            collection_depth: cursor.collection_stack_depth as usize,
+            cohort_origin: cursor.cohort_origin.as_ref().map(|key| key.equiv()),
+            sppf_stack: cursor.sppf_stack_id,
+            source_priority: cursor.source_priority,
+            lex_alt_idx: cursor.weight.lex_alt_idx(),
+            weight_src_idx: cursor.weight.lex_src_idx(),
+            weight_rule_idx: cursor.weight.lex_rule_idx(),
+            lex_fork_stamp: cursor.lex_fork_path.last().copied(),
+        }
+    }
+
+    fn transparent_projection_reentry_once_for_operator(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        token_text: &str,
+        cur_bp: u8,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> TransparentSourceReentryDecision {
+        let Some(reentry) =
+            self.transparent_projection_reentry_for_operator(cursor, token_text, cur_bp, tokens)
+        else {
+            return TransparentSourceReentryDecision::None;
+        };
+        let key = self.transparent_source_reentry_key(cursor, reentry, cur_bp);
+        if self.transparent_source_reentry_keys.insert(key) {
+            TransparentSourceReentryDecision::Reenter(reentry)
+        } else {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] transparent-source reentry skipped: duplicate source={} target={} pos={} child={}",
+                    reentry.source_src_idx,
+                    reentry.target_src_idx,
+                    cursor.pos,
+                    self.sppf_trace_summary(reentry.child_symbol_id),
+                );
+            }
+            TransparentSourceReentryDecision::AlreadyQueued
+        }
+    }
+
     fn target_category_rejects_own_operator_at_floor(
         &self,
         target_src_idx: u16,
@@ -9343,20 +9499,26 @@ where
             if let WpdaState::InfixLoop { cur_bp } = &cursor.inner_state {
                 let cur_bp = *cur_bp;
                 if let Some(token_text) = tokens.peek_text(cursor.pos) {
-                    if let Some(reentry) = self.transparent_projection_reentry_for_operator(
+                    match self.transparent_projection_reentry_once_for_operator(
                         cursor, token_text, cur_bp, tokens,
                     ) {
-                        self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
-                        if trace_actions_enabled() {
-                            eprintln!(
-                                "[wpds-action] transparent-source reentry source={} target={} pos={} lookahead={:?}",
-                                reentry.source_src_idx,
-                                reentry.target_src_idx,
-                                cursor.pos,
-                                token_text
-                            );
-                        }
-                        return self.cursor_resolution_check(cursor);
+                        TransparentSourceReentryDecision::Reenter(reentry) => {
+                            self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
+                            if trace_actions_enabled() {
+                                eprintln!(
+                                    "[wpds-action] transparent-source reentry source={} target={} pos={} lookahead={:?}",
+                                    reentry.source_src_idx,
+                                    reentry.target_src_idx,
+                                    cursor.pos,
+                                    token_text
+                                );
+                            }
+                            return self.cursor_resolution_check(cursor);
+                        },
+                        TransparentSourceReentryDecision::AlreadyQueued => {
+                            return CursorOutcome::Drop;
+                        },
+                        TransparentSourceReentryDecision::None => {},
                     }
                 }
             }
@@ -14041,44 +14203,48 @@ where
                                     &node.shell,
                                     &arc,
                                 );
-                            if let Some(reentry) = self.transparent_projection_reentry_for_operator(
+                            match self.transparent_projection_reentry_once_for_operator(
                                 &cursor, token_text, cur_bp, tokens,
                             ) {
-                                self.reenter_transparent_projection_source(
-                                    &mut cursor,
-                                    reentry,
-                                    cur_bp,
-                                );
-                                if trace_actions_enabled() {
-                                    eprintln!(
-                                        "[wpds-action] transparent-source cohort reentry source={} target={} pos={} lookahead={:?}",
-                                        reentry.source_src_idx,
-                                        reentry.target_src_idx,
-                                        cursor.pos,
-                                        token_text
+                                TransparentSourceReentryDecision::Reenter(reentry) => {
+                                    self.reenter_transparent_projection_source(
+                                        &mut cursor,
+                                        reentry,
+                                        cur_bp,
                                     );
-                                }
-                                match self.cursor_resolution_check(&cursor) {
-                                    CursorOutcome::Drop => {},
-                                    CursorOutcome::Alive => {
-                                        new_cursors
-                                            .push(crate::cohort_lazy::Frame::Concrete(cursor));
-                                    },
-                                    CursorOutcome::Resolved => {
-                                        resolved_indices.push(new_cursors.len());
-                                        new_cursors
-                                            .push(crate::cohort_lazy::Frame::Concrete(cursor));
-                                    },
-                                    CursorOutcome::ForkInto(children) => {
-                                        new_cursors.extend(
-                                            children
-                                                .into_iter()
-                                                .map(crate::cohort_lazy::Frame::Concrete),
+                                    if trace_actions_enabled() {
+                                        eprintln!(
+                                            "[wpds-action] transparent-source cohort reentry source={} target={} pos={} lookahead={:?}",
+                                            reentry.source_src_idx,
+                                            reentry.target_src_idx,
+                                            cursor.pos,
+                                            token_text
                                         );
-                                    },
-                                }
-                            } else {
-                                remaining_arcs.push(arc);
+                                    }
+                                    match self.cursor_resolution_check(&cursor) {
+                                        CursorOutcome::Drop => {},
+                                        CursorOutcome::Alive => {
+                                            new_cursors
+                                                .push(crate::cohort_lazy::Frame::Concrete(cursor));
+                                        },
+                                        CursorOutcome::Resolved => {
+                                            resolved_indices.push(new_cursors.len());
+                                            new_cursors
+                                                .push(crate::cohort_lazy::Frame::Concrete(cursor));
+                                        },
+                                        CursorOutcome::ForkInto(children) => {
+                                            new_cursors.extend(
+                                                children
+                                                    .into_iter()
+                                                    .map(crate::cohort_lazy::Frame::Concrete),
+                                            );
+                                        },
+                                    }
+                                },
+                                TransparentSourceReentryDecision::AlreadyQueued => {},
+                                TransparentSourceReentryDecision::None => {
+                                    remaining_arcs.push(arc);
+                                },
                             }
                         }
                         node.arcs = remaining_arcs;
@@ -17290,6 +17456,7 @@ where
             }
             return None;
         }
+        let pre_collection_len = sb.collection_stack_len();
         let popped = sb.pop_args(arity);
         (entry.action_fn)(&mut sb, popped);
         let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
@@ -17309,6 +17476,7 @@ where
         let output_cat = sb
             .top_term_type_name()
             .and_then(|tn| self.engine.cat_of_type_name(tn));
+        let drains_count = pre_collection_len.saturating_sub(sb.collection_stack_len());
         let value = sb.take_dyn_result()?;
         if trace_this {
             eprintln!(
@@ -17316,7 +17484,7 @@ where
                 packing_id, cat, local_rule_idx, output_cat
             );
         }
-        Some(SppfSymbolTerm { value, output_cat })
+        Some(SppfSymbolTerm { value, output_cat, drains_count })
     }
 
     fn collect_collection_ids_from_arg(arg: &ActionArg, seen: &mut [bool; 256], out: &mut Vec<u8>) {
@@ -18049,6 +18217,107 @@ where
                 .engine
                 .action_for(cat_src_idx, local_rule_idx)
                 .is_some();
+            if let Some(action_entry) = self.engine.action_for(cat_src_idx, local_rule_idx).copied()
+            {
+                let trace_this_action = trace_actions_enabled();
+                if let Some(mut reuse_children) = self.coerce_children_for_expected_categories(
+                    &children,
+                    action_entry.expected_input_cats,
+                    cat_src_idx,
+                    local_rule_idx,
+                    trace_this_action,
+                ) {
+                    for child in &mut reuse_children {
+                        *child = self.snapshot_collection_ids_in_child(*child, cursor);
+                    }
+                    let token_sound = self.packing_satisfies_min_terminal_span(
+                        global_rule_idx,
+                        &reuse_children,
+                        lo_pos,
+                        hi_pos,
+                    );
+                    if token_sound && self.sppf.packing_exists(global_rule_idx, &reuse_children) {
+                        if let Some(symbol_id) =
+                            self.sppf.symbol_id(cat_src_idx as u32, lo_pos, hi_pos)
+                        {
+                            if let Some(term) = self.sppf_symbol_terms.get(&symbol_id).cloned() {
+                                let packing_weight = std::mem::replace(
+                                    &mut cursor.pending_packing_weight,
+                                    W::one_ref(),
+                                );
+                                let packing_id = self.sppf.intern_packing(
+                                    global_rule_idx,
+                                    reuse_children.clone(),
+                                    packing_weight,
+                                );
+                                self.sppf.link_packing_to_symbol(symbol_id, packing_id);
+                                cursor.collection_stack_depth = cursor
+                                    .collection_stack_depth
+                                    .saturating_sub(term.drains_count as u8);
+                                cursor.last_action_output_cat = term.output_cat;
+                                let body_origins = self.crosscat_lhs_body_origins_for_reduction(
+                                    cursor,
+                                    &reuse_children,
+                                    lo_pos as usize,
+                                );
+                                cursor.sppf_stack_id = self
+                                    .sppf_stack_arena
+                                    .intern_push(cursor.sppf_stack_id, symbol_id);
+                                self.record_crosscat_lhs_body_origins_for_sppf_id(
+                                    symbol_id,
+                                    body_origins.clone(),
+                                );
+                                self.resolve_crosscat_lhs_body_origins(
+                                    cursor,
+                                    symbol_id,
+                                    body_origins,
+                                    false,
+                                );
+                                if trace_actions_enabled() {
+                                    eprintln!(
+                                        "[wpds-action] intern reuse cat={} rule={} token_sound=true symbol={} packing={}",
+                                        cat_src_idx,
+                                        local_rule_idx,
+                                        self.sppf_trace_summary(symbol_id),
+                                        self.sppf_trace_summary(packing_id)
+                                    );
+                                }
+                                return;
+                            }
+                        }
+                    }
+                }
+            } else if self.sppf.packing_exists(global_rule_idx, &children)
+                && self
+                    .sppf
+                    .symbol_id(cat_src_idx as u32, lo_pos, hi_pos)
+                    .is_some()
+            {
+                let symbol_id = self
+                    .sppf
+                    .symbol_id(cat_src_idx as u32, lo_pos, hi_pos)
+                    .expect("symbol_id checked above");
+                let packing_weight =
+                    std::mem::replace(&mut cursor.pending_packing_weight, W::one_ref());
+                let packing_id =
+                    self.sppf
+                        .intern_packing(global_rule_idx, children.clone(), packing_weight);
+                self.sppf.link_packing_to_symbol(symbol_id, packing_id);
+                cursor.last_action_output_cat = None;
+                cursor.sppf_stack_id = self
+                    .sppf_stack_arena
+                    .intern_push(cursor.sppf_stack_id, symbol_id);
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] intern reuse no-action cat={} rule={} symbol={} packing={}",
+                        cat_src_idx,
+                        local_rule_idx,
+                        self.sppf_trace_summary(symbol_id),
+                        self.sppf_trace_summary(packing_id)
+                    );
+                }
+                return;
+            }
             let transient_result = self.fire_action_via_transient(cursor, symbol, &children);
             // Collection-accumulation fix (2026-05-29): re-intern every
             // CollectionId reachable from this action's children with a
@@ -18152,8 +18421,14 @@ where
                             symbol_id,
                             body_origins.clone(),
                         );
-                        self.sppf_symbol_terms
-                            .insert(symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
+                        self.sppf_symbol_terms.insert(
+                            symbol_id,
+                            SppfSymbolTerm {
+                                value: result_arc,
+                                output_cat,
+                                drains_count,
+                            },
+                        );
                         self.resolve_crosscat_lhs_body_origins(
                             cursor,
                             symbol_id,
@@ -19194,7 +19469,7 @@ where
                 .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, (pos + 1) as u32);
         self.sppf.link_packing_to_symbol(sym, pack);
         self.sppf_symbol_terms
-            .insert(sym, SppfSymbolTerm { value, output_cat });
+            .insert(sym, SppfSymbolTerm { value, output_cat, drains_count: 0 });
         Some(sym)
     }
 
@@ -20533,6 +20808,72 @@ where
         Some(self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id))
     }
 
+    fn prefix_cast_waiter_key(&self, waiter: &PrefixCastWaiter<W>) -> PrefixCastWaiterKey {
+        PrefixCastWaiterKey {
+            body_cat: waiter.body_cat,
+            body_start_pos: waiter.body_start_pos,
+            trigger_lo: waiter.trigger_lo,
+            c_out: waiter.c_out,
+            cast_rule: waiter.cast_rule,
+            resume_bp: waiter.resume_bp,
+            outer_node: waiter.outer_frame.node,
+            outer_pos: waiter.outer_frame.pos,
+            outer_incoming_edge_stack: waiter.outer_frame.incoming_edge_stack_id,
+            outer_collection_depth: waiter.outer_frame.collection_stack_depth as usize,
+            outer_cohort_origin: waiter
+                .outer_frame
+                .cohort_origin
+                .as_ref()
+                .map(|key| key.equiv()),
+            outer_sppf_stack: waiter.outer_frame.sppf_stack_id,
+            outer_source_priority: waiter.outer_frame.source_priority,
+            outer_lex_alt_idx: waiter.outer_frame.weight.lex_alt_idx(),
+            outer_weight_src_idx: waiter.outer_frame.weight.lex_src_idx(),
+            outer_weight_rule_idx: waiter.outer_frame.weight.lex_rule_idx(),
+            outer_lex_fork_stamp: waiter.outer_frame.lex_fork_path.last().copied(),
+        }
+    }
+
+    fn push_prefix_cast_waiter_once(&mut self, waiter: PrefixCastWaiter<W>) {
+        let key = self.prefix_cast_waiter_key(&waiter);
+        if self.parked_prefix_cast_waiter_keys.insert(key) {
+            self.parked_prefix_cast_waiters.push(waiter);
+        }
+    }
+
+    fn prefix_cast_wrap_job_key(&self, job: &PrefixCastWrapJob<W>) -> PrefixCastWrapJobKey {
+        PrefixCastWrapJobKey {
+            body_sid: job.body_sid,
+            trigger_lo: job.trigger_lo,
+            close_hi: job.close_hi,
+            c_out: job.c_out,
+            cast_rule: job.cast_rule,
+            resume_bp: job.resume_bp,
+            outer_node: job.outer_frame.node,
+            outer_pos: job.outer_frame.pos,
+            outer_incoming_edge_stack: job.outer_frame.incoming_edge_stack_id,
+            outer_collection_depth: job.outer_frame.collection_stack_depth as usize,
+            outer_cohort_origin: job
+                .outer_frame
+                .cohort_origin
+                .as_ref()
+                .map(|key| key.equiv()),
+            outer_sppf_stack: job.outer_frame.sppf_stack_id,
+            outer_source_priority: job.outer_frame.source_priority,
+            outer_lex_alt_idx: job.outer_frame.weight.lex_alt_idx(),
+            outer_weight_src_idx: job.outer_frame.weight.lex_src_idx(),
+            outer_weight_rule_idx: job.outer_frame.weight.lex_rule_idx(),
+            outer_lex_fork_stamp: job.outer_frame.lex_fork_path.last().copied(),
+        }
+    }
+
+    fn push_prefix_cast_wrap_job_once(&mut self, job: PrefixCastWrapJob<W>) {
+        let key = self.prefix_cast_wrap_job_key(&job);
+        if self.pending_prefix_cast_wrap_job_keys.insert(key) {
+            self.pending_prefix_cast_wrap_jobs.push(job);
+        }
+    }
+
     /// Park the continuation for a direct trigger-bearing prefix cast body.
     ///
     /// Generated casts such as `int(<Bool>)` launch their body with
@@ -20618,7 +20959,7 @@ where
         outer.node = pred;
         outer.incoming_edge_stack_id = stack_below_prefix;
         outer.sppf_stack_id = stack_below_trigger;
-        self.parked_prefix_cast_waiters.push(PrefixCastWaiter {
+        self.push_prefix_cast_waiter_once(PrefixCastWaiter {
             body_cat,
             body_start_pos,
             trigger_lo,
@@ -20717,7 +21058,7 @@ where
             .incoming_edge_stack_arena
             .intern_pop(outer.incoming_edge_stack_id);
         outer.sppf_stack_id = stack_below_prefix_body;
-        self.pending_prefix_cast_wrap_jobs.push(PrefixCastWrapJob {
+        self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
             body_sid: body_symbol_id,
             trigger_lo,
             close_hi: cursor.pos, // refined to next_pos(close) at drain
@@ -20778,7 +21119,7 @@ where
         outer.node = pred;
         outer.incoming_edge_stack_id = stack_below_prefix;
         outer.sppf_stack_id = stack_below_prefix_body;
-        self.pending_prefix_cast_wrap_jobs.push(PrefixCastWrapJob {
+        self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
             body_sid: body_symbol_id,
             trigger_lo,
             close_hi: cursor.pos,
@@ -20840,7 +21181,9 @@ where
                 );
             }
         }
-        self.pending_prefix_cast_wrap_jobs.extend(staged);
+        for job in staged {
+            self.push_prefix_cast_wrap_job_once(job);
+        }
     }
 
     /// RC-B (2026-06-17): drain the staged prefix-cast wrap jobs into accepting
@@ -20979,8 +21322,14 @@ where
         let wrapped_symbol_id = self.sppf.intern_symbol(job.c_out as u32, lo, hi);
         self.sppf
             .link_packing_to_symbol(wrapped_symbol_id, packing_id);
-        self.sppf_symbol_terms
-            .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
+        self.sppf_symbol_terms.insert(
+            wrapped_symbol_id,
+            SppfSymbolTerm {
+                value: result_arc,
+                output_cat,
+                drains_count: 0,
+            },
+        );
         // Build the accepting cursor: outer return frame, single-Symbol SPPF
         // stack, pos past `)`, and the post-cast-fire binding-power floor.
         let mut acc = job.outer_frame;
@@ -21018,8 +21367,25 @@ where
         let lo = self.sppf.span_lo(body_symbol_id)?;
         let hi = self.sppf.span_hi(body_symbol_id)?;
         let global_rule_idx: u32 = ((coercion_cat as u32) << 16) | (coercion_rule as u32);
-        if !self.packing_satisfies_min_terminal_span(global_rule_idx, &[body_symbol_id], lo, hi) {
+        let children = [body_symbol_id];
+        if !self.packing_satisfies_min_terminal_span(global_rule_idx, &children, lo, hi) {
             return None;
+        }
+        if self.sppf.packing_exists(global_rule_idx, &children) {
+            if let Some(wrapped_symbol_id) = self.sppf.symbol_id(coercion_cat as u32, lo, hi) {
+                if self.sppf_symbol_terms.contains_key(&wrapped_symbol_id) {
+                    if trace_actions_enabled() {
+                        eprintln!(
+                            "[wpds-action] coercion reuse cat={} rule={} body={} symbol={}",
+                            coercion_cat,
+                            coercion_rule,
+                            self.sppf_trace_summary(body_symbol_id),
+                            self.sppf_trace_summary(wrapped_symbol_id),
+                        );
+                    }
+                    return Some(wrapped_symbol_id);
+                }
+            }
         }
         // Fire the coercion action over [body_symbol_id] via the read-only
         // transient (the SAME path emit_fire_action uses). A probe cursor
@@ -21030,19 +21396,25 @@ where
             .fire_action_via_transient_without_child_coercions(
                 &probe,
                 coercion_symbol,
-                &[body_symbol_id],
+                &children,
             )?;
         // Intern Packing(coercion_rule, [body]) + Symbol(coercion_cat, lo, hi),
         // link, and store the realized Term keyed by the new Symbol id (so a
         // subsequent fire consuming THIS Symbol as a child reconstructs it).
-        let packing_id =
-            self.sppf
-                .intern_packing(global_rule_idx, vec![body_symbol_id], W::one_ref());
+        let packing_id = self
+            .sppf
+            .intern_packing(global_rule_idx, children.to_vec(), W::one_ref());
         let wrapped_symbol_id = self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
         self.sppf
             .link_packing_to_symbol(wrapped_symbol_id, packing_id);
-        self.sppf_symbol_terms
-            .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
+        self.sppf_symbol_terms.insert(
+            wrapped_symbol_id,
+            SppfSymbolTerm {
+                value: result_arc,
+                output_cat,
+                drains_count: 0,
+            },
+        );
         Some(wrapped_symbol_id)
     }
 
@@ -24237,6 +24609,7 @@ mod tests {
             SppfSymbolTerm {
                 value: Arc::new(42_i64),
                 output_cat: Some(0),
+                drains_count: 0,
             },
         );
 
