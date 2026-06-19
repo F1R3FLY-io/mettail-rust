@@ -1024,19 +1024,20 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     // field + public accessors entirely. Downstream extraction uses
     // `walker.resolve_at_end_of_input(&tokens)` → `realize_root_to_terms`
     // over the SPPF root captured from `cursor.sppf_stack.last()`.
-    /// "No Fork has happened yet" flag — `true` at construction; set
-    /// `false` at the first `WpdaStepAction::Fork`; never reset within
-    /// a parse (only `reset()` flips it back to `true`).
+    /// Singleton-driver flag. `true` means `self.state`, `self.pos`,
+    /// `self.weight`, and `self.top_node` are synchronized with the sole
+    /// concrete cursor and `apply_action` may drive it directly. `false`
+    /// means `step_fanout` owns a frontier whose alternatives are still
+    /// being preserved.
     ///
     /// The 4 mode-agnostic helpers (advance_cursor_pos,
     /// multiply_cursor_weight, set_cursor_inner_state, cursor_gss_push,
     /// cursor_gss_pop_via_edge, apply_pop_body_to_cursor's top-node
     /// mirror) consult this flag to decide whether to mirror cursor.* to
-    /// self.*. Mirror fires only while deterministic (singleton cursor still
-    /// canonically tracked by the walker's live `self.builder` /
-    /// `self.pos` / etc.); once a Fork happens, the walker has multiple
-    /// cursors and self.* loses its singleton-meaning until
-    /// `commit_winner` installs a winner.
+    /// self.*. Mirror fires only while deterministic. Forks set the flag
+    /// false; when fanout later collapses to one concrete cursor with no
+    /// deferred drains or replay journal, the walker can resume this direct
+    /// singleton mode.
     deterministic: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdaState::AmbiguityFanout`. Each entry is a `BranchCursor` that
@@ -1436,11 +1437,10 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
 // self.builder) and `Strict` (multi-cursor, journaled mutation queued
 // in pending_builder_ops, replayed at commit_winner). The names
 // inverted standard CS terminology (lazy meant immediate; strict meant
-// deferred). The actual signal — "no Fork has happened yet" — is now
-// a monotone bool `WpdaWalker.deterministic` (true while no Fork has
-// happened — the walker is on a single parse path; false once a Fork
-// has transitioned it into nondeterministic mode where multiple cursors
-// explore grammar ambiguity in parallel, GLR/GLL-style).
+// deferred). The actual signal is now `WpdaWalker.deterministic`: true
+// when live walker fields are synchronized with exactly one concrete
+// cursor, false while a fanout frontier is preserving competing
+// alternatives, GLR/GLL-style.
 
 /// Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard for nondeterministic-mode
 /// cursors. If any cursor's `recovery_deltas` exceeds this length,
@@ -4349,14 +4349,12 @@ where
         self.chain_absorbed_intervals.clear();
     }
 
-    /// Read-only access to the deterministic-parse flag. Returns `true`
-    /// when no `WpdaStepAction::Fork` has been processed yet (the walker
-    /// is operating on a single parse path); `false` once any Fork has
-    /// transitioned the walker into nondeterministic mode (multiple
-    /// parallel cursors exploring grammar ambiguity, in the GLR/GLL
-    /// sense). Monotone — set false at the first Fork and never reset
-    /// within a parse. `reset()` flips it back to `true` for the next
-    /// parse.
+    /// Read-only access to the singleton-driver flag. Returns `true`
+    /// when the walker can safely drive one synchronized concrete cursor
+    /// through `apply_action`; returns `false` while fanout is preserving
+    /// competing alternatives. A fork sets it false, and a settled
+    /// singleton frontier may set it true again once no deferred drains or
+    /// replay journals remain.
     ///
     /// Replaces the pre-Phase-5.6-tail `cursor_mode()` accessor that
     /// returned a `CursorMode { Lazy, Strict }` enum (whose variant
@@ -8051,23 +8049,20 @@ where
     fn nearest_cross_cat_lhs_context(&self, cursor: &BranchCursor<W>) -> Option<(u16, bool)> {
         let top = self.gss.node(cursor.node)?;
         let top_cat = top.symbol.category_src_idx;
-        let edge_stack = self
-            .incoming_edge_stack_arena
-            .to_vec(cursor.incoming_edge_stack_id);
-        for edge_id in edge_stack.into_iter().rev() {
-            match self.gss.edge_kind(edge_id) {
-                Some(
-                    crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
-                    | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. },
-                ) if source_src_idx == top_cat => return Some((source_src_idx, true)),
-                Some(
-                    crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. }
-                    | crate::gss::EdgeKind::TransparentSourceReentry { source_src_idx, .. },
-                ) if source_src_idx == top_cat => return Some((source_src_idx, false)),
-                _ => {},
-            }
-        }
-        None
+        self.incoming_edge_stack_arena
+            .find_top_down(cursor.incoming_edge_stack_id, |edge_id| {
+                match self.gss.edge_kind_ref(edge_id) {
+                    Some(
+                        crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                        | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. },
+                    ) if *source_src_idx == top_cat => Some((*source_src_idx, true)),
+                    Some(
+                        crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. }
+                        | crate::gss::EdgeKind::TransparentSourceReentry { source_src_idx, .. },
+                    ) if *source_src_idx == top_cat => Some((*source_src_idx, false)),
+                    _ => None,
+                }
+            })
     }
 
     fn action_contains_category_changing_infix_from(
@@ -8520,23 +8515,13 @@ where
         source_src_idx: u16,
         result_src_idx: u16,
     ) -> bool {
-        let edge_stack = self
-            .incoming_edge_stack_arena
-            .to_vec(cursor.incoming_edge_stack_id);
-        for edge_id in edge_stack.into_iter().rev() {
-            let Some(pred_id) = self.gss.edge_target(edge_id) else {
-                continue;
-            };
-            let Some(node) = self.gss.node(pred_id) else {
-                continue;
-            };
-            if let Some(accepts) =
+        self.incoming_edge_stack_arena
+            .find_top_down(cursor.incoming_edge_stack_id, |edge_id| {
+                let pred_id = self.gss.edge_target(edge_id)?;
+                let node = self.gss.node(pred_id)?;
                 self.requested_category_symbol_accepts(node.symbol, source_src_idx, result_src_idx)
-            {
-                return accepts;
-            }
-        }
-        false
+            })
+            .unwrap_or(false)
     }
 
     fn category_change_admitted(
@@ -8632,48 +8617,49 @@ where
         if token_text.is_empty() {
             return None;
         }
-        let edge_stack = self
-            .incoming_edge_stack_arena
-            .to_vec(cursor.incoming_edge_stack_id);
-        for edge_id in edge_stack.into_iter().rev() {
-            let Some(crate::gss::EdgeKind::CrossCatProjection {
-                source_src_idx,
-                inner_cur_bp,
-                wrap_cat,
-                ..
-            }) = self.gss.edge_kind(edge_id)
-            else {
-                continue;
-            };
-            if source_src_idx != source_cat {
-                continue;
-            }
-            if !self
-                .engine
-                .category_recognizes_operator(wrap_cat, token_text)
-            {
-                continue;
-            }
-            let target_accepts_at_projection_floor =
-                self.category_accepts_operator_at_floor(wrap_cat, cursor, inner_cur_bp, tokens);
-            let suppress_source_consumption = !target_accepts_at_projection_floor;
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] crosscat projection target-boundary source={} target={} pos={} floor={} lookahead={:?} suppress_source={}",
+        self.incoming_edge_stack_arena
+            .find_top_down(cursor.incoming_edge_stack_id, |edge_id| {
+                let Some(crate::gss::EdgeKind::CrossCatProjection {
                     source_src_idx,
-                    wrap_cat,
-                    cursor.pos,
                     inner_cur_bp,
-                    token_text,
-                    suppress_source_consumption
+                    wrap_cat,
+                    ..
+                }) = self.gss.edge_kind_ref(edge_id)
+                else {
+                    return None;
+                };
+                if *source_src_idx != source_cat {
+                    return None;
+                }
+                if !self
+                    .engine
+                    .category_recognizes_operator(*wrap_cat, token_text)
+                {
+                    return None;
+                }
+                let target_accepts_at_projection_floor = self.category_accepts_operator_at_floor(
+                    *wrap_cat,
+                    cursor,
+                    *inner_cur_bp,
+                    tokens,
                 );
-            }
-            return Some(ProjectionTargetBoundary {
-                source_src_idx,
-                suppress_source_consumption,
-            });
-        }
-        None
+                let suppress_source_consumption = !target_accepts_at_projection_floor;
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] crosscat projection target-boundary source={} target={} pos={} floor={} lookahead={:?} suppress_source={}",
+                        source_src_idx,
+                        wrap_cat,
+                        cursor.pos,
+                        inner_cur_bp,
+                        token_text,
+                        suppress_source_consumption
+                    );
+                }
+                Some(ProjectionTargetBoundary {
+                    source_src_idx: *source_src_idx,
+                    suppress_source_consumption,
+                })
+            })
     }
 
     fn iterative_chain_normal_branch(
@@ -8968,18 +8954,14 @@ where
                     // (under-a-cast-delegate work); the OFF baseline is
                     // RE-PINNED under this widened predicate (ledger
                     // §P1 Step-0 row).
-                    let contains =
-                        self.incoming_edge_stack_arena
-                            .to_vec(sid)
-                            .iter()
-                            .any(|edge_id| {
-                                matches!(
-                                    self.gss.edge_kind(*edge_id),
-                                    Some(crate::gss::EdgeKind::CrossCatLhs { .. })
-                                        | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
-                                        | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
-                                )
-                            });
+                    let contains = self.incoming_edge_stack_arena.any_top_down(sid, |edge_id| {
+                        matches!(
+                            self.gss.edge_kind_ref(edge_id),
+                            Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                                | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                                | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+                        )
+                    });
                     self.stats.crosscat_lhs_stack_memo.insert(sid, contains);
                     contains
                 },
@@ -13438,6 +13420,47 @@ where
         )
     }
 
+    /// Re-enter the direct singleton driver after fanout has genuinely
+    /// collapsed.
+    ///
+    /// This is not disambiguation: all alternatives have already either
+    /// merged by `ConfigKey`, been evidence-dropped, or remain absent from
+    /// the frontier. The guard refuses to resume while any deferred drain,
+    /// parked cross-category member, cohort boundary, or recovery replay
+    /// journal still needs the fanout machinery. Once it succeeds,
+    /// subsequent forks can still re-enter `AmbiguityFanout`, preserving
+    /// ambiguity through the normal WPDA path.
+    fn try_resume_deterministic_singleton_frontier(&mut self) -> Option<WpdaState> {
+        if self.deterministic
+            || self.branch_cursors.len() != 1
+            || self.terminal_fanout_has_step_drains()
+            || self.parked_crosscat_lhs_outstanding != 0
+            || !self.dispatch_cohort_cache.entries.is_empty()
+        {
+            return None;
+        }
+
+        let cursor = match self.branch_cursors.first() {
+            Some(crate::cohort_lazy::Frame::Concrete(cursor)) => cursor,
+            _ => return None,
+        };
+        if !cursor.recovery_deltas.is_empty() || cursor.cohort_origin.is_some() {
+            return None;
+        }
+
+        let state = cursor.inner_state.clone();
+        self.top_node = if cursor.node == crate::gss::GSS_NODE_NONE {
+            None
+        } else {
+            Some(cursor.node)
+        };
+        self.pos = cursor.pos;
+        self.weight = cursor.weight.clone();
+        self.state = state.clone();
+        self.deterministic = true;
+        Some(state)
+    }
+
     /// Step 3 (Fork plan F6): per-step driver for `WpdaState::AmbiguityFanout`.
     ///
     /// Iterates each `BranchCursor`, queries the engine for an action against
@@ -14526,6 +14549,18 @@ where
                 message: "all fork branches dropped".to_string(),
             };
             self.state = s.clone();
+            return s;
+        }
+
+        if let Some(s) = self.try_resume_deterministic_singleton_frontier() {
+            // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): end of
+            // step — roll per-step TomitaKey distinct count into cumulative
+            // even when the fanout driver hands control back to the direct
+            // singleton path.
+            #[cfg(feature = "walker-stats")]
+            {
+                self.stats.tomita_key_projection.end_step();
+            }
             return s;
         }
 
@@ -15723,7 +15758,10 @@ where
         self.state = winner.inner_state.clone();
         // Stage 3.9 / ι Phase 4 (2026-05-01): write singleton back per L4.
         // Cleared recovery_deltas — already replayed onto live builder above.
-        // `self.deterministic` stays false (monotone once flipped).
+        // `self.deterministic` remains false here; commit_winner_cursor
+        // installs a selected EOI winner, while mid-parse direct-mode
+        // resumption is handled only by the settled-frontier guard in
+        // `try_resume_deterministic_singleton_frontier`.
         // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
         self.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(BranchCursor {
             node: winner.node,
@@ -17620,36 +17658,24 @@ where
             // same.
             // Non-prefix rules push NO TriggerTerminal, so the walk-back
             // exits immediately and behavior is byte-identical to pre-fix.
-            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
-            // arena slice + pop loop replaces sppf_stack drain. The
-            // arena does not expose a contiguous slice; materialize one
-            // into caller scratch, perform the walk-back claim logic on
-            // the slice, then `to_vec()` the suffix into `children` and
-            // pop `pop_count` entries from the cursor's chain id.
-            let mut scratch: Vec<crate::sppf::SppfId> = Vec::with_capacity(sppf_stack_len);
-            let slice = self
-                .sppf_stack_arena
-                .slice_at(cursor.sppf_stack_id, &mut scratch);
-            let mut split_at = sppf_stack_len - arity;
-            while split_at > 0 {
-                let prev = slice[split_at - 1];
-                let claim = match self.sppf.node(prev) {
-                    Some(crate::sppf::SppfNode::TriggerTerminal {
-                        owner_cat,
-                        owner_rule_idx,
-                        ..
-                    }) => *owner_cat == cat_src_idx && *owner_rule_idx == local_rule_idx,
-                    _ => false,
-                };
-                if claim {
-                    split_at -= 1;
-                } else {
-                    break;
-                }
-            }
-            let children: Vec<crate::sppf::SppfId> = slice[split_at..].to_vec();
-            let pop_count = sppf_stack_len - split_at;
-            drop(scratch);
+            // Deep-parens suffix fix (2026-06-19): collect only the
+            // demanded arity suffix plus adjacent owned TriggerTerminal
+            // frames. The previous path materialized the entire path-tree
+            // stack via `slice_at`, which made a unary/grouping reduce at
+            // depth N pay O(N) even though it pops O(1) children.
+            let (children, pop_count) =
+                self.sppf_stack_arena
+                    .collect_suffix_with_preceding_while(cursor.sppf_stack_id, arity, |sid| {
+                        match self.sppf.node(sid) {
+                            Some(crate::sppf::SppfNode::TriggerTerminal {
+                                owner_cat,
+                                owner_rule_idx,
+                                ..
+                            }) => *owner_cat == cat_src_idx && *owner_rule_idx == local_rule_idx,
+                            _ => false,
+                        }
+                    })
+                    .expect("sppf_stack_len guard ensures suffix is in range");
             for _ in 0..pop_count {
                 cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
             }
@@ -18024,20 +18050,17 @@ where
         // sppf_stack contents pushed since the mark into a Packing tagged
         // with OPTIONAL_PRESENT_RULE_IDX, push the resulting Packing id.
         if let Some(mark) = cursor.optional_scope_marks.pop() {
-            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
-            // materialize the chain via arena.slice_at + scratch, take
-            // children from [mark..] as Vec, pop `pop_count` chain
-            // entries off cursor.sppf_stack_id, then push the synthetic
-            // Packing sid via arena.intern_push.
+            // Deep-drain suffix fix (2026-06-19): collect only the
+            // optional group suffix being finalized. The path-tree stack
+            // does not need whole-chain materialization to drain
+            // `mark..cur_len`.
             let cur_len = self.sppf_stack_arena.len(cursor.sppf_stack_id);
             if mark <= cur_len {
-                let mut scratch: Vec<crate::sppf::SppfId> = Vec::with_capacity(cur_len);
-                let slice = self
-                    .sppf_stack_arena
-                    .slice_at(cursor.sppf_stack_id, &mut scratch);
-                let children: Vec<crate::sppf::SppfId> = slice[mark..].to_vec();
                 let pop_count = cur_len - mark;
-                drop(scratch);
+                let children = self
+                    .sppf_stack_arena
+                    .collect_suffix(cursor.sppf_stack_id, pop_count)
+                    .expect("mark <= cur_len ensures suffix is in range");
                 for _ in 0..pop_count {
                     cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                 }
@@ -18078,17 +18101,14 @@ where
     // ─── 4 mode-agnostic helpers (mirror to live walker fields when deterministic) ──
     //
     // Each helper updates the cursor's local state AND, when
-    // `self.deterministic` is true, mirrors to the live walker fields. The
-    // `self.deterministic` flag is monotone — true at construction, set
-    // false on the first Fork, never reset within a parse. Mirror
-    // therefore fires only while the walker is still in single-cursor
-    // pre-Fork mode; once nondeterministic, self.* is rehydrated at
-    // commit_winner from the winning cursor.
+    // `self.deterministic` is true, mirrors to the live walker fields.
+    // Mirror fires while the walker has explicitly synchronized its live
+    // fields to one concrete cursor. Forks disable it; the fanout driver
+    // can re-enable it only after a conservative settled-singleton check.
     //
-    // NB: `self.branch_cursors.len() == 1` is NOT equivalent — after a
-    // Fork resolves to a single winner (commit_winner), len drops back
-    // to 1 but `self.deterministic` stays false. The monotone flag avoids
-    // accidentally re-mirroring post-commit state.
+    // NB: `self.branch_cursors.len() == 1` alone is NOT equivalent:
+    // pending drains, recovery journals, or cohort/cross-cat boundaries may
+    // still require the fanout driver. Use the guarded resume helper.
 
     /// M6c.6.1 (2026-05-14): advance the cursor's `pos` via the
     /// token source's `next_pos` rather than a hardcoded `+= n`.
@@ -18382,9 +18402,11 @@ where
                 crate::cohort_lazy::Frame::Cohort(cf) => cf.shell.incoming_edge_stack_id,
             };
             if scanned_stacks.insert(sid) {
-                for edge_id in self.incoming_edge_stack_arena.to_vec(sid) {
-                    live_edges.insert(edge_id);
-                }
+                self.incoming_edge_stack_arena
+                    .for_each_top_down_until(sid, |edge_id| {
+                        live_edges.insert(edge_id);
+                        true
+                    });
             }
         }
         // Identify dead keys: every recorded edge absent from the live set.
@@ -19952,7 +19974,7 @@ where
         let mut sid = cursor.incoming_edge_stack_id;
         while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
             if let Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, .. }) =
-                self.gss.edge_kind(eid)
+                self.gss.edge_kind_ref(eid)
             {
                 let (source_node, _) = crate::gss::unpack_edge_id(eid);
                 let source_frame = self.gss.node(source_node);
@@ -19964,8 +19986,8 @@ where
                     .unwrap_or(crate::gss::GSS_NODE_NONE);
                 let stack_below_prefix = self.incoming_edge_stack_arena.intern_pop(sid);
                 return Some((
-                    cat_src,
-                    rule_idx,
+                    *cat_src,
+                    *rule_idx,
                     body_start_pos,
                     pred,
                     stack_below_prefix,
@@ -25439,12 +25461,12 @@ mod tests {
     // Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker invariant tests
     //
     // Phase 5.6-tail-F (2026-05-12): CursorMode enum deleted in favor of
-    // a monotone `deterministic: bool` flag. The L1-L6 invariants from the
-    // pre-tail enum-based scheme either collapse (L1/L5/L6) or simplify
-    // (L2/L3/L4) under the bool. Tests reshaped accordingly:
+    // a `deterministic: bool` singleton-driver flag. The L1-L6 invariants
+    // from the pre-tail enum-based scheme either collapse (L1/L5/L6) or
+    // simplify (L2/L3/L4) under the bool. Tests reshaped accordingly:
     // - phase4_lazy_admission_holds_after_construction → singleton+empty check
     // - phase4_lazy_to_strict_on_first_fork → deterministic-flips-on-Fork check
-    // - phase4_strict_persists_through_resolution → deterministic-stays-false check
+    // - phase4_strict_persists_through_resolution → settled singleton resumes
     // - phase4_reset_returns_to_lazy → deterministic-reset-to-true check
     // - phase4_lazy_terminal_state_is_mode_irrelevant → terminal-absorbs check
     // - phase4_lazy_eoi_accept_no_replay_needed → recovery_deltas-empty check
@@ -25495,9 +25517,10 @@ mod tests {
         assert!(!w.deterministic(), "flipped to nondeterministic on first Fork");
     }
 
-    /// Once nondeterministic, the flag stays nondeterministic through resolution.
+    /// Once fanout settles to one concrete cursor with no deferred work, the
+    /// direct singleton driver resumes.
     #[test]
-    fn phase4_nondeterministic_persists_through_resolution() {
+    fn phase4_settled_singleton_resumes_deterministic_driver() {
         let engine = ScriptedEngine::new(vec![
             WpdaStepAction::Accept,
             WpdaStepAction::Pop {
@@ -25527,7 +25550,7 @@ mod tests {
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        assert!(!w.deterministic(), "stays nondeterministic post-resolution (monotone)");
+        assert!(w.deterministic(), "settled singleton frontier resumes the direct driver");
     }
 
     /// reset() returns deterministic=true with a fresh singleton.

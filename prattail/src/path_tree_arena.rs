@@ -150,6 +150,56 @@ impl<T: Copy + Eq + Hash> PathTreeArena<T> {
         }
     }
 
+    /// Walk from the top element toward the root and return the first
+    /// non-`None` result produced by `f`.
+    ///
+    /// O(distance to match) and stack-safe. This is the hot-path query
+    /// form for nearest-enclosing-frame lookups; it preserves the lazy
+    /// path-tree representation without materializing the full chain.
+    pub fn find_top_down<R, F>(&self, stack: StackId, mut f: F) -> Option<R>
+    where
+        F: FnMut(T) -> Option<R>,
+    {
+        let mut cur = stack;
+        while cur != STACK_ID_ROOT {
+            let node = self.nodes[cur.0 as usize];
+            if let Some(result) = f(node.sid) {
+                return Some(result);
+            }
+            cur = node.parent;
+        }
+        None
+    }
+
+    /// Walk from the top element toward the root, applying `f` to each
+    /// element without allocating an intermediate vector.
+    ///
+    /// The closure can stop the walk early by returning `false`.
+    pub fn for_each_top_down_until<F>(&self, stack: StackId, mut f: F)
+    where
+        F: FnMut(T) -> bool,
+    {
+        let mut cur = stack;
+        while cur != STACK_ID_ROOT {
+            let node = self.nodes[cur.0 as usize];
+            if !f(node.sid) {
+                break;
+            }
+            cur = node.parent;
+        }
+    }
+
+    /// Return true if any top-down element satisfies `predicate`.
+    ///
+    /// O(distance to match), stack-safe, and allocation-free.
+    pub fn any_top_down<F>(&self, stack: StackId, mut predicate: F) -> bool
+    where
+        F: FnMut(T) -> bool,
+    {
+        self.find_top_down(stack, |item| predicate(item).then_some(()))
+            .is_some()
+    }
+
     /// Chain length. O(1) (cached on node).
     pub fn len(&self, stack: StackId) -> usize {
         self.node_len(stack) as usize
@@ -180,6 +230,62 @@ impl<T: Copy + Eq + Hash> PathTreeArena<T> {
         }
         scratch.reverse();
         &scratch[..]
+    }
+
+    /// Collect the top `suffix_len` elements in push order.
+    ///
+    /// O(`suffix_len`) and stack-safe. This is the hot-path alternative
+    /// to `slice_at` when a caller only needs the suffix it is about to
+    /// pop. Returns `None` when `suffix_len` exceeds the chain length.
+    pub fn collect_suffix(&self, stack: StackId, suffix_len: usize) -> Option<Vec<T>> {
+        self.collect_suffix_with_preceding_while(stack, suffix_len, |_| false)
+            .map(|(suffix, _)| suffix)
+    }
+
+    /// Collect the top `suffix_len` elements plus immediately preceding
+    /// elements while `include_preceding` accepts them.
+    ///
+    /// The returned `Vec` is in push order, matching `slice_at(stack)`
+    /// suffix semantics. The accompanying `usize` is the number of
+    /// elements collected and therefore the number of `intern_pop` calls
+    /// needed to remove the same suffix from `stack`.
+    ///
+    /// This preserves the path-tree representation's stack safety: it
+    /// walks parent links iteratively and touches only the demanded
+    /// suffix, not the whole chain.
+    pub fn collect_suffix_with_preceding_while<F>(
+        &self,
+        stack: StackId,
+        suffix_len: usize,
+        mut include_preceding: F,
+    ) -> Option<(Vec<T>, usize)>
+    where
+        F: FnMut(T) -> bool,
+    {
+        if suffix_len > self.len(stack) {
+            return None;
+        }
+
+        let mut cur = stack;
+        let mut reversed = Vec::with_capacity(suffix_len);
+        for _ in 0..suffix_len {
+            let node = self.nodes[cur.0 as usize];
+            reversed.push(node.sid);
+            cur = node.parent;
+        }
+
+        while cur != STACK_ID_ROOT {
+            let node = self.nodes[cur.0 as usize];
+            if !include_preceding(node.sid) {
+                break;
+            }
+            reversed.push(node.sid);
+            cur = node.parent;
+        }
+
+        reversed.reverse();
+        let pop_count = reversed.len();
+        Some((reversed, pop_count))
     }
 
     /// Materialize as an owned `Vec<T>` (allocation per call).
@@ -290,6 +396,100 @@ mod tests {
         let mut scratch = Vec::new();
         let borrowed = arena.slice_at(s3, &mut scratch);
         assert_eq!(owned.as_slice(), borrowed);
+    }
+
+    #[test]
+    fn collect_suffix_returns_top_suffix_in_push_order() {
+        let mut arena: U32Arena = PathTreeArena::new();
+        let mut cur = STACK_ID_ROOT;
+        for sid in [1, 2, 3, 4, 5] {
+            cur = arena.intern_push(cur, sid);
+        }
+
+        assert_eq!(arena.collect_suffix(cur, 3).as_deref(), Some(&[3, 4, 5][..]));
+        assert_eq!(arena.collect_suffix(cur, 0).as_deref(), Some(&[][..]));
+        assert_eq!(arena.collect_suffix(cur, 6), None);
+    }
+
+    #[test]
+    fn collect_suffix_with_preceding_accepts_adjacent_prefix_only() {
+        let mut arena: U32Arena = PathTreeArena::new();
+        let mut cur = STACK_ID_ROOT;
+        for sid in [10, 20, 21, 30, 40] {
+            cur = arena.intern_push(cur, sid);
+        }
+
+        let (suffix, pop_count) = arena
+            .collect_suffix_with_preceding_while(cur, 2, |sid| sid >= 20 && sid < 30)
+            .expect("suffix in range");
+        assert_eq!(suffix, vec![20, 21, 30, 40]);
+        assert_eq!(pop_count, 4);
+    }
+
+    #[test]
+    fn collect_suffix_with_preceding_supports_zero_width_suffix() {
+        let mut arena: U32Arena = PathTreeArena::new();
+        let mut cur = STACK_ID_ROOT;
+        for sid in [1, 2, 3] {
+            cur = arena.intern_push(cur, sid);
+        }
+
+        let (suffix, pop_count) = arena
+            .collect_suffix_with_preceding_while(cur, 0, |sid| sid >= 2)
+            .expect("zero-width suffix is in range");
+        assert_eq!(suffix, vec![2, 3]);
+        assert_eq!(pop_count, 2);
+    }
+
+    #[test]
+    fn find_top_down_stops_at_nearest_match() {
+        let mut arena: U32Arena = PathTreeArena::new();
+        let mut cur = STACK_ID_ROOT;
+        for sid in [1, 2, 3, 4, 5] {
+            cur = arena.intern_push(cur, sid);
+        }
+
+        let mut visited = Vec::new();
+        let found = arena.find_top_down(cur, |sid| {
+            visited.push(sid);
+            (sid % 2 == 0).then_some(sid)
+        });
+
+        assert_eq!(found, Some(4));
+        assert_eq!(visited, vec![5, 4]);
+    }
+
+    #[test]
+    fn for_each_top_down_until_avoids_materializing_chain() {
+        let mut arena: U32Arena = PathTreeArena::new();
+        let mut cur = STACK_ID_ROOT;
+        for sid in [10, 20, 30, 40] {
+            cur = arena.intern_push(cur, sid);
+        }
+
+        let mut visited = Vec::new();
+        arena.for_each_top_down_until(cur, |sid| {
+            visited.push(sid);
+            sid != 30
+        });
+
+        assert_eq!(visited, vec![40, 30]);
+    }
+
+    #[test]
+    fn any_top_down_short_circuits() {
+        let mut arena: U32Arena = PathTreeArena::new();
+        let mut cur = STACK_ID_ROOT;
+        for sid in [1, 3, 5, 7, 8] {
+            cur = arena.intern_push(cur, sid);
+        }
+
+        let mut count = 0;
+        assert!(arena.any_top_down(cur, |sid| {
+            count += 1;
+            sid % 2 == 0
+        }));
+        assert_eq!(count, 1);
     }
 
     #[test]

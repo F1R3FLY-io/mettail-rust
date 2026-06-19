@@ -712,6 +712,17 @@ impl<W: SemiringRef> WpdaGss<W> {
             .and_then(|edges| edges.get(idx as usize).map(|e| e.kind.clone()))
     }
 
+    /// Borrow the `EdgeKind` of a specific edge without cloning it.
+    ///
+    /// Hot path scans use this when they only need to inspect edge metadata
+    /// while walking a path-tree stack.
+    pub fn edge_kind_ref(&self, edge_id: GssEdgeId) -> Option<&EdgeKind> {
+        let (source, idx) = unpack_edge_id(edge_id);
+        self.edges
+            .get(&source)
+            .and_then(|edges| edges.get(idx as usize).map(|e| &e.kind))
+    }
+
     /// Stage 3.12.6 (2026-05-02): look up the target node of a specific
     /// edge by its `GssEdgeId`. Returns `None` if the edge does not exist
     /// (e.g., the source node has fewer outgoing edges than the index
@@ -1199,6 +1210,11 @@ mod tests {
         assert_eq!(g.edge_kind(lhs_edge), Some(lhs_kind));
         assert_eq!(g.edge_kind(lhs_reentry_edge), Some(lhs_reentry_kind));
         assert_eq!(g.edge_kind(generic_edge), Some(EdgeKind::Generic));
+        assert!(matches!(g.edge_kind_ref(root_edge), Some(EdgeKind::CategoryEntryRoot)));
+        assert!(matches!(
+            g.edge_kind_ref(lhs_edge),
+            Some(EdgeKind::CrossCatLhs { source_src_idx: 2 })
+        ));
     }
 
     #[test]
