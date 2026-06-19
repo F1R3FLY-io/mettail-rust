@@ -490,273 +490,331 @@ fn collect_first_set(
     // `literal_patterned_pattern_and_guard_for_kind`'s `ctx` parameter to
     // preserve the home-vs-cross-cat distinction for the Integer family.
     let ctx = EmissionContext::FirstSet;
-    if !visited.insert(cat_name.to_string()) {
-        return; // cycle guard
-    }
-    // Synthetic literal rule: cat_name gets a synthesized atomic-literal
-    // rule when it has either:
-    //   (a) An explicit `literals { ... }` block — `from_literals: true` TokenDef.
-    //   (b) An implicit native_type (e.g., `![i32] as Num`) without an
-    //       explicit literals block. Stage 4 fix: this used to skip the
-    //       FIRST-set entry, so cross-cat projection rules whose source
-    //       category was native-only didn't dispatch on bare Integer
-    //       tokens (e.g., LedTest's `CastNum . a:Num |- a : Expr` failed
-    //       to fire on input `0`).
-    if let Some(lang_type) = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == cat_name)
-    {
-        if let Some(nt) = lang_type.native_type.as_ref() {
-            let kind = NativeKind::from_syn_type(nt);
-            if let Some(family) = literal_family_for(&kind) {
-                for (pattern, extra_guard) in
-                    literal_patterned_pattern_and_guard_for_kind(cat_name, family, Some(&kind), ctx)
-                {
-                    acc.push(FirstToken { pattern, extra_guard });
+    let mut pending = std::collections::VecDeque::new();
+    pending.push_back(cat_name.to_string());
+
+    while let Some(current_cat_name) = pending.pop_front() {
+        if !visited.insert(current_cat_name.clone()) {
+            continue;
+        }
+        // Synthetic literal rule: cat_name gets a synthesized atomic-literal
+        // rule when it has either:
+        //   (a) An explicit `literals { ... }` block — `from_literals: true` TokenDef.
+        //   (b) An implicit native_type (e.g., `![i32] as Num`) without an
+        //       explicit literals block. Stage 4 fix: this used to skip the
+        //       FIRST-set entry, so cross-cat projection rules whose source
+        //       category was native-only didn't dispatch on bare Integer
+        //       tokens (e.g., LedTest's `CastNum . a:Num |- a : Expr` failed
+        //       to fire on input `0`).
+        if let Some(lang_type) = language
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == current_cat_name)
+        {
+            if let Some(nt) = lang_type.native_type.as_ref() {
+                let kind = NativeKind::from_syn_type(nt);
+                if let Some(family) = literal_family_for(&kind) {
+                    for (pattern, extra_guard) in literal_patterned_pattern_and_guard_for_kind(
+                        &current_cat_name,
+                        family,
+                        Some(&kind),
+                        ctx,
+                    ) {
+                        acc.push(FirstToken { pattern, extra_guard });
+                    }
                 }
             }
         }
-    }
-    // Synthetic Var rule: every declared category that lacks an explicit
-    // user Var rule gets a synthetic Var rule (Phase 5a in synthetic.rs).
-    // Add Ident to FIRST.
-    //
-    // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06): the
-    // pre-fix gate `lang_type.native_type.is_none()` was wrong — it
-    // caused FIRST(Int) etc. to omit Ident even though `gen/types/enums.rs`
-    // unconditionally emits `Int::IVar(...)` AST variants. Now the FIRST
-    // set mirrors the AST surface for every category.
-    if let Some(_lang_type) = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == cat_name)
-    {
-        // Has-user-var-rule check: if any user rule for this cat matches
-        // NonTerminal(Var), don't add (the user rule covers it).
-        let has_user_var = language.terms.iter().any(|r| {
-            r.category.to_string() == cat_name
-                && r.items
-                    .first()
-                    .map(|item| {
-                        matches!(
-                            item,
-                            mettail_ast::grammar::GrammarItem::NonTerminal {
-                                kind: mettail_ast::grammar::NonTerminalKind::Var,
-                                ..
-                            }
-                        )
-                    })
-                    .unwrap_or(false)
-        });
-        if !has_user_var {
-            acc.push(FirstToken {
-                pattern: quote! {
-                    Some(mettail_prattail::automata::TokenKind::Ident)
-                },
-                extra_guard: None,
+        // Synthetic Var rule: every declared category that lacks an explicit
+        // user Var rule gets a synthetic Var rule (Phase 5a in synthetic.rs).
+        // Add Ident to FIRST.
+        //
+        // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06): the
+        // pre-fix gate `lang_type.native_type.is_none()` was wrong — it
+        // caused FIRST(Int) etc. to omit Ident even though `gen/types/enums.rs`
+        // unconditionally emits `Int::IVar(...)` AST variants. Now the FIRST
+        // set mirrors the AST surface for every category.
+        if let Some(_lang_type) = language
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == current_cat_name)
+        {
+            // Has-user-var-rule check: if any user rule for this cat matches
+            // NonTerminal(Var), don't add (the user rule covers it).
+            let has_user_var = language.terms.iter().any(|r| {
+                r.category.to_string() == current_cat_name
+                    && r.items
+                        .first()
+                        .map(|item| {
+                            matches!(
+                                item,
+                                mettail_ast::grammar::GrammarItem::NonTerminal {
+                                    kind: mettail_ast::grammar::NonTerminalKind::Var,
+                                    ..
+                                }
+                            )
+                        })
+                        .unwrap_or(false)
             });
-        }
-    }
-    // B7 Pattern 3 fix: synthetic collection-literal rules (`ListLit`,
-    // `BagLit`, `MapLit`) emitted by `synthetic.rs:118-200` are NOT in
-    // `language.terms` — they live in the macro's `per_cat` table. The
-    // walk over `language.terms` below therefore misses them, and any
-    // cross-cat projection rule whose source is a collection category
-    // (e.g. Calculator's `CastBag . b:Bag |- b : Proc;`) ends up missing
-    // `bag(`/`list(`/`map(` triggers in its FIRST set. The fix here is
-    // to inline the synthetic-collection-rule's FIRST contribution by
-    // reading `LangType::collection_kind` directly. The first-token of
-    // the open delim (after trimming a trailing `(` to match the lexer's
-    // 2-token tokenization of `list(`) is the FIRST element.
-    if let Some(lang_type) = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == cat_name)
-    {
-        if let Some(coll_kind) = lang_type.collection_kind.as_ref() {
-            let open = match coll_kind {
-                mettail_ast::language::CollectionCategory::List(d) => d.open.clone(),
-                mettail_ast::language::CollectionCategory::Bag(d) => d.open.clone(),
-                mettail_ast::language::CollectionCategory::Map(d) => d.open.clone(),
-            };
-            // Mirror synthetic.rs's split-on-trailing-`(` logic so the
-            // FIRST token equals the lexer's first emitted Fixed token.
-            let first_open = open.trim_end_matches('(').to_string();
-            acc.push(FirstToken {
-                pattern: quote! {
-                    Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                },
-                extra_guard: Some(quote! { __kw == #first_open }),
-            });
-        }
-    }
-    // Walk all rules where rule.category == cat_name.
-    for rule in &language.terms {
-        if rule.category.to_string() != cat_name {
-            continue;
-        }
-        let shape = classify_atomic(rule, language);
-        match shape {
-            AtomicShape::LiteralPatterned { cat_name: c, family, ref native_type, .. } => {
-                let nk = NativeKind::from_syn_type(native_type);
-                for (pattern, extra_guard) in
-                    literal_patterned_pattern_and_guard_for_kind(&c, family, Some(&nk), ctx)
-                {
-                    acc.push(FirstToken { pattern, extra_guard });
-                }
-            },
-            AtomicShape::TerminalKeyword { terminal_text, .. } => {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                    },
-                    extra_guard: Some(quote! { __kw == #terminal_text }),
-                });
-            },
-            AtomicShape::VarRule { .. } => {
+            if !has_user_var {
                 acc.push(FirstToken {
                     pattern: quote! {
                         Some(mettail_prattail::automata::TokenKind::Ident)
                     },
                     extra_guard: None,
                 });
-            },
-            AtomicShape::LiteralInteger => {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Integer)
-                    },
-                    extra_guard: None,
-                });
-            },
-            AtomicShape::LiteralBoolean => {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::True)
-                        | Some(mettail_prattail::automata::TokenKind::False)
-                        | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-                    },
-                    extra_guard: None,
-                });
-            },
-            AtomicShape::LiteralString => {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::StringLit)
-                    },
-                    extra_guard: None,
-                });
-            },
-            AtomicShape::LiteralFloat => {
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Float)
-                    },
-                    extra_guard: None,
-                });
-            },
-            AtomicShape::CrossCatProjection { source_cat_name, .. } => {
-                // Recurse into the source category's FIRST set. Option A
-                // (per-cursor collection support in fanout) makes this
-                // recursion unconditionally safe — F8's bucketed Fork
-                // emission can now drive cursors through any FIRST token,
-                // including transitive cross-cat tokens.
-                collect_first_set(&source_cat_name, language, acc, visited);
-            },
-            AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
+            }
+        }
+        // B7 Pattern 3 fix: synthetic collection-literal rules (`ListLit`,
+        // `BagLit`, `MapLit`) emitted by `synthetic.rs:118-200` are NOT in
+        // `language.terms` — they live in the macro's `per_cat` table. The
+        // walk over `language.terms` below therefore misses them, and any
+        // cross-cat projection rule whose source is a collection category
+        // (e.g. Calculator's `CastBag . b:Bag |- b : Proc;`) ends up missing
+        // `bag(`/`list(`/`map(` triggers in its FIRST set. The fix here is
+        // to inline the synthetic-collection-rule's FIRST contribution by
+        // reading `LangType::collection_kind` directly. The first-token of
+        // the open delim (after trimming a trailing `(` to match the lexer's
+        // 2-token tokenization of `list(`) is the FIRST element.
+        if let Some(lang_type) = language
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == current_cat_name)
+        {
+            if let Some(coll_kind) = lang_type.collection_kind.as_ref() {
+                let open = match coll_kind {
+                    mettail_ast::language::CollectionCategory::List(d) => d.open.clone(),
+                    mettail_ast::language::CollectionCategory::Bag(d) => d.open.clone(),
+                    mettail_ast::language::CollectionCategory::Map(d) => d.open.clone(),
+                };
+                // Mirror synthetic.rs's split-on-trailing-`(` logic so the
+                // FIRST token equals the lexer's first emitted Fixed token.
+                let first_open = open.trim_end_matches('(').to_string();
                 acc.push(FirstToken {
                     pattern: quote! {
                         Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
                     },
-                    extra_guard: Some(quote! { __kw == #trigger }),
+                    extra_guard: Some(quote! { __kw == #first_open }),
                 });
-            },
-            AtomicShape::PrefixOperator { trigger, .. } => {
-                // M6c.6.4.b (2026-05-14): same-cat unary prefix uses
-                // the trigger literal as its FIRST token, matching
-                // the existing CrossCatPrefixUnary FIRST-set shape.
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                    },
-                    extra_guard: Some(quote! { __kw == #trigger }),
-                });
-            },
-            AtomicShape::NonAtomic => {
-                // Pratt prefix / collection / binder rules: their FIRST
-                // typically starts with a literal trigger from
-                // syntax_pattern[0]. Best-effort extract.
-                //
-                // H1 fix (2026-05-18 from
-                // `~/.claude/plans/replicated-conjuring-turtle.md`): if
-                // syntax_pattern[0] is a Param (non-terminal ref) and
-                // rule.items[0] is a Category-kind NonTerminal whose
-                // category differs from `cat_name`, recurse into that
-                // category's FIRST set. This covers multi-Param non-
-                // binder rules like POutput (`n:Name, q:Proc |- n "!"
-                // "(" q ")"`) whose first syntactic item is a non-
-                // terminal of a different cat. Pre-fix the NonAtomic
-                // branch silently emitted no FIRST contribution for
-                // these rules, so e.g. Proc's FIRST set was missing
-                // Ident (via Name's synthetic Var rule), which broke
-                // PNew-body Ident-dispatch tests like
-                // `new(x) in { x!(0) }`.
-                if let Some(sp) = rule.syntax_pattern.as_ref() {
-                    match sp.first() {
-                        Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) => {
-                            acc.push(FirstToken {
-                                pattern: quote! {
-                                    Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                                },
-                                extra_guard: Some(quote! { __kw == #text }),
-                            });
-                        },
-                        Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
-                            // First syntactic item is a param ref.
-                            // Look up the corresponding NonTerminal in
-                            // rule.items[0] and recurse into its
-                            // category's FIRST if it's a different cat.
-                            if let Some(mettail_ast::grammar::GrammarItem::NonTerminal {
-                                ident: nt_ident,
-                                kind: mettail_ast::grammar::NonTerminalKind::Category,
-                            }) = rule.items.first()
-                            {
-                                let nt_cat = nt_ident.to_string();
-                                if nt_cat != cat_name {
-                                    collect_first_set(&nt_cat, language, acc, visited);
-                                }
-                            }
-                        },
-                        _ => {},
+            }
+        }
+        // Walk all rules where rule.category == current_cat_name.
+        for rule in &language.terms {
+            if rule.category.to_string() != current_cat_name {
+                continue;
+            }
+            let shape = classify_atomic(rule, language);
+            match shape {
+                AtomicShape::LiteralPatterned { cat_name: c, family, ref native_type, .. } => {
+                    let nk = NativeKind::from_syn_type(native_type);
+                    for (pattern, extra_guard) in
+                        literal_patterned_pattern_and_guard_for_kind(&c, family, Some(&nk), ctx)
+                    {
+                        acc.push(FirstToken { pattern, extra_guard });
                     }
-                }
-            },
+                },
+                AtomicShape::TerminalKeyword { terminal_text, .. } => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                        },
+                        extra_guard: Some(quote! { __kw == #terminal_text }),
+                    });
+                },
+                AtomicShape::VarRule { .. } => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Ident)
+                        },
+                        extra_guard: None,
+                    });
+                },
+                AtomicShape::LiteralInteger => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Integer)
+                        },
+                        extra_guard: None,
+                    });
+                },
+                AtomicShape::LiteralBoolean => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::True)
+                            | Some(mettail_prattail::automata::TokenKind::False)
+                            | Some(mettail_prattail::automata::TokenKind::BooleanLit)
+                        },
+                        extra_guard: None,
+                    });
+                },
+                AtomicShape::LiteralString => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::StringLit)
+                        },
+                        extra_guard: None,
+                    });
+                },
+                AtomicShape::LiteralFloat => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Float)
+                        },
+                        extra_guard: None,
+                    });
+                },
+                AtomicShape::CrossCatProjection { source_cat_name, .. } => {
+                    // Queue the source category's FIRST set instead of
+                    // recursing. Projection cycles are cut by `visited`.
+                    pending.push_back(source_cat_name);
+                },
+                AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                        },
+                        extra_guard: Some(quote! { __kw == #trigger }),
+                    });
+                },
+                AtomicShape::PrefixOperator { trigger, .. } => {
+                    // M6c.6.4.b (2026-05-14): same-cat unary prefix uses
+                    // the trigger literal as its FIRST token, matching
+                    // the existing CrossCatPrefixUnary FIRST-set shape.
+                    acc.push(FirstToken {
+                        pattern: quote! {
+                            Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                        },
+                        extra_guard: Some(quote! { __kw == #trigger }),
+                    });
+                },
+                AtomicShape::NonAtomic => {
+                    // Pratt prefix / collection / binder rules: their FIRST
+                    // typically starts with a literal trigger from
+                    // syntax_pattern[0]. Best-effort extract.
+                    //
+                    // H1 fix (2026-05-18 from
+                    // `~/.claude/plans/replicated-conjuring-turtle.md`): if
+                    // syntax_pattern[0] is a Param (non-terminal ref) and
+                    // rule.items[0] is a Category-kind NonTerminal whose
+                    // category differs from `cat_name`, queue that
+                    // category's FIRST set. This covers multi-Param non-
+                    // binder rules like POutput (`n:Name, q:Proc |- n "!"
+                    // "(" q ")"`) whose first syntactic item is a non-
+                    // terminal of a different cat. Pre-fix the NonAtomic
+                    // branch silently emitted no FIRST contribution for
+                    // these rules, so e.g. Proc's FIRST set was missing
+                    // Ident (via Name's synthetic Var rule), which broke
+                    // PNew-body Ident-dispatch tests like
+                    // `new(x) in { x!(0) }`.
+                    if let Some(sp) = rule.syntax_pattern.as_ref() {
+                        match sp.first() {
+                            Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) => {
+                                acc.push(FirstToken {
+                                    pattern: quote! {
+                                        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                                    },
+                                    extra_guard: Some(quote! { __kw == #text }),
+                                });
+                            },
+                            Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
+                                // First syntactic item is a param ref.
+                                // Look up the corresponding NonTerminal in
+                                // rule.items[0] and queue its category's
+                                // FIRST if it's a different cat.
+                                if let Some(mettail_ast::grammar::GrammarItem::NonTerminal {
+                                    ident: nt_ident,
+                                    kind: mettail_ast::grammar::NonTerminalKind::Category,
+                                }) = rule.items.first()
+                                {
+                                    let nt_cat = nt_ident.to_string();
+                                    if nt_cat != current_cat_name {
+                                        pending.push_back(nt_cat);
+                                    }
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                },
+            }
         }
     }
 }
 
+fn grouping_source_categories_for_result(
+    categories: &[String],
+    language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
+    result_idx: usize,
+) -> Vec<u16> {
+    let result_src_idx = result_idx as u16;
+    let result_cat_name = &categories[result_idx];
+    let mut extra_sources = std::collections::BTreeSet::new();
+
+    for rule in &language.terms {
+        if rule.category.to_string() != *result_cat_name {
+            continue;
+        }
+        if let Some(info) = super::infix::classify_rule_public(rule) {
+            if info.is_cross_category && info.category != info.result_category {
+                if let Some(source_idx) = categories.iter().position(|c| c == &info.category) {
+                    if source_idx != result_idx {
+                        extra_sources.insert(source_idx as u16);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(rules) = per_cat.get(result_idx) {
+        for rule in rules {
+            if let AtomicShape::CrossCatProjection { source_cat_name, .. } =
+                classify_atomic(rule, language)
+            {
+                if let Some(source_idx) = categories.iter().position(|c| c == &source_cat_name) {
+                    if source_idx != result_idx {
+                        extra_sources.insert(source_idx as u16);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut sources = Vec::with_capacity(extra_sources.len() + 1);
+    sources.push(result_src_idx);
+    sources.extend(extra_sources);
+    sources
+}
+
 /// Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06): emit `(`-trigger
 /// dispatch arms that handle BOTH the B7 paren-grouping AND any binder
-/// rule whose first trigger is `"("`. For categories with no `(`-binder,
-/// this degenerates to the simple grouping arm. For categories like Lambda's
-/// `Term` that have a paren-triggered App rule, this emits a `WpdaStepAction::Fork` over
-/// {grouping_branch, binder_rule_branches...} so lex-min disambiguates
-/// per `feedback_use_wpds_disambiguation_not_heuristics.md`. The grouping
-/// branch uses `lex_one()` (max src/rule indices) so
-/// any concrete binder rule beats it on lex-min ties.
+/// rule whose first trigger is `"("`. Categories with source-category
+/// transparent projections or category-changing infix operators also get
+/// grouping branches for those declared source categories; otherwise an
+/// outer requested category like `Pred` would force `(Num * Num)` to parse as
+/// a `Pred` group before the `! == ...` continuation can build the `Pred`.
+/// For categories with one grouping target and no `(`-binder, this still
+/// degenerates to the simple grouping arm. For categories like Lambda's
+/// `Term` that have a paren-triggered App rule, this emits a
+/// `WpdaStepAction::Fork` over {grouping_branches, binder_rule_branches...}
+/// so lex-min disambiguates per
+/// `feedback_use_wpds_disambiguation_not_heuristics.md`. Grouping branches
+/// use `lex_one()` (max src/rule indices) so any concrete binder rule beats
+/// them on lex-min ties.
 ///
 /// Verified empirically across `target/generated/*/wpds.rs`: only Lambda
 /// has a `(`-triggered binder rule; for all other shipped grammars this emits
 /// the direct grouping arm.
 pub fn emit_paren_dispatch_arms(
     categories: &[String],
-    _language: &mettail_ast::language::LanguageDef,
+    language: &mettail_ast::language::LanguageDef,
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, _cat_name) in categories.iter().enumerate() {
         let result_src_idx = cat_i as u16;
+        let grouping_source_indices =
+            grouping_source_categories_for_result(categories, language, per_cat, cat_i);
         // Find binder rules in this category with `(` first trigger.
         let paren_binder_rules: Vec<(u16, super::binder::BinderShape)> = per_cat[cat_i]
             .iter()
@@ -772,14 +830,15 @@ pub fn emit_paren_dispatch_arms(
                 }
             })
             .collect();
-        if paren_binder_rules.is_empty() {
+        if paren_binder_rules.is_empty() && grouping_source_indices.len() == 1 {
             // No conflict: emit the simple grouping arm.
+            let grouping_src_idx = grouping_source_indices[0];
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                     if __open == "(" && state_cat_src_idx == #result_src_idx => {
                     return WpdaStepAction::ConsumeAndPush {
                         symbol: StackSymbolV2::grouping_marker(
-                            #result_src_idx, *cur_bp,
+                            #grouping_src_idx, *cur_bp,
                         ),
                         weight: lex_one(),
                         new_state: WpdaState::PrefixDispatch {
@@ -793,24 +852,32 @@ pub fn emit_paren_dispatch_arms(
             });
             continue;
         }
-        // Fork over {grouping, binder_rule_branches...}. consume_trigger:
+        // Fork over {grouping_branches, binder_rule_branches...}. consume_trigger:
         // true → walker advances pos by 1 before allocating cursors.
         let mut branches: Vec<TokenStream> = Vec::new();
-        // Branch 0: grouping. Uses one() (max src/rule via u16::MAX) so
-        // any concrete binder rule beats it on lex-min ties.
-        branches.push(quote! {
-            mettail_prattail::wpda_walker::ForkBranch {
-                symbol: StackSymbolV2::grouping_marker(
-                    #result_src_idx, *cur_bp,
-                ),
-                weight: lex_one(),
-                new_state: WpdaState::PrefixDispatch {
-                    pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
-                    cur_bp: 0,
-                },
-                action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
-            }
-        });
+        // Grouping branches come first, with the current result category
+        // first. Source-category branches are grammar-derived alternatives
+        // needed by transparent projections and category-changing infix.
+        for grouping_src_idx in &grouping_source_indices {
+            let action_kind = if *grouping_src_idx == result_src_idx {
+                quote! { mettail_prattail::wpda_walker::ForkActionKind::Push }
+            } else {
+                quote! { mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs }
+            };
+            branches.push(quote! {
+                mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: StackSymbolV2::grouping_marker(
+                        #grouping_src_idx, *cur_bp,
+                    ),
+                    weight: lex_one(),
+                    new_state: WpdaState::PrefixDispatch {
+                        pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
+                        cur_bp: 0,
+                    },
+                    action_kind: #action_kind,
+                }
+            });
+        }
         // Branches 1..N: each binder rule with `(` trigger.
         for (rule_idx, shape) in &paren_binder_rules {
             let body_src_idx = super::binder::binder_initial_body_cat(shape)
@@ -1302,19 +1369,17 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 let source_src_idx = *source_src_idx;
                 quote! {
                     #pat if #guard => {
-                        // Plan C Fix 1.4 (led_test cluster, 2026-05-11):
-                        // `cur_bp: 0` (not `*cur_bp`). Anonymous cross-cat-LHS
-                        // delegation should start the sub-parser at its own
-                        // minimum BP. The outer cur_bp is preserved on the
-                        // GSS via the wrapping context (Return symbol on a
-                        // pending RuleAt or the original CategoryEntry), so
-                        // it restores correctly when this sub-parse unwinds.
+                        // Cross-category LHS delegation is an alternate view
+                        // of the same Pratt operand slot, not a fresh grouped
+                        // expression body. Preserve the active floor so lower
+                        // binding operators cannot be swallowed by the
+                        // delegated source category.
                         return WpdaStepAction::PushWithEdgeKind {
                             symbol: StackSymbolV2::category_entry(#source_src_idx),
                             weight: lex_one(),
                             new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
-                                cur_bp: 0,
+                                cur_bp: *cur_bp,
                             },
                             edge_kind: mettail_prattail::gss::EdgeKind::CrossCatLhs {
                                 source_src_idx: #source_src_idx,
@@ -1334,10 +1399,11 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // marker and route to CrossCatDelegate so the
                         // source-cat sub-parse fires; on return, the
                         // projection's action wraps the source term.
-                        // D-strings fix (2026-05-13): inner_cur_bp = 0
-                        // (fresh-operand semantics — Pass 2a projection
-                        // is at the start of a fresh operand, no
-                        // enclosing Pratt precedence to enforce).
+                        // Transparent projection delegates into a source
+                        // category while remaining inside the caller's Pratt
+                        // operand slot. Carry the active floor through so
+                        // the source parse respects the caller's binding
+                        // context.
                         return WpdaStepAction::Push {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -1347,7 +1413,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #source_src_idx,
-                                inner_cur_bp: 0,
+                                inner_cur_bp: *cur_bp,
                             },
                         };
                     }
@@ -1368,12 +1434,12 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
                                 #category_src_idx, #src_idx,
                             ),
-                            // Plan C Fix 1.4 (led_test cluster, 2026-05-11):
-                            // `cur_bp: 0` for the same reason as the singleton
-                            // CrossCatLhs arm above.
+                            // Preserve the caller's Pratt floor for the same
+                            // delegated operand-context reason as the
+                            // singleton CrossCatLhs arm above.
                             new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
-                                cur_bp: 0,
+                                cur_bp: *cur_bp,
                             },
                             action_kind:
                                 mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
@@ -1411,12 +1477,12 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
                                 #category_src_idx, #rule_idx,
                             ),
-                            // D-strings fix (2026-05-13): inner_cur_bp = 0
-                            // (Pass 2a projection multi-branch case —
-                            // fresh-operand semantics).
+                            // Preserve the caller's Pratt floor for the same
+                            // delegated operand-context reason as the
+                            // singleton CrossCatProjection arm above.
                             new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
-                                inner_cur_bp: 0,
+                                inner_cur_bp: *cur_bp,
                             },
                             action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
                         }

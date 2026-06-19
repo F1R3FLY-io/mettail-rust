@@ -552,7 +552,9 @@ pub(crate) fn emit_engine_impl_full(
                                         // predecessor. Non-grouping predecessors
                                         // override this to their own exact
                                         // transition.
-                                        let next_tok = tokens.peek_text(_pos + 1).unwrap_or("");
+                                        let close_hi =
+                                            tokens.next_pos(_pos, 0).unwrap_or(_pos + 1);
+                                        let next_tok = tokens.peek_text(close_hi).unwrap_or("");
                                         let inner_matches: bool = #category_recognizes_token_dispatch;
                                         if inner_matches {
                                             // D8 fix (2026-05-13): emit sentinel
@@ -724,13 +726,16 @@ pub(crate) fn emit_engine_impl_full(
                                 mettail_prattail::wpda_runtime::SymbolKind::GroupingMarker => {
                                     // B7 Pattern 2: inner expression of a
                                     // grouping just returned. Demand the
-                                    // closing `)`, ConsumeAndPop the marker,
-                                    // and resume InfixLoop at the saved outer
-                                    // cur_bp so surrounding operators continue
-                                    // at the original precedence. The marker
-                                    // is transparent (no AST node, no action);
-                                    // the inner Term remains on the builder
-                                    // as the result.
+                                    // closing `)`. If the token after `)` is
+                                    // recognized by the marker's category,
+                                    // preserve that category by replacing the
+                                    // marker with a CategoryEntry; otherwise
+                                    // pop the marker and resume in the
+                                    // predecessor context. This mirrors the
+                                    // CategoryEntry-above-GroupingMarker
+                                    // preserving path and is required when a
+                                    // grouping was opened directly in a
+                                    // delegated source category.
                                     //
                                     // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): GroupingMarker symbols ALWAYS
@@ -742,11 +747,28 @@ pub(crate) fn emit_engine_impl_full(
                                          Some(outer_bp) — saved cur_bp at the open paren"
                                     );
                                     match tokens.peek_text(_pos) {
-                                        Some(")") => WpdaStepAction::ConsumeAndPop {
-                                            weight: lex_one(),
-                                            new_state: WpdaState::InfixLoop {
-                                                cur_bp: outer_bp,
-                                            },
+                                        Some(")") => {
+                                            let inner_cat = node.symbol.category_src_idx;
+                                            let close_hi =
+                                                tokens.next_pos(_pos, 0).unwrap_or(_pos + 1);
+                                            let next_tok = tokens.peek_text(close_hi).unwrap_or("");
+                                            let inner_matches: bool = #category_recognizes_token_dispatch;
+                                            if inner_matches {
+                                                WpdaStepAction::ConsumeAndReplace {
+                                                    symbol: StackSymbolV2::category_entry(inner_cat),
+                                                    weight: lex_one(),
+                                                    new_state: WpdaState::InfixLoop {
+                                                        cur_bp: outer_bp,
+                                                    },
+                                                }
+                                            } else {
+                                                WpdaStepAction::ConsumeAndPop {
+                                                    weight: lex_one(),
+                                                    new_state: WpdaState::InfixLoop {
+                                                        cur_bp: outer_bp,
+                                                    },
+                                                }
+                                            }
                                         },
                                         other => WpdaStepAction::Error(format!(
                                             "expected `)` to close grouping at pos {}, found {:?}",
@@ -1816,8 +1838,8 @@ pub(crate) fn emit_engine_impl_full(
                         // lower-precedence operators leaking in from the
                         // enclosing Pratt context. For PrefixDispatch
                         // CrossCatProjection/ImplicitCast/CrossCatPrefixUnary
-                        // arms, the emitter passes 0 (fresh-operand
-                        // semantics). The outer cur_bp is restored via the
+                        // arms, the emitter passes the active operand-context
+                        // floor. The outer cur_bp is restored via the
                         // wrapping `Return(..., bp=Some(outer_cur_bp))`
                         // symbol when that Return is later popped, not via
                         // this state.

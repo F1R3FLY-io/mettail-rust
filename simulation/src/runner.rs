@@ -225,12 +225,37 @@ fn dovetail_report_summary(report: &RuntimeDovetailRunReport) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "DovetailRunReport(completeness={}, roots=[{}], terms={}, edges={})",
+        "DovetailRunReport(completeness={}, roots=[{}], terms={}, edges={}, rule_firings={})",
         report.completeness,
         roots,
         report.terms.len(),
-        report.derivation_edges.len()
+        report.derivation_edges.len(),
+        report
+            .rule_firings
+            .iter()
+            .map(|firing| firing.count)
+            .sum::<usize>()
     )
+}
+
+fn append_dovetail_rule_firing_steps(
+    steps: &mut Vec<TraceEntry>,
+    next_step_index: &mut usize,
+    summary: &str,
+    report: &RuntimeDovetailRunReport,
+) {
+    for firing in &report.rule_firings {
+        let operation = SimOperation::Rewrite { rule_name: firing.label.clone() }.label();
+        for _ in 0..firing.count {
+            steps.push(TraceEntry {
+                step_index: *next_step_index,
+                term_display: summary.to_string(),
+                operation: operation.clone(),
+                metrics: None,
+            });
+            *next_step_index += 1;
+        }
+    }
 }
 
 /// Extract the funded normal-form term display from a Dovetail report, if the input reduced to a
@@ -527,11 +552,21 @@ impl<'a> SimulationRunner<'a> {
                     operation,
                     metrics: Some(metrics),
                 });
+                let mut next_step_index = step_index + 1;
+                append_dovetail_rule_firing_steps(
+                    &mut steps,
+                    &mut next_step_index,
+                    &summary,
+                    &dovetail_report,
+                );
 
                 // Present the reduced normal form when the input folded to a literal (post-P6
                 // Dovetail reduces native folds in-engine); otherwise keep the raw report.
                 let outcome = match dovetail_extract_normal_form(&dovetail_report) {
-                    Some(term) => TraceOutcome::NormalForm { term, steps: step_index },
+                    Some(term) => TraceOutcome::NormalForm {
+                        term,
+                        steps: next_step_index.saturating_sub(1),
+                    },
                     None => TraceOutcome::RuntimeReport {
                         backend: backend.to_string(),
                         artifact: artifact.to_string(),
@@ -1414,6 +1449,7 @@ mod tests {
                 is_root: true,
             }],
             derivation_edges: Vec::new(),
+            rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
         }
     }

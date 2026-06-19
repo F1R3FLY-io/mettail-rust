@@ -401,6 +401,12 @@ pub enum EdgeKind {
     /// when cursor.node is GSS_NODE_NONE or 0). All such edges target
     /// the universal sentinel frame.
     CategoryEntryRoot,
+    /// CategoryEntry continuation that must resume the caller's Pratt floor
+    /// when the category frame is later popped. This is produced by
+    /// replacement-style transparent frames, notably grouping close, where the
+    /// replacement CategoryEntry is an operand continuation rather than a fresh
+    /// top-level category entry.
+    CategoryEntryContinuation { min_bp: u8 },
     /// Cross-cat projection branch: walker emits a push and transitions to
     /// `CrossCatDelegate` to delegate to a source-category parse. This applies
     /// to both forked and singleton fast-path emissions. Convergent: post-pop
@@ -436,7 +442,12 @@ pub enum EdgeKind {
     /// has returned. Infix dispatch may use this as evidence that a
     /// category-changing operator is allowed, but popping this edge must not
     /// re-enter again.
-    CrossCatLhsReentry { source_src_idx: u16 },
+    CrossCatLhsReentry { source_src_idx: u16, min_bp: u8 },
+    /// Runtime-normalized CrossCatLhs edge whose identity includes the
+    /// binding-power floor of the delegated source parse. Generated code may
+    /// still emit `CrossCatLhs`; the walker upgrades it before GSS insertion
+    /// so edge dedup cannot merge different Pratt continuations.
+    CrossCatLhsScoped { source_src_idx: u16, min_bp: u8 },
     /// Transparent projection source continuation. A target-category wrapper
     /// such as `Expr <- Num` has produced a target Symbol, but the next
     /// lookahead operator belongs to the source category. The walker unwraps
@@ -548,6 +559,7 @@ impl EdgeKind {
         matches!(
             self,
             EdgeKind::CategoryEntryRoot
+                | EdgeKind::CategoryEntryContinuation { .. }
                 | EdgeKind::CrossCatProjection { .. }
                 | EdgeKind::PrefixRuleEntry { .. }
                 | EdgeKind::InfixContinuation { .. }
@@ -1144,7 +1156,7 @@ mod tests {
             g.add_edge_kind(source, target, lex(1.0, 0, 0), EdgeKind::CategoryEntryRoot);
         let lhs_kind = EdgeKind::CrossCatLhs { source_src_idx: 2 };
         let lhs_edge = g.add_edge_kind(source, target, lex(1.0, 0, 0), lhs_kind.clone());
-        let lhs_reentry_kind = EdgeKind::CrossCatLhsReentry { source_src_idx: 2 };
+        let lhs_reentry_kind = EdgeKind::CrossCatLhsReentry { source_src_idx: 2, min_bp: 0 };
         let lhs_reentry_edge =
             g.add_edge_kind(source, target, lex(1.0, 0, 0), lhs_reentry_kind.clone());
         let generic_edge = g.add_edge(source, target, lex(1.0, 0, 0));

@@ -369,7 +369,14 @@ pub struct Sppf<W: SemiringRef> {
     /// emit_push_ident's Terminal{kind=Ident, …} at the same position.
     /// They produce different ActionArgs at realization (Token vs Ident);
     /// they must be distinct SPPF nodes.
-    dedup_terminal: FxHashMap<(TokenKind, PosOrSynth, bool), SppfId>,
+    ///
+    /// RC-D (2026-06-18): key also includes the terminal lexeme. Several
+    /// semantic actions (`NumLit`, string literals, fixed literals) read token
+    /// text during lazy witness realization. If the first terminal intern at a
+    /// `(kind, pos, origin)` key had no text, later same-position terminals
+    /// with real text deduped to the empty-text node and their actions elided.
+    /// Token text is semantic payload, so it is part of Terminal identity.
+    dedup_terminal: FxHashMap<(TokenKind, PosOrSynth, Option<String>, bool), SppfId>,
     dedup_symbol: FxHashMap<(u32, u32, u32), SppfId>,
     /// Phase C R6 fix: full-list key (not a 64-bit hash digest) eliminates
     /// the silent-collision soundness risk. Memory cost is negligible
@@ -461,14 +468,15 @@ impl<W: SemiringRef> Sppf<W> {
         text: Option<&str>,
         pushed_via_push_ident: bool,
     ) -> SppfId {
-        // Dedup key: (kind, pos, pushed_via_push_ident). Two terminals at the
-        // same position with the same kind and same push-helper origin ARE the
-        // same terminal — `text` is determined by kind+pos.
-        let key = (token_kind.clone(), pos, pushed_via_push_ident);
+        // Dedup key: (kind, pos, text, pushed_via_push_ident). Text is
+        // semantic payload for token-capturing actions, not recoverable from
+        // kind+pos once terminals are shared across speculative branches.
+        let text_key = text.map(str::to_owned);
+        let key = (token_kind.clone(), pos, text_key.clone(), pushed_via_push_ident);
         if let Some(&id) = self.dedup_terminal.get(&key) {
             return id;
         }
-        let text_handle = match text {
+        let text_handle = match text_key.as_deref() {
             Some(s) => self.intern_text(s),
             None => TEXT_HANDLE_NONE,
         };
@@ -1359,6 +1367,22 @@ mod tests {
         match s.node(id) {
             Some(SppfNode::Terminal { text_handle, .. }) => {
                 assert_eq!(s.text(*text_handle), "foo");
+            },
+            _ => panic!("expected Terminal"),
+        }
+    }
+
+    #[test]
+    fn intern_terminal_distinguishes_text_payload() {
+        let mut s: Sppf<W> = Sppf::new();
+        let empty = s.intern_terminal(TokenKind::Integer, PosOrSynth::Real(0), None, false);
+        let full =
+            s.intern_terminal(TokenKind::Integer, PosOrSynth::Real(0), Some("1739016572"), false);
+        assert_ne!(empty, full);
+        assert_eq!(s.len(), 2);
+        match s.node(full) {
+            Some(SppfNode::Terminal { text_handle, .. }) => {
+                assert_eq!(s.text(*text_handle), "1739016572");
             },
             _ => panic!("expected Terminal"),
         }

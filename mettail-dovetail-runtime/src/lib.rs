@@ -17,8 +17,8 @@ use dovetail::report::DovetailRunReport;
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendCapability, RuntimeBackendReport,
     RuntimeDovetailCompleteness, RuntimeDovetailDerivationEdge, RuntimeDovetailReportError,
-    RuntimeDovetailRunReport, RuntimeDovetailTermRecord, SeedFacts, Term, TermType, VarTypeInfo,
-    WeightedRewriteSeed, WeightedSeedId,
+    RuntimeDovetailRuleFiring, RuntimeDovetailRunReport, RuntimeDovetailTermRecord, SeedFacts,
+    Term, TermType, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
 };
 
 /// Convert a checked Dovetail report into the runtime-neutral report projection.
@@ -58,6 +58,16 @@ where
                 parent_key: edge.parent_key.as_bytes().to_vec(),
                 child_key: edge.child_key.as_bytes().to_vec(),
                 child_index: edge.child_index,
+            })
+            .collect(),
+        rule_firings: report
+            .rule_firings
+            .iter()
+            .enumerate()
+            .map(|(ordinal, firing)| RuntimeDovetailRuleFiring {
+                ordinal,
+                label: firing.label.clone(),
+                count: firing.count,
             })
             .collect(),
         completeness: match report.completeness {
@@ -201,6 +211,7 @@ where
         root_ordinals,
         terms,
         derivation_edges: Vec::new(),
+        rule_firings: Vec::new(),
         completeness: RuntimeDovetailCompleteness::Complete,
     };
     report
@@ -760,6 +771,7 @@ mod tests {
                 is_root: true,
             }],
             derivation_edges: Vec::new(),
+            rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::BoundedByCycleCut,
         }
     }

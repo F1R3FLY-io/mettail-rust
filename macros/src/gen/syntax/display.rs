@@ -17,6 +17,7 @@ use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
+    grammar_shapes::classify_simple_projection_shape,
     language::LanguageDef,
     types::TypeExpr,
 };
@@ -26,7 +27,7 @@ use mettail_prattail::binding_power::{
 use mettail_prattail::SyntaxItemSpec;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 // =============================================================================
 // Main Entry Point
@@ -43,8 +44,6 @@ struct DisplayBpInfo {
     is_postfix: bool,
     /// Whether this is a mixfix operator.
     is_mixfix: bool,
-    /// Whether this is a cross-category operator (operands differ from result).
-    is_cross_category: bool,
 }
 
 /// Binding power information for a unary prefix operator.
@@ -61,6 +60,8 @@ struct BpLookup {
     infix: HashMap<String, DisplayBpInfo>,
     /// Unary prefix operators: label -> prefix BP.
     prefix: HashMap<String, DisplayPrefixBpInfo>,
+    /// Maximum Display binding power of constructors that produce each category.
+    max_bp_by_category: HashMap<String, u8>,
 }
 
 impl BpLookup {
@@ -68,7 +69,16 @@ impl BpLookup {
         BpLookup {
             infix: HashMap::new(),
             prefix: HashMap::new(),
+            max_bp_by_category: HashMap::new(),
         }
+    }
+
+    fn atomic_child_bp(&self, category: &str) -> u8 {
+        self.max_bp_by_category
+            .get(category)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1)
     }
 }
 
@@ -84,9 +94,14 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
         .rules
         .iter()
         .filter(|r| r.is_infix)
-        .map(|r| {
+        .filter_map(|r| {
+            let operand_category = r
+                .cross_source_category
+                .clone()
+                .or_else(|| first_nonterminal_category_for_display(&r.syntax))
+                .unwrap_or_else(|| r.category.clone());
             let (is_mixfix, mixfix_parts) = extract_mixfix_parts_for_display(&r.syntax);
-            InfixRuleInfo {
+            Some(InfixRuleInfo {
                 label: r.label.clone(),
                 terminal: r
                     .syntax
@@ -99,14 +114,14 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
                         }
                     })
                     .unwrap_or_default(),
-                category: r.category.clone(),
+                category: operand_category.clone(),
                 result_category: r.category.clone(),
                 associativity: r.associativity,
-                is_cross_category: r.is_cross_category,
+                is_cross_category: r.is_cross_category || operand_category != r.category,
                 is_postfix: r.is_postfix,
                 is_mixfix,
                 mixfix_parts,
-            }
+            })
         })
         .collect();
 
@@ -118,30 +133,27 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
 
     let mut lookup = BpLookup::empty();
 
-    // Build a terminal→same-category BP map so cross-category operators can
-    // use the same parenthesization threshold as their same-category counterpart.
-    // Without this, cross-category operators (e.g., LtInt: Int×Int→Bool) get
-    // different BPs from same-category operators (e.g., LtBool: Bool×Bool→Bool)
-    // despite sharing the same token. This causes Display to produce parenthesization
-    // that doesn't roundtrip through the parser (which uses a single token-based BP).
+    // Build a terminal→same-operand-category BP map so cross-category operators
+    // can share a threshold with a same-category operator on the same operand
+    // category when such a rule exists. The source category is the Pratt
+    // competition domain for the operands; the result category is not.
     let mut same_cat_bp: HashMap<(String, String), (u8, u8)> = HashMap::new();
     for op in &bp_table.operators {
         if !op.is_cross_category {
-            same_cat_bp.insert(
-                (op.terminal.clone(), op.result_category.clone()),
-                (op.left_bp, op.right_bp),
-            );
+            same_cat_bp
+                .insert((op.terminal.clone(), op.category.clone()), (op.left_bp, op.right_bp));
         }
     }
 
     // Add infix/postfix/mixfix operators
     for op in &bp_table.operators {
-        // For cross-category operators, use the same-category operator's BP
-        // for parenthesization (own_left_bp check) since the parser uses
-        // token-based BP lookup which maps to the same-category variant.
+        // For cross-category operators, use the same operand-category
+        // operator's BP for parenthesization when available. If no same-token
+        // source-category operator exists, keep the binding power assigned in
+        // the source category by analyze_binding_powers().
         let (display_left_bp, display_right_bp) = if op.is_cross_category {
             same_cat_bp
-                .get(&(op.terminal.clone(), op.result_category.clone()))
+                .get(&(op.terminal.clone(), op.category.clone()))
                 .copied()
                 .unwrap_or((op.left_bp, op.right_bp))
         } else {
@@ -154,9 +166,14 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
                 right_bp: display_right_bp,
                 is_postfix: op.is_postfix,
                 is_mixfix: op.is_mixfix,
-                is_cross_category: op.is_cross_category,
             },
         );
+        let own_bp = display_left_bp.max(display_right_bp);
+        lookup
+            .max_bp_by_category
+            .entry(op.result_category.clone())
+            .and_modify(|max_bp| *max_bp = (*max_bp).max(own_bp))
+            .or_insert(own_bp);
     }
 
     // Add unary prefix operators (Stage 3.27d-pre standardized helper)
@@ -166,10 +183,25 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
             lookup
                 .prefix
                 .insert(rule.label.clone(), DisplayPrefixBpInfo { prefix_bp });
+            lookup
+                .max_bp_by_category
+                .entry(rule.category.clone())
+                .and_modify(|max_bp| *max_bp = (*max_bp).max(prefix_bp))
+                .or_insert(prefix_bp);
         }
     }
 
     lookup
+}
+
+fn first_nonterminal_category_for_display(syntax: &[SyntaxItemSpec]) -> Option<String> {
+    syntax.iter().find_map(|item| {
+        if let SyntaxItemSpec::NonTerminal { category, .. } = item {
+            Some(category.clone())
+        } else {
+            None
+        }
+    })
 }
 
 /// Extract mixfix parts from syntax items (same logic as pipeline.rs).
@@ -625,11 +657,130 @@ fn generate_engine_var_fields_arm(
     }
 }
 
+/// True for a rule whose printed surface is exactly one child term.
+///
+/// Such rules are display-transparent: the wrapper itself contributes no
+/// delimiter, keyword, or operator that could isolate the child from the
+/// surrounding parse context.  They must therefore forward the inherited
+/// binding-power threshold instead of resetting it to zero.
+fn is_syntaxless_single_child_projection(rule: &GrammarRule) -> bool {
+    simple_projection_shape_for_display(rule).is_some()
+}
+
+fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, String)> {
+    if let Some(shape) = classify_simple_projection_shape(rule) {
+        return Some((shape.source_category, shape.target_category));
+    }
+    if rule.items.len() == 1 && rule.bindings.is_empty() && rule.syntax_pattern.is_none() {
+        if let Some(GrammarItem::NonTerminal { ident, .. }) = rule.items.first() {
+            let source = ident.to_string();
+            let target = rule.category.to_string();
+            if source != target {
+                return Some((source, target));
+            }
+        }
+    }
+    None
+}
+
+fn display_projection_reaches(language: &LanguageDef, source_cat: &str, target_cat: &str) -> bool {
+    if source_cat == target_cat {
+        return true;
+    }
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    seen.insert(source_cat.to_string());
+    queue.push_back(source_cat.to_string());
+
+    while let Some(cat) = queue.pop_front() {
+        for rule in &language.terms {
+            let Some((next_source, next_target)) = simple_projection_shape_for_display(rule) else {
+                continue;
+            };
+            if next_source != cat || !seen.insert(next_target.clone()) {
+                continue;
+            }
+            if next_target == target_cat {
+                return true;
+            }
+            queue.push_back(next_target);
+        }
+    }
+
+    false
+}
+
+fn simple_projection_variants_to(
+    language: &LanguageDef,
+    target_cat: &str,
+) -> Vec<(String, syn::Ident)> {
+    language
+        .terms
+        .iter()
+        .filter_map(|rule| {
+            let (source, target) = simple_projection_shape_for_display(rule)?;
+            if target == target_cat {
+                Some((source, rule.label.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn simple_literal_param_pattern_ops(
+    syntax_pattern: &[SyntaxExpr],
+    param_name: &str,
+    task_variant: &syn::Ident,
+    field_ident: &syn::Ident,
+) -> Option<Vec<TokenStream>> {
+    let mut forward_ops: Vec<TokenStream> = Vec::new();
+    for (i, expr) in syntax_pattern.iter().enumerate() {
+        match expr {
+            SyntaxExpr::Literal(s) => {
+                let next_param = syntax_pattern
+                    .get(i + 1)
+                    .map(|e| matches!(e, SyntaxExpr::Param(_)));
+                let prev_param =
+                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                let is_word = !s.is_empty()
+                    && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && !s.chars().next().unwrap().is_numeric();
+                let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
+                    (" ", " ")
+                } else if next_param == Some(true) && is_word {
+                    ("", " ")
+                } else {
+                    ("", "")
+                };
+                let raw = format!("{}{}{}", prefix, s, suffix);
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#raw.to_string()));
+                });
+            },
+            SyntaxExpr::Param(id) if id.to_string() == param_name => {
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
+                });
+            },
+            _ => return None,
+        }
+    }
+    forward_ops.reverse();
+    Some(forward_ops)
+}
+
 /// Generate arm for regular rules (no Var fields, no binders, no syntax_pattern).
 ///
 /// Precedence-aware: for infix/postfix/prefix operators, wraps the output in
 /// parentheses when the inherited `min_bp` exceeds the operator's own binding power.
-/// Non-operator rules push children with `min_bp = 0` (no parenthesization).
+/// Non-operator rules push children with `min_bp = 0`, except syntaxless
+/// single-child projections, which preserve the surrounding boundary because
+/// the wrapper has no surface syntax of its own. Same-category projections
+/// forward the inherited threshold directly; cross-category projections render
+/// a foreign-category child atomically whenever the wrapper appears as an
+/// operand.
 fn generate_engine_regular_arm(
     rule: &GrammarRule,
     fields: &[(String, Option<&syn::Ident>)],
@@ -640,6 +791,8 @@ fn generate_engine_regular_arm(
     let category = &rule.category;
     let label = &rule.label;
     let label_str = label.to_string();
+    let category_str = category.to_string();
+    let forwards_projection_min_bp = is_syntaxless_single_child_projection(rule);
 
     // Check if this rule is an infix/postfix/mixfix operator
     let infix_info = bp_lookup.infix.get(&label_str);
@@ -688,9 +841,6 @@ fn generate_engine_regular_arm(
                             } else {
                                 0
                             }
-                        } else if info.is_cross_category {
-                            // Cross-category: children are in different category, reset BP
-                            0
                         } else {
                             // Regular infix: left child = left_bp, right child = right_bp
                             if nt_idx == 0 {
@@ -704,6 +854,17 @@ fn generate_engine_regular_arm(
                         pinfo.prefix_bp
                     } else {
                         0
+                    };
+
+                    let child_min_bp = if forwards_projection_min_bp {
+                        if nt_str == category_str {
+                            quote! { min_bp }
+                        } else {
+                            let atomic_bp = bp_lookup.atomic_child_bp(&nt_str);
+                            quote! { if min_bp == 0 { 0 } else { #atomic_bp } }
+                        }
+                    } else {
+                        quote! { #child_min_bp }
                     };
 
                     forward_ops.push(quote! {
@@ -1082,6 +1243,89 @@ fn generate_engine_syntax_pattern_arm(
         }
     }
 
+    let forwards_projection_param = if !has_abstraction && syntax_pattern.len() == 1 {
+        if let SyntaxExpr::Param(id) = &syntax_pattern[0] {
+            let name = id.to_string();
+            if param_names.len() == 1
+                && param_names[0] == name
+                && matches!(param_types.get(name.as_str()), Some(TypeExpr::Base(_)))
+            {
+                Some(name)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if !has_abstraction && param_names.len() == 1 {
+        let param_name = &param_names[0];
+        if let Some(TypeExpr::Base(param_cat_ident)) = param_types.get(param_name.as_str()) {
+            let param_cat = param_cat_ident.to_string();
+            let target_cat = category.to_string();
+            let param_occurrences = syntax_pattern
+                .iter()
+                .filter(
+                    |expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == *param_name),
+                )
+                .count();
+            let has_literal = syntax_pattern
+                .iter()
+                .any(|expr| matches!(expr, SyntaxExpr::Literal(_)));
+            if param_cat != target_cat && param_occurrences == 1 && has_literal {
+                let field_ident = syn::Ident::new(param_name, proc_macro2::Span::call_site());
+                let param_task_variant = format_ident!("Display{}", param_cat);
+                if let Some(fallback_ops) = simple_literal_param_pattern_ops(
+                    syntax_pattern,
+                    param_name,
+                    &param_task_variant,
+                    &field_ident,
+                ) {
+                    let canonical_arms: Vec<TokenStream> =
+                        simple_projection_variants_to(_language, &param_cat)
+                            .into_iter()
+                            .filter(|(source_cat, _)| {
+                                display_projection_reaches(_language, source_cat, &target_cat)
+                            })
+                            .map(|(source_cat, wrapper_label)| {
+                                let source_task_variant = format_ident!("Display{}", source_cat);
+                                let child_bp = if source_cat == target_cat {
+                                    quote! { min_bp }
+                                } else {
+                                    let atomic_bp = bp_lookup.atomic_child_bp(&source_cat);
+                                    quote! { if min_bp == 0 { 0 } else { #atomic_bp } }
+                                };
+                                quote! {
+                                    #param_cat_ident::#wrapper_label(__inner) => {
+                                        stack.push(DisplayTask::#source_task_variant(&**__inner as *const _, #child_bp));
+                                    }
+                                }
+                            })
+                            .collect();
+                    if !canonical_arms.is_empty() {
+                        let field_idents: Vec<syn::Ident> = param_names
+                            .iter()
+                            .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
+                            .collect();
+                        return quote! {
+                            #category::#label(#(#field_idents),*) => {
+                                match #field_ident.as_ref() {
+                                    #(#canonical_arms,)*
+                                    _ => {
+                                        #(#fallback_ops)*
+                                    }
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+        }
+    }
+
     // Count non-terminal parameters for infix position tracking
     // For new-style syntax, params appearing in the syntax_pattern as base-category
     // types are the "operand" nonterminals.
@@ -1117,12 +1361,7 @@ fn generate_engine_syntax_pattern_arm(
     // Compute a map from param name -> child min_bp for infix/prefix rules
     let child_bp_map: HashMap<String, u8> = if let Some(info) = infix_info {
         let mut map = HashMap::new();
-        if info.is_cross_category {
-            // Cross-category: children are in different category, reset BP
-            for name in &base_cat_params {
-                map.insert(name.clone(), 0u8);
-            }
-        } else if info.is_postfix {
+        if info.is_postfix {
             // Postfix: single operand gets left_bp
             if let Some(name) = base_cat_params.first() {
                 map.insert(name.clone(), info.left_bp);
@@ -1223,6 +1462,19 @@ fn generate_engine_syntax_pattern_arm(
                         match ty {
                             TypeExpr::Base(cat_ident) => {
                                 let task_variant = format_ident!("Display{}", cat_ident);
+                                let child_bp = if forwards_projection_param.as_deref()
+                                    == Some(name.as_str())
+                                {
+                                    let cat_name = cat_ident.to_string();
+                                    if cat_name == category.to_string() {
+                                        quote! { min_bp }
+                                    } else {
+                                        let atomic_bp = bp_lookup.atomic_child_bp(&cat_name);
+                                        quote! { if min_bp == 0 { 0 } else { #atomic_bp } }
+                                    }
+                                } else {
+                                    quote! { #child_bp }
+                                };
                                 forward_ops.push(quote! {
                                     stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, #child_bp));
                                 });

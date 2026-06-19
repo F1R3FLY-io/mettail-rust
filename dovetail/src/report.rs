@@ -13,6 +13,7 @@ use std::rc::Rc;
 use crate::egraph::EClassId;
 use crate::extract::{Derivation, Extraction, ExtractionCompleteness};
 use crate::key::ContentKey;
+use crate::rules::RuleFiring;
 
 /// One unique derivation node in a Dovetail report.
 ///
@@ -53,6 +54,9 @@ pub struct DovetailRunReport<L, W> {
     pub terms: Vec<DovetailTermRecord<L, W>>,
     /// Ordered derivation-tree edges, preserving repeated child uses.
     pub derivation_edges: Vec<DovetailDerivationEdge>,
+    /// Aggregated labels for Dovetail rules that produced at least one merge
+    /// before extraction.
+    pub rule_firings: Vec<RuleFiring>,
     /// Whether the extraction is exhaustive or bounded by a detected cycle.
     pub completeness: ExtractionCompleteness,
 }
@@ -94,11 +98,25 @@ where
     L: Clone,
     W: Clone,
 {
+    report_from_extraction_with_rule_firings(extraction, Vec::new())
+}
+
+/// Convert checked extracted derivations plus saturation provenance into a
+/// substrate-neutral report.
+pub fn report_from_extraction_with_rule_firings<L, W>(
+    extraction: Extraction<Vec<Rc<Derivation<L, W>>>>,
+    rule_firings: Vec<RuleFiring>,
+) -> DovetailRunReport<L, W>
+where
+    L: Clone,
+    W: Clone,
+{
     let mut report = DovetailRunReport {
         roots: Vec::with_capacity(extraction.value.len()),
         root_ordinals: Vec::with_capacity(extraction.value.len()),
         terms: Vec::new(),
         derivation_edges: Vec::new(),
+        rule_firings,
         completeness: extraction.completeness,
     };
     let mut seen: HashMap<ContentKey, usize> = HashMap::new();
@@ -256,6 +274,22 @@ mod tests {
                 child_index: 1,
             }
         );
+    }
+
+    #[test]
+    fn report_preserves_rule_firing_provenance() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+
+        let mut extractor = Extractor::new(&eg, weigh);
+        let extracted = extractor.derivations(a).collect_checked();
+        let firing = RuleFiring {
+            label: Some("rewrite::a_to_b".to_string()),
+            count: 3,
+        };
+        let report = report_from_extraction_with_rule_firings(extracted, vec![firing.clone()]);
+
+        assert_eq!(report.rule_firings, vec![firing]);
     }
 
     #[test]

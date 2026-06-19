@@ -833,18 +833,19 @@ pub fn pop_kind_bucket_index(kind: &crate::gss::EdgeKind) -> usize {
     match kind {
         EdgeKind::Generic => 0,
         EdgeKind::CategoryEntryRoot => 1,
-        EdgeKind::CrossCatProjection { .. } => 2,
-        EdgeKind::CrossCatLhs { .. } => 3,
-        EdgeKind::CrossCatLhsReentry { .. } => 4,
-        EdgeKind::TransparentSourceReentry { .. } => 5,
-        EdgeKind::PrefixRuleEntry { .. } => 6,
-        EdgeKind::InfixContinuation { .. } => 7,
-        EdgeKind::LexAltLiteral { .. } => 8,
-        EdgeKind::OptionalGroupAt { .. } => 9,
-        EdgeKind::CollectionElement { .. } => 10,
-        EdgeKind::GroupingMarker { .. } => 11,
-        EdgeKind::MixfixMarker { .. } => 12,
-        EdgeKind::ReturnFrame { .. } => 13,
+        EdgeKind::CategoryEntryContinuation { .. } => 2,
+        EdgeKind::CrossCatProjection { .. } => 3,
+        EdgeKind::CrossCatLhs { .. } | EdgeKind::CrossCatLhsScoped { .. } => 4,
+        EdgeKind::CrossCatLhsReentry { .. } => 5,
+        EdgeKind::TransparentSourceReentry { .. } => 6,
+        EdgeKind::PrefixRuleEntry { .. } => 7,
+        EdgeKind::InfixContinuation { .. } => 8,
+        EdgeKind::LexAltLiteral { .. } => 9,
+        EdgeKind::OptionalGroupAt { .. } => 10,
+        EdgeKind::CollectionElement { .. } => 11,
+        EdgeKind::GroupingMarker { .. } => 12,
+        EdgeKind::MixfixMarker { .. } => 13,
+        EdgeKind::ReturnFrame { .. } => 14,
     }
 }
 
@@ -854,6 +855,7 @@ pub fn pop_kind_label(idx: usize) -> &'static str {
     [
         "Generic",
         "CategoryEntryRoot",
+        "CategoryEntryContinuation",
         "CrossCatProjection",
         "CrossCatLhs",
         "CrossCatLhsReentry",
@@ -866,7 +868,7 @@ pub fn pop_kind_label(idx: usize) -> &'static str {
         "GroupingMarker",
         "MixfixMarker",
         "ReturnFrame",
-    ][idx.min(13)]
+    ][idx.min(14)]
 }
 
 /// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):

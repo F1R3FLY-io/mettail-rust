@@ -18,6 +18,7 @@
 //! Run with: `cargo test -p mettail-languages --features led-test`
 
 use mettail_languages::led_test::{self as lt, Expr, Num};
+use std::sync::Arc;
 
 // ============================================================================
 // Phase 1: Known-Variant LED Delegation
@@ -393,6 +394,156 @@ fn test_p2_5_auto_project_postfix() {
     } else {
         panic!("expected CastNum wrapper, got: {:?}", result);
     }
+}
+
+/// P2.6: Explicit prefix cast remains available under keyword/identifier lex forks
+#[test]
+fn test_p2_6_explicit_prefix_cast_keyword() {
+    mettail_runtime::clear_var_cache();
+    let result = Num::parse("to_num(a)").expect("should parse explicit to_num prefix cast");
+    match &result {
+        Num::ExprToNum(expr) => {
+            assert!(matches!(expr.as_ref(), Expr::EVar(_)), "expected EVar body, got: {:?}", expr);
+        },
+        other => panic!("expected ExprToNum at top, got: {:?}", other),
+    }
+}
+
+/// P2.7: Explicit prefix cast can seed a cross-category LED comparison
+#[test]
+fn test_p2_7_prefix_cast_cross_category_comparison() {
+    mettail_runtime::clear_var_cache();
+    let result = Expr::parse("to_num(a) != 1!")
+        .expect("should parse to_num prefix cast followed by cross-category comparison");
+    if let Expr::CastPred(pred) = &result {
+        if let lt::Pred::NeNum(left, right) = pred.as_ref() {
+            assert!(
+                matches!(left.as_ref(), Num::ExprToNum(_)),
+                "expected explicit ExprToNum on comparison lhs, got: {:?}",
+                left
+            );
+            assert!(
+                matches!(right.as_ref(), Num::FactNum(_)),
+                "expected FactNum on comparison rhs, got: {:?}",
+                right
+            );
+        } else {
+            panic!("expected NeNum at top of predicate, got: {:?}", pred);
+        }
+    } else {
+        panic!("expected CastPred wrapper, got: {:?}", result);
+    }
+}
+
+/// P2.8: Pred comparison accepts displayed nested Num chains at EOI
+#[test]
+fn test_p2_8_pred_display_nested_num_comparison() {
+    mettail_runtime::clear_var_cache();
+    let result = lt::Pred::parse(
+        "1391970874 + 1944498665 + 624576185 * 1972797575 != -(137741760 + 424548178)",
+    )
+    .expect("should parse nested numeric comparison as Pred");
+    assert!(matches!(result, lt::Pred::NeNum(_, _)), "expected NeNum, got: {:?}", result);
+}
+
+/// P2.9: Display keeps transparent CastPred grouped under an Expr operator
+#[test]
+fn test_p2_9_expr_display_groups_transparent_cast_pred_operand() {
+    mettail_runtime::clear_var_cache();
+    let term = Expr::EPar(
+        Arc::new(Expr::CastNum(Arc::new(Num::MulNum(
+            Arc::new(Num::NumLit(1699326936)),
+            Arc::new(Num::NumLit(682111741)),
+        )))),
+        Arc::new(Expr::CastPred(Arc::new(lt::Pred::EqNum(
+            Arc::new(Num::NumLit(575184559)),
+            Arc::new(Num::NumLit(1857751180)),
+        )))),
+    );
+    let displayed = format!("{}", term);
+    assert_eq!(displayed, "(1699326936 * 682111741) | (575184559 == 1857751180)");
+    Expr::parse(&displayed).expect("displayed Expr should parse");
+}
+
+/// P2.10: Display keeps transparent PredToNum grouped under a Pred comparison
+#[test]
+fn test_p2_10_pred_display_groups_transparent_pred_to_num_operand() {
+    mettail_runtime::clear_var_cache();
+    let var = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    ));
+    let term = lt::Pred::NeNum(
+        Arc::new(Num::NumLit(2065782020)),
+        Arc::new(Num::PredToNum(Arc::new(lt::Pred::EqNum(
+            Arc::new(Num::NumLit(65396207)),
+            Arc::new(Num::MulNum(
+                Arc::new(Num::ExprToNum(Arc::new(Expr::EVar(var)))),
+                Arc::new(Num::NegNum(Arc::new(Num::NumLit(1426318814)))),
+            )),
+        )))),
+    );
+    let displayed = format!("{}", term);
+    assert_eq!(displayed, "2065782020 != to_num(65396207 == to_num(a) * -1426318814)");
+    lt::Pred::parse(&displayed).expect("displayed Pred should parse");
+}
+
+/// P2.11: Display keeps transparent PredToNum grouped under Num prefix
+#[test]
+fn test_p2_11_num_display_groups_transparent_pred_to_num_operand() {
+    mettail_runtime::clear_var_cache();
+    let term = Num::NegNum(Arc::new(Num::PredToNum(Arc::new(lt::Pred::AndPred(
+        Arc::new(lt::Pred::BoolLit(true)),
+        Arc::new(lt::Pred::BoolLit(false)),
+    )))));
+    let displayed = format!("{}", term);
+    assert_eq!(displayed, "-to_num(true and false)");
+    Num::parse(&displayed).expect("displayed Num should parse");
+}
+
+/// P2.12: Parenthesized Pred comparison accepts a postfix Num LHS
+#[test]
+fn test_p2_12_grouped_pred_comparison_accepts_postfix_num_lhs() {
+    mettail_runtime::clear_var_cache();
+    let result = lt::Pred::parse("(368158551! != 730148310) and (322479346 != -1467730788)")
+        .expect("grouped Pred comparison with postfix Num LHS should parse");
+    assert!(matches!(result, lt::Pred::AndPred(_, _)), "expected AndPred, got: {:?}", result);
+}
+
+/// P2.13: Explicit ExprToNum accepts an Expr body with its own operator
+#[test]
+fn test_p2_13_explicit_to_num_accepts_expr_operator_body() {
+    mettail_runtime::clear_var_cache();
+    let result = Num::parse("to_num(a | a) * (true and false)")
+        .expect("explicit to_num body with Expr operator should parse");
+    assert!(matches!(result, Num::MulNum(_, _)), "expected MulNum, got: {:?}", result);
+}
+
+/// P2.14: Grouped Num source can continue as a category-changing Pred comparison
+#[test]
+fn test_p2_14_grouped_num_source_pred_postfix_comparison() {
+    mettail_runtime::clear_var_cache();
+    let result = lt::Pred::parse("(-182258397)! != (-182258397)!")
+        .expect("grouped Num source should feed postfix and Pred comparison");
+    assert!(matches!(result, lt::Pred::NeNum(_, _)), "expected NeNum, got: {:?}", result);
+}
+
+/// P2.15: Grouped Num sources inside Expr can continue through Expr's own operator
+#[test]
+fn test_p2_15_expr_grouped_num_sources_continue_to_expr_operator() {
+    mettail_runtime::clear_var_cache();
+    let result = Expr::parse("(1503349600 + 1117011807) | (605514027!)")
+        .expect("grouped Num sources should parse as Expr operands around |");
+    assert!(matches!(result, Expr::EPar(_, _)), "expected EPar, got: {:?}", result);
+}
+
+/// P2.16: Pred comparison RHS accepts Num chains ending in explicit PredToNum
+#[test]
+fn test_p2_16_pred_rhs_num_chain_ending_in_explicit_pred_to_num() {
+    mettail_runtime::clear_var_cache();
+    let result =
+        lt::Pred::parse("-(900818811 + 776447971) != 1382488656 * 1779238132 * to_num(false)")
+            .expect("Pred comparison should accept RHS Num chain ending in explicit to_num");
+    assert!(matches!(result, lt::Pred::NeNum(_, _)), "expected NeNum, got: {:?}", result);
 }
 
 // ============================================================================

@@ -1081,6 +1081,9 @@ pub trait WpdaTokenSource {
 ///   `BinderRule { body_src_idx, outer_bp }`.
 /// - `CrossCatProjection { source_src_idx }`: transparent wrapper via
 ///   `rule_at(slot=0).with_kind_return()` + `CrossCatDelegate`.
+/// - `CrossCatLhs { source_src_idx }`: source-category LHS delegation via
+///   `category_entry(source)` + `CrossCatLhs` GSS edge. This is not a
+///   rule-backed branch; `rule_idx` is a stable synthetic discriminator.
 /// - `PostfixOp { l_bp, result_src_idx }`: unary postfix via
 ///   `LexAltPostfixOp` + `rule_at(slot=0).with_kind_return()` + `Unwinding`,
 ///   gated by `l_bp >= cur_bp`.
@@ -1117,6 +1120,12 @@ pub enum LexAltRuleKind {
     /// `ProcFloat . a:Float |- a : Proc`) whose source category can consume
     /// the matched token kind.
     CrossCatProjection { source_src_idx: u16 },
+    /// Cross-category LHS delegation available at PrefixDispatch through a
+    /// source category's FIRST set. The branch does not consume the current
+    /// lexical edge in the requesting category; it pushes the source category
+    /// and lets that source PrefixDispatch consume whichever lexical
+    /// alternative survives by evidence.
+    CrossCatLhs { source_src_idx: u16 },
     /// Unary postfix rule (e.g., `Fact . a:Int |- a "!" : Int`).
     /// `l_bp` = left binding power (operand priority gate).
     /// `result_src_idx` carried for cross-cat-postfix completeness.

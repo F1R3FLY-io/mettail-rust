@@ -747,11 +747,12 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
                     __derivations.extend(__extracted.value);
                 }
 
-                let report = ::dovetail::report::report_from_extraction(
+                let report = ::dovetail::report::report_from_extraction_with_rule_firings(
                     ::dovetail::extract::Extraction {
                         value: __derivations,
                         completeness: __completeness,
                     },
+                    sat.rule_firings,
                 );
                 let runtime_report = ::mettail_dovetail_runtime::project_dovetail_report(&report);
                 runtime_report

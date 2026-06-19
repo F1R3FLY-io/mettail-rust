@@ -315,6 +315,15 @@ pub struct RuntimeDovetailDerivationEdge {
     pub child_index: usize,
 }
 
+/// Aggregated labeled Dovetail rule firing evidence projected into the generic
+/// runtime envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDovetailRuleFiring {
+    pub ordinal: usize,
+    pub label: Option<String>,
+    pub count: usize,
+}
+
 /// Structural validation failure for a runtime-projected Dovetail report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -352,6 +361,13 @@ pub enum RuntimeDovetailReportError {
     },
     EdgeChildMissing {
         edge_ordinal: usize,
+    },
+    RuleFiringOrdinalMismatch {
+        index: usize,
+        ordinal: usize,
+    },
+    RuleFiringZeroCount {
+        ordinal: usize,
     },
     RootFlagWithoutRootKey {
         ordinal: usize,
@@ -402,6 +418,14 @@ impl fmt::Display for RuntimeDovetailReportError {
                 f,
                 "derivation edge ordinal {edge_ordinal} references a missing child term key"
             ),
+            RuntimeDovetailReportError::RuleFiringOrdinalMismatch { index, ordinal } => write!(
+                f,
+                "rule firing at table index {index} records ordinal {ordinal}"
+            ),
+            RuntimeDovetailReportError::RuleFiringZeroCount { ordinal } => write!(
+                f,
+                "rule firing ordinal {ordinal} records a zero merge count"
+            ),
             RuntimeDovetailReportError::RootFlagWithoutRootKey { ordinal } => write!(
                 f,
                 "term ordinal {ordinal} is marked as a root but is absent from the report roots"
@@ -424,6 +448,7 @@ pub struct RuntimeDovetailRunReport {
     pub root_ordinals: Vec<usize>,
     pub terms: Vec<RuntimeDovetailTermRecord>,
     pub derivation_edges: Vec<RuntimeDovetailDerivationEdge>,
+    pub rule_firings: Vec<RuntimeDovetailRuleFiring>,
     pub completeness: RuntimeDovetailCompleteness,
 }
 
@@ -507,6 +532,20 @@ impl RuntimeDovetailRunReport {
             if !term_keys.contains(&edge.child_key) {
                 return Err(RuntimeDovetailReportError::EdgeChildMissing {
                     edge_ordinal: edge.ordinal,
+                });
+            }
+        }
+
+        for (index, firing) in self.rule_firings.iter().enumerate() {
+            if firing.ordinal != index {
+                return Err(RuntimeDovetailReportError::RuleFiringOrdinalMismatch {
+                    index,
+                    ordinal: firing.ordinal,
+                });
+            }
+            if firing.count == 0 {
+                return Err(RuntimeDovetailReportError::RuleFiringZeroCount {
+                    ordinal: firing.ordinal,
                 });
             }
         }
@@ -2243,6 +2282,11 @@ mod tests {
                 child_key: b"child".to_vec(),
                 child_index: 0,
             }],
+            rule_firings: vec![RuntimeDovetailRuleFiring {
+                ordinal: 0,
+                label: Some("sample-rule".to_string()),
+                count: 2,
+            }],
             completeness: RuntimeDovetailCompleteness::Complete,
         }
     }
@@ -2305,6 +2349,33 @@ mod tests {
             .validate_shape()
             .expect_err("term records must be unique by exact key");
         assert!(matches!(err, RuntimeDovetailReportError::DuplicateTermKey { ordinal: 2 }));
+    }
+
+    #[test]
+    fn dovetail_report_shape_validation_rejects_bad_rule_firing_ordinal() {
+        let mut report = sample_dovetail_runtime_report();
+        report.rule_firings[0].ordinal = 7;
+
+        let err = report
+            .validate_shape()
+            .expect_err("bad rule-firing ordinal must be rejected");
+
+        assert!(matches!(
+            err,
+            RuntimeDovetailReportError::RuleFiringOrdinalMismatch { index: 0, ordinal: 7 }
+        ));
+    }
+
+    #[test]
+    fn dovetail_report_shape_validation_rejects_zero_rule_firing_count() {
+        let mut report = sample_dovetail_runtime_report();
+        report.rule_firings[0].count = 0;
+
+        let err = report
+            .validate_shape()
+            .expect_err("zero-count rule firing evidence must be rejected");
+
+        assert!(matches!(err, RuntimeDovetailReportError::RuleFiringZeroCount { ordinal: 0 }));
     }
 
     #[test]

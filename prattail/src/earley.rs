@@ -61,6 +61,89 @@ use crate::automata::semiring::SemiringRef;
 use crate::automata::TokenKind;
 use crate::sppf::{Sppf, SppfId};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct EmitItemKey {
+    rule_label: String,
+    origin: usize,
+    hi_pos: u32,
+}
+
+impl EmitItemKey {
+    fn new(item: &EarleyItem, hi_pos: u32) -> Self {
+        Self {
+            rule_label: item.rule_label.clone(),
+            origin: item.origin,
+            hi_pos,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EmitItemFrame<W: SemiringRef> {
+    key: EmitItemKey,
+    item: EarleyItem,
+    hi_pos: u32,
+    nt_tag: u32,
+    rule_idx: u32,
+    weight: W,
+    trailing_min: Vec<usize>,
+    body_index: usize,
+    pos: usize,
+    children: Vec<SppfId>,
+}
+
+#[derive(Debug)]
+struct EmitSubSearchFrame {
+    category: String,
+    origin: usize,
+    min_hi: usize,
+    next_hi: usize,
+    current_hi: usize,
+    nt_tag: u32,
+    candidates: Vec<EarleyItem>,
+    candidate_index: usize,
+    found_symbol: Option<SppfId>,
+}
+
+impl EmitSubSearchFrame {
+    fn new(category: String, origin: usize, max_hi: usize, nt_tag: u32) -> Self {
+        Self {
+            category,
+            origin,
+            min_hi: origin.saturating_add(1),
+            next_hi: max_hi,
+            current_hi: max_hi,
+            nt_tag,
+            candidates: Vec::new(),
+            candidate_index: 0,
+            found_symbol: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum EmitFrame<W: SemiringRef> {
+    Item(EmitItemFrame<W>),
+    Search(EmitSubSearchFrame),
+}
+
+enum EmitSignal {
+    ItemSucceeded(SppfId),
+    ItemFailed,
+    SearchSucceeded(SppfId, u32),
+    SearchFailed,
+}
+
+enum EmitStep<W: SemiringRef> {
+    Continue,
+    PushItem(EmitItemFrame<W>),
+    PushSearch(EmitSubSearchFrame),
+    PopItemSucceeded(SppfId),
+    PopItemFailed,
+    PopSearchSucceeded(SppfId, u32),
+    PopSearchFailed,
+}
+
 /// Stable u32 tag for a `TokenKind`, used by `RuleItem::Terminal`'s
 /// `tag` field. Each variant gets a distinct discriminant. For
 /// variants that carry a payload (e.g. `IntegerLit(name)`), the
@@ -435,12 +518,13 @@ impl EarleyChart {
     ///   Packing emitted for that rule.
     ///
     /// The walk:
-    /// 1. Find the recognizing item at `sets[input_len]` for
-    ///    `root_category` originating at 0. If none → return `None`.
-    /// 2. Recursively `emit_for_item` from there, producing
-    ///    `(SppfId, lo_pos)` for each completed item.
+    /// 1. Find recognizing items at `sets[input_len]` for
+    ///    `root_category` originating at 0. If none -> return `None`.
+    /// 2. Drive each completed item through an explicit continuation stack,
+    ///    producing one Symbol node per completed span without host-stack
+    ///    recursion.
     /// 3. Each rule body item is either a Terminal (look up
-    ///    `terminal_sppf_ids[pos]`) or a NonTerminal (recurse).
+    ///    `terminal_sppf_ids[pos]`) or a NonTerminal (push a sub-search frame).
     ///
     /// `intern_packing` is dedup'd by `(rule_idx, children)`, so
     /// repeated calls produce no duplicate nodes — safe to call after
@@ -460,63 +544,74 @@ impl EarleyChart {
             self.input_len,
             "emit_sppf_subforest: terminal_sppf_ids length must equal input_len",
         );
-        // Find the recognizing item: completed root_category at hi =
-        // input_len, originating at 0.
-        let root_item = self.sets[self.input_len].iter().find(|item| {
-            if item.category != *root_category || item.origin != 0 {
-                return false;
+        let root_items = self.completed_items_for(root_category, 0, self.input_len);
+        let mut root_id = None;
+        for root_item in root_items {
+            if let Some(id) = self.emit_item_iterative(
+                sppf,
+                root_item,
+                self.input_len as u32,
+                root_nt_tag,
+                rule_label_to_meta,
+                terminal_sppf_ids,
+                rule_weights,
+            ) {
+                root_id.get_or_insert(id);
             }
-            self.rules
-                .get(&item.rule_label)
-                .map(|r| item.dot_position == r.body.len())
-                .unwrap_or(false)
-        })?;
-        let root_id = self.emit_for_item(
-            sppf,
-            root_item,
-            self.input_len as u32,
-            root_nt_tag,
-            rule_label_to_meta,
-            terminal_sppf_ids,
-            rule_weights,
-        )?;
-        Some(root_id)
+        }
+        root_id
     }
 
-    /// Emit a Packing + Symbol for one completed item. `hi_pos` is the
-    /// position immediately after the item's last consumed token.
-    /// Returns the SppfId of the wrapping Symbol.
-    ///
-    /// Recurses into NonTerminal body items by searching the chart
-    /// for matching completed items.
-    ///
-    /// **Plan v6 H1 fix (2026-05-27)**: tracks per-body-position
-    /// min-trailing-token consumption so non-last NonTerminal items
-    /// search with `max_hi = hi_pos - trailing_min`, avoiding the
-    /// self-recursion that breaks left-recursive grammars. For
-    /// `Chain -> Chain "+" Atom`, the recursive Chain sub-call now
-    /// has max_hi = hi_pos - 2 (room for "+" Atom), excluding the
-    /// root completion at hi_pos and forcing the descending search
-    /// to find a strictly smaller sub-chain.
-    fn emit_for_item<W: SemiringRef>(
+    fn completed_items_for(&self, category: &str, origin: usize, hi: usize) -> Vec<EarleyItem> {
+        let Some(set) = self.sets.get(hi) else {
+            return Vec::new();
+        };
+        let mut candidates: Vec<EarleyItem> = set
+            .iter()
+            .filter(|item| {
+                item.category == *category
+                    && item.origin == origin
+                    && self
+                        .rules
+                        .get(&item.rule_label)
+                        .map(|rule| item.dot_position == rule.body.len())
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        candidates.sort_by(|a, b| {
+            a.rule_label
+                .cmp(&b.rule_label)
+                .then_with(|| a.category.cmp(&b.category))
+                .then_with(|| a.dot_position.cmp(&b.dot_position))
+                .then_with(|| a.origin.cmp(&b.origin))
+        });
+        candidates
+    }
+
+    fn nt_tag_for_category(
         &self,
-        sppf: &mut Sppf<W>,
-        item: &EarleyItem,
+        category: &str,
+        rule_label_to_meta: &HashMap<String, (u32, u32)>,
+    ) -> Option<u32> {
+        self.rules_by_category
+            .get(category)
+            .and_then(|labels| labels.first())
+            .and_then(|label| rule_label_to_meta.get(label))
+            .map(|(_, tag)| *tag)
+    }
+
+    fn make_emit_item_frame<W: SemiringRef>(
+        &self,
+        item: EarleyItem,
         hi_pos: u32,
         nt_tag: u32,
         rule_label_to_meta: &HashMap<String, (u32, u32)>,
-        terminal_sppf_ids: &[SppfId],
         rule_weights: &HashMap<String, W>,
-    ) -> Option<SppfId> {
+    ) -> Option<EmitItemFrame<W>> {
         let rule = self.rules.get(&item.rule_label)?;
         let (rule_idx, _cat_nt_tag) = rule_label_to_meta.get(&item.rule_label)?.clone();
         let weight = rule_weights.get(&item.rule_label)?.clone();
-        // Plan v6 H1 fix (2026-05-27): compute min-trailing-tokens per
-        // body position. trailing_min[k] = min number of tokens that
-        // body[k..body.len()] must consume. Terminal = 1; NonTerminal
-        // = 1 (conservative — assumes no epsilon rules, true for the
-        // chain grammar). For NonTerminal at body[k], sub-NT's
-        // effective max_hi = hi_pos - trailing_min[k+1].
         let body = &rule.body;
         let body_len = body.len();
         let mut trailing_min: Vec<usize> = vec![0; body_len + 1];
@@ -527,123 +622,240 @@ impl EarleyChart {
             };
             trailing_min[k] = trailing_min[k + 1] + item_min;
         }
-        // Walk body left-to-right, accumulating children SppfIds.
-        // `pos` tracks the current input position; starts at
-        // `item.origin`, ends at `hi_pos`.
-        let mut children: Vec<SppfId> = Vec::with_capacity(body_len);
-        let mut pos = item.origin;
-        for (k, body_item) in body.iter().enumerate() {
-            match body_item {
-                RuleItem::Terminal { tag: _ } => {
-                    if pos >= terminal_sppf_ids.len() {
-                        return None;
-                    }
-                    children.push(terminal_sppf_ids[pos]);
-                    pos += 1;
-                },
-                RuleItem::NonTerminal { category } => {
-                    // Sub-NT's max_hi excludes the room needed for
-                    // trailing body items. For chain grammar's
-                    // chain_step Chain body[0]: trailing_min[1] = 2
-                    // (one "+" + one Atom), so Chain's max_hi
-                    // = hi_pos - 2. This avoids self-recursion at
-                    // hi=hi_pos.
-                    let sub_max_hi = (hi_pos as usize).saturating_sub(trailing_min[k + 1]);
-                    if sub_max_hi <= pos {
-                        return None;
-                    }
-                    let (sub_id, sub_hi) = self.find_and_emit_sub(
-                        sppf,
-                        category,
-                        pos,
-                        sub_max_hi,
-                        rule_label_to_meta,
-                        terminal_sppf_ids,
-                        rule_weights,
-                    )?;
-                    children.push(sub_id);
-                    pos = sub_hi as usize;
-                },
-            }
-        }
-        // Verify we consumed exactly up to hi_pos.
-        if pos as u32 != hi_pos {
-            return None;
-        }
-        // Intern outer Symbol + Packing + link.
-        let symbol_id = sppf.intern_symbol(nt_tag, item.origin as u32, hi_pos);
-        let packing_id = sppf.intern_packing(rule_idx, children, weight);
-        sppf.link_packing_to_symbol(symbol_id, packing_id);
-        Some(symbol_id)
+        Some(EmitItemFrame {
+            key: EmitItemKey::new(&item, hi_pos),
+            pos: item.origin,
+            children: Vec::with_capacity(body_len),
+            item,
+            hi_pos,
+            nt_tag,
+            rule_idx,
+            weight,
+            trailing_min,
+            body_index: 0,
+        })
     }
 
-    /// Find and recurse into a completed sub-item of `category`
-    /// starting at `origin`. Tries hi positions in ascending order
-    /// (greedy shortest match for left-assoc; the chain grammar
-    /// produces a unique match).
-    fn find_and_emit_sub<W: SemiringRef>(
+    /// Emit a Packing + Symbol for one completed item. `hi_pos` is the
+    /// position immediately after the item's last consumed token.
+    ///
+    /// Stack-safety: this is a PDA-style iterative driver for the former
+    /// `emit_for_item -> find_and_emit_sub -> emit_for_item` recursion. Item
+    /// frames scan rule bodies left-to-right; sub-search frames enumerate
+    /// completed child items by descending end position. The active item-key
+    /// set cuts non-consuming self-cycles instead of recursing forever.
+    fn emit_item_iterative<W: SemiringRef>(
         &self,
         sppf: &mut Sppf<W>,
-        category: &str,
-        origin: usize,
-        max_hi: usize,
+        item: EarleyItem,
+        hi_pos: u32,
+        nt_tag: u32,
         rule_label_to_meta: &HashMap<String, (u32, u32)>,
         terminal_sppf_ids: &[SppfId],
         rule_weights: &HashMap<String, W>,
-    ) -> Option<(SppfId, u32)> {
-        // Look up nt_tag for `category` from any rule of that category.
-        let nt_tag = self
-            .rules_by_category
-            .get(category)
-            .and_then(|labels| labels.first())
-            .and_then(|label| rule_label_to_meta.get(label))
-            .map(|(_, tag)| *tag)?;
-        // Plan v6 H1 fix (2026-05-27): iterate hi DESCENDING so left-
-        // recursive sub-non-terminals find the LONGEST completion that
-        // fits within max_hi. The caller (emit_for_item) computes
-        // max_hi = parent_hi - trailing_min[k+1] to exclude the room
-        // needed for trailing body items, which also excludes the
-        // parent's self-completion at parent_hi — avoiding the infinite
-        // self-recursion that naive descending would cause.
-        //
-        // For non-recursive non-terminals (e.g. Atom), descending vs
-        // ascending picks the same item (Atom only completes at one hi
-        // per origin). For left-recursive, descending picks the longest
-        // sub-chain — exactly what the parent needs to leave the
-        // trailing-min tokens for the rest of the body.
-        for hi in (origin + 1..=max_hi).rev() {
-            let candidates: Vec<EarleyItem> = self.sets[hi]
-                .iter()
-                .filter(|i| {
-                    i.category == *category
-                        && i.origin == origin
-                        && self
-                            .rules
-                            .get(&i.rule_label)
-                            .map(|r| i.dot_position == r.body.len())
-                            .unwrap_or(false)
-                })
-                .cloned()
-                .collect();
-            if let Some(item) = candidates.first() {
-                if let Some(sid) = self.emit_for_item(
+    ) -> Option<SppfId> {
+        let root =
+            self.make_emit_item_frame(item, hi_pos, nt_tag, rule_label_to_meta, rule_weights)?;
+        let mut active_items: HashSet<EmitItemKey> = HashSet::new();
+        active_items.insert(root.key.clone());
+        let mut stack = vec![EmitFrame::Item(root)];
+        let mut signal = None;
+
+        loop {
+            if let Some(sig) = signal.take() {
+                if stack.is_empty() {
+                    return match sig {
+                        EmitSignal::ItemSucceeded(id) => Some(id),
+                        EmitSignal::ItemFailed => None,
+                        EmitSignal::SearchSucceeded(id, _) => Some(id),
+                        EmitSignal::SearchFailed => None,
+                    };
+                }
+                match sig {
+                    EmitSignal::ItemSucceeded(id) => match stack.last_mut()? {
+                        EmitFrame::Search(search) => {
+                            search.found_symbol.get_or_insert(id);
+                        },
+                        EmitFrame::Item(_) => return None,
+                    },
+                    EmitSignal::ItemFailed => match stack.last_mut()? {
+                        EmitFrame::Search(_) => {},
+                        EmitFrame::Item(_) => return None,
+                    },
+                    EmitSignal::SearchSucceeded(id, hi) => match stack.last_mut()? {
+                        EmitFrame::Item(frame) => {
+                            frame.children.push(id);
+                            frame.pos = hi as usize;
+                            frame.body_index += 1;
+                        },
+                        EmitFrame::Search(_) => return None,
+                    },
+                    EmitSignal::SearchFailed => {
+                        let popped = stack.pop()?;
+                        match popped {
+                            EmitFrame::Item(frame) => {
+                                active_items.remove(&frame.key);
+                                signal = Some(EmitSignal::ItemFailed);
+                            },
+                            EmitFrame::Search(_) => return None,
+                        }
+                    },
+                }
+                continue;
+            }
+
+            let step = match stack.last_mut()? {
+                EmitFrame::Item(frame) => self.step_emit_item_frame(
+                    frame,
                     sppf,
-                    item,
-                    hi as u32,
-                    nt_tag,
                     rule_label_to_meta,
                     terminal_sppf_ids,
                     rule_weights,
-                ) {
-                    return Some((sid, hi as u32));
-                }
-                // emit_for_item returned None: this hi candidate's body
-                // could not be fully reconstructed downstream (e.g., the
-                // chain doesn't extend that long). Try the next smaller
-                // hi.
+                ),
+                EmitFrame::Search(search) => self.step_emit_search_frame(
+                    search,
+                    rule_label_to_meta,
+                    rule_weights,
+                    &active_items,
+                ),
+            };
+
+            match step {
+                EmitStep::Continue => {},
+                EmitStep::PushItem(frame) => {
+                    active_items.insert(frame.key.clone());
+                    stack.push(EmitFrame::Item(frame));
+                },
+                EmitStep::PushSearch(frame) => stack.push(EmitFrame::Search(frame)),
+                EmitStep::PopItemSucceeded(id) => {
+                    let popped = stack.pop()?;
+                    match popped {
+                        EmitFrame::Item(frame) => {
+                            active_items.remove(&frame.key);
+                            signal = Some(EmitSignal::ItemSucceeded(id));
+                        },
+                        EmitFrame::Search(_) => return None,
+                    }
+                },
+                EmitStep::PopItemFailed => {
+                    let popped = stack.pop()?;
+                    match popped {
+                        EmitFrame::Item(frame) => {
+                            active_items.remove(&frame.key);
+                            signal = Some(EmitSignal::ItemFailed);
+                        },
+                        EmitFrame::Search(_) => return None,
+                    }
+                },
+                EmitStep::PopSearchSucceeded(id, hi) => {
+                    if !matches!(stack.pop()?, EmitFrame::Search(_)) {
+                        return None;
+                    }
+                    signal = Some(EmitSignal::SearchSucceeded(id, hi));
+                },
+                EmitStep::PopSearchFailed => {
+                    if !matches!(stack.pop()?, EmitFrame::Search(_)) {
+                        return None;
+                    }
+                    signal = Some(EmitSignal::SearchFailed);
+                },
             }
         }
-        None
+    }
+
+    fn step_emit_item_frame<W: SemiringRef>(
+        &self,
+        frame: &mut EmitItemFrame<W>,
+        sppf: &mut Sppf<W>,
+        rule_label_to_meta: &HashMap<String, (u32, u32)>,
+        terminal_sppf_ids: &[SppfId],
+        _rule_weights: &HashMap<String, W>,
+    ) -> EmitStep<W> {
+        let Some(rule) = self.rules.get(&frame.item.rule_label) else {
+            return EmitStep::PopItemFailed;
+        };
+        if frame.body_index >= rule.body.len() {
+            if frame.pos as u32 != frame.hi_pos {
+                return EmitStep::PopItemFailed;
+            }
+            let symbol_id =
+                sppf.intern_symbol(frame.nt_tag, frame.item.origin as u32, frame.hi_pos);
+            let packing_id = sppf.intern_packing(
+                frame.rule_idx,
+                std::mem::take(&mut frame.children),
+                frame.weight.clone(),
+            );
+            sppf.link_packing_to_symbol(symbol_id, packing_id);
+            return EmitStep::PopItemSucceeded(symbol_id);
+        }
+
+        match rule.body.get(frame.body_index).cloned() {
+            Some(RuleItem::Terminal { .. }) => {
+                if frame.pos >= terminal_sppf_ids.len() {
+                    return EmitStep::PopItemFailed;
+                }
+                frame.children.push(terminal_sppf_ids[frame.pos]);
+                frame.pos += 1;
+                frame.body_index += 1;
+                EmitStep::Continue
+            },
+            Some(RuleItem::NonTerminal { category }) => {
+                let sub_max_hi = (frame.hi_pos as usize)
+                    .saturating_sub(frame.trailing_min[frame.body_index + 1]);
+                if sub_max_hi <= frame.pos {
+                    return EmitStep::PopItemFailed;
+                }
+                let Some(nt_tag) = self.nt_tag_for_category(&category, rule_label_to_meta) else {
+                    return EmitStep::PopItemFailed;
+                };
+                EmitStep::PushSearch(EmitSubSearchFrame::new(
+                    category, frame.pos, sub_max_hi, nt_tag,
+                ))
+            },
+            None => EmitStep::PopItemFailed,
+        }
+    }
+
+    fn step_emit_search_frame<W: SemiringRef>(
+        &self,
+        search: &mut EmitSubSearchFrame,
+        rule_label_to_meta: &HashMap<String, (u32, u32)>,
+        rule_weights: &HashMap<String, W>,
+        active_items: &HashSet<EmitItemKey>,
+    ) -> EmitStep<W> {
+        loop {
+            if search.candidate_index < search.candidates.len() {
+                let item = search.candidates[search.candidate_index].clone();
+                search.candidate_index += 1;
+                let key = EmitItemKey::new(&item, search.current_hi as u32);
+                if active_items.contains(&key) {
+                    continue;
+                }
+                if let Some(frame) = self.make_emit_item_frame(
+                    item,
+                    search.current_hi as u32,
+                    search.nt_tag,
+                    rule_label_to_meta,
+                    rule_weights,
+                ) {
+                    return EmitStep::PushItem(frame);
+                }
+                continue;
+            }
+
+            if let Some(id) = search.found_symbol.take() {
+                return EmitStep::PopSearchSucceeded(id, search.current_hi as u32);
+            }
+
+            if search.next_hi < search.min_hi {
+                return EmitStep::PopSearchFailed;
+            }
+            let hi = search.next_hi;
+            search.next_hi = search.next_hi.saturating_sub(1);
+            search.current_hi = hi;
+            search.candidates = self.completed_items_for(&search.category, search.origin, hi);
+            search.candidate_index = 0;
+        }
     }
 }
 

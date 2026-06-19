@@ -158,6 +158,7 @@ mod tests {
                     is_root: true,
                 }],
                 derivation_edges: Vec::new(),
+                rule_firings: Vec::new(),
                 completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
             })
             .expect("sample Dovetail report is valid");

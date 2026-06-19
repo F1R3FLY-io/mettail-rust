@@ -209,17 +209,43 @@ pub struct SatStats {
     pub total_merges: usize,
 }
 
+/// Aggregated evidence that a labeled rewrite rule produced at least one
+/// e-class merge during saturation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuleFiring {
+    /// Human-readable rule label. `None` preserves anonymous rule identity
+    /// without fabricating a name at the Dovetail layer.
+    pub label: Option<String>,
+    /// Number of distinct e-class merges caused by this rule.
+    pub count: usize,
+}
+
 /// Outcome of equality saturation.
 #[must_use = "saturation can stop from node or iteration limits; inspect `outcome` before extracting as if complete"]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SatReport {
     pub outcome: SaturationOutcome,
     pub stats: SatStats,
+    pub rule_firings: Vec<RuleFiring>,
 }
 
 impl SatReport {
-    fn new(outcome: SaturationOutcome, stats: SatStats) -> Self {
-        SatReport { outcome, stats }
+    fn new(outcome: SaturationOutcome, stats: SatStats, rule_firings: Vec<RuleFiring>) -> Self {
+        SatReport { outcome, stats, rule_firings }
+    }
+}
+
+fn record_rule_firing(rule_firings: &mut Vec<RuleFiring>, label: &Option<String>, count: usize) {
+    if count == 0 {
+        return;
+    }
+    if let Some(existing) = rule_firings
+        .iter_mut()
+        .find(|entry| entry.label.as_ref() == label.as_ref())
+    {
+        existing.count += count;
+    } else {
+        rule_firings.push(RuleFiring { label: label.clone(), count });
     }
 }
 
@@ -555,6 +581,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         max_iters: usize,
     ) -> SatReport {
         let mut stats = SatStats::default();
+        let mut rule_firings = Vec::new();
         for iteration in 0..max_iters {
             stats.iterations = iteration + 1;
             let mut iter_merges = 0usize;
@@ -586,8 +613,9 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                 }
                 iter_merges += rule_merges;
                 stats.total_merges += rule_merges;
+                record_rule_firing(&mut rule_firings, &rule.label, rule_merges);
                 if budget_hit {
-                    return SatReport::new(SaturationOutcome::NodeLimit, stats);
+                    return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
                 }
             }
             // ── Native rules: dispatch computes the funded result, then merge. ──
@@ -619,15 +647,16 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                 }
                 iter_merges += rule_merges;
                 stats.total_merges += rule_merges;
+                record_rule_firing(&mut rule_firings, &nrule.label, rule_merges);
                 if budget_hit {
-                    return SatReport::new(SaturationOutcome::NodeLimit, stats);
+                    return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
                 }
             }
             if iter_merges == 0 {
-                return SatReport::new(SaturationOutcome::Converged, stats);
+                return SatReport::new(SaturationOutcome::Converged, stats, rule_firings);
             }
         }
-        SatReport::new(SaturationOutcome::IterationLimit, stats)
+        SatReport::new(SaturationOutcome::IterationLimit, stats, rule_firings)
     }
 }
 
@@ -1155,6 +1184,7 @@ mod tests {
         };
         let rep = eg.saturate(&[rule], 20);
         assert_eq!(rep.outcome, SaturationOutcome::Converged, "reaches a fixpoint");
+        assert_eq!(rep.rule_firings, vec![RuleFiring { label: Some("unwrap_f".into()), count: 1 }]);
         assert!(eg.equiv(fa, a), "f(a) ~ a after saturation");
     }
 
@@ -1173,6 +1203,7 @@ mod tests {
         };
         let rep = eg.saturate(&[rule], 20);
         assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        assert_eq!(rep.rule_firings, vec![RuleFiring { label: None, count: 1 }]);
         assert!(eg.equiv(a, b));
         assert!(eg.equiv(fa, fb), "congruence: f(a) ~ f(b) after a ~ b");
     }
@@ -1202,6 +1233,7 @@ mod tests {
             SaturationOutcome::Converged,
             "native saturation reaches a fixpoint"
         );
+        assert_eq!(rep.rule_firings, vec![RuleFiring { label: Some("double".into()), count: 1 }]);
         let add_aa = eg.add(ENode::new("add".into(), vec![a, a]));
         assert!(eg.equiv(dbl, add_aa), "double(a) == add(a, a) after the native rule fires");
     }
@@ -1221,6 +1253,7 @@ mod tests {
         }];
         let rep = eg.saturate_with_native(&[], &native, &|_, _, _| None, 20);
         assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        assert!(rep.rule_firings.is_empty());
         assert!(!eg.equiv(fa, a), "an inert native rule merges nothing");
     }
 

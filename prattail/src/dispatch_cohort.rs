@@ -432,6 +432,25 @@ pub struct CohortMember<W: SemiringRef> {
     pub weight_at_dispatch: W,
 }
 
+/// Parked members drained from one stale `InFlight` cohort entry.
+///
+/// This preserves the cache key and compact lazy member states so callers can
+/// re-drive large orphan sets without first materializing every parked member
+/// into a full [`BranchCursor`].
+pub struct OrphanedInflightMembers<W: SemiringRef> {
+    pub key: DispatchKey,
+    pub cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+    pub pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+    pub full_pending_members: Vec<CohortMember<W>>,
+}
+
+impl<W: SemiringRef> OrphanedInflightMembers<W> {
+    #[inline]
+    pub fn member_count(&self) -> usize {
+        pending_member_count(&self.pending_members, &self.full_pending_members)
+    }
+}
+
 impl<W: SemiringRef> Clone for CohortMember<W> {
     fn clone(&self) -> Self {
         CohortMember {
@@ -1876,7 +1895,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         (inflight, inflight_with, resolved, resolved_with)
     }
 
-    pub fn drain_orphaned_inflight_members(&mut self) -> Vec<CohortMember<W>> {
+    pub fn drain_orphaned_inflight_member_groups(&mut self) -> Vec<OrphanedInflightMembers<W>> {
         // First pass: identify InFlight keys that carry revivable
         // orphans. We collect keys then remove, because `FxHashMap`
         // cannot be mutated while its `values()` iterator is borrowed.
@@ -1893,21 +1912,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         if orphan_keys.is_empty() {
             return Vec::new();
         }
-        // Upper bound on output size: sum of pending member lengths.
-        // Re-read each entry to size the Vec exactly (members are capped
-        // at MAX_PENDING_COHORT_PER_KEY = 16, keys are few at EOI).
-        let total: usize = orphan_keys
-            .iter()
-            .filter_map(|k| match self.entries.get(k) {
-                Some(DispatchCacheEntry::InFlight {
-                    pending_members,
-                    full_pending_members,
-                    ..
-                }) => Some(pending_member_count(pending_members, full_pending_members)),
-                _ => None,
-            })
-            .sum();
-        let mut out: Vec<CohortMember<W>> = Vec::with_capacity(total);
+        let mut out: Vec<OrphanedInflightMembers<W>> = Vec::with_capacity(orphan_keys.len());
         for key in orphan_keys {
             // `remove` drops the stale InFlight entry so re-registration
             // of a re-injected orphan returns `WorkerInserted`.
@@ -1918,12 +1923,30 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 ..
             }) = self.entries.remove(&key)
             {
-                out.extend(materialize_owned_pending_members(
+                out.push(OrphanedInflightMembers {
+                    key,
                     cohort_shell,
                     pending_members,
                     full_pending_members,
-                ));
+                });
             }
+        }
+        out
+    }
+
+    pub fn drain_orphaned_inflight_members(&mut self) -> Vec<CohortMember<W>> {
+        let groups = self.drain_orphaned_inflight_member_groups();
+        let total: usize = groups
+            .iter()
+            .map(OrphanedInflightMembers::member_count)
+            .sum();
+        let mut out: Vec<CohortMember<W>> = Vec::with_capacity(total);
+        for group in groups {
+            out.extend(materialize_owned_pending_members(
+                group.cohort_shell,
+                group.pending_members,
+                group.full_pending_members,
+            ));
         }
         out
     }
@@ -1931,9 +1954,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// Non-mutating census of `InFlight` pending members that would be
     /// returned by [`Self::drain_orphaned_inflight_members`].
     ///
-    /// The walker uses this before applying revival resource bounds so an
-    /// over-budget revival can be reported without first removing evidence
-    /// from the cache.
+    /// The walker uses this to decide whether an orphan-revival round has
+    /// work to do before removing evidence from the cache.
     pub fn revivable_inflight_member_count(&self) -> usize {
         self.entries
             .values()

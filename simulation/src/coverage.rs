@@ -89,7 +89,7 @@ impl SimulationCoverage {
         if total_rules == 0 {
             return 100.0;
         }
-        let covered = self.rule_firings.len();
+        let covered = self.rule_firings.len().min(total_rules);
         (covered as f64 / total_rules as f64) * 100.0
     }
 

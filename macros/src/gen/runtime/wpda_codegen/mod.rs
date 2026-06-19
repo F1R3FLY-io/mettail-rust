@@ -649,6 +649,7 @@ mod tests {
         assert!(ts.contains("parse_Name_via_wpda_with_source"));
         assert!(ts.contains("TokenKind :: Ident"));
         assert!(ts.contains("LexAltRuleKind :: Atomic"));
+        assert!(ts.contains("LexAltRuleKind :: CrossCatLhs"));
         assert!(ts.contains("prefix_primary_has_dispatch_rule"));
         assert!(ts.contains("__primary_survived"));
         assert!(

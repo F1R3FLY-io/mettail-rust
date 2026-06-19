@@ -1095,6 +1095,13 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// to reconstruct the full DispatchKey. Reset at the parse boundary
     /// (edge ids restart with the GSS).
     crosscat_lhs_wrap: rustc_hash::FxHashMap<crate::gss::GssEdgeId, (u16, u16)>,
+    /// Binding-power floor captured at a `CrossCatLhs` source-delegate
+    /// push. This is edge-indexed for the same reason as
+    /// `crosscat_lhs_wrap`: the GSS edge is the concrete continuation.
+    /// When the source body returns, reentry must resume at this floor, not
+    /// at Pratt root `0`, or a low-binding operator can escape from inside a
+    /// high-binding operand.
+    crosscat_lhs_min_bp: rustc_hash::FxHashMap<crate::gss::GssEdgeId, u8>,
     /// EP-P1 v3.1 quiescence (R7-9 EXACT realization): live body-
     /// producing lineages per CrossCatLhs key. ++ at every PROCEEDING
     /// CrossCatLhs push (worker + every Proceed fallback — R7-7);
@@ -1406,6 +1413,13 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// the gauntlet + cross-cat eval suites see an empty map → zero
     /// behavior change. Reset at parse boundary.
     pub chain_absorbed_intervals: rustc_hash::FxHashMap<(u16, u16), Vec<(usize, usize)>>,
+    /// Category requested by `new_for_category`.
+    ///
+    /// EOI resolution uses this to make root acceptance category-aware: an
+    /// accepted source-category root is valid for the requested category only
+    /// when it is already in that category or a declared single-hop transparent
+    /// coercion can be materialized over the SPPF root.
+    requested_root_cat: Option<u16>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -1437,11 +1451,10 @@ pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 /// re-injects orphaned `InFlight` cohort members as fresh workers
 /// (`revive_orphaned_cohort_members_once`). A small cap bounds the rare
 /// pathological case of an orphan whose re-driven sub-parse re-dies and
-/// re-orphans every round. Large orphan sets are handled by the separate
-/// frontier budget inside `revive_orphaned_cohort_members_once`, which
-/// reports unresolved evidence before draining rather than materializing an
-/// unbounded batch. 4 mirrors the conservative bound style used elsewhere
-/// in this walker while preventing livelock.
+/// re-orphans every round. Large orphan sets are re-injected through lazy
+/// cohort frames rather than refused by a cursor-count cap. 4 mirrors the
+/// conservative bound style used elsewhere in this walker while preventing
+/// livelock.
 const MAX_REVIVAL_ROUNDS: u32 = 4;
 
 // ── led_chain FLIP EXPERIMENT harness (TEMPORARY) ──────────────────────
@@ -1457,17 +1470,10 @@ fn ep_p1_deadworker_release_disabled() -> bool {
 }
 
 /// Cohort orphan revival is a bounded, evidence-preserving search step.
-/// Over-budget alternatives must be surfaced as unresolved ambiguity, not
-/// silently treated as absent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OrphanRevivalOutcome {
     Idle,
     Injected(usize),
-    BudgetExceeded {
-        budget: usize,
-        actual: usize,
-        position: usize,
-    },
 }
 
 /// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
@@ -1574,6 +1580,11 @@ struct TransparentSourceReentry {
 /// callers emit `consume_trigger: false` for them.
 #[derive(Clone, Debug)]
 pub enum ForkActionKind {
+    /// Epsilon transition to `branch.new_state` without consuming input or
+    /// changing the GSS. Used when a generated dispatch must preserve a
+    /// non-consuming fall-through path alongside consuming alternatives.
+    Advance,
+
     /// Default: cursor pushes `branch.symbol` onto its GSS chain.
     /// Implicit Push-time side effects (CollectionMarker id allocation,
     /// OptionalGroupAt(1) scope opening) are handled by
@@ -1619,6 +1630,14 @@ pub enum ForkActionKind {
     /// Stage 3.16 (Cluster 1) — Consume one token, no GSS change. Mirrors
     /// `WpdaStepAction::Consume`. Fork must emit `consume_trigger: false`.
     Consume,
+
+    /// Consume the current token, apply the requested trigger disposition,
+    /// then push `branch.symbol`. This is the fork-native mirror of
+    /// [`WpdaStepAction::ConsumeAndPush`]; unlike `Push` with
+    /// `consume_trigger=true`, it preserves all three [`TriggerMode`] cases
+    /// when a consuming transition must coexist with a non-consuming sibling.
+    /// Fork must emit `consume_trigger: false`.
+    ConsumeAndPush { trigger_mode: TriggerMode },
 
     /// Stage 3.16 (Cluster 1) — Consume identifier token: optionally start
     /// binder scope, push ident name to builder, then replace top-of-GSS
@@ -2837,6 +2856,12 @@ struct ConfigKey {
     /// in ConfigKey, merge collapses them, losing the `-6`
     /// interpretation.
     sppf_top: Option<crate::sppf::SppfId>,
+    /// Full SPPF-stack handle. The top SPPF node is sufficient to
+    /// distinguish single-result reductions, but not a pending
+    /// multi-argument return whose right operand is on top and whose
+    /// left operand lives deeper in the stack. Those cursors are not
+    /// mergeable: a later `FireAction` pops the whole argument vector.
+    sppf_stack: crate::sppf_stack_arena::StackId,
     /// Phase F.13 Stage 2.0 (2026-05-22): GLL/Tomita descriptor —
     /// lex-Fork provenance. A cursor's `weight.lex_alt_idx`,
     /// `weight.src_idx`, `weight.rule_idx` are LEX-FORK BRANCH STAMPS
@@ -3957,6 +3982,7 @@ where
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_min_bp: rustc_hash::FxHashMap::default(),
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
             pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
@@ -4007,6 +4033,7 @@ where
             // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
+            requested_root_cat: None,
         }
     }
 
@@ -4052,6 +4079,7 @@ where
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_min_bp: rustc_hash::FxHashMap::default(),
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
             pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
@@ -4102,6 +4130,7 @@ where
             // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
+            requested_root_cat: Some(cat_src_idx),
         }
     }
 
@@ -4146,6 +4175,7 @@ where
             recovery_config: RecoveryConfig::default(),
             ep_p1_mode: EpP1Mode::from_env(),
             crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_min_bp: rustc_hash::FxHashMap::default(),
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
             pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
@@ -4196,6 +4226,7 @@ where
             // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
+            requested_root_cat: None,
         }
     }
 
@@ -4263,6 +4294,7 @@ where
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
+        self.crosscat_lhs_min_bp.clear();
         self.crosscat_lhs_live_lineages.clear();
         self.pushed_crosscat_lhs_edges.clear();
         self.popped_crosscat_lhs_edges.clear();
@@ -4373,6 +4405,7 @@ where
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
+        self.crosscat_lhs_min_bp.clear();
         self.crosscat_lhs_live_lineages.clear();
         self.pushed_crosscat_lhs_edges.clear();
         self.popped_crosscat_lhs_edges.clear();
@@ -4572,6 +4605,18 @@ where
                 crate::cohort_lazy::Frame::Concrete(cursor) => cursor.inner_state.is_terminal(),
                 crate::cohort_lazy::Frame::Cohort(cohort) => cohort.shell.inner_state.is_terminal(),
             })
+    }
+
+    #[inline]
+    fn terminal_fanout_has_step_drains(&self) -> bool {
+        !self.pending_cohort_drain_keys.is_empty()
+            || !self.pending_prefix_cast_wrap_jobs.is_empty()
+            || (self.ep_p1_mode == EpP1Mode::On && !self.pending_crosscat_lhs_drain_keys.is_empty())
+    }
+
+    #[inline]
+    fn fanout_frontier_terminal_step_quiescent(&self) -> bool {
+        self.fanout_frontier_all_terminal() && !self.terminal_fanout_has_step_drains()
     }
 
     /// Stage 3.4 (2026-04-30): set the legacy beam-size bound in place.
@@ -4902,7 +4947,7 @@ where
             // about the AmbiguityFanout state itself (engine returns Idle
             // for that state).
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
-                if self.fanout_frontier_all_terminal() {
+                if self.fanout_frontier_terminal_step_quiescent() {
                     break;
                 }
                 let prev_state = self.state.clone();
@@ -4966,9 +5011,8 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        // Orphan revival may call `realize_root_to_terms` to decide whether
-        // an over-budget revival frontier must be reported as unresolved
-        // ambiguity. Every real walker instantiation (production +
+        // Orphan revival and realization both rely on idempotent/closed
+        // semiring operations. Every real walker instantiation (production +
         // `ScriptedEngine` unit tests) uses `LexicographicWeight`, which
         // satisfies both bounds.
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
@@ -5018,8 +5062,11 @@ where
                 return Ok(());
             }
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
-                if self.fanout_frontier_all_terminal() {
-                    return Ok(());
+                if self.fanout_frontier_terminal_step_quiescent() {
+                    match self.revive_orphaned_cohort_members_once(tokens) {
+                        OrphanRevivalOutcome::Injected(_) => continue,
+                        OrphanRevivalOutcome::Idle => return Ok(()),
+                    }
                 }
                 // Snapshot pre-step cursor identities (`(node, pos,
                 // weight, inner_state)`) so we can detect whether any
@@ -5124,22 +5171,10 @@ where
                     // as fresh workers and re-drive — they run their own
                     // cross-cat sub-parse and reach EOI. Bounded by
                     // `MAX_REVIVAL_ROUNDS`; a resource overflow is surfaced
-                    // as structured ambiguity-budget evidence rather than
-                    // accepting a parse with hidden alternatives removed.
+                    // by the explicit frontier/realization budget APIs, not
+                    // by this internal recovery step.
                     match self.revive_orphaned_cohort_members_once(tokens) {
                         OrphanRevivalOutcome::Injected(_) => continue,
-                        OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
-                            // EP-P4 (Stage E): budget event at the orphan
-                            // fixpoint — compute + record the frontier ESS.
-                            let ess_x1000 = self.frontier_ess_x1000();
-                            crate::record_frontier_ess!(self, ess_x1000);
-                            self.state = WpdaState::Error {
-                                message: format_ambiguity_budget_sentinel(
-                                    budget, actual, position, ess_x1000,
-                                ),
-                            };
-                            return Ok(());
-                        },
                         OrphanRevivalOutcome::Idle => {},
                     }
                     // Sig-B Blocker-3 §2.4a (2026-06-01, pgmcp experiment #9):
@@ -5225,8 +5260,138 @@ where
             .unwrap_or(crate::sppf::SPPF_ID_NONE)
     }
 
+    fn eoi_transparent_projection_unwrapped_variants(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        root_sid: crate::sppf::SppfId,
+        root_cat: u16,
+        target_cat: u16,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Vec<BranchCursor<W>> {
+        let mut variants = Vec::new();
+        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(root_sid).to_vec();
+        for packing_id in packings {
+            let (rule_idx, children) = match self.sppf.node(packing_id) {
+                Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
+                    (*rule_idx, children.clone())
+                },
+                _ => continue,
+            };
+            let cat_src_idx = (rule_idx >> 16) as u16;
+            let local_rule_idx = (rule_idx & 0xFFFF) as u16;
+            if cat_src_idx != root_cat {
+                continue;
+            }
+            let Some(entry) = self.engine.action_for(root_cat, local_rule_idx) else {
+                continue;
+            };
+            if entry.arity != 1
+                || entry.output_cat != root_cat
+                || entry.expected_input_cats.len() != 1
+                || entry.expected_input_cats[0] != target_cat
+            {
+                continue;
+            }
+            let declared_projection = self
+                .engine
+                .single_hop_coercion(target_cat, root_cat)
+                .iter()
+                .any(|&(coercion_cat, coercion_rule)| {
+                    coercion_cat == root_cat && coercion_rule == local_rule_idx
+                });
+            if !declared_projection {
+                continue;
+            }
+            let action_children: Vec<crate::sppf::SppfId> = children
+                .iter()
+                .copied()
+                .filter(|&child| {
+                    !matches!(
+                        self.sppf.node(child),
+                        Some(crate::sppf::SppfNode::TriggerTerminal { .. })
+                    )
+                })
+                .collect();
+            if action_children.len() != 1 {
+                continue;
+            }
+            let child_symbol_id = action_children[0];
+            if self.sppf_symbol_category(child_symbol_id) != Some(target_cat) {
+                continue;
+            }
+            if !self.semantic_root_accepts_at_cursor(child_symbol_id, cursor.pos, tokens) {
+                continue;
+            }
+            let mut variant = cursor.clone();
+            variant.sppf_stack_id = self.sppf_stack_arena.intern_pop(variant.sppf_stack_id);
+            variant.sppf_stack_id = self
+                .sppf_stack_arena
+                .intern_push(variant.sppf_stack_id, child_symbol_id);
+            variant.last_action_output_cat = Some(target_cat);
+            variants.push(variant);
+        }
+        variants
+    }
+
+    fn eoi_requested_root_variants(
+        &mut self,
+        cursor: BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Vec<BranchCursor<W>>
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        let Some(target_cat) = self.requested_root_cat else {
+            return vec![cursor];
+        };
+        let Some(Some(root_sid)) = self.cursor_accepting_terminal_root(&cursor) else {
+            return vec![cursor];
+        };
+        let Some(root_cat) = self.sppf_symbol_category(root_sid) else {
+            return Vec::new();
+        };
+        if root_cat == target_cat {
+            return vec![cursor];
+        }
+
+        let unwrapped = self.eoi_transparent_projection_unwrapped_variants(
+            &cursor, root_sid, root_cat, target_cat, tokens,
+        );
+        if !unwrapped.is_empty() {
+            return unwrapped;
+        }
+
+        let coercions = self
+            .engine
+            .single_hop_coercion(root_cat, target_cat)
+            .to_vec();
+        let mut variants = Vec::new();
+        for (coercion_cat, coercion_rule) in coercions {
+            if coercion_cat != target_cat {
+                continue;
+            }
+            let Some(wrapped_sid) =
+                self.intern_coercion_over_body(root_sid, coercion_cat, coercion_rule)
+            else {
+                continue;
+            };
+            let mut variant = cursor.clone();
+            variant.sppf_stack_id = self.sppf_stack_arena.intern_pop(variant.sppf_stack_id);
+            variant.sppf_stack_id = self
+                .sppf_stack_arena
+                .intern_push(variant.sppf_stack_id, wrapped_sid);
+            variant.last_action_output_cat = self
+                .sppf_symbol_terms
+                .get(&wrapped_sid)
+                .and_then(|term| term.output_cat)
+                .or(Some(target_cat));
+            variants.push(variant);
+        }
+        variants
+    }
+
     fn push_eoi_resolution_candidate(
-        &self,
+        &mut self,
         snapshot: &mut EoiResolutionSnapshot<W>,
         cursor: BranchCursor<W>,
         tokens: &dyn WpdaTokenSource,
@@ -5268,38 +5433,42 @@ where
             // bypasses this function entirely). See that method.
             return;
         }
-        // EP-P2 (Stage B) Step-0 — check site (iii.b): the HARD-STOP
-        // TRIPWIRE. This cursor REACHED the EOI accept path. If its sticky
-        // `ep_shadow_refuted` bit is set, a would-refuted cursor is
-        // participating in an accepted parse — a soundness bug (the model
-        // or transcription is wrong). MUST stay zero everywhere.
-        if self.ep_p2_mode == EpP2Mode::Shadow && cursor.ep_shadow_refuted {
-            let recovery_enabled = (self.recovery_config.max_recovery_depth > 0) as usize;
-            let idx =
-                crate::walker_stats::wpda_state_class(&cursor.inner_state) * 2 + recovery_enabled;
-            if idx < snapshot.ep_p2_refuted_then_accepted.len() {
-                snapshot.ep_p2_refuted_then_accepted[idx] =
-                    snapshot.ep_p2_refuted_then_accepted[idx].saturating_add(1);
-            }
-        }
         // EP-P5 (Stage D) ENTRY-GATE: accounting MOVED to the dedicated
         // pre-dump pass `p5_account_eoi_frontier` (see the death-site comment
         // above). This snapshot path is post-dump and det-bypassed.
-        let root = self.cursor_sppf_root(&cursor);
-        if at_logical_eoi {
-            snapshot.accepting.push(EoiCursorCandidate {
-                weight: cursor.weight.clone(),
-                root,
-                cursor,
-            });
-        } else if prefix_trailing_pos {
-            snapshot
-                .prefix_trailing_candidates
-                .push((cursor.pos, cursor.weight.clone(), root));
+        let variants = self.eoi_requested_root_variants(cursor, tokens);
+        for variant in variants {
+            // EP-P2 (Stage B) Step-0 — check site (iii.b): the HARD-STOP
+            // TRIPWIRE. Count only category-compatible EOI variants as
+            // accepted; uncoercible root-category mismatches are dead
+            // candidates, not accepted parses.
+            if self.ep_p2_mode == EpP2Mode::Shadow && variant.ep_shadow_refuted {
+                let recovery_enabled = (self.recovery_config.max_recovery_depth > 0) as usize;
+                let idx = crate::walker_stats::wpda_state_class(&variant.inner_state) * 2
+                    + recovery_enabled;
+                if idx < snapshot.ep_p2_refuted_then_accepted.len() {
+                    snapshot.ep_p2_refuted_then_accepted[idx] =
+                        snapshot.ep_p2_refuted_then_accepted[idx].saturating_add(1);
+                }
+            }
+            let root = self.cursor_sppf_root(&variant);
+            if at_logical_eoi {
+                snapshot.accepting.push(EoiCursorCandidate {
+                    weight: variant.weight.clone(),
+                    root,
+                    cursor: variant,
+                });
+            } else if prefix_trailing_pos {
+                snapshot.prefix_trailing_candidates.push((
+                    variant.pos,
+                    variant.weight.clone(),
+                    root,
+                ));
+            }
         }
     }
 
-    fn eoi_resolution_snapshot(&self, tokens: &dyn WpdaTokenSource) -> EoiResolutionSnapshot<W>
+    fn eoi_resolution_snapshot(&mut self, tokens: &dyn WpdaTokenSource) -> EoiResolutionSnapshot<W>
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
@@ -5312,19 +5481,23 @@ where
             ep_p2_eoi_dead_refutable: [0; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
             ep_p2_refuted_then_accepted: [0; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
         };
+        let mut cursors = Vec::new();
         for frame in &self.branch_cursors {
             match frame {
                 crate::cohort_lazy::Frame::Concrete(cursor) => {
-                    self.push_eoi_resolution_candidate(&mut snapshot, cursor.clone(), tokens);
+                    cursors.push(cursor.clone());
                 },
                 crate::cohort_lazy::Frame::Cohort(cf) => {
                     for member in &cf.members {
                         let cursor =
                             crate::cohort_lazy::materialize_branch_cursor(&cf.shell, member);
-                        self.push_eoi_resolution_candidate(&mut snapshot, cursor, tokens);
+                        cursors.push(cursor);
                     }
                 },
             }
+        }
+        for cursor in cursors {
+            self.push_eoi_resolution_candidate(&mut snapshot, cursor, tokens);
         }
         if snapshot.logical_count == 0 {
             snapshot.max_dead_pos = self.pos;
@@ -7329,7 +7502,7 @@ where
         // via step_fanout rather than the per-state engine.step (engine
         // returns Idle for AmbiguityFanout).
         if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
-            if self.fanout_frontier_all_terminal() {
+            if self.fanout_frontier_terminal_step_quiescent() {
                 return WpdaTransition::NoChange;
             }
             self.step_fanout(tokens);
@@ -7563,6 +7736,13 @@ where
         symbol: &StackSymbolV2,
         new_state: &WpdaState,
     ) -> Option<u16> {
+        Self::category_changing_infix_transition(symbol, new_state).map(|(source, _)| source)
+    }
+
+    fn category_changing_infix_transition(
+        symbol: &StackSymbolV2,
+        new_state: &WpdaState,
+    ) -> Option<(u16, u16)> {
         if symbol.kind != SymbolKind::Return {
             return None;
         }
@@ -7570,20 +7750,101 @@ where
             WpdaState::CrossCatDelegate { source_src_idx, .. }
                 if symbol.category_src_idx != *source_src_idx =>
             {
-                Some(*source_src_idx)
+                Some((*source_src_idx, symbol.category_src_idx))
             },
             _ => None,
         }
     }
 
     fn branch_category_changing_infix_source(branch: &ForkBranch<W>) -> Option<u16> {
+        Self::branch_category_changing_infix_transition(branch).map(|(source, _)| source)
+    }
+
+    fn branch_category_changing_infix_transition(branch: &ForkBranch<W>) -> Option<(u16, u16)> {
         match &branch.action_kind {
             ForkActionKind::LexAltInfixOp { result_src_idx, source_cat_src_idx, .. }
                 if result_src_idx != source_cat_src_idx =>
             {
-                Some(*source_cat_src_idx)
+                Some((*source_cat_src_idx, *result_src_idx))
             },
-            _ => Self::category_changing_infix_source(&branch.symbol, &branch.new_state),
+            _ => Self::category_changing_infix_transition(&branch.symbol, &branch.new_state),
+        }
+    }
+
+    fn state_binding_power_floor(state: &WpdaState) -> Option<u8> {
+        match state {
+            WpdaState::Ready { min_bp } => Some(*min_bp),
+            WpdaState::PrefixDispatch { cur_bp, .. } | WpdaState::InfixLoop { cur_bp } => {
+                Some(*cur_bp)
+            },
+            WpdaState::CrossCatDelegate { inner_cur_bp, .. } => Some(*inner_cur_bp),
+            _ => None,
+        }
+    }
+
+    fn crosscat_lhs_scope_from_kind(
+        kind: &crate::gss::EdgeKind,
+        fallback_min_bp: u8,
+    ) -> Option<(u16, u8)> {
+        match kind {
+            crate::gss::EdgeKind::CrossCatLhs { source_src_idx } => {
+                Some((*source_src_idx, fallback_min_bp))
+            },
+            crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, min_bp } => {
+                Some((*source_src_idx, *min_bp))
+            },
+            _ => None,
+        }
+    }
+
+    fn normalize_prefix_crosscat_delegate_state(
+        current_state: &WpdaState,
+        new_state: WpdaState,
+    ) -> WpdaState {
+        match new_state {
+            WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } if inner_cur_bp == 0 => {
+                let inherited_bp = match current_state {
+                    WpdaState::Ready { min_bp } => *min_bp,
+                    WpdaState::PrefixDispatch { cur_bp, .. } => *cur_bp,
+                    _ => inner_cur_bp,
+                };
+                WpdaState::CrossCatDelegate {
+                    source_src_idx,
+                    inner_cur_bp: inherited_bp,
+                }
+            },
+            other => other,
+        }
+    }
+
+    fn normalize_crosscat_lhs_push_state(
+        cursor: &BranchCursor<W>,
+        new_state: WpdaState,
+    ) -> (WpdaState, u8) {
+        let inherited_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
+        let normalized = match new_state {
+            WpdaState::PrefixDispatch { pos, cur_bp } if cur_bp == 0 && inherited_bp != 0 => {
+                WpdaState::PrefixDispatch { pos, cur_bp: inherited_bp }
+            },
+            other => other,
+        };
+        let recorded_bp = Self::state_binding_power_floor(&normalized).unwrap_or(inherited_bp);
+        (normalized, recorded_bp)
+    }
+
+    fn category_entry_resume_bp(
+        &self,
+        popped_edge_kind: Option<&crate::gss::EdgeKind>,
+        popped_edge_id: Option<crate::gss::GssEdgeId>,
+    ) -> u8 {
+        match popped_edge_kind {
+            Some(crate::gss::EdgeKind::CategoryEntryContinuation { min_bp })
+            | Some(crate::gss::EdgeKind::CrossCatLhsReentry { min_bp, .. })
+            | Some(crate::gss::EdgeKind::CrossCatLhsScoped { min_bp, .. }) => *min_bp,
+            Some(crate::gss::EdgeKind::CrossCatLhs { .. }) => popped_edge_id
+                .and_then(|eid| self.crosscat_lhs_min_bp.get(&eid).copied())
+                .unwrap_or(0),
+            _ => 0,
         }
     }
 
@@ -7595,17 +7856,148 @@ where
         if top.symbol.kind != SymbolKind::CategoryEntry {
             return None;
         }
-        let edge_id = self
+        self.nearest_cross_cat_lhs_context(cursor)
+            .map(|(source_src_idx, _is_body_producer)| source_src_idx)
+    }
+
+    fn cross_cat_lhs_body_producer_source(&self, cursor: &BranchCursor<W>) -> Option<u16> {
+        if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return None;
+        }
+        self.nearest_cross_cat_lhs_context(cursor)
+            .and_then(|(source_src_idx, is_body_producer)| {
+                if is_body_producer {
+                    Some(source_src_idx)
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn nearest_cross_cat_lhs_context(&self, cursor: &BranchCursor<W>) -> Option<(u16, bool)> {
+        let top = self.gss.node(cursor.node)?;
+        let top_cat = top.symbol.category_src_idx;
+        let edge_stack = self
             .incoming_edge_stack_arena
-            .top(cursor.incoming_edge_stack_id)?;
-        match self.gss.edge_kind(edge_id) {
-            Some(
-                crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
-                | crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx }
-                | crate::gss::EdgeKind::TransparentSourceReentry { source_src_idx, .. },
-            ) if source_src_idx == top.symbol.category_src_idx => Some(source_src_idx),
+            .to_vec(cursor.incoming_edge_stack_id);
+        for edge_id in edge_stack.into_iter().rev() {
+            match self.gss.edge_kind(edge_id) {
+                Some(
+                    crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                    | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. },
+                ) if source_src_idx == top_cat => return Some((source_src_idx, true)),
+                Some(
+                    crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. }
+                    | crate::gss::EdgeKind::TransparentSourceReentry { source_src_idx, .. },
+                ) if source_src_idx == top_cat => return Some((source_src_idx, false)),
+                _ => {},
+            }
+        }
+        None
+    }
+
+    fn action_contains_category_changing_infix_from(
+        action: &WpdaStepAction<W>,
+        source_src_idx: u16,
+    ) -> bool {
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, new_state, .. } => {
+                Self::category_changing_infix_source(symbol, new_state) == Some(source_src_idx)
+            },
+            WpdaStepAction::Fork { branches, .. } => branches.iter().any(|branch| {
+                Self::branch_category_changing_infix_source(branch) == Some(source_src_idx)
+            }),
+            _ => false,
+        }
+    }
+
+    fn action_contains_category_changing_infix(action: &WpdaStepAction<W>) -> bool {
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, new_state, .. } => {
+                Self::category_changing_infix_source(symbol, new_state).is_some()
+            },
+            WpdaStepAction::Fork { branches, .. } => branches
+                .iter()
+                .any(|branch| Self::branch_category_changing_infix_source(branch).is_some()),
+            _ => false,
+        }
+    }
+
+    fn action_contains_primary_category_changing_infix_from(
+        action: &WpdaStepAction<W>,
+        source_src_idx: u16,
+    ) -> bool {
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, new_state, .. } => {
+                Self::category_changing_infix_source(symbol, new_state) == Some(source_src_idx)
+            },
+            WpdaStepAction::Fork { branches, .. } => branches.iter().any(|branch| {
+                Self::branch_category_changing_infix_source(branch) == Some(source_src_idx)
+                    && match &branch.action_kind {
+                        ForkActionKind::LexAltInfixOp { alt_idx, .. } => *alt_idx == 0,
+                        ForkActionKind::LexAlt { .. }
+                        | ForkActionKind::LexAltPrefixOp { .. }
+                        | ForkActionKind::LexAltPostfixOp { .. }
+                        | ForkActionKind::LexAltMixfixOp { .. } => false,
+                        _ => true,
+                    }
+            }),
+            _ => false,
+        }
+    }
+
+    fn lex_alt_branch_trigger_text(branch: &ForkBranch<W>) -> Option<(u16, &str)> {
+        match &branch.action_kind {
+            ForkActionKind::LexAlt { alt_idx, text, .. } => Some((*alt_idx, text.as_str())),
+            ForkActionKind::LexAltPrefixOp { alt_idx, trigger, .. }
+            | ForkActionKind::LexAltPostfixOp { alt_idx, trigger, .. }
+            | ForkActionKind::LexAltInfixOp { alt_idx, trigger, .. }
+            | ForkActionKind::LexAltMixfixOp { alt_idx, trigger, .. } => {
+                Some((*alt_idx, trigger.as_str()))
+            },
             _ => None,
         }
+    }
+
+    fn action_contains_shadowed_secondary_lex_alt(
+        action: &WpdaStepAction<W>,
+        primary_text: &str,
+    ) -> bool {
+        if primary_text.is_empty() {
+            return false;
+        }
+        match action {
+            WpdaStepAction::Fork { branches, .. } => branches.iter().any(|branch| {
+                let Some((alt_idx, alt_text)) = Self::lex_alt_branch_trigger_text(branch) else {
+                    return false;
+                };
+                alt_idx > 0
+                    && !alt_text.is_empty()
+                    && primary_text.len() > alt_text.len()
+                    && primary_text.starts_with(alt_text)
+            }),
+            _ => false,
+        }
+    }
+
+    fn primary_category_changing_infix_from_at_floor_zero(
+        &self,
+        cursor: &BranchCursor<W>,
+        source_src_idx: u16,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> bool {
+        let source_frontier = crate::gss::WpdaGssNode {
+            pos: cursor.pos,
+            symbol: StackSymbolV2::category_entry(source_src_idx),
+        };
+        let action = self.engine.step(
+            &WpdaState::InfixLoop { cur_bp: 0 },
+            &self.gss,
+            Some(&source_frontier),
+            cursor.pos,
+            tokens,
+        );
+        Self::action_contains_primary_category_changing_infix_from(&action, source_src_idx)
     }
 
     fn sppf_symbol_category(&self, symbol_id: crate::sppf::SppfId) -> Option<u16> {
@@ -7621,6 +8013,8 @@ where
         &self,
         cursor: &BranchCursor<W>,
         token_text: &str,
+        cur_bp: u8,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
     ) -> Option<TransparentSourceReentry> {
         if token_text.is_empty() {
             return None;
@@ -7632,6 +8026,15 @@ where
         let target_src_idx = top.symbol.category_src_idx;
         let top_symbol_id = self.sppf_stack_arena.top(cursor.sppf_stack_id)?;
         if self.sppf_symbol_category(top_symbol_id) != Some(target_src_idx) {
+            return None;
+        }
+        if self.target_category_rejects_own_operator_at_floor(
+            target_src_idx,
+            token_text,
+            cursor,
+            cur_bp,
+            tokens,
+        ) {
             return None;
         }
 
@@ -7669,9 +8072,7 @@ where
                     coercion_cat == target_src_idx && coercion_rule == local_rule_idx
                 });
             if !is_declared_projection
-                || !self
-                    .engine
-                    .category_recognizes_operator(source_src_idx, token_text)
+                || !self.category_accepts_operator_at_floor(source_src_idx, cursor, cur_bp, tokens)
             {
                 continue;
             }
@@ -7702,6 +8103,53 @@ where
             });
         }
         None
+    }
+
+    fn target_category_rejects_own_operator_at_floor(
+        &self,
+        target_src_idx: u16,
+        token_text: &str,
+        cursor: &BranchCursor<W>,
+        cur_bp: u8,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> bool {
+        if !self
+            .engine
+            .category_recognizes_operator(target_src_idx, token_text)
+        {
+            return false;
+        }
+        // Binding-power numbers are category-local. If the target grammar owns
+        // this operator token but rejects it at the active target floor, the
+        // token is a target boundary; a source projection must not reinterpret
+        // the same token under an unrelated source-category floor.
+        !self.category_accepts_operator_at_floor(target_src_idx, cursor, cur_bp, tokens)
+    }
+
+    fn category_accepts_operator_at_floor(
+        &self,
+        cat_src_idx: u16,
+        cursor: &BranchCursor<W>,
+        cur_bp: u8,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> bool {
+        let source_frontier = crate::gss::WpdaGssNode {
+            pos: cursor.pos,
+            symbol: StackSymbolV2::category_entry(cat_src_idx),
+        };
+        let action = self.engine.step(
+            &WpdaState::InfixLoop { cur_bp },
+            &self.gss,
+            Some(&source_frontier),
+            cursor.pos,
+            tokens,
+        );
+        !matches!(
+            action,
+            WpdaStepAction::Advance(WpdaState::Unwinding)
+                | WpdaStepAction::Idle
+                | WpdaStepAction::Error(_)
+        )
     }
 
     fn reenter_transparent_projection_source(
@@ -7821,30 +8269,378 @@ where
         source_src_idx: u16,
     ) {
         let source_entry = StackSymbolV2::category_entry(source_src_idx);
+        let min_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
         let _ = self.cursor_gss_push_with_kind(
             cursor,
             source_entry,
             cursor.pos,
             W::one_ref(),
-            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx },
+            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp },
         );
+    }
+
+    fn category_transparently_satisfies(&self, produced: u16, requested: u16) -> bool {
+        produced == requested
+            || self
+                .engine
+                .single_hop_coercion(produced, requested)
+                .iter()
+                .any(|&(coercion_cat, coercion_rule)| {
+                    coercion_cat == requested
+                        && self.engine.min_terminal_span(coercion_cat, coercion_rule) == 0
+                })
+    }
+
+    fn requested_category_symbol_accepts(
+        &self,
+        symbol: StackSymbolV2,
+        source_src_idx: u16,
+        result_src_idx: u16,
+    ) -> Option<bool> {
+        match symbol.kind {
+            SymbolKind::CategoryEntry | SymbolKind::GroupingMarker => {
+                let requested = symbol.category_src_idx;
+                if requested == source_src_idx {
+                    None
+                } else {
+                    Some(self.category_transparently_satisfies(result_src_idx, requested))
+                }
+            },
+            SymbolKind::RuleAt(_)
+            | SymbolKind::Return
+            | SymbolKind::MixfixMarker
+            | SymbolKind::OptionalGroupAt(_) => {
+                let entry = self
+                    .engine
+                    .action_for(symbol.category_src_idx, symbol.rule_index_in_category)?;
+                if entry.arity == 1
+                    && entry.expected_input_cats == [source_src_idx]
+                    && entry.output_cat != source_src_idx
+                    && self.category_can_satisfy_expected(result_src_idx, entry.output_cat)
+                {
+                    return Some(true);
+                }
+                let expected = entry
+                    .expected_input_cats
+                    .iter()
+                    .copied()
+                    .filter(|cat| *cat != crate::wpda_runtime::ANY_CAT);
+                let mut saw_concrete = false;
+                for requested in expected {
+                    saw_concrete = true;
+                    if self.category_transparently_satisfies(result_src_idx, requested) {
+                        return Some(true);
+                    }
+                }
+                saw_concrete.then_some(false)
+            },
+            _ => None,
+        }
+    }
+
+    fn enclosing_context_accepts_category_change(
+        &self,
+        cursor: &BranchCursor<W>,
+        source_src_idx: u16,
+        result_src_idx: u16,
+    ) -> bool {
+        let edge_stack = self
+            .incoming_edge_stack_arena
+            .to_vec(cursor.incoming_edge_stack_id);
+        for edge_id in edge_stack.into_iter().rev() {
+            let Some(pred_id) = self.gss.edge_target(edge_id) else {
+                continue;
+            };
+            let Some(node) = self.gss.node(pred_id) else {
+                continue;
+            };
+            if let Some(accepts) =
+                self.requested_category_symbol_accepts(node.symbol, source_src_idx, result_src_idx)
+            {
+                return accepts;
+            }
+        }
+        false
+    }
+
+    fn category_change_admitted(
+        &self,
+        cursor: &BranchCursor<W>,
+        lhs_evidence: Option<u16>,
+        source_src_idx: u16,
+        result_src_idx: u16,
+    ) -> bool {
+        lhs_evidence == Some(source_src_idx)
+            || self.enclosing_context_accepts_category_change(
+                cursor,
+                source_src_idx,
+                result_src_idx,
+            )
+    }
+
+    fn crosscat_lhs_source_from_edge_kind(kind: Option<&crate::gss::EdgeKind>) -> Option<u16> {
+        match kind {
+            Some(
+                crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. }
+                | crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. },
+            ) => Some(*source_src_idx),
+            _ => None,
+        }
+    }
+
+    fn grouping_produced_category_admissible(
+        &self,
+        cursor: &BranchCursor<W>,
+        popped_edge_kind: Option<&crate::gss::EdgeKind>,
+        expected_cat: u16,
+        produced_cat: u16,
+    ) -> bool {
+        if self.category_can_satisfy_expected(produced_cat, expected_cat) {
+            return true;
+        }
+        let Some(source_src_idx) = Self::crosscat_lhs_source_from_edge_kind(popped_edge_kind)
+        else {
+            return false;
+        };
+        self.enclosing_context_accepts_category_change(cursor, source_src_idx, produced_cat)
+    }
+
+    fn crosscat_lhs_boundary_branch(source_src_idx: u16) -> ForkBranch<W> {
+        ForkBranch {
+            symbol: StackSymbolV2::category_entry(source_src_idx),
+            weight: W::one_ref(),
+            new_state: WpdaState::Unwinding,
+            action_kind: ForkActionKind::Advance,
+        }
+    }
+
+    /// A source parser running under a cross-category projection must not
+    /// monopolize an operator token that the projection target can also see.
+    /// The source-consuming branch and the target handoff branch are both
+    /// evidence-bearing alternatives; later Pratt dispatch decides whether the
+    /// target consumes the token at this floor or unwinds it further outward.
+    fn crosscat_projection_target_boundary_source(
+        &self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> Option<u16> {
+        if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return None;
+        }
+        let top = self.gss.node(cursor.node)?;
+        if top.symbol.kind != SymbolKind::CategoryEntry {
+            return None;
+        }
+        let source_cat = top.symbol.category_src_idx;
+        let token_text = tokens.peek_text(cursor.pos)?;
+        if token_text.is_empty() {
+            return None;
+        }
+        let edge_stack = self
+            .incoming_edge_stack_arena
+            .to_vec(cursor.incoming_edge_stack_id);
+        for edge_id in edge_stack.into_iter().rev() {
+            let Some(crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx,
+                inner_cur_bp,
+                wrap_cat,
+                ..
+            }) = self.gss.edge_kind(edge_id)
+            else {
+                continue;
+            };
+            if source_src_idx != source_cat {
+                continue;
+            }
+            if !self
+                .engine
+                .category_recognizes_operator(wrap_cat, token_text)
+            {
+                continue;
+            }
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] crosscat projection target-boundary source={} target={} pos={} floor={} lookahead={:?}",
+                    source_src_idx,
+                    wrap_cat,
+                    cursor.pos,
+                    inner_cur_bp,
+                    token_text
+                );
+            }
+            return Some(source_src_idx);
+        }
+        None
+    }
+
+    fn iterative_chain_normal_branch(
+        symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+        spec: crate::binding_power::IterAbsorbSpec,
+    ) -> ForkBranch<W> {
+        if spec.is_mixfix {
+            ForkBranch {
+                symbol: StackSymbolV2::mixfix_marker(spec.op_cat_src_idx, spec.op_rule_idx, 0),
+                weight,
+                new_state: WpdaState::MixfixLiteralRun {
+                    result_src_idx: spec.op_cat_src_idx,
+                    rule_idx: spec.op_rule_idx,
+                    completed_idx: 0,
+                    kind: 2,
+                    sub_pos: 0,
+                },
+                action_kind: ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard },
+            }
+        } else {
+            Self::consume_and_push_branch(symbol, weight, new_state, TriggerMode::Discard)
+        }
+    }
+
+    fn consume_and_push_branch(
+        symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+        trigger_mode: TriggerMode,
+    ) -> ForkBranch<W> {
+        ForkBranch {
+            symbol,
+            weight,
+            new_state,
+            action_kind: ForkActionKind::ConsumeAndPush { trigger_mode },
+        }
+    }
+
+    fn fork_branch_consumes_current_token(branch: &ForkBranch<W>) -> bool {
+        matches!(
+            branch.action_kind,
+            ForkActionKind::Consume { .. }
+                | ForkActionKind::ConsumeAndPush { .. }
+                | ForkActionKind::ConsumeAndReplace
+                | ForkActionKind::ConsumeAtAndReplace { .. }
+                | ForkActionKind::ConsumeAndReplaceWithEffect { .. }
+                | ForkActionKind::ConsumeAndCaptureAndPush
+                | ForkActionKind::ConsumeIdentAndReplace { .. }
+                | ForkActionKind::ConsumeIdentAndPop { .. }
+                | ForkActionKind::ConsumeAndPop
+                | ForkActionKind::ConsumeAtAndPop { .. }
+                | ForkActionKind::LexAltPostfixOp { .. }
+                | ForkActionKind::LexAltInfixOp { .. }
+                | ForkActionKind::LexAltMixfixOp { .. }
+        )
+    }
+
+    fn guard_crosscat_projection_target_boundary(
+        &self,
+        cursor: &BranchCursor<W>,
+        action: WpdaStepAction<W>,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> WpdaStepAction<W> {
+        let Some(source_src_idx) = self.crosscat_projection_target_boundary_source(cursor, tokens)
+        else {
+            return action;
+        };
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode } => {
+                WpdaStepAction::Fork {
+                    branches: vec![
+                        Self::consume_and_push_branch(symbol, weight, new_state, trigger_mode),
+                        Self::crosscat_lhs_boundary_branch(source_src_idx),
+                    ],
+                    consume_trigger: false,
+                }
+            },
+            WpdaStepAction::IterativeChainAbsorb { symbol, weight, new_state, spec } => {
+                WpdaStepAction::Fork {
+                    branches: vec![
+                        Self::iterative_chain_normal_branch(symbol, weight, new_state, spec),
+                        Self::crosscat_lhs_boundary_branch(source_src_idx),
+                    ],
+                    consume_trigger: false,
+                }
+            },
+            WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                if consume_trigger {
+                    if !branches
+                        .iter()
+                        .all(|branch| matches!(branch.action_kind, ForkActionKind::Push))
+                    {
+                        return WpdaStepAction::Fork { branches, consume_trigger };
+                    }
+                    for branch in &mut branches {
+                        branch.action_kind =
+                            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard };
+                    }
+                } else if !branches
+                    .iter()
+                    .any(Self::fork_branch_consumes_current_token)
+                {
+                    return WpdaStepAction::Fork { branches, consume_trigger };
+                }
+                branches.push(Self::crosscat_lhs_boundary_branch(source_src_idx));
+                WpdaStepAction::Fork { branches, consume_trigger: false }
+            },
+            other => other,
+        }
     }
 
     fn guard_category_changing_infix(
         &self,
         cursor: &BranchCursor<W>,
         action: WpdaStepAction<W>,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
     ) -> WpdaStepAction<W> {
         if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
             return action;
         }
+        let boundary_source =
+            self.cross_cat_lhs_body_producer_source(cursor)
+                .filter(|source_src_idx| {
+                    Self::action_contains_category_changing_infix_from(&action, *source_src_idx)
+                });
+        if let Some(source_src_idx) = self.cross_cat_lhs_body_producer_source(cursor) {
+            let has_direct_category_change =
+                Self::action_contains_category_changing_infix_from(&action, source_src_idx);
+            if has_direct_category_change {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] cross-cat-lhs hosted boundary source={} pos={}",
+                        source_src_idx, cursor.pos
+                    );
+                }
+            }
+            if let Some(primary_text) = tokens.peek_text(cursor.pos) {
+                if !has_direct_category_change
+                    && Self::action_contains_shadowed_secondary_lex_alt(&action, primary_text)
+                    && self.primary_category_changing_infix_from_at_floor_zero(
+                        cursor,
+                        source_src_idx,
+                        tokens,
+                    )
+                {
+                    if trace_actions_enabled() {
+                        eprintln!(
+                            "[wpds-action] cross-cat-lhs lex boundary source={} pos={} primary={:?}",
+                            source_src_idx, cursor.pos, primary_text
+                        );
+                    }
+                    return WpdaStepAction::Advance(WpdaState::Unwinding);
+                }
+            }
+        }
         let lhs_evidence = self.cross_cat_lhs_infix_evidence_source(cursor);
         match action {
             WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode } => {
-                if let Some(source_src_idx) =
-                    Self::category_changing_infix_source(&symbol, &new_state)
+                if let Some((source_src_idx, result_src_idx)) =
+                    Self::category_changing_infix_transition(&symbol, &new_state)
                 {
-                    if lhs_evidence != Some(source_src_idx) {
+                    if !self.category_change_admitted(
+                        cursor,
+                        lhs_evidence,
+                        source_src_idx,
+                        result_src_idx,
+                    ) {
                         if trace_actions_enabled() {
                             eprintln!(
                                 "[wpds-action] suppress category-changing infix source={} result={} pos={} evidence={:?}",
@@ -7856,17 +8652,37 @@ where
                         }
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
+                    if boundary_source == Some(source_src_idx) {
+                        return WpdaStepAction::Fork {
+                            branches: vec![
+                                Self::consume_and_push_branch(
+                                    symbol,
+                                    weight,
+                                    new_state,
+                                    trigger_mode,
+                                ),
+                                Self::crosscat_lhs_boundary_branch(source_src_idx),
+                            ],
+                            consume_trigger: false,
+                        };
+                    }
                 }
                 WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode }
             },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
                 let before = branches.len();
                 branches.retain(|branch| {
-                    let Some(source_src_idx) = Self::branch_category_changing_infix_source(branch)
+                    let Some((source_src_idx, result_src_idx)) =
+                        Self::branch_category_changing_infix_transition(branch)
                     else {
                         return true;
                     };
-                    lhs_evidence == Some(source_src_idx)
+                    self.category_change_admitted(
+                        cursor,
+                        lhs_evidence,
+                        source_src_idx,
+                        result_src_idx,
+                    )
                 });
                 if branches.len() != before {
                     if trace_actions_enabled() {
@@ -7881,6 +8697,9 @@ where
                     if branches.is_empty() {
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
+                }
+                if let Some(source_src_idx) = boundary_source {
+                    branches.push(Self::crosscat_lhs_boundary_branch(source_src_idx));
                 }
                 WpdaStepAction::Fork { branches, consume_trigger }
             },
@@ -7942,6 +8761,7 @@ where
                                 matches!(
                                     self.gss.edge_kind(*edge_id),
                                     Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                                        | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
                                         | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
                                 )
                             });
@@ -7987,9 +8807,9 @@ where
             if let WpdaState::InfixLoop { cur_bp } = &cursor.inner_state {
                 let cur_bp = *cur_bp;
                 if let Some(token_text) = tokens.peek_text(cursor.pos) {
-                    if let Some(reentry) =
-                        self.transparent_projection_reentry_for_operator(cursor, token_text)
-                    {
+                    if let Some(reentry) = self.transparent_projection_reentry_for_operator(
+                        cursor, token_text, cur_bp, tokens,
+                    ) {
                         self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
                         if trace_actions_enabled() {
                             eprintln!(
@@ -8026,7 +8846,8 @@ where
             }
             return self.cursor_resolution_check(cursor);
         }
-        let action = self.guard_category_changing_infix(cursor, action);
+        let action = self.guard_crosscat_projection_target_boundary(cursor, action, tokens);
+        let action = self.guard_category_changing_infix(cursor, action, tokens);
         #[cfg(feature = "walker-stats")]
         {
             let bucket = crate::walker_stats::apply_action_variant_index(&action);
@@ -8060,6 +8881,8 @@ where
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::Push { mut symbol, weight, new_state } => {
+                let new_state =
+                    Self::normalize_prefix_crosscat_delegate_state(&cursor.inner_state, new_state);
                 // B12 / Candidate E (2026-05-07): cross-cat projection
                 // cycle defense for SINGLETON projection arms. Singleton
                 // bucket emits `WpdaStepAction::Push` (not Fork) when only
@@ -8126,6 +8949,15 @@ where
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::PushWithEdgeKind { mut symbol, weight, new_state, edge_kind } => {
+                let (new_state, crosscat_lhs_min_bp) = if matches!(
+                    edge_kind,
+                    crate::gss::EdgeKind::CrossCatLhs { .. }
+                        | crate::gss::EdgeKind::CrossCatLhsScoped { .. }
+                ) {
+                    Self::normalize_crosscat_lhs_push_state(cursor, new_state)
+                } else {
+                    (new_state, 0)
+                };
                 #[cfg(feature = "walker-stats")]
                 {
                     let bucket = crate::walker_stats::pop_kind_bucket_index(&edge_kind);
@@ -8138,7 +8970,9 @@ where
                     // (share iff dup ≥ 10% of spawned; EquivKey-only,
                     // wrap_rule stays a discriminator per the M4
                     // tombstone).
-                    if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
+                    if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                    | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. } = &edge_kind
+                    {
                         self.stats.crosscat_lhs_delegates_spawned =
                             self.stats.crosscat_lhs_delegates_spawned.saturating_add(1);
                         let spawn_count = self
@@ -8184,7 +9018,9 @@ where
                 // (Proceed); consume and park return early (no push,
                 // zero materialization).
                 if self.ep_p1_mode == EpP1Mode::On {
-                    if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
+                    if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                    | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. } = &edge_kind
+                    {
                         let __source = *source_src_idx;
                         let __host = self
                             .gss
@@ -8194,7 +9030,7 @@ where
                         let __key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                             cursor.pos,
                             __source,
-                            0,
+                            crosscat_lhs_min_bp,
                             __host,
                             u16::MAX,
                         );
@@ -8272,6 +9108,7 @@ where
                                     self.consume_crosscat_lhs_body(
                                         cursor,
                                         __source,
+                                        crosscat_lhs_min_bp,
                                         b.symbol_id,
                                         b.hi_pos,
                                         __cat,
@@ -8300,6 +9137,7 @@ where
                                     self.consume_crosscat_lhs_body(
                                         &mut __child,
                                         __source,
+                                        crosscat_lhs_min_bp,
                                         b.symbol_id,
                                         b.hi_pos,
                                         __cat,
@@ -8367,7 +9205,10 @@ where
                 }
                 let __ep_p1_measure_ccl: Option<(u16, u16)> =
                     if matches!(self.ep_p1_mode, EpP1Mode::Measure | EpP1Mode::On) {
-                        if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &edge_kind {
+                        if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                        | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. } =
+                            &edge_kind
+                        {
                             let host_cat = self
                                 .gss
                                 .node(cursor.node)
@@ -8405,6 +9246,7 @@ where
                         .top(cursor.incoming_edge_stack_id)
                     {
                         self.crosscat_lhs_wrap.insert(__eid, (__host, u16::MAX));
+                        self.crosscat_lhs_min_bp.insert(__eid, crosscat_lhs_min_bp);
                         // (On-mode key-edges/lineage bookkeeping lives in
                         // cursor_gss_push_with_kind — the consolidated
                         // chokepoint shared by both producers.)
@@ -8416,7 +9258,7 @@ where
                     let __key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                         __ep_p1_dispatch_pos,
                         __source,
-                        0,
+                        crosscat_lhs_min_bp,
                         __host,
                         u16::MAX,
                     );
@@ -8458,22 +9300,26 @@ where
                 // Lazy redesign L2 prep (2026-05-27): record the popped
                 // EdgeKind so L2 can confirm dominance of convergent
                 // kinds before paying the broadcast-helper budget.
-                let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
+                let (pred_id, popped_edge_kind, popped_edge_id) =
+                    self.cursor_gss_pop_via_edge(cursor);
                 #[cfg(feature = "walker-stats")]
                 if let Some(kind) = popped_edge_kind.as_ref() {
                     let bucket = crate::walker_stats::pop_kind_bucket_index(kind);
                     self.stats.pop_kind_histogram[bucket] =
                         self.stats.pop_kind_histogram[bucket].saturating_add(1);
                 }
-                self.apply_pop_body_to_cursor(
+                if !self.apply_pop_body_to_cursor(
                     cursor,
                     pred_id,
                     popped_edge_kind.as_ref(),
+                    popped_edge_id,
                     popped_symbol,
                     &weight,
                     new_state,
                     tokens,
-                );
+                ) {
+                    return CursorOutcome::Drop;
+                }
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::Replace { symbol, weight, new_state } => {
@@ -8599,6 +9445,11 @@ where
                     if let Some((root_sid, acc_weight, chain_end)) =
                         self.synth_ternary_chain(cursor, tokens, &spec, weight.clone())
                     {
+                        let chain_start = self
+                            .sppf
+                            .span_lo(root_sid)
+                            .map(|lo| lo as usize)
+                            .unwrap_or(chain_start);
                         // Pop the head-atom (cond c0) Symbol (root re-spans it).
                         cursor.sppf_stack_id =
                             self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
@@ -8625,22 +9476,36 @@ where
                         );
                         return self.cursor_resolution_check(cursor);
                     }
-                    // Defensive fall-through: peek-confirmed ternary chain
-                    // failed to synthesize (should not happen). Treat as a
-                    // plain consume+push so the parse still progresses.
-                    self.emit_push_side_effects(cursor, &mut symbol);
-                    let edge_kind =
-                        self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                    // Conservative fall-through: the token pattern looked
+                    // chain-shaped, but the synthesizer could not prove every
+                    // atom through the literal rule. Resume the ordinary
+                    // mixfix path with the same marker shape the engine would
+                    // have pushed without absorption.
+                    let mut normal_symbol =
+                        StackSymbolV2::mixfix_marker(spec.op_cat_src_idx, spec.op_rule_idx, 0);
+                    let normal_state = WpdaState::MixfixLiteralRun {
+                        result_src_idx: spec.op_cat_src_idx,
+                        rule_idx: spec.op_rule_idx,
+                        completed_idx: 0,
+                        kind: 2,
+                        sub_pos: 0,
+                    };
+                    self.emit_push_side_effects(cursor, &mut normal_symbol);
+                    let edge_kind = self.edge_kind_for_push_transition(
+                        cursor.node,
+                        &normal_symbol,
+                        &normal_state,
+                    );
                     let _ = self.cursor_gss_push_with_kind(
                         cursor,
-                        symbol,
+                        normal_symbol,
                         cursor.pos,
                         weight.clone(),
                         edge_kind,
                     );
                     self.advance_cursor_pos(cursor, tokens, 1);
                     self.multiply_cursor_weight(cursor, &weight);
-                    self.set_cursor_inner_state(cursor, new_state);
+                    self.set_cursor_inner_state(cursor, normal_state);
                     return self.cursor_resolution_check(cursor);
                 }
                 if spec.assoc_right {
@@ -8656,6 +9521,11 @@ where
                     if let Some((root_sid, acc_weight, chain_end)) =
                         self.synth_binary_chain(cursor, tokens, &spec, weight.clone())
                     {
+                        let chain_start = self
+                            .sppf
+                            .span_lo(root_sid)
+                            .map(|lo| lo as usize)
+                            .unwrap_or(chain_start);
                         // Pop the head-atom Symbol (the root re-spans it).
                         cursor.sppf_stack_id =
                             self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
@@ -8834,6 +9704,11 @@ where
                         if let Some((root_sid, acc_weight, chain_end)) =
                             self.synth_binary_chain(cursor, tokens, &spec, weight.clone())
                         {
+                            let chain_start = self
+                                .sppf
+                                .span_lo(root_sid)
+                                .map(|lo| lo as usize)
+                                .unwrap_or(chain_start);
                             crate::stats_inc!(self, chain_earley_succeeded_count);
                             // atoms absorbed = (chain_end - chain_start)/2 + 1
                             // (m total atoms in the chain, head included).
@@ -8916,17 +9791,21 @@ where
                 // edge-id (see Pop arm). Consume token first, then pop
                 // along the cursor's recorded path.
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
-                let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
+                let (pred_id, popped_edge_kind, popped_edge_id) =
+                    self.cursor_gss_pop_via_edge(cursor);
                 self.advance_cursor_pos(cursor, tokens, 1);
-                self.apply_pop_body_to_cursor(
+                if !self.apply_pop_body_to_cursor(
                     cursor,
                     pred_id,
                     popped_edge_kind.as_ref(),
+                    popped_edge_id,
                     popped_symbol,
                     &weight,
                     new_state,
                     tokens,
-                );
+                ) {
+                    return CursorOutcome::Drop;
+                }
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::ConsumeAtAndPop { weight, new_state, next_pos } => {
@@ -8938,7 +9817,8 @@ where
                 // CrossCatLhs re-entry, cross-cat Return replace,
                 // GroupingClose resolve).
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
-                let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
+                let (pred_id, popped_edge_kind, popped_edge_id) =
+                    self.cursor_gss_pop_via_edge(cursor);
                 cursor.pos = next_pos;
                 // RC-A fix sibling (2026-06-17): same deterministic-mode
                 // mirror as `ConsumeAtAndReplace`. `ConsumeAndPop` (the
@@ -8951,15 +9831,18 @@ where
                 if self.deterministic {
                     self.pos = next_pos;
                 }
-                self.apply_pop_body_to_cursor(
+                if !self.apply_pop_body_to_cursor(
                     cursor,
                     pred_id,
                     popped_edge_kind.as_ref(),
+                    popped_edge_id,
                     popped_symbol,
                     &weight,
                     new_state,
                     tokens,
-                );
+                ) {
+                    return CursorOutcome::Drop;
+                }
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
@@ -9097,6 +9980,7 @@ where
                                     self.stats.fork_kind_lex_alt_family.saturating_add(1);
                             },
                             ForkActionKind::Consume { .. }
+                            | ForkActionKind::ConsumeAndPush { .. }
                             | ForkActionKind::ConsumeAndReplace { .. }
                             | ForkActionKind::ConsumeIdentAndReplace { .. }
                             | ForkActionKind::ConsumeAndPop { .. }
@@ -9486,6 +10370,18 @@ where
                     // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
+                        ForkActionKind::Advance => {
+                            let mut child = cursor.clone();
+                            child.weight = cursor.weight.times_ref(&branch.weight);
+                            child.inner_state = branch.new_state.clone();
+                            child.source_priority = child_source_priority;
+                            children.push(child);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        },
                         ForkActionKind::ConsumeAtAndReplace { next_pos } => {
                             // #307 ROOT-A D3 multi-target literal consume (FV:
                             // MixfixLiteralAccounting.fork_completeness): the
@@ -9525,9 +10421,24 @@ where
                                 };
                             let push_edge_kind =
                                 if matches!(action_kind, ForkActionKind::PushCrossCatLhs) {
-                                    Some(crate::gss::EdgeKind::CrossCatLhs {
-                                        source_src_idx: branch.symbol.category_src_idx,
-                                    })
+                                    let source_src_idx = branch.symbol.category_src_idx;
+                                    if branch.symbol.kind == SymbolKind::CategoryEntry {
+                                        Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx })
+                                    } else {
+                                        // Source-category grouping branches parse the source body
+                                        // directly, so they only need evidence for a later
+                                        // category-changing infix. A full CrossCatLhs edge would
+                                        // incorrectly inherit Pratt floors into the parenthesized
+                                        // body; Reentry is evidence-only.
+                                        let min_bp = branch.symbol.bp.unwrap_or_else(|| {
+                                            Self::state_binding_power_floor(&cursor.inner_state)
+                                                .unwrap_or(0)
+                                        });
+                                        Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                                            source_src_idx,
+                                            min_bp,
+                                        })
+                                    }
                                 } else {
                                     None
                                 };
@@ -9663,7 +10574,7 @@ where
                             // Stage 3.12.6 (2026-05-02): pop along the
                             // child's recorded edge (its own history),
                             // not an arbitrary in-edge of child.node.
-                            let (popped_to, _) = self.cursor_gss_pop_via_edge(&mut child);
+                            let (popped_to, _, _) = self.cursor_gss_pop_via_edge(&mut child);
                             if popped_to == crate::gss::GSS_NODE_NONE {
                                 // GSS underflow: synthesize CategoryEntry(0)
                                 // sentinel so the subsequent push has a
@@ -9877,6 +10788,69 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        },
+
+                        ForkActionKind::ConsumeAndPush { trigger_mode } => {
+                            let mut child = cursor.clone();
+                            child.pos = pos_after;
+                            child.weight = cursor.weight.times_ref(&branch.weight);
+                            child.inner_state = branch.new_state.clone();
+                            child.source_priority = child_source_priority;
+                            child.recovery_depth = child_recovery_depth;
+                            child.visited_recovery = child_visited_recovery.clone();
+                            child.visited_dispatch = child_visited_dispatch.clone();
+                            child.visited_proj_descriptors = child_visited_proj_descriptors.clone();
+                            child.pending_packing_weight =
+                                cursor.pending_packing_weight.times_ref(&branch.weight);
+                            child.p5_steps_own = 0;
+                            child.p5_steps_lineage = cursor.p5_steps_lineage;
+
+                            let mut symbol = branch.symbol;
+                            match trigger_mode {
+                                TriggerMode::CaptureForBuilder => {
+                                    if let Some(kind) = tokens.peek_kind(child.pos) {
+                                        let text = tokens.peek_text(child.pos).unwrap_or("");
+                                        let pos = child.pos;
+                                        self.emit_push_token(&mut child, kind, text, pos);
+                                    }
+                                },
+                                TriggerMode::ConsumeAsTriggerOnly => {
+                                    if let Some(kind) = tokens.peek_kind(child.pos) {
+                                        let text = tokens.peek_text(child.pos).unwrap_or("");
+                                        let pos = child.pos;
+                                        self.emit_push_trigger_terminal(
+                                            &mut child,
+                                            kind,
+                                            text,
+                                            pos,
+                                            symbol.category_src_idx,
+                                            symbol.rule_index_in_category,
+                                        );
+                                    }
+                                },
+                                TriggerMode::Discard => {},
+                            }
+                            self.emit_push_side_effects(&mut child, &mut symbol);
+                            let edge_kind = self.edge_kind_for_push_transition(
+                                child.node,
+                                &symbol,
+                                &branch.new_state,
+                            );
+                            let pos_now = child.pos;
+                            let _ = self.cursor_gss_push_with_kind(
+                                &mut child,
+                                symbol,
+                                pos_now,
+                                branch.weight.clone(),
+                                edge_kind,
+                            );
+                            child.pos = Self::child_next_pos(tokens, child.pos);
+                            children.push(child);
                             crate::stats_thunk_created!(
                                 self,
                                 crate::walker_stats::fork_kind_index::OTHER
@@ -10180,17 +11154,20 @@ where
                                 // First write in this child triggers Arc::make_mut.
                             };
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let (pred_id, popped_edge_kind) =
+                            let (pred_id, popped_edge_kind, popped_edge_id) =
                                 self.cursor_gss_pop_via_edge(&mut child);
-                            self.apply_pop_body_to_cursor(
+                            if !self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
                                 popped_edge_kind.as_ref(),
+                                popped_edge_id,
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            );
+                            ) {
+                                continue;
+                            }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
                             crate::stats_thunk_created!(
@@ -10280,18 +11257,21 @@ where
                                 // First write in this child triggers Arc::make_mut.
                             };
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let (pred_id, popped_edge_kind) =
+                            let (pred_id, popped_edge_kind, popped_edge_id) =
                                 self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
-                            self.apply_pop_body_to_cursor(
+                            if !self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
                                 popped_edge_kind.as_ref(),
+                                popped_edge_id,
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            );
+                            ) {
+                                continue;
+                            }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
                             crate::stats_thunk_created!(
@@ -10381,20 +11361,23 @@ where
                                 // First write in this child triggers Arc::make_mut.
                             };
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let (pred_id, popped_edge_kind) =
+                            let (pred_id, popped_edge_kind, popped_edge_id) =
                                 self.cursor_gss_pop_via_edge(&mut child);
                             // #307 ROOT-F G1 (2026-06-11): advance along the MATCHED close
                             // edge's target, never alt-0 (R2-1).
                             child.pos = next_pos;
-                            self.apply_pop_body_to_cursor(
+                            if !self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
                                 popped_edge_kind.as_ref(),
+                                popped_edge_id,
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            );
+                            ) {
+                                continue;
+                            }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
                             crate::stats_thunk_created!(
@@ -10422,17 +11405,20 @@ where
                                 Arc::make_mut(&mut child.recovery_deltas).push(effect);
                             }
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let (pred_id, popped_edge_kind) =
+                            let (pred_id, popped_edge_kind, popped_edge_id) =
                                 self.cursor_gss_pop_via_edge(&mut child);
-                            self.apply_pop_body_to_cursor(
+                            if !self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
                                 popped_edge_kind.as_ref(),
+                                popped_edge_id,
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            );
+                            ) {
+                                continue;
+                            }
                             children.push(child);
                             crate::stats_thunk_created!(
                                 self,
@@ -11320,18 +12306,21 @@ where
                             self.emit_extend_binder_scope(&mut child, text);
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let (pred_id, popped_edge_kind) =
+                            let (pred_id, popped_edge_kind, popped_edge_id) =
                                 self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
-                            self.apply_pop_body_to_cursor(
+                            if !self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
                                 popped_edge_kind.as_ref(),
+                                popped_edge_id,
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            );
+                            ) {
+                                continue;
+                            }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
                             crate::stats_thunk_created!(
@@ -11491,18 +12480,21 @@ where
                             }
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let (pred_id, popped_edge_kind) =
+                            let (pred_id, popped_edge_kind, popped_edge_id) =
                                 self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
-                            self.apply_pop_body_to_cursor(
+                            if !self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
                                 popped_edge_kind.as_ref(),
+                                popped_edge_id,
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            );
+                            ) {
+                                continue;
+                            }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
                             crate::stats_thunk_created!(
@@ -11731,7 +12723,7 @@ where
                 // Stage 3.12.6 (2026-05-02): use edge-id-guided pop so
                 // the cursor's recorded predecessor is the one followed,
                 // not an arbitrary in-edge of the popped node.
-                let (new_node_after_pop, _) = self.cursor_gss_pop_via_edge(cursor);
+                let (new_node_after_pop, _, _) = self.cursor_gss_pop_via_edge(cursor);
                 if new_node_after_pop == crate::gss::GSS_NODE_NONE {
                     // GSS underflow — synthesize a CategoryEntry sentinel at
                     // pos for the cursor. Update cursor.node directly so the
@@ -11763,10 +12755,10 @@ where
                 //   3. Pop the (now-on-top) outer RuleAt marker.
                 //   4. Push `replace_symbol` (advanced outer RuleAt).
                 // Stage 3.12.6 (2026-05-02): edge-id-guided pops.
-                let (after_marker_pop, _) = self.cursor_gss_pop_via_edge(cursor);
+                let (after_marker_pop, _, _) = self.cursor_gss_pop_via_edge(cursor);
                 self.emit_finalize_optional_scope_present(cursor);
                 let after_outer_pop = if after_marker_pop != crate::gss::GSS_NODE_NONE {
-                    let (after_outer_pop, _) = self.cursor_gss_pop_via_edge(cursor);
+                    let (after_outer_pop, _, _) = self.cursor_gss_pop_via_edge(cursor);
                     after_outer_pop
                 } else {
                     crate::gss::GSS_NODE_NONE
@@ -11851,21 +12843,14 @@ where
     /// dispatch-cache entries (their worker died without resolving, so
     /// the end-of-step drain never fired for them — the cross-cat cursor
     /// loss documented in `drive-suite-green-ledger.md` "⚑ Cross-cat
-    /// cluster ROOT CAUSE"). Each orphan is re-materialized via
-    /// `cohort_lazy::materialize_branch_cursor` (reconstructing the
-    /// cursor in its pre-Fork dispatch state at the dispatch position)
-    /// and pushed onto `branch_cursors` as a fresh `Frame::Concrete`.
-    /// `drain_orphaned_inflight_members` REMOVED the stale `InFlight`
-    /// entry, so when the walker re-drives the injected cursor it
-    /// re-emits its Fork and re-registers as `WorkerInserted` — becoming
-    /// the worker for its own sub-parse and reaching EOI on its own
-    /// return context (which the dead worker's context could not).
+    /// cluster ROOT CAUSE"). Orphans are drained as keyed member groups and
+    /// re-injected as lazy cohort frames when possible, preserving the
+    /// pre-Fork dispatch state without eagerly cloning every cursor. Removing
+    /// the stale `InFlight` entry means re-driven dispatches register fresh
+    /// (`WorkerInserted`) and can become workers for their own sub-parse.
     ///
-    /// Returns whether cursors were injected, no work remained, or the
-    /// revival frontier exceeded the eager-revival resource budget. The
-    /// caller (`run_to_end_of_input`) re-drives only on `Injected`; a
-    /// `BudgetExceeded` result is resolved through the same structured
-    /// `AmbiguityBudget` path as cursor-frontier overflow.
+    /// Returns whether frames were injected or no work remained. The caller
+    /// (`run_to_end_of_input`) re-drives only on `Injected`.
     ///
     /// **Bounded.** Guarded by `revival_rounds < MAX_REVIVAL_ROUNDS`.
     /// Each call that injects ≥1 cursor bumps `revival_rounds`. A
@@ -11887,19 +12872,46 @@ where
     /// `Ambiguous` alternate; an already-covered one merges (no
     /// double-count). The `-3!` ladder / `wpda_parity_*` /
     /// `h3_chain_correctness` invariants are preserved.
+    fn cursor_root_can_satisfy_requested_category(
+        &self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> bool {
+        if !self.is_logical_eoi(cursor.pos, tokens) {
+            return false;
+        }
+        if !self.is_accepting_config(cursor, tokens) {
+            return false;
+        }
+        let Some(target_cat) = self.requested_root_cat else {
+            return true;
+        };
+        let Some(root_sid) = self.cursor_accepting_terminal_root(cursor).flatten() else {
+            return false;
+        };
+        let Some(root_cat) = self.sppf_symbol_category(root_sid) else {
+            return false;
+        };
+        self.category_can_satisfy_expected(root_cat, target_cat)
+    }
+
     /// True iff at least one LIVE concrete frontier cursor is an accepting
-    /// configuration at EOI (`is_accepting_config`). Used to suppress the
+    /// configuration at EOI (`is_accepting_config`) whose root can actually
+    /// satisfy the requested parse category. Used to suppress the
     /// InFlight-orphan re-injection recovery (below): that recovery exists to
-    /// surface an accept when NONE is live; when one is already present, the
-    /// stranded InFlight members cannot be the sole source of an accept, so
-    /// re-driving them is pure (and — under EP-P1 On — actively harmful)
-    /// churn. Cohort frames are skipped: a `Frame::Cohort` is a lazy
-    /// compression of parked members whose worker has not resolved, so it is
-    /// never itself an EOI accept (consistent with `eoi_resolution_snapshot`,
-    /// which only reads accepts from concrete cursors).
+    /// surface an accept when NONE is live; when one compatible accept is
+    /// already present, the stranded InFlight members cannot be the sole source
+    /// of an accept, so re-driving them is pure (and — under EP-P1 On —
+    /// actively harmful) churn. Cohort frames are skipped: a `Frame::Cohort`
+    /// is a lazy compression of parked members whose worker has not resolved,
+    /// so it is never itself an EOI accept (consistent with
+    /// `eoi_resolution_snapshot`, which only reads accepts from concrete
+    /// cursors).
     fn live_frontier_has_accepting_config(&self, tokens: &dyn WpdaTokenSource) -> bool {
         self.branch_cursors.iter().any(|frame| match frame {
-            crate::cohort_lazy::Frame::Concrete(c) => self.is_accepting_config(c, tokens),
+            crate::cohort_lazy::Frame::Concrete(c) => {
+                self.cursor_root_can_satisfy_requested_category(c, tokens)
+            },
             crate::cohort_lazy::Frame::Cohort(_) => false,
         })
     }
@@ -11952,6 +12964,7 @@ where
                         self.consume_crosscat_lhs_body(
                             &mut revived,
                             key.source_src_idx,
+                            key.inner_cur_bp,
                             symbol_id,
                             hi_pos,
                             cat,
@@ -11969,24 +12982,16 @@ where
                 return OrphanRevivalOutcome::Injected(injected_consumed);
             }
         }
-        // Budget-divergence fix (2026-06-12): the InFlight-orphan re-injection
+        // Accept-present fix (2026-06-12): the InFlight-orphan re-injection
         // below is a RECOVERY heuristic — it re-drives members stranded behind
         // never-resolving workers on the hypothesis that one of them carries
         // THE accepting parse the live frontier lacks. When the live frontier
         // ALREADY holds an accepting configuration, that hypothesis is false:
         // an accept is present, so the stranded members cannot be its sole
-        // source. Re-driving them is then pure churn — and under EP-P1 On it is
-        // actively harmful: each round re-parks the re-injected cursors into
-        // InFlight entries faster than they drain (the EP-P1 park-at-every-
-        // collision rate), AMPLIFYING `revivable_inflight_member_count()` round
-        // over round until it crosses ORPHAN_REVIVAL_FRONTIER_BUDGET and aborts
-        // the parse whose accept was already committable. (Empirically on
-        // `int(..) ^ int(c) ? .. : int(..)`: the SAME accepting SPPF root is
-        // live at every fixpoint round in BOTH modes; Off's slower amplification
-        // stays < budget through the round cap and commits it, On's crosses the
-        // budget on round 2 and errors.) Suppressing revival when an accept is
-        // live makes the outcome the accepting commit in BOTH modes — the Off
-        // result, reached without the spurious rounds. Genuine-recovery inputs
+        // source. Re-driving them is pure churn and can amplify parked
+        // InFlight entries round over round. Suppressing revival when an accept
+        // is live makes the outcome the accepting commit without spurious
+        // recovery work. Genuine-recovery inputs
         // (no live accept; the accept is ONLY inside a parked member) are
         // unaffected: this guard does not fire for them. NOT a prune (Invariant
         // 1): the full live accepting set is committed by the unchanged
@@ -12059,48 +13064,84 @@ where
         if orphan_count == 0 {
             return OrphanRevivalOutcome::Idle;
         }
-        // Resource bound for eager orphan revival. Above this size, re-driving
-        // every parked member may turn an otherwise linear deep-mixfix parse
-        // into quadratic work. The bound is a search budget only: overflow is
-        // unresolved evidence whether or not another accepting cursor is
-        // already available.
-        const ORPHAN_REVIVAL_FRONTIER_BUDGET: usize = 256;
-        if orphan_count > ORPHAN_REVIVAL_FRONTIER_BUDGET {
-            return OrphanRevivalOutcome::BudgetExceeded {
-                budget: ORPHAN_REVIVAL_FRONTIER_BUDGET,
-                actual: orphan_count,
-                position: self.pos,
-            };
-        }
-        let orphans = self.dispatch_cohort_cache.drain_orphaned_inflight_members();
-        if orphans.is_empty() {
+        let orphan_groups = self
+            .dispatch_cohort_cache
+            .drain_orphaned_inflight_member_groups();
+        if orphan_groups.is_empty() {
             return OrphanRevivalOutcome::Idle;
         }
-        let injected = orphans.len();
+        let injected: usize = orphan_groups
+            .iter()
+            .map(crate::dispatch_cohort::OrphanedInflightMembers::member_count)
+            .sum();
         #[cfg(feature = "walker-stats")]
         {
             self.stats.dbg_ccl_m1_injected += injected as u64;
         }
-        // Preallocate for the cursors we are about to push.
-        self.branch_cursors.reserve(injected);
-        for member in orphans {
-            // Reconstruct the orphan's pre-Fork cursor. `inner_state` =
-            // the dispatch state that emits the Fork; `pos` = the
-            // dispatch position. Re-driving it re-emits the Fork → the
-            // CrossCatDelegate branch re-registers at the (now-removed)
-            // key as a fresh WorkerInserted worker.
-            let cursor = member.return_frame;
-            self.branch_cursors
-                .push(crate::cohort_lazy::Frame::Concrete(cursor));
+        self.branch_cursors.reserve(orphan_groups.len());
+        for group in orphan_groups {
+            self.inject_orphaned_inflight_group(group);
         }
         self.revival_rounds += 1;
         // Re-driving requires the walker to be in fanout mode so
         // `step_fanout` processes the injected cursors. At an EOI parked
         // fixpoint the walker is already in `AmbiguityFanout` (the only
         // state that reaches the `!progress_made` hook); the injected
-        // Frame::Concrete cursors join `branch_cursors` and are stepped
-        // on the next `step_fanout` iteration.
+        // frames join `branch_cursors` and are stepped on the next
+        // `step_fanout` iteration.
         OrphanRevivalOutcome::Injected(injected)
+    }
+
+    fn push_orphan_cohort_frame(
+        &mut self,
+        shell: std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
+        members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+    ) {
+        if members.is_empty() {
+            return;
+        }
+        let mut frame = crate::cohort_lazy::CohortFrame::new(shell);
+        frame.members = members;
+        self.branch_cursors
+            .push(crate::cohort_lazy::Frame::Cohort(Box::new(frame)));
+    }
+
+    fn inject_orphaned_inflight_group(
+        &mut self,
+        group: crate::dispatch_cohort::OrphanedInflightMembers<W>,
+    ) {
+        let crate::dispatch_cohort::OrphanedInflightMembers {
+            key: _key,
+            cohort_shell,
+            pending_members,
+            full_pending_members,
+        } = group;
+        if !pending_members.is_empty() {
+            let shell = cohort_shell
+                .expect("cohort invariant: compact orphan members require a cohort shell");
+            let mut chunk = Vec::with_capacity(
+                pending_members
+                    .len()
+                    .min(crate::cohort_lazy::MAX_COHORT_FRAME_MEMBERS),
+            );
+            for member in pending_members {
+                chunk.push(member);
+                if chunk.len() == crate::cohort_lazy::MAX_COHORT_FRAME_MEMBERS {
+                    self.push_orphan_cohort_frame(
+                        std::sync::Arc::clone(&shell),
+                        std::mem::take(&mut chunk),
+                    );
+                }
+            }
+            self.push_orphan_cohort_frame(shell, chunk);
+        }
+        if !full_pending_members.is_empty() {
+            self.branch_cursors.reserve(full_pending_members.len());
+            for member in full_pending_members {
+                self.branch_cursors
+                    .push(crate::cohort_lazy::Frame::Concrete(member.return_frame));
+            }
+        }
     }
 
     /// After `apply_action_to_cursor` updates `cursor.inner_state`, classify
@@ -12233,6 +13274,7 @@ where
                         c.node,
                         c.pos,
                         edge_top,
+                        c.incoming_edge_stack_id,
                         c.collection_stack_depth,
                     );
                     let shell = crate::tomita_frontier::TomitaShell::from_cursor(c);
@@ -12261,6 +13303,7 @@ where
                             cursor.node,
                             cursor.pos,
                             edge_top,
+                            cursor.incoming_edge_stack_id,
                             cursor.collection_stack_depth,
                         );
                         let shell = crate::tomita_frontier::TomitaShell::from_cursor(&cursor);
@@ -12351,6 +13394,18 @@ where
                 node.shell.pos,
                 tokens,
             );
+            if Self::action_contains_category_changing_infix(&action) {
+                for arc in &node.arcs {
+                    let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                        &node.shell,
+                        arc,
+                    );
+                    let guarded =
+                        self.guard_category_changing_infix(&cursor, action.clone(), tokens);
+                    drained.push((cursor, guarded));
+                }
+                continue;
+            }
             if let WpdaStepAction::Advance(WpdaState::Unwinding) = &action {
                 if let WpdaState::InfixLoop { cur_bp } = &node.shell.inner_state {
                     if let Some(token_text) = tokens.peek_text(node.shell.pos) {
@@ -12362,9 +13417,9 @@ where
                                     &node.shell,
                                     &arc,
                                 );
-                            if let Some(reentry) = self
-                                .transparent_projection_reentry_for_operator(&cursor, token_text)
-                            {
+                            if let Some(reentry) = self.transparent_projection_reentry_for_operator(
+                                &cursor, token_text, cur_bp, tokens,
+                            ) {
                                 self.reenter_transparent_projection_source(
                                     &mut cursor,
                                     reentry,
@@ -13071,6 +14126,7 @@ where
                         self.consume_crosscat_lhs_body(
                             &mut revived,
                             key.source_src_idx,
+                            key.inner_cur_bp,
                             symbol_id,
                             hi_pos,
                             cat,
@@ -13948,6 +15004,7 @@ where
                 // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                 // sppf_stack.last() superseded by arena.top(id).
                 sppf_top: self.sppf_stack_arena.top(cursor.sppf_stack_id),
+                sppf_stack: cursor.sppf_stack_id,
                 // Phase F.13 Stage 2.0b (2026-05-22): lex-Fork
                 // provenance via LexProvenance trait. LexicographicWeight's
                 // `times` left-projects these fields, so the first
@@ -15679,6 +16736,145 @@ where
         None
     }
 
+    fn coerce_action_child_for_expected_category(
+        &mut self,
+        sid: crate::sppf::SppfId,
+        expected_cat: u16,
+        cat_src_idx: u16,
+        local_rule_idx: u16,
+        trace_this_action: bool,
+    ) -> Option<crate::sppf::SppfId> {
+        if expected_cat == crate::wpda_runtime::ANY_CAT {
+            return Some(sid);
+        }
+        let produced_cat = match self.sppf.node(sid) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                *non_terminal_tag as u16
+            },
+            _ => {
+                if trace_this_action {
+                    eprintln!(
+                        "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
+                        cat_src_idx,
+                        local_rule_idx,
+                        sid,
+                        expected_cat,
+                        self.sppf_trace_summary(sid),
+                    );
+                }
+                return None;
+            },
+        };
+        if produced_cat == expected_cat {
+            return Some(sid);
+        }
+        let coercion_candidates: Vec<(u16, u16)> = self
+            .engine
+            .single_hop_coercion(produced_cat, expected_cat)
+            .to_vec();
+        let coercion = coercion_candidates
+            .into_iter()
+            .filter(|(coercion_cat, coercion_rule)| {
+                *coercion_cat == expected_cat
+                    && self.action_accepts_single_body_category(
+                        *coercion_cat,
+                        *coercion_rule,
+                        produced_cat,
+                    )
+            })
+            .min_by_key(|(_, coercion_rule)| *coercion_rule);
+        let Some((coercion_cat, coercion_rule)) = coercion else {
+            if trace_this_action {
+                eprintln!(
+                    "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    sid,
+                    expected_cat,
+                    self.sppf_trace_summary(sid),
+                );
+            }
+            return None;
+        };
+        let wrapped = self.intern_coercion_over_body(sid, coercion_cat, coercion_rule);
+        if trace_this_action {
+            match wrapped {
+                Some(wrapped_sid) => eprintln!(
+                    "[wpds-action] transient child coercion cat={} rule={} child={} produced={} expected={} via=({}, {}) wrapped={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    self.sppf_trace_summary(sid),
+                    produced_cat,
+                    expected_cat,
+                    coercion_cat,
+                    coercion_rule,
+                    self.sppf_trace_summary(wrapped_sid),
+                ),
+                None => eprintln!(
+                    "[wpds-action] transient reject cat={} rule={} reason=coercion-materialize sid={} expected={} via=({}, {})",
+                    cat_src_idx,
+                    local_rule_idx,
+                    sid,
+                    expected_cat,
+                    coercion_cat,
+                    coercion_rule,
+                ),
+            }
+        }
+        wrapped
+    }
+
+    fn coerce_children_for_expected_categories(
+        &mut self,
+        children: &[crate::sppf::SppfId],
+        expected_input_cats: &[u16],
+        cat_src_idx: u16,
+        local_rule_idx: u16,
+        trace_this_action: bool,
+    ) -> Option<Vec<crate::sppf::SppfId>> {
+        let mut rewritten = Vec::with_capacity(children.len());
+        let mut expected_idx = 0usize;
+        for &sid in children {
+            if matches!(self.sppf.node(sid), Some(crate::sppf::SppfNode::TriggerTerminal { .. })) {
+                rewritten.push(sid);
+                continue;
+            }
+            let Some(&expected_cat) = expected_input_cats.get(expected_idx) else {
+                if trace_this_action {
+                    eprintln!(
+                        "[wpds-action] transient reject cat={} rule={} reason=arity action_children>{}",
+                        cat_src_idx,
+                        local_rule_idx,
+                        expected_input_cats.len(),
+                    );
+                }
+                return None;
+            };
+            let rewritten_sid = self.coerce_action_child_for_expected_category(
+                sid,
+                expected_cat,
+                cat_src_idx,
+                local_rule_idx,
+                trace_this_action,
+            )?;
+            rewritten.push(rewritten_sid);
+            expected_idx += 1;
+        }
+        if expected_idx != expected_input_cats.len() {
+            if trace_this_action {
+                eprintln!(
+                    "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    expected_idx,
+                    expected_input_cats.len(),
+                );
+            }
+            return None;
+        }
+        Some(rewritten)
+    }
+
     fn snapshot_collection_ids_in_child(
         &mut self,
         sid: crate::sppf::SppfId,
@@ -15742,22 +16938,75 @@ where
     ///   on the transient SB). Used to update
     ///   `cursor.collection_stack_depth` post-fire.
     fn fire_action_via_transient(
-        &self,
+        &mut self,
         cursor: &BranchCursor<W>,
         symbol: StackSymbolV2,
         children: &[crate::sppf::SppfId],
-    ) -> Option<(Arc<dyn std::any::Any + Send + Sync>, Option<u16>, usize)> {
+    ) -> Option<(
+        Arc<dyn std::any::Any + Send + Sync>,
+        Option<u16>,
+        usize,
+        Vec<crate::sppf::SppfId>,
+    )> {
+        self.fire_action_via_transient_inner(cursor, symbol, children, true)
+    }
+
+    fn fire_action_via_transient_without_child_coercions(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        symbol: StackSymbolV2,
+        children: &[crate::sppf::SppfId],
+    ) -> Option<(
+        Arc<dyn std::any::Any + Send + Sync>,
+        Option<u16>,
+        usize,
+        Vec<crate::sppf::SppfId>,
+    )> {
+        self.fire_action_via_transient_inner(cursor, symbol, children, false)
+    }
+
+    fn fire_action_via_transient_inner(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        symbol: StackSymbolV2,
+        children: &[crate::sppf::SppfId],
+        allow_child_coercions: bool,
+    ) -> Option<(
+        Arc<dyn std::any::Any + Send + Sync>,
+        Option<u16>,
+        usize,
+        Vec<crate::sppf::SppfId>,
+    )> {
         let cat_src_idx = symbol.category_src_idx;
         let local_rule_idx = symbol.rule_index_in_category;
         let entry = self.engine.action_for(cat_src_idx, local_rule_idx)?;
         let arity = entry.arity as usize;
         let action_fn = entry.action_fn;
+        let expected_input_cats = entry.expected_input_cats;
         let trace_this_action = trace_actions_enabled();
+        let fire_children = if allow_child_coercions {
+            self.coerce_children_for_expected_categories(
+                children,
+                expected_input_cats,
+                cat_src_idx,
+                local_rule_idx,
+                trace_this_action,
+            )?
+        } else {
+            children.to_vec()
+        };
 
         // Filter TriggerTerminal children — same filter as
         // `realize_packing_call` (line 3739-3746). TriggerTerminals
         // contribute NO ActionArg to action_fn.
         let action_children: Vec<crate::sppf::SppfId> = children
+            .iter()
+            .copied()
+            .filter(|&c| {
+                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
+            })
+            .collect();
+        let fire_action_children: Vec<crate::sppf::SppfId> = fire_children
             .iter()
             .copied()
             .filter(|&c| {
@@ -15773,17 +17022,27 @@ where
                 .iter()
                 .map(|&sid| self.sppf_trace_summary(sid))
                 .collect();
+            let fire_child_summaries: Vec<String> = fire_children
+                .iter()
+                .map(|&sid| self.sppf_trace_summary(sid))
+                .collect();
+            let fire_action_child_summaries: Vec<String> = fire_action_children
+                .iter()
+                .map(|&sid| self.sppf_trace_summary(sid))
+                .collect();
             eprintln!(
-                "[wpds-action] transient start cat={} rule={} pos={} arity={} children={:?} action_children={:?}",
+                "[wpds-action] transient start cat={} rule={} pos={} arity={} children={:?} action_children={:?} fire_children={:?} fire_action_children={:?}",
                 cat_src_idx,
                 local_rule_idx,
                 cursor.pos,
                 arity,
                 child_summaries,
                 action_child_summaries,
+                fire_child_summaries,
+                fire_action_child_summaries,
             );
         }
-        if action_children.len() != arity {
+        if fire_action_children.len() != arity {
             // Arity mismatch — action would fail; mirror persistent
             // path's behavior by returning None.
             if trace_this_action {
@@ -15791,13 +17050,13 @@ where
                     "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
                     cat_src_idx,
                     local_rule_idx,
-                    action_children.len(),
+                    fire_action_children.len(),
                     arity,
                 );
             }
             return None;
         }
-        for (&sid, &expected_cat) in action_children.iter().zip(entry.expected_input_cats.iter()) {
+        for (&sid, &expected_cat) in fire_action_children.iter().zip(expected_input_cats.iter()) {
             if expected_cat == crate::wpda_runtime::ANY_CAT {
                 continue;
             }
@@ -15821,7 +17080,7 @@ where
         }
 
         // Reconstruct ActionArgs.
-        let args: Option<Vec<ActionArg>> = action_children
+        let args: Option<Vec<ActionArg>> = fire_action_children
             .iter()
             .map(|&sid| self.reconstruct_action_arg(cursor, sid))
             .collect();
@@ -15833,7 +17092,7 @@ where
                         "[wpds-action] transient reject cat={} rule={} reason=reconstruct action_children={:?}",
                         cat_src_idx,
                         local_rule_idx,
-                        action_children
+                        fire_action_children
                     );
                 }
                 return None;
@@ -15975,7 +17234,7 @@ where
                 cat_src_idx, local_rule_idx, output_cat, drains_count
             );
         }
-        Some((result_arc, output_cat, drains_count))
+        Some((result_arc, output_cat, drains_count, fire_children))
     }
 
     #[inline(always)]
@@ -16158,7 +17417,10 @@ where
             // recursive over Packing children. This does not change `lo_pos`
             // because CollectionId and synthetic optional packings are
             // span-transparent for the enclosing symbol.
-            let mut children = children;
+            let mut children = transient_result
+                .as_ref()
+                .map(|(_, _, _, fire_children)| fire_children.clone())
+                .unwrap_or(children);
             for child in &mut children {
                 *child = self.snapshot_collection_ids_in_child(*child, cursor);
             }
@@ -16193,7 +17455,7 @@ where
                     // the production.
                     cursor.last_action_output_cat = None;
                 },
-                (_, Some((result_arc, output_cat, drains_count))) => {
+                (_, Some((result_arc, output_cat, drains_count, _))) => {
                     // Successful fire. Update mirror + collection depth
                     // from transient's post-fire state.
                     cursor.collection_stack_depth = cursor
@@ -16759,6 +18021,7 @@ where
         &mut self,
         cursor: &mut BranchCursor<W>,
         source_src_idx: u16,
+        reentry_min_bp: u8,
         symbol_id: crate::sppf::SppfId,
         hi_pos: usize,
         worker_last_action_output_cat: Option<u16>,
@@ -16781,7 +18044,7 @@ where
         //     pre-push so cursor.node IS pred_id).
         let pred = cursor.node;
         let effective = match self.gss.node(pred).map(|n| n.symbol.kind) {
-            Some(SymbolKind::CategoryEntry) => WpdaState::InfixLoop { cur_bp: 0 },
+            Some(SymbolKind::CategoryEntry) => WpdaState::InfixLoop { cur_bp: reentry_min_bp },
             Some(SymbolKind::GroupingMarker) => WpdaState::Unwinding,
             Some(_) => WpdaState::Unwinding,
             None if pred == crate::gss::GSS_NODE_NONE => WpdaState::InfixLoop { cur_bp: 0 },
@@ -16792,16 +18055,17 @@ where
         if reentry_fires {
             // The reentry (mirrors the pop path verbatim):
             // category_entry(source) at the body end, weight one,
-            // identity-strict CrossCatLhsReentry edge, InfixLoop{0}.
+            // identity-strict CrossCatLhsReentry edge, preserving the
+            // delegated Pratt floor.
             let source_entry = StackSymbolV2::category_entry(source_src_idx);
             let _ = self.cursor_gss_push_with_kind(
                 cursor,
                 source_entry,
                 cursor.pos,
                 W::one_ref(),
-                crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx },
+                crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp: reentry_min_bp },
             );
-            self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: 0 });
+            self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: reentry_min_bp });
         } else {
             self.set_cursor_inner_state(cursor, effective);
         }
@@ -16905,8 +18169,12 @@ where
         sym: StackSymbolV2,
         pos: usize,
         w: W,
-        kind: crate::gss::EdgeKind,
+        mut kind: crate::gss::EdgeKind,
     ) -> crate::gss::GssNodeId {
+        if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = kind {
+            let min_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
+            kind = crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, min_bp };
+        }
         // Synthesize a fresh root if cursor is at the sentinel —
         // duplicates cursor_gss_push's logic for parity.
         let predecessor = if (cursor.node == 0 && self.gss.node(0).is_none())
@@ -16940,7 +18208,10 @@ where
         // dispatch-cohort cache (Round-5 shadow-inertness contract).
         #[cfg(feature = "walker-stats")]
         if self.ep_p1_mode == EpP1Mode::Shadow {
-            if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &kind {
+            let fallback_min_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
+            if let Some((source_src_idx, _)) =
+                Self::crosscat_lhs_scope_from_kind(&kind, fallback_min_bp)
+            {
                 let host_cat = self
                     .gss
                     .node(predecessor)
@@ -16949,7 +18220,7 @@ where
                 let seen = self
                     .stats
                     .ep_p1_shadow_seen
-                    .entry((pos, *source_src_idx, host_cat))
+                    .entry((pos, source_src_idx, host_cat))
                     .or_insert(0u32);
                 *seen += 1;
                 if *seen > 1 {
@@ -16973,14 +18244,17 @@ where
         // (the dead-worker scan), and the once-per-edge lineage open
         // (coalesced same-context pushes count once; the decrement is
         // per-edge too — exact balance).
-        let ep_p1_ccl_push: Option<(u16, u16)> = if self.ep_p1_mode == EpP1Mode::On {
-            if let crate::gss::EdgeKind::CrossCatLhs { source_src_idx } = &kind {
+        let ep_p1_ccl_push: Option<(u16, u16, u8)> = if self.ep_p1_mode == EpP1Mode::On {
+            let fallback_min_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
+            if let Some((source_src_idx, min_bp)) =
+                Self::crosscat_lhs_scope_from_kind(&kind, fallback_min_bp)
+            {
                 let host = self
                     .gss
                     .node(predecessor)
                     .map(|n| n.symbol.category_src_idx)
                     .unwrap_or(u16::MAX);
-                Some((*source_src_idx, host))
+                Some((source_src_idx, host, min_bp))
             } else {
                 None
             }
@@ -16988,12 +18262,21 @@ where
             None
         };
         let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
-        if let Some((ccl_source, ccl_host)) = ep_p1_ccl_push {
+        let fallback_min_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
+        if let Some((_, min_bp)) = self
+            .gss
+            .edge_kind(edge_id)
+            .and_then(|edge_kind| Self::crosscat_lhs_scope_from_kind(&edge_kind, fallback_min_bp))
+        {
+            self.crosscat_lhs_min_bp.entry(edge_id).or_insert(min_bp);
+        }
+        if let Some((ccl_source, ccl_host, ccl_min_bp)) = ep_p1_ccl_push {
             self.crosscat_lhs_wrap.insert(edge_id, (ccl_host, u16::MAX));
+            self.crosscat_lhs_min_bp.insert(edge_id, ccl_min_bp);
             let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                 pos,
                 ccl_source,
-                0,
+                ccl_min_bp,
                 ccl_host,
                 u16::MAX,
             );
@@ -17124,12 +18407,53 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Option<crate::sppf::SppfId> {
         let kind = tokens.peek_kind(pos)?;
-        let text = tokens.peek_text(pos);
-        let term =
-            self.sppf
-                .intern_terminal(kind, crate::sppf::PosOrSynth::Real(pos as u32), text, false);
+        let text = tokens.peek_text(pos)?;
+        let (value, output_cat) = {
+            let entry = self
+                .engine
+                .action_for(spec.atom_cat_src_idx, spec.atom_lit_rule_idx)?;
+            let arity = entry.arity as usize;
+            if arity != 1 || entry.expected_input_cats.len() != 1 {
+                return None;
+            }
+            if entry.output_cat != spec.atom_cat_src_idx {
+                return None;
+            }
+            let action_fn = entry.action_fn;
+            let mut sb = SemanticBuilder::new();
+            sb.push_token(kind.clone(), text.to_string(), pos);
+            let pre_len = sb.len();
+            let popped = sb.pop_args(arity);
+            action_fn(&mut sb, popped);
+            let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
+            if sb.len() != expected_len {
+                return None;
+            }
+            let output_cat = sb
+                .top_term_type_name()
+                .and_then(|tn| self.engine.cat_of_type_name(tn));
+            if matches!(output_cat, Some(cat) if cat != spec.atom_cat_src_idx) {
+                return None;
+            }
+            let value = sb.take_dyn_result()?;
+            (value, output_cat)
+        };
+        let term = self.sppf.intern_terminal(
+            kind,
+            crate::sppf::PosOrSynth::Real(pos as u32),
+            Some(text),
+            false,
+        );
         let atom_rule_idx =
             ((spec.atom_cat_src_idx as u32) << 16) | (spec.atom_lit_rule_idx as u32);
+        if !self.packing_satisfies_min_terminal_span(
+            atom_rule_idx,
+            &[term],
+            pos as u32,
+            (pos + 1) as u32,
+        ) {
+            return None;
+        }
         let pack = self
             .sppf
             .intern_packing(atom_rule_idx, vec![term], W::one_ref());
@@ -17137,7 +18461,26 @@ where
             self.sppf
                 .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, (pos + 1) as u32);
         self.sppf.link_packing_to_symbol(sym, pack);
+        self.sppf_symbol_terms
+            .insert(sym, SppfSymbolTerm { value, output_cat });
         Some(sym)
+    }
+
+    fn chain_head_symbol(
+        &self,
+        cursor: &BranchCursor<W>,
+        spec: &crate::binding_power::IterAbsorbSpec,
+    ) -> Option<(crate::sppf::SppfId, u32, u32)> {
+        let sid = self.sppf_stack_arena.top(cursor.sppf_stack_id)?;
+        match self.sppf.node(sid)? {
+            crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }
+                if *non_terminal_tag == spec.atom_cat_src_idx as u32
+                    && *hi_pos as usize == cursor.pos =>
+            {
+                Some((sid, *lo_pos, *hi_pos))
+            },
+            _ => None,
+        }
     }
 
     /// C1-R (WALK-S1): direct O(N) synthesizer for a WHOLE binary chain,
@@ -17182,24 +18525,25 @@ where
         weight: W,
     ) -> Option<(crate::sppf::SppfId, W, usize)> {
         // Pre-fork geometry: cursor.pos is ON the leading operator; the
-        // head atom is at cursor.pos - 1 (already parsed; the absorb arm
-        // pops its Symbol before pushing this root). The chain spans
-        // [head_pos, chain_end).
-        if cursor.pos == 0 {
-            return None;
-        }
-        let head_pos = cursor.pos - 1;
-        let atom_kind = tokens.peek_kind(head_pos)?;
+        // already parsed head operand is the SPPF stack top. Reuse that
+        // symbol instead of re-lexing `cursor.pos - 1`, because the head may
+        // be a compound expression whose final token is not its semantic atom
+        // (for example, a postfix expression).
+        let (head_symbol, head_lo, _) = self.chain_head_symbol(cursor, spec)?;
+        let rhs_atom_kind = tokens.peek_kind(cursor.pos + 1)?;
         let op_kind = tokens.peek_kind(cursor.pos)?;
-        if atom_kind == op_kind {
+        if rhs_atom_kind == op_kind {
             return None;
         }
 
         // Forward peek: recover atom positions a[0..m] + chain_end.
-        // Pattern: atom (op atom)* from head_pos. We know head_pos is an
-        // atom and cursor.pos is the op; collect every atom position.
-        let mut atom_positions: Vec<usize> = Vec::new();
-        atom_positions.push(head_pos);
+        // Pattern: head (op atom)*. The head is the existing SPPF Symbol;
+        // every tail atom is synthesized only after its literal action is
+        // proven to push a term of the expected category.
+        let mut atom_symbols: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut atom_los: Vec<u32> = Vec::new();
+        atom_symbols.push(head_symbol);
+        atom_los.push(head_lo);
         let mut probe = cursor.pos;
         loop {
             match tokens.peek_kind(probe).as_ref() {
@@ -17207,14 +18551,17 @@ where
                 _ => break,
             }
             match tokens.peek_kind(probe + 1).as_ref() {
-                Some(k) if *k == atom_kind => {},
+                Some(k) if *k == rhs_atom_kind => {},
                 _ => break,
             }
-            atom_positions.push(probe + 1);
+            let atom = self.synth_atom_symbol(probe + 1, spec, tokens)?;
+            let lo = self.sppf.span_lo(atom)?;
+            atom_symbols.push(atom);
+            atom_los.push(lo);
             probe += 2;
         }
         let chain_end = probe;
-        let m = atom_positions.len();
+        let m = atom_symbols.len();
         if m < 2 {
             return None;
         }
@@ -17225,9 +18572,9 @@ where
         let acc: crate::sppf::SppfId;
         if spec.assoc_right {
             // Right-nested: innermost = rightmost atom.
-            let mut cur = self.synth_atom_symbol(atom_positions[m - 1], spec, tokens)?;
+            let mut cur = atom_symbols[m - 1];
             for i in (0..=m - 2).rev() {
-                let lhs = self.synth_atom_symbol(atom_positions[i], spec, tokens)?;
+                let lhs = atom_symbols[i];
                 let acc_hi = self
                     .sppf
                     .span_hi(cur)
@@ -17235,25 +18582,23 @@ where
                 let pack = self
                     .sppf
                     .intern_packing(rule_idx, vec![lhs, cur], weight.clone());
-                let sym = self
-                    .sppf
-                    .intern_symbol(op_nt_tag, atom_positions[i] as u32, acc_hi);
+                let sym = self.sppf.intern_symbol(op_nt_tag, atom_los[i], acc_hi);
                 self.sppf.link_packing_to_symbol(sym, pack);
                 cur = sym;
             }
             acc = cur;
         } else {
             // Left-nested: innermost = leftmost atom.
-            let mut cur = self.synth_atom_symbol(atom_positions[0], spec, tokens)?;
-            let lo = atom_positions[0] as u32;
+            let mut cur = atom_symbols[0];
+            let lo = atom_los[0];
             for i in 1..m {
-                let rhs = self.synth_atom_symbol(atom_positions[i], spec, tokens)?;
+                let rhs = atom_symbols[i];
                 let pack = self
                     .sppf
                     .intern_packing(rule_idx, vec![cur, rhs], weight.clone());
                 let sym = self
                     .sppf
-                    .intern_symbol(op_nt_tag, lo, (atom_positions[i] + 1) as u32);
+                    .intern_symbol(op_nt_tag, lo, self.sppf.span_hi(rhs)?);
                 self.sppf.link_packing_to_symbol(sym, pack);
                 cur = sym;
             }
@@ -17312,10 +18657,7 @@ where
         spec: &crate::binding_power::IterAbsorbSpec,
         weight: W,
     ) -> Option<(crate::sppf::SppfId, W, usize)> {
-        if cursor.pos == 0 {
-            return None;
-        }
-        let head_pos = cursor.pos - 1;
+        let (head_symbol, head_lo, _) = self.chain_head_symbol(cursor, spec)?;
         let trigger = spec.trigger;
         let sep = spec.sep;
         if trigger.is_empty() || sep.is_empty() {
@@ -17334,21 +18676,19 @@ where
                     None => false,
                 }
         };
-        if !is_atom(head_pos) {
-            return None;
-        }
-
         // Forward peek: recover per-level (cond, then) positions + the
         // final else position + chain_end. Pattern from head_pos:
         //   c0 [trigger] t0 [sep] c1 [trigger] t1 [sep] … e_final
         // The cond of level 0 is the head atom; subsequent conds are the
         // trailing atom of the prior level when followed by another
         // trigger.
-        let mut cond_positions: Vec<usize> = Vec::new();
-        let mut then_positions: Vec<usize> = Vec::new();
-        let mut cur_cond = head_pos;
+        let mut cond_symbols: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut cond_los: Vec<u32> = Vec::new();
+        let mut then_symbols: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut cur_cond = head_symbol;
+        let mut cur_cond_lo = head_lo;
         let mut probe = cursor.pos;
-        let e_final: usize;
+        let e_final: crate::sppf::SppfId;
         loop {
             // [trigger] at probe
             match tokens.peek_text(probe) {
@@ -17359,6 +18699,7 @@ where
             if !is_atom(probe + 1) {
                 return None;
             }
+            let then_sym = self.synth_atom_symbol(probe + 1, spec, tokens)?;
             // [sep] at probe+2
             match tokens.peek_text(probe + 2) {
                 Some(t) if t == sep => {},
@@ -17368,24 +18709,28 @@ where
             if !is_atom(probe + 3) {
                 return None;
             }
-            cond_positions.push(cur_cond);
-            then_positions.push(probe + 1);
+            let trailing_sym = self.synth_atom_symbol(probe + 3, spec, tokens)?;
+            let trailing_lo = self.sppf.span_lo(trailing_sym)?;
+            cond_symbols.push(cur_cond);
+            cond_los.push(cur_cond_lo);
+            then_symbols.push(then_sym);
             // Disambiguate: another trigger at probe+4 ⇒ probe+3 is the
             // next level's cond; otherwise probe+3 is e_final.
             match tokens.peek_text(probe + 4) {
                 Some(t) if t == trigger => {
-                    cur_cond = probe + 3;
+                    cur_cond = trailing_sym;
+                    cur_cond_lo = trailing_lo;
                     probe += 4;
                 },
                 _ => {
-                    e_final = probe + 3;
+                    e_final = trailing_sym;
                     probe += 4;
                     break;
                 },
             }
         }
         let chain_end = probe;
-        let k = cond_positions.len();
+        let k = cond_symbols.len();
         if k < 2 {
             return None;
         }
@@ -17394,10 +18739,10 @@ where
         let op_nt_tag = spec.op_cat_src_idx as u32;
 
         // Right-nested fold in the else slot: innermost = e_final.
-        let mut cur = self.synth_atom_symbol(e_final, spec, tokens)?;
+        let mut cur = e_final;
         for i in (0..k).rev() {
-            let cond_sym = self.synth_atom_symbol(cond_positions[i], spec, tokens)?;
-            let then_sym = self.synth_atom_symbol(then_positions[i], spec, tokens)?;
+            let cond_sym = cond_symbols[i];
+            let then_sym = then_symbols[i];
             let acc_hi = self
                 .sppf
                 .span_hi(cur)
@@ -17406,9 +18751,7 @@ where
             let pack =
                 self.sppf
                     .intern_packing(rule_idx, vec![cond_sym, then_sym, cur], weight.clone());
-            let sym = self
-                .sppf
-                .intern_symbol(op_nt_tag, cond_positions[i] as u32, acc_hi);
+            let sym = self.sppf.intern_symbol(op_nt_tag, cond_los[i], acc_hi);
             self.sppf.link_packing_to_symbol(sym, pack);
             cur = sym;
         }
@@ -17614,39 +18957,17 @@ where
         rule_weights.insert("chain_step".to_string(), iter_weight.clone());
         rule_weights.insert("chain_base".to_string(), W::one_ref());
         rule_weights.insert("atom".to_string(), W::one_ref());
-        // chain_10000 stack-safety (2026-05-28): `emit_sppf_subforest`
-        // recurses ~chain_len/2 deep (emit_for_item → find_and_emit_sub →
-        // emit_for_item, one frame per chain level). At chain_10000 (~5000
-        // frames) this overflows the default ~2 MB thread stack. The Earley
-        // chart drive is iterative (worklist fixpoint) and realize/Drop are
-        // iterative, so emit is the ONLY deep recursion in the chain path.
-        // Run it on a scoped thread with a large stack — only TOUCHED stack
-        // pages count toward RSS, so the O(N) memory result is unaffected
-        // (chain_10000 stays ~112 MB). `W: SemiringRef` is `Send + Sync +
-        // 'static`, so the borrows cross the thread boundary with no extra
-        // bounds.
-        let sppf_mut = &mut self.sppf;
-        let chart_ref = &chart;
-        let rlm_ref = &rule_label_to_meta;
-        let tsi_ref: &[crate::sppf::SppfId] = &terminal_sppf_ids;
-        let rw_ref = &rule_weights;
-        let root = std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .stack_size(512 * 1024 * 1024)
-                .spawn_scoped(scope, move || {
-                    chart_ref.emit_sppf_subforest(
-                        sppf_mut,
-                        "Chain",
-                        outer_nt_tag,
-                        rlm_ref,
-                        tsi_ref,
-                        rw_ref,
-                    )
-                })
-                .expect("spawn emit-sppf-subforest thread")
-                .join()
-                .expect("emit-sppf-subforest thread panicked")
-        })?;
+        // `emit_sppf_subforest` is stack-safe: it uses an explicit
+        // continuation stack for item emission and sub-item searches, so the
+        // outboard chain path does not require a large-stack worker thread.
+        let root = chart.emit_sppf_subforest(
+            &mut self.sppf,
+            "Chain",
+            outer_nt_tag,
+            &rule_label_to_meta,
+            &terminal_sppf_ids,
+            &rule_weights,
+        )?;
 
         // Step 8: accumulated weight = iter_weight^(atom_count - 1).
         // Each chain_step Packing contributes iter_weight once; total
@@ -17676,7 +18997,7 @@ where
     fn allocate_fork_push_child(
         &mut self,
         parent: &BranchCursor<W>,
-        branch: ForkBranch<W>,
+        mut branch: ForkBranch<W>,
         pos_after: usize,
         child_recovery_depth: u8,
         // Phase F.13 Stage L4.1 (2026-05-25): Arc-wrapped per cycle-
@@ -17695,6 +19016,24 @@ where
         lex_fork_stamp: Option<LexForkStamp>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
+        if matches!(&branch.action_kind, ForkActionKind::Push) {
+            branch.new_state = Self::normalize_prefix_crosscat_delegate_state(
+                &parent.inner_state,
+                branch.new_state,
+            );
+        }
+        let fork_crosscat_lhs_min_bp = if matches!(
+            push_edge_kind,
+            Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+        ) {
+            let (normalized_state, min_bp) =
+                Self::normalize_crosscat_lhs_push_state(parent, branch.new_state);
+            branch.new_state = normalized_state;
+            Some(min_bp)
+        } else {
+            None
+        };
         // EP-P1 v3.1 §3 (the FORK-path producer; corpus-cold — zero fork
         // spawns measured on the acceptance corpus — but implemented for
         // completeness): the same synchronous-consume / bounded-park
@@ -17706,8 +19045,9 @@ where
         // happens inside cursor_gss_push_with_kind (the consolidated
         // chokepoint), so workers here need no extra wiring.
         if self.ep_p1_mode == EpP1Mode::On {
-            if let Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) = &push_edge_kind {
-                let ccl_source = *source_src_idx;
+            if let Some((ccl_source, ccl_min_bp)) = push_edge_kind.as_ref().and_then(|kind| {
+                Self::crosscat_lhs_scope_from_kind(kind, fork_crosscat_lhs_min_bp.unwrap_or(0))
+            }) {
                 // R5-7: the HOST is the parent's GSS-top category — NEVER
                 // branch.symbol.category_src_idx (that is the SOURCE: the
                 // pushed symbol is category_entry(source)).
@@ -17719,7 +19059,7 @@ where
                 let ccl_key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                     pos_after,
                     ccl_source,
-                    0,
+                    ccl_min_bp,
                     ccl_host,
                     u16::MAX,
                 );
@@ -17768,6 +19108,7 @@ where
                             self.consume_crosscat_lhs_body(
                                 &mut child,
                                 ccl_source,
+                                ccl_min_bp,
                                 b.symbol_id,
                                 b.hi_pos,
                                 cat,
@@ -18227,24 +19568,35 @@ where
 
     /// RC-B (2026-06-17): walk the cursor's incoming-edge stack to the nearest
     /// enclosing `PrefixRuleEntry { cat_src, rule_idx }` (the prefix-cast frame
-    /// the body sits under). Returns `(cat_src, rule_idx, predecessor_node)`,
-    /// where the predecessor is the GSS node the prefix-rule edge targets (the
-    /// OUTER return frame). `None` if the cursor is not under a prefix-rule
-    /// frame.
+    /// the body sits under). Returns `(cat_src, rule_idx, body_start_pos,
+    /// predecessor_node, stack_below_prefix)`, where `body_start_pos` is the
+    /// position recorded on the prefix rule frame, the predecessor is the GSS
+    /// node the prefix-rule edge targets (the OUTER return frame), and
+    /// `stack_below_prefix` is the incoming-edge continuation after the whole
+    /// prefix rule frame has been popped. `None` if the cursor is not under a
+    /// prefix-rule frame.
     fn enclosing_prefix_rule_frame(
         &self,
         cursor: &BranchCursor<W>,
-    ) -> Option<(u16, u16, crate::gss::GssNodeId)> {
+    ) -> Option<(u16, u16, usize, crate::gss::GssNodeId, crate::edge_stack_arena::EdgeStackId)>
+    {
         let mut sid = cursor.incoming_edge_stack_id;
         while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
             if let Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, .. }) =
                 self.gss.edge_kind(eid)
             {
+                let (source_node, _) = crate::gss::unpack_edge_id(eid);
+                let body_start_pos = self
+                    .gss
+                    .node(source_node)
+                    .map(|node| node.pos)
+                    .unwrap_or(cursor.pos);
                 let pred = self
                     .gss
                     .edge_target(eid)
                     .unwrap_or(crate::gss::GSS_NODE_NONE);
-                return Some((cat_src, rule_idx, pred));
+                let stack_below_prefix = self.incoming_edge_stack_arena.intern_pop(sid);
+                return Some((cat_src, rule_idx, body_start_pos, pred, stack_below_prefix));
             }
             sid = self.incoming_edge_stack_arena.intern_pop(sid);
         }
@@ -18288,6 +19640,42 @@ where
         None
     }
 
+    fn sppf_stack_below_prefix_body_and_trigger(
+        &self,
+        cursor: &BranchCursor<W>,
+        body_symbol_id: crate::sppf::SppfId,
+        owner_cat: u16,
+        owner_rule: u16,
+        trigger_lo: usize,
+    ) -> Option<crate::sppf_stack_arena::StackId> {
+        if self.sppf_stack_arena.top(cursor.sppf_stack_id) != Some(body_symbol_id) {
+            return None;
+        }
+        let below_body = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+        let trigger_sid = self.sppf_stack_arena.top(below_body)?;
+        let Some(crate::sppf::SppfNode::TriggerTerminal {
+            pos,
+            owner_cat: oc,
+            owner_rule_idx: orx,
+            ..
+        }) = self.sppf.node(trigger_sid)
+        else {
+            return None;
+        };
+        if *oc != owner_cat || *orx != owner_rule {
+            return None;
+        }
+        let pos = match pos {
+            crate::sppf::PosOrSynth::Real(p) | crate::sppf::PosOrSynth::Synthesized(p) => {
+                *p as usize
+            },
+        };
+        if pos != trigger_lo {
+            return None;
+        }
+        Some(self.sppf_stack_arena.intern_pop(below_body))
+    }
+
     /// RC-B (2026-06-17): stage a prefix-cast wrap synthesis job at the
     /// cross-cat projection pop site (§5.1). The body cursor has just resolved
     /// a `CrossCatProjection { source_src_idx = C_in }` with a full-span
@@ -18314,9 +19702,14 @@ where
             return;
         }
         // C_out + the prefix-cast frame: the nearest enclosing PrefixRuleEntry.
-        let Some((c_out, outer_rule, _pred)) = self.enclosing_prefix_rule_frame(cursor) else {
+        let Some((c_out, outer_rule, body_start_pos, _pred, _stack_below_prefix)) =
+            self.enclosing_prefix_rule_frame(cursor)
+        else {
             return;
         };
+        if dispatch_pos != body_start_pos {
+            return;
+        }
         // Category-graph witness: a trigger-bearing cast C_in -> C_out exists.
         let Some(cast_rule) = self.prefix_cast_rule_into(c_in, c_out) else {
             return;
@@ -18341,9 +19734,19 @@ where
             Some(kw) if kw == keyword.as_str() => {},
             _ => return,
         }
+        let Some(stack_below_prefix_body) = self.sppf_stack_below_prefix_body_and_trigger(
+            cursor,
+            body_symbol_id,
+            c_out,
+            outer_rule,
+            trigger_lo,
+        ) else {
+            return;
+        };
         // Build the OUTER-frame cursor: clone, then pop past the projection
-        // edge so cursor.node is the outer return frame and its sppf top no
-        // longer carries the body (the synthesizer pushes the formed C_out).
+        // edge so cursor.node is the outer return frame and its sppf stack has
+        // consumed the prefix trigger + body, matching a normal prefix reduce
+        // before the synthesizer pushes the formed C_out.
         let mut outer = cursor.clone();
         let outer_target = self
             .gss
@@ -18353,11 +19756,71 @@ where
         outer.incoming_edge_stack_id = self
             .incoming_edge_stack_arena
             .intern_pop(outer.incoming_edge_stack_id);
-        outer.sppf_stack_id = self.sppf_stack_arena.intern_pop(outer.sppf_stack_id);
+        outer.sppf_stack_id = stack_below_prefix_body;
         self.pending_prefix_cast_wrap_jobs.push(PrefixCastWrapJob {
             body_sid: body_symbol_id,
             trigger_lo,
             close_hi: cursor.pos, // refined to next_pos(close) at drain
+            c_out,
+            cast_rule,
+            keyword,
+            outer_frame: outer,
+        });
+    }
+
+    /// RC-B generalization (2026-06-18): stage the same prefix-cast wrap when
+    /// a full prefix body has returned through any stack-safe continuation, not
+    /// only a `CrossCatProjection` pop. Category-changing infix bodies can
+    /// reach the structural close through their own return path; the valid
+    /// body then sits under the still-enclosing `PrefixRuleEntry`, but no
+    /// projection edge observes it. The guards intentionally mirror
+    /// `try_stage_prefix_cast_wrap`: declared cast edge, full body span,
+    /// matching keyword, and drain-time structural close.
+    fn try_stage_prefix_cast_body_wrap(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        body_symbol_id: crate::sppf::SppfId,
+    ) {
+        let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
+            return;
+        };
+        let Some((c_out, outer_rule, body_start_pos, pred, stack_below_prefix)) =
+            self.enclosing_prefix_rule_frame(cursor)
+        else {
+            return;
+        };
+        if self.sppf.span_lo(body_symbol_id).map(|lo| lo as usize) != Some(body_start_pos) {
+            return;
+        }
+        let Some(cast_rule) = self.prefix_cast_rule_into(body_cat, c_out) else {
+            return;
+        };
+        let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, outer_rule)
+        else {
+            return;
+        };
+        match self.engine.prefix_cast_keyword(c_out, cast_rule) {
+            Some(kw) if kw == keyword.as_str() => {},
+            _ => return,
+        }
+        let Some(stack_below_prefix_body) = self.sppf_stack_below_prefix_body_and_trigger(
+            cursor,
+            body_symbol_id,
+            c_out,
+            outer_rule,
+            trigger_lo,
+        ) else {
+            return;
+        };
+
+        let mut outer = cursor.clone();
+        outer.node = pred;
+        outer.incoming_edge_stack_id = stack_below_prefix;
+        outer.sppf_stack_id = stack_below_prefix_body;
+        self.pending_prefix_cast_wrap_jobs.push(PrefixCastWrapJob {
+            body_sid: body_symbol_id,
+            trigger_lo,
+            close_hi: cursor.pos,
             c_out,
             cast_rule,
             keyword,
@@ -18448,8 +19911,8 @@ where
         // the read-only transient — the SAME path emit_fire_action uses.
         let cast_symbol = StackSymbolV2::rule_at(job.c_out, job.cast_rule, 0, None);
         let probe = self.make_probe_cursor();
-        let (result_arc, output_cat, _drains) =
-            self.fire_action_via_transient(&probe, cast_symbol, &children)?;
+        let (result_arc, output_cat, _drains, _) =
+            self.fire_action_via_transient_without_child_coercions(&probe, cast_symbol, &children)?;
         // Intern Packing(cast_rule, [trigger, body]) + Symbol(C_out, lo, hi),
         // link, and store the realized term keyed by the new Symbol id.
         let packing_id = self
@@ -18468,6 +19931,7 @@ where
             .intern_push(acc.sppf_stack_id, wrapped_symbol_id);
         acc.pos = job.close_hi;
         acc.inner_state = WpdaState::InfixLoop { cur_bp: 0 };
+        acc.last_action_output_cat = output_cat.or(Some(job.c_out));
         if trace_actions_enabled() {
             eprintln!(
                 "[wpds-action] RC-B prefix-cast wrap: fired ({},{}) over body=sid{} -> {} span=[{},{}]",
@@ -18503,8 +19967,12 @@ where
         // suffices — reconstruct_action_arg reads sppf_symbol_terms by sid.
         let coercion_symbol = StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, None);
         let probe = self.make_probe_cursor();
-        let (result_arc, output_cat, _drains) =
-            self.fire_action_via_transient(&probe, coercion_symbol, &[body_symbol_id])?;
+        let (result_arc, output_cat, _drains, _) = self
+            .fire_action_via_transient_without_child_coercions(
+                &probe,
+                coercion_symbol,
+                &[body_symbol_id],
+            )?;
         // Intern Packing(coercion_rule, [body]) + Symbol(coercion_cat, lo, hi),
         // link, and store the realized Term keyed by the new Symbol id (so a
         // subsequent fire consuming THIS Symbol as a child reconstructs it).
@@ -18572,6 +20040,107 @@ where
             .and_then(|term| term.output_cat)
             .or(Some(target_src_idx));
         Ok(())
+    }
+
+    fn action_accepts_single_body_category(
+        &self,
+        cat_src_idx: u16,
+        rule_idx: u16,
+        body_cat: u16,
+    ) -> bool {
+        let Some(entry) = self.engine.action_for(cat_src_idx, rule_idx) else {
+            return false;
+        };
+        if entry.arity != 1 || entry.expected_input_cats.len() != 1 {
+            return false;
+        }
+        let expected = entry.expected_input_cats[0];
+        expected == crate::wpda_runtime::ANY_CAT || expected == body_cat
+    }
+
+    fn category_can_satisfy_expected(&self, produced_cat: u16, expected_cat: u16) -> bool {
+        produced_cat == expected_cat
+            || self
+                .engine
+                .single_hop_coercion(produced_cat, expected_cat)
+                .iter()
+                .any(|&(coercion_cat, coercion_rule)| {
+                    coercion_cat == expected_cat
+                        && self.action_accepts_single_body_category(
+                            coercion_cat,
+                            coercion_rule,
+                            produced_cat,
+                        )
+                })
+    }
+
+    fn crosscat_projection_return_for_actual_body(
+        &self,
+        symbol: StackSymbolV2,
+        popped_edge_kind: Option<&crate::gss::EdgeKind>,
+        cursor: &BranchCursor<W>,
+    ) -> Option<StackSymbolV2> {
+        if symbol.kind != SymbolKind::Return {
+            return Some(symbol);
+        }
+        let Some(crate::gss::EdgeKind::CrossCatProjection { wrap_cat, wrap_rule, .. }) =
+            popped_edge_kind
+        else {
+            return Some(symbol);
+        };
+        if symbol.category_src_idx != *wrap_cat || symbol.rule_index_in_category != *wrap_rule {
+            return Some(symbol);
+        }
+        let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) else {
+            return Some(symbol);
+        };
+        let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
+            return Some(symbol);
+        };
+        if body_cat == *wrap_cat {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] crosscat projection wrapper elided: body already in host cat={} symbol={}",
+                    wrap_cat,
+                    self.sppf_trace_summary(body_symbol_id)
+                );
+            }
+            return None;
+        }
+        if self.action_accepts_single_body_category(*wrap_cat, *wrap_rule, body_cat) {
+            return Some(symbol);
+        }
+        let rebound = self
+            .engine
+            .single_hop_coercion(body_cat, *wrap_cat)
+            .iter()
+            .copied()
+            .filter(|(coercion_cat, coercion_rule)| {
+                *coercion_cat == *wrap_cat
+                    && self.action_accepts_single_body_category(
+                        *coercion_cat,
+                        *coercion_rule,
+                        body_cat,
+                    )
+            })
+            .min_by_key(|(_, coercion_rule)| *coercion_rule);
+        if let Some((coercion_cat, coercion_rule)) = rebound {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] crosscat projection wrapper rebound: body_cat={} host_cat={} old_rule={} new_rule={} symbol={}",
+                    body_cat,
+                    coercion_cat,
+                    wrap_rule,
+                    coercion_rule,
+                    self.sppf_trace_summary(body_symbol_id)
+                );
+            }
+            return Some(
+                StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, symbol.bp)
+                    .with_kind_return(),
+            );
+        }
+        Some(symbol)
     }
 
     /// Sig-B Blocker-3 §2.4a/§2.4c (2026-06-01, pgmcp experiment #9): drain
@@ -18796,6 +20365,30 @@ where
         if sym.kind != SymbolKind::CategoryEntry {
             return crate::gss::EdgeKind::from_symbol(sym);
         }
+        if let Some(edge_id) = self
+            .incoming_edge_stack_arena
+            .top(cursor.incoming_edge_stack_id)
+        {
+            if let Some(crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp }) =
+                self.gss.edge_kind(edge_id)
+            {
+                let replacing_grouping_marker = self
+                    .gss
+                    .node(cursor.node)
+                    .map(|n| n.symbol.kind == SymbolKind::GroupingMarker)
+                    .unwrap_or(false);
+                if replacing_grouping_marker && sym.category_src_idx == source_src_idx {
+                    return crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp };
+                }
+            }
+        }
+        if let Some(node) = self.gss.node(cursor.node) {
+            if node.symbol.kind == SymbolKind::GroupingMarker {
+                return crate::gss::EdgeKind::CategoryEntryContinuation {
+                    min_bp: node.symbol.bp.unwrap_or(0),
+                };
+            }
+        }
         let predecessor = self
             .incoming_edge_stack_arena
             .top(cursor.incoming_edge_stack_id)
@@ -18860,11 +20453,12 @@ where
         cursor: &mut BranchCursor<W>,
         pred_id: crate::gss::GssNodeId,
         popped_edge_kind: Option<&crate::gss::EdgeKind>,
-        popped_symbol: Option<StackSymbolV2>,
+        popped_edge_id: Option<crate::gss::GssEdgeId>,
+        mut popped_symbol: Option<StackSymbolV2>,
         weight: &W,
         new_state: WpdaState,
         tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
-    ) {
+    ) -> bool {
         // Set cursor's GSS top to the predecessor (or sentinel).
         cursor.node = pred_id;
         if self.deterministic {
@@ -18873,6 +20467,10 @@ where
             } else {
                 Some(pred_id)
             };
+        }
+        if let Some(symbol) = popped_symbol {
+            popped_symbol =
+                self.crosscat_projection_return_for_actual_body(symbol, popped_edge_kind, cursor);
         }
         // Stage 3.12.8 (2026-05-03) — Phase 5.6-tail-B (2026-05-12):
         // pre-tail the CollectionMarker-pop drain ran only in nondeterministic
@@ -19109,6 +20707,7 @@ where
                         Some(SymbolKind::CategoryEntry) => !matches!(
                             popped_edge_kind,
                             Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                                | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
                         ),
                         Some(SymbolKind::RuleAt(_)) | Some(_) => {
                             // Pratt element-close: simulate one
@@ -19194,7 +20793,7 @@ where
                                                 pred_slot_idx,
                                             ),
                                         };
-                                        return;
+                                        return false;
                                     }
                                 }
                             }
@@ -19218,7 +20817,9 @@ where
                 // that exact predecessor here.
                 match self.gss.node(pred_id).map(|n| n.symbol.kind) {
                     Some(SymbolKind::CategoryEntry) => {
-                        effective_new_state = WpdaState::InfixLoop { cur_bp: 0 };
+                        effective_new_state = WpdaState::InfixLoop {
+                            cur_bp: self.category_entry_resume_bp(popped_edge_kind, popped_edge_id),
+                        };
                     },
                     Some(SymbolKind::GroupingMarker) => {
                         if !matches!(
@@ -19243,8 +20844,13 @@ where
         if let Some(message) = transparent_reentry_error {
             effective_new_state = WpdaState::Error { message };
         }
-        if let (Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }), Some(popped)) =
-            (popped_edge_kind, popped_symbol)
+        if let (
+            Some(
+                crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. },
+            ),
+            Some(popped),
+        ) = (popped_edge_kind, popped_symbol)
         {
             if popped.kind == SymbolKind::CategoryEntry
                 && pred_id != crate::gss::GSS_NODE_NONE
@@ -19253,6 +20859,9 @@ where
                     WpdaState::InfixLoop { .. } | WpdaState::Unwinding
                 )
             {
+                let reentry_min_bp = popped_edge_id
+                    .and_then(|eid| self.crosscat_lhs_min_bp.get(&eid).copied())
+                    .unwrap_or(0);
                 let source_entry = StackSymbolV2::category_entry(*source_src_idx);
                 // This is not a root-sentinel CategoryEntry push. It is a
                 // one-pass re-entry above this cursor's concrete predecessor,
@@ -19262,9 +20871,12 @@ where
                     source_entry,
                     cursor.pos,
                     W::one_ref(),
-                    crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx: *source_src_idx },
+                    crate::gss::EdgeKind::CrossCatLhsReentry {
+                        source_src_idx: *source_src_idx,
+                        min_bp: reentry_min_bp,
+                    },
                 );
-                effective_new_state = WpdaState::InfixLoop { cur_bp: 0 };
+                effective_new_state = WpdaState::InfixLoop { cur_bp: reentry_min_bp };
             }
         }
 
@@ -19358,6 +20970,43 @@ where
             }
         }
 
+        // A category-changing infix may complete while the enclosing frame is
+        // a source-category grouping marker, e.g. `(Int <= Int <= Bool)`.
+        // The Return pop leaves the marker on top, but the SPPF top is now the
+        // produced category. Re-enter that produced category above the marker
+        // so the next token is dispatched against the expression's actual
+        // type; keep the source-category evidence on the edge so the eventual
+        // `)` close can prove that the outer continuation accepts the change.
+        if let (Some(popped), Some(pred_symbol), Some(produced_cat)) = (
+            popped_symbol,
+            self.gss.node(pred_id).map(|n| n.symbol),
+            cursor.last_action_output_cat,
+        ) {
+            if popped.kind == SymbolKind::Return
+                && pred_symbol.kind == SymbolKind::GroupingMarker
+                && produced_cat != pred_symbol.category_src_idx
+            {
+                let cur_bp = match &effective_new_state {
+                    WpdaState::InfixLoop { cur_bp } => *cur_bp,
+                    _ => pred_symbol.bp.unwrap_or(0),
+                };
+                let min_bp = Self::state_binding_power_floor(&effective_new_state)
+                    .unwrap_or_else(|| pred_symbol.bp.unwrap_or(0));
+                let produced_entry = StackSymbolV2::category_entry(produced_cat);
+                let _ = self.cursor_gss_push_with_kind(
+                    cursor,
+                    produced_entry,
+                    cursor.pos,
+                    W::one_ref(),
+                    crate::gss::EdgeKind::CrossCatLhsReentry {
+                        source_src_idx: pred_symbol.category_src_idx,
+                        min_bp,
+                    },
+                );
+                effective_new_state = WpdaState::InfixLoop { cur_bp };
+            }
+        }
+
         // D8 fix (2026-05-13): resolve `GroupingClosePreservingInner`'s
         // `inner_cat_src_idx` from the cursor builder's top-Term
         // `type_name` instead of trusting the popped CategoryEntry's
@@ -19392,13 +21041,92 @@ where
             },
             other => other.clone(),
         };
+        if let (Some(popped), Some(pred_node)) = (popped_symbol, self.gss.node(pred_id)) {
+            if popped.kind == SymbolKind::CategoryEntry
+                && pred_node.symbol.kind == SymbolKind::GroupingMarker
+                && matches!(&resolved_new_state, WpdaState::GroupingClosePreservingInner { .. })
+            {
+                let expected_cat = pred_node.symbol.category_src_idx;
+                let produced_cat = match &resolved_new_state {
+                    WpdaState::GroupingClosePreservingInner { inner_cat_src_idx } => {
+                        Some(*inner_cat_src_idx)
+                    },
+                    _ => cursor
+                        .last_action_output_cat
+                        .or(Some(popped.category_src_idx)),
+                };
+                if produced_cat
+                    .map(|cat| {
+                        !self.grouping_produced_category_admissible(
+                            cursor,
+                            popped_edge_kind,
+                            expected_cat,
+                            cat,
+                        )
+                    })
+                    .unwrap_or(false)
+                {
+                    let produced_text = produced_cat
+                        .map(|cat| cat.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let message = format!(
+                        "grouping category mismatch: requested cat {} but inner parse produced cat {}",
+                        expected_cat, produced_text
+                    );
+                    self.set_cursor_inner_state(cursor, WpdaState::Error { message });
+                    return false;
+                }
+            }
+        }
+        if let Some(popped) = popped_symbol {
+            if popped.kind == SymbolKind::GroupingMarker {
+                let expected_cat = popped.category_src_idx;
+                let produced_cat = match &resolved_new_state {
+                    WpdaState::GroupingClosePreservingInner { inner_cat_src_idx } => {
+                        Some(*inner_cat_src_idx)
+                    },
+                    _ => cursor.last_action_output_cat.or_else(|| {
+                        self.sppf_stack_arena
+                            .top(cursor.sppf_stack_id)
+                            .and_then(|sid| self.sppf_symbol_category(sid))
+                    }),
+                };
+                if produced_cat
+                    .map(|cat| {
+                        !self.grouping_produced_category_admissible(
+                            cursor,
+                            popped_edge_kind,
+                            expected_cat,
+                            cat,
+                        )
+                    })
+                    .unwrap_or(false)
+                {
+                    let produced_text = produced_cat
+                        .map(|cat| cat.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let message = format!(
+                        "grouping category mismatch: requested cat {} but inner parse produced cat {}",
+                        expected_cat, produced_text
+                    );
+                    self.set_cursor_inner_state(cursor, WpdaState::Error { message });
+                    return false;
+                }
+            }
+        }
         // Phase 5.5 (2026-05-12): preserve Error state if emit_fire_action's
         // eager fire set it (arity underflow). Without this guard, the
         // unconditional `set_cursor_inner_state(cursor, new_state)` would
         // overwrite the Error with the ConsumeAndPop's planned next_state.
         if !cursor.inner_state.is_terminal() {
+            if let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+                self.try_stage_prefix_cast_body_wrap(cursor, body_symbol_id);
+            }
+        }
+        if !cursor.inner_state.is_terminal() {
             self.set_cursor_inner_state(cursor, resolved_new_state);
         }
+        true
     }
 
     /// Stage 3.12.6 (2026-05-02): single-predecessor pop guided by the
@@ -19424,7 +21152,11 @@ where
     fn cursor_gss_pop_via_edge(
         &mut self,
         cursor: &mut BranchCursor<W>,
-    ) -> (crate::gss::GssNodeId, Option<crate::gss::EdgeKind>) {
+    ) -> (
+        crate::gss::GssNodeId,
+        Option<crate::gss::EdgeKind>,
+        Option<crate::gss::GssEdgeId>,
+    ) {
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.top peeks pre-pop value; arena.intern_pop updates the
         // cursor's StackId to the predecessor chain (or ROOT for empty).
@@ -19583,9 +21315,15 @@ where
         // mode records the resolution + the R6-6/B1 tail-divergence
         // witness and NEVER schedules a drain.
         if matches!(self.ep_p1_mode, EpP1Mode::Measure | EpP1Mode::On) {
-            if let (Some(eid), Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx })) =
-                (edge_id, popped_edge_kind.clone())
+            if let (
+                Some(eid),
+                Some(
+                    crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                    | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. },
+                ),
+            ) = (edge_id, popped_edge_kind.clone())
             {
+                let crosscat_lhs_min_bp = self.crosscat_lhs_min_bp.get(&eid).copied().unwrap_or(0);
                 // EP-P1 v3.1 quiescence bookkeeping (06 §2; R7-9 +
                 // flip-run fix): the lineage ends on its FIRST pop of
                 // this edge REGARDLESS of body validity (an
@@ -19606,7 +21344,7 @@ where
                         let quiesce_key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                             node.pos,
                             source_src_idx,
-                            0,
+                            crosscat_lhs_min_bp,
                             host_for_key,
                             u16::MAX,
                         );
@@ -19638,7 +21376,7 @@ where
                             let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
                                 dispatch_pos,
                                 source_src_idx,
-                                0,
+                                crosscat_lhs_min_bp,
                                 wrap_cat,
                                 wrap_rule,
                             );
@@ -19730,7 +21468,7 @@ where
             cursor.cohort_revive_depth = 0;
             self.dispatch_cohort_cache.cohort_cursors_graduated_total += 1;
         }
-        (cursor.node, popped_edge_kind)
+        (cursor.node, popped_edge_kind, edge_id)
     }
 
     // Phase 5.6-tail follow-up (2026-05-12): `cursor_gss_pop_all`
@@ -20218,8 +21956,8 @@ impl<W: SemiringRef + std::fmt::Debug> CursorObserver<W> for EnvTracingConsumer 
             for c in &snapshot.cursors {
                 eprintln!(
                     "[wpds-trace]   cursor[{}] pos={} state={:?} node={} top={:?} sppf_top={:?} src_pri={} ops_len={} coll_depth={}",
-                    c.idx, c.pos, c.state, c.gss_node_id, c.gss_top, c.sppf_top,
-                    c.source_priority, c.pending_ops_len, c.collection_depth,
+                    c.idx, c.pos, c.state, c.gss_node_id, c.gss_top, c.sppf_top, c.source_priority,
+                    c.pending_ops_len, c.collection_depth,
                 );
             }
         }
@@ -20310,7 +22048,7 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> WpdaState {
         for _ in 0..max_steps {
-            if self.state.is_terminal() {
+            if self.state.is_terminal() || self.fanout_frontier_terminal_step_quiescent() {
                 consumer.on_complete(&self.state);
                 return self.state.clone();
             }
@@ -20370,7 +22108,7 @@ where
             // non-terminal state at end-of-budget to the exceeded error to
             // keep the call-site signature identical to run_to_end_of_input.
             let final_state = self.run_with_consumer_observed(&mut env_consumer, max_steps, tokens);
-            if final_state.is_terminal() {
+            if final_state.is_terminal() || self.fanout_frontier_terminal_step_quiescent() {
                 Ok(())
             } else {
                 Err(WpdaMaxStepsExceeded { position: self.pos })
@@ -20418,7 +22156,7 @@ where
             // T4 SIGUSR1 hang-dump (2026-05-12): publish per-step snapshot
             // for SIGUSR1 / watchdog dumps. No-op when feature is off.
             self.publish_to_hang_dump_slot();
-            if self.state.is_terminal() {
+            if self.state.is_terminal() || self.fanout_frontier_terminal_step_quiescent() {
                 <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
                 return self.state.clone();
             }
@@ -20603,7 +22341,7 @@ mod tests {
         });
         let grouping_pred = walker.gss.get_or_create_node(WpdaGssNode {
             pos: 0,
-            symbol: StackSymbolV2::grouping_marker(11, 3),
+            symbol: StackSymbolV2::grouping_marker(7, 3),
         });
         let popped_symbol = StackSymbolV2::category_entry(7);
         let shared_top = walker
@@ -20643,17 +22381,20 @@ mod tests {
             .incoming_edge_stack_arena
             .intern_push(crate::edge_stack_arena::EDGE_STACK_ID_ROOT, grouping_edge);
 
-        let (pred_id, popped_edge_kind) = walker.cursor_gss_pop_via_edge(&mut cursor);
+        let (pred_id, popped_edge_kind, popped_edge_id) =
+            walker.cursor_gss_pop_via_edge(&mut cursor);
         assert_eq!(pred_id, grouping_pred);
-        walker.apply_pop_body_to_cursor(
+        let pop_ok = walker.apply_pop_body_to_cursor(
             &mut cursor,
             pred_id,
             popped_edge_kind.as_ref(),
+            popped_edge_id,
             Some(popped_symbol),
             &LexicographicWeight::one(),
             WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: u16::MAX },
             &empty_tokens(),
         );
+        assert!(pop_ok);
 
         assert_eq!(
             cursor.inner_state,
@@ -22468,29 +24209,11 @@ mod tests {
         assert_eq!(weights, vec![lex(1.0, 0, 0), lex(2.0, 0, 0)]);
     }
 
-    /// Budget-divergence fix (2026-06-12): when an accepting configuration is
-    /// ALREADY live, the InFlight-orphan re-injection (and its frontier-budget
-    /// gate) is SUPPRESSED — revival is a recovery heuristic for when NO accept
-    /// exists, and re-driving never-resolved orphans cannot change a result an
-    /// accept already determines.
-    ///
-    /// This test previously pinned the OPPOSITE — that over-budget revival
-    /// reports `BudgetExceeded` even with an accept present (commit 44702709,
-    /// "overflow is unresolved evidence whether or not another accepting cursor
-    /// is already available"). That contract was an artifact, not a sound
-    /// disambiguation rule: the over-budget path NEVER drains the orphans (so it
-    /// surfaces no alternate either way), and whether the gate trips at all
-    /// depends on the InFlight-parking amplification RATE — which differs
-    /// between EP-P1 Off and On on the SAME input (the cast-then-ternary
-    /// `int(..) ^ int(c) ? .. : int(..)` regression: Off stays under budget and
-    /// commits the parse, On amplifies past it and errors). A correctness
-    /// contract cannot hinge on an artifact that makes two
-    /// observationally-identical modes diverge. The principled outcome is the
-    /// same in both: with a live accept, commit it (Off already did; this makes
-    /// On agree). The companion test
-    /// `orphan_revival_over_budget_reports_before_accepting_cursor_exists`
-    /// (NO live accept — the genuine recovery path) is unchanged and still
-    /// reports `BudgetExceeded`.
+    /// Accept-present fix (2026-06-12): when an accepting configuration is
+    /// ALREADY live, the InFlight-orphan re-injection is suppressed. Revival is
+    /// a recovery heuristic for when NO accept exists, and re-driving
+    /// never-resolved orphans cannot change a result an accept already
+    /// determines.
     #[test]
     fn orphan_revival_with_live_accept_skips_revival_without_draining() {
         let tokens = [TokenKind::Integer, TokenKind::Eof];
@@ -22514,8 +24237,8 @@ mod tests {
         walker.pos = 1;
         seed_revivable_orphans(&mut walker, 257);
 
-        // An accept is live, so revival is skipped (Idle) rather than reporting
-        // a (spurious) frontier-budget overflow.
+        // An accept is live, so revival is skipped (Idle) rather than doing
+        // redundant recovery work.
         match walker.revive_orphaned_cohort_members_once(&token_src) {
             OrphanRevivalOutcome::Idle => {},
             other => panic!("expected Idle (accept present -> revival skipped), got {other:?}"),
@@ -22537,7 +24260,7 @@ mod tests {
     }
 
     #[test]
-    fn orphan_revival_over_budget_reports_before_accepting_cursor_exists() {
+    fn orphan_revival_without_accept_injects_large_orphan_set_lazily() {
         let tokens = [TokenKind::Integer, TokenKind::Eof];
         let texts = ["42", ""];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
@@ -22547,24 +24270,24 @@ mod tests {
         seed_revivable_orphans(&mut walker, 257);
 
         match walker.revive_orphaned_cohort_members_once(&token_src) {
-            OrphanRevivalOutcome::BudgetExceeded { budget, actual, position } => {
-                assert_eq!(budget, 256);
-                assert_eq!(actual, 257);
-                assert_eq!(position, 1);
-            },
-            other => panic!("expected orphan revival budget overflow, got {other:?}"),
+            OrphanRevivalOutcome::Injected(257) => {},
+            other => panic!("expected lazy orphan injection, got {other:?}"),
         }
         assert_eq!(
             walker
                 .dispatch_cohort_cache
                 .revivable_inflight_member_count(),
-            257,
-            "over-budget revival must report before draining hidden evidence"
+            0,
+            "orphan revival must drain stale InFlight evidence before re-driving it"
         );
         assert!(
-            walker.branch_cursors.is_empty(),
-            "overflow reporting must not materialize orphan cursors"
+            walker
+                .branch_cursors
+                .iter()
+                .all(|frame| matches!(frame, crate::cohort_lazy::Frame::Cohort(_))),
+            "compact orphan evidence should stay lazy until the fanout driver needs it"
         );
+        assert_eq!(walker.branch_cursors.len(), 257);
     }
 
     #[test]
@@ -23534,6 +25257,274 @@ mod tests {
     // grammars exercise Mechanism γ end-to-end via gen_calculator_op (1331+),
     // gen_rhocalc_op (532), gen_optsmoke_op (25), gen_mixedmath_op (199).
     // ════════════════════════════════════════════════════════════════════════
+
+    /// Mechanism γ — `Advance` fork branch changes state without consuming
+    /// input or mutating the GSS. This models evidence-preserving
+    /// fall-through branches alongside consuming lex alternatives.
+    #[test]
+    fn fork_action_advance_preserves_pos_and_gss() {
+        let engine = ScriptedEngine::new(vec![
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(0.0, 0, 0),
+                    new_state: WpdaState::Unwinding,
+                    action_kind: ForkActionKind::Advance,
+                }],
+                consume_trigger: false,
+            },
+            WpdaStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let pos_before = w.position();
+        let gss_count_before = w.gss().node_count();
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].pos, pos_before, "Advance must not consume input");
+        assert_eq!(
+            w.gss().node_count(),
+            gss_count_before,
+            "Advance must not push or pop GSS nodes",
+        );
+        assert!(matches!(cursors[0].inner_state, WpdaState::Unwinding));
+    }
+
+    struct TargetOwnedOperatorProbeEngine;
+
+    impl WpdaEngine<LexicographicWeight> for TargetOwnedOperatorProbeEngine {
+        fn step(
+            &self,
+            state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            frontier_top: Option<&WpdaGssNode>,
+            pos: usize,
+            tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            let target_cat = frontier_top.map(|node| node.symbol.category_src_idx);
+            let token_text = tokens.peek_text(pos).unwrap_or("");
+            if target_cat == Some(1)
+                && token_text == "+"
+                && matches!(state, WpdaState::InfixLoop { cur_bp } if *cur_bp <= 2)
+            {
+                return WpdaStepAction::ConsumeAndPush {
+                    symbol: StackSymbolV2::rule_at(1, 0, 0, Some(0)).with_kind_return(),
+                    weight: lex(0.0, 1, 0),
+                    new_state: WpdaState::PrefixDispatch { pos: pos + 1, cur_bp: 3 },
+                    trigger_mode: TriggerMode::Discard,
+                };
+            }
+            WpdaStepAction::Advance(WpdaState::Unwinding)
+        }
+
+        fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
+            cat == 1 && token_text == "+"
+        }
+    }
+
+    #[test]
+    fn transparent_reentry_treats_target_floor_blocked_operator_as_boundary() {
+        let token_kinds = [TokenKind::Fixed("+".into()), TokenKind::Eof];
+        let token_texts = ["+", ""];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let w = WpdaWalker::new(TargetOwnedOperatorProbeEngine, 0);
+        let cursor = w.branch_cursors_for_test()[0].clone();
+
+        assert!(
+            w.target_category_rejects_own_operator_at_floor(1, "+", &cursor, 3, &token_src),
+            "a target-owned operator rejected by the target floor is a boundary"
+        );
+        assert!(
+            !w.target_category_rejects_own_operator_at_floor(1, "+", &cursor, 0, &token_src),
+            "an operator accepted at the active target floor is not a reentry boundary"
+        );
+        assert!(
+            !w.target_category_rejects_own_operator_at_floor(2, "+", &cursor, 3, &token_src),
+            "source-only operators remain eligible for transparent source reentry"
+        );
+    }
+
+    struct ProjectionBoundaryProbeEngine;
+
+    impl WpdaEngine<LexicographicWeight> for ProjectionBoundaryProbeEngine {
+        fn step(
+            &self,
+            state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            frontier_top: Option<&WpdaGssNode>,
+            pos: usize,
+            tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            let cat = frontier_top.map(|node| node.symbol.category_src_idx);
+            let token_text = tokens.peek_text(pos).unwrap_or("");
+            match (cat, token_text, state) {
+                (Some(1), "+", WpdaState::InfixLoop { cur_bp }) if *cur_bp <= 2 => {
+                    WpdaStepAction::ConsumeAndPush {
+                        symbol: StackSymbolV2::rule_at(1, 0, 0, Some(*cur_bp)).with_kind_return(),
+                        weight: lex(0.0, 1, 0),
+                        new_state: WpdaState::PrefixDispatch { pos: pos + 1, cur_bp: 3 },
+                        trigger_mode: TriggerMode::Discard,
+                    }
+                },
+                (Some(2), "+", WpdaState::InfixLoop { cur_bp }) if *cur_bp <= 4 => {
+                    WpdaStepAction::ConsumeAndPush {
+                        symbol: StackSymbolV2::rule_at(2, 0, 0, Some(*cur_bp)).with_kind_return(),
+                        weight: lex(0.0, 2, 0),
+                        new_state: WpdaState::PrefixDispatch { pos: pos + 1, cur_bp: 5 },
+                        trigger_mode: TriggerMode::Discard,
+                    }
+                },
+                _ => WpdaStepAction::Advance(WpdaState::Unwinding),
+            }
+        }
+
+        fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
+            matches!((cat, token_text), (1, "+") | (2, "+"))
+        }
+    }
+
+    #[test]
+    fn projection_source_operator_preserves_target_boundary_branch() {
+        let token_kinds = [TokenKind::Fixed("+".into()), TokenKind::Eof];
+        let token_texts = ["+", ""];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let mut w = WpdaWalker::new(ProjectionBoundaryProbeEngine, 0);
+        let mut cursor = w.branch_cursors_for_test()[0].clone();
+        cursor.inner_state = WpdaState::InfixLoop { cur_bp: 3 };
+        let _ = w.cursor_gss_push_with_kind(
+            &mut cursor,
+            StackSymbolV2::category_entry(2),
+            0,
+            lex(0.0, 2, 0),
+            crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx: 2,
+                inner_cur_bp: 3,
+                wrap_cat: 1,
+                wrap_rule: 0,
+            },
+        );
+
+        let guarded = w.guard_crosscat_projection_target_boundary(
+            &cursor,
+            WpdaStepAction::ConsumeAndPush {
+                symbol: StackSymbolV2::rule_at(2, 0, 0, Some(3)).with_kind_return(),
+                weight: lex(0.0, 2, 0),
+                new_state: WpdaState::PrefixDispatch { pos: 1, cur_bp: 5 },
+                trigger_mode: TriggerMode::Discard,
+            },
+            &token_src,
+        );
+
+        let WpdaStepAction::Fork { branches, consume_trigger } = guarded else {
+            panic!("expected projection boundary fork, got {guarded:?}");
+        };
+        assert!(!consume_trigger);
+        assert_eq!(branches.len(), 2);
+        assert!(matches!(
+            branches[0].action_kind,
+            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard }
+        ));
+        assert!(matches!(branches[1].action_kind, ForkActionKind::Advance));
+        assert!(matches!(branches[1].new_state, WpdaState::Unwinding));
+        assert_eq!(branches[1].symbol.category_src_idx, 2);
+    }
+
+    #[test]
+    fn projection_source_operator_preserves_target_accepting_branch() {
+        let token_kinds = [TokenKind::Fixed("+".into()), TokenKind::Eof];
+        let token_texts = ["+", ""];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let mut w = WpdaWalker::new(ProjectionBoundaryProbeEngine, 0);
+        let mut cursor = w.branch_cursors_for_test()[0].clone();
+        cursor.inner_state = WpdaState::InfixLoop { cur_bp: 2 };
+        let _ = w.cursor_gss_push_with_kind(
+            &mut cursor,
+            StackSymbolV2::category_entry(2),
+            0,
+            lex(0.0, 2, 0),
+            crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx: 2,
+                inner_cur_bp: 2,
+                wrap_cat: 1,
+                wrap_rule: 0,
+            },
+        );
+
+        let guarded = w.guard_crosscat_projection_target_boundary(
+            &cursor,
+            WpdaStepAction::ConsumeAndPush {
+                symbol: StackSymbolV2::rule_at(2, 0, 0, Some(2)).with_kind_return(),
+                weight: lex(0.0, 2, 0),
+                new_state: WpdaState::PrefixDispatch { pos: 1, cur_bp: 5 },
+                trigger_mode: TriggerMode::Discard,
+            },
+            &token_src,
+        );
+
+        let WpdaStepAction::Fork { branches, consume_trigger } = guarded else {
+            panic!("expected projection target-accepting fork, got {guarded:?}");
+        };
+        assert!(!consume_trigger);
+        assert_eq!(branches.len(), 2);
+        assert!(matches!(
+            branches[0].action_kind,
+            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard }
+        ));
+        assert!(matches!(branches[1].action_kind, ForkActionKind::Advance));
+        assert!(matches!(branches[1].new_state, WpdaState::Unwinding));
+        assert_eq!(branches[1].symbol.category_src_idx, 2);
+    }
+
+    /// CrossCatLhs body parsing keeps both the operator-taking path and the
+    /// source-body boundary when a category-changing infix is visible.
+    #[test]
+    fn guard_category_changing_infix_preserves_boundary_branch() {
+        let token_kinds = [TokenKind::Fixed("<".into()), TokenKind::Eof];
+        let token_texts = ["<", ""];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let engine = ScriptedEngine::new(vec![]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let mut cursor = w.branch_cursors_for_test()[0].clone();
+        cursor.inner_state = WpdaState::InfixLoop { cur_bp: 0 };
+        let _ = w.cursor_gss_push_with_kind(
+            &mut cursor,
+            StackSymbolV2::category_entry(2),
+            0,
+            lex(0.0, 0, 0),
+            crate::gss::EdgeKind::CrossCatLhs { source_src_idx: 2 },
+        );
+
+        let guarded = w.guard_category_changing_infix(
+            &cursor,
+            WpdaStepAction::ConsumeAndPush {
+                symbol: StackSymbolV2::rule_at(7, 8, 0, Some(0)).with_kind_return(),
+                weight: lex(0.0, 2, 8),
+                new_state: WpdaState::CrossCatDelegate { source_src_idx: 2, inner_cur_bp: 9 },
+                trigger_mode: TriggerMode::Discard,
+            },
+            &token_src,
+        );
+
+        let WpdaStepAction::Fork { branches, consume_trigger } = guarded else {
+            panic!("expected preserving Fork, got {guarded:?}");
+        };
+        assert!(!consume_trigger);
+        assert_eq!(branches.len(), 2);
+        assert!(matches!(
+            branches[0].action_kind,
+            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard }
+        ));
+        assert!(matches!(branches[0].new_state, WpdaState::CrossCatDelegate { .. }));
+        assert!(matches!(branches[1].action_kind, ForkActionKind::Advance));
+        assert!(matches!(branches[1].new_state, WpdaState::Unwinding));
+        assert_eq!(branches[1].symbol.category_src_idx, 2);
+    }
 
     /// Mechanism γ — `ConsumeAndReplace` fork branch advances pos by 1.
     /// Mirrors `WpdaStepAction::ConsumeAndReplace` semantics inside Fork.

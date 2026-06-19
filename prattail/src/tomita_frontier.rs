@@ -9,13 +9,13 @@
 //!
 //! Per Exp 14 plan (`prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`)
 //! Substage 0 measurement (commit `9662b81`, 2026-05-27), the projected
-//! per-step merge factor under a coarsened 5-tuple key
-//! `TomitaKey = (state, node, pos, edge_top, collection_depth)` is
-//! 2.85x-3.11x on LEFT-assoc chain_50/100/200 and 2.68x-2.71x on
-//! RIGHT-assoc chain_50/100/200/1000. Below the plan's heuristic 5x
-//! threshold but Welch-significant (p=9.2e-8). The 3x merge collapses
-//! 28.9 M cohort cursor emissions at chain_500 LEFT-assoc to ~9.6 M —
-//! a 67% reduction that is structurally meaningful.
+//! per-step merge factor under a coarsened key
+//! `TomitaKey = (state, node, pos, edge_top, edge_stack, collection_depth)`
+//! keeps the full incoming-edge stack as a shell axis. The top edge
+//! classifies the next immediate pop, but delegated Pratt continuations can
+//! expose a deeper stack entry after a shared return frame pops. Those
+//! cursors are distinct WPDA configurations and must not share a Tomita
+//! shell.
 //!
 //! # This module
 //!
@@ -56,10 +56,9 @@ use crate::wpda_walker::{BranchCursor, BuilderDelta, LexForkStamp, PackedDispatc
 /// provenance axes (`lex_alt_idx`, `weight_src_idx`, `weight_rule_idx`,
 /// `lex_fork_stamp`) plus `cohort_origin` plus `sppf_top`. Cursors with
 /// the same TomitaKey but distinct ConfigKey arc-merge under this map.
-/// The full incoming-edge stack is branch history, not a shell axis:
-/// `incoming_edge_top` classifies the next shell action, while deeper
-/// stack entries must remain per-arc so later pops resume the correct
-/// continuation.
+/// The full incoming-edge stack is retained because GSS dedup can produce
+/// identical current tips and top pushed edges while the next non-shared pop
+/// depends on a deeper continuation.
 ///
 /// Soundness: per the Exp 14 plan §2.4 (proof sketch), the engine's
 /// `step` function is pure of cursor state at every dispatch site —
@@ -73,16 +72,18 @@ pub struct TomitaKey {
     pub node: GssNodeId,
     pub pos: usize,
     pub incoming_edge_top: Option<GssEdgeId>,
+    pub incoming_edge_stack: EdgeStackId,
     pub collection_depth: u8,
 }
 
 impl TomitaKey {
-    /// Convenience constructor taking the 5 axes verbatim.
+    /// Convenience constructor taking the shell axes verbatim.
     pub fn new(
         state: WpdaState,
         node: GssNodeId,
         pos: usize,
         incoming_edge_top: Option<GssEdgeId>,
+        incoming_edge_stack: EdgeStackId,
         collection_depth: u8,
     ) -> Self {
         Self {
@@ -90,6 +91,7 @@ impl TomitaKey {
             node,
             pos,
             incoming_edge_top,
+            incoming_edge_stack,
             collection_depth,
         }
     }
@@ -820,7 +822,7 @@ mod tests {
     use crate::wpda_runtime::WpdaState;
 
     fn fresh_key() -> TomitaKey {
-        TomitaKey::new(WpdaState::Ready { min_bp: 0 }, 0, 0, None, 0)
+        TomitaKey::new(WpdaState::Ready { min_bp: 0 }, 0, 0, None, EDGE_STACK_ID_ROOT, 0)
     }
 
     fn fresh_shell() -> TomitaShell<LexicographicWeight> {

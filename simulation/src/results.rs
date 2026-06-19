@@ -128,7 +128,8 @@ impl RuleCoverage {
     pub fn finalize(&mut self, total_rules: usize) {
         self.total_rules = total_rules;
         if total_rules > 0 {
-            self.coverage_pct = (self.rules_fired.len() as f64 / total_rules as f64) * 100.0;
+            let covered = self.rules_fired.len().min(total_rules);
+            self.coverage_pct = (covered as f64 / total_rules as f64) * 100.0;
         } else {
             self.coverage_pct = 100.0;
         }

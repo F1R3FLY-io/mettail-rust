@@ -201,6 +201,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // frontier without adding evidence.
             let mut __crosscat_projection_seen: std::collections::BTreeSet<(u16, u16)> =
                 std::collections::BTreeSet::new();
+            let mut __crosscat_lhs_seen: std::collections::BTreeSet<u16> =
+                std::collections::BTreeSet::new();
 
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
             // M6c.6.4.d (2026-05-14): activated PrefixOp branch — same-cat
@@ -282,10 +284,31 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     ),
                                     new_state: WpdaState::CrossCatDelegate {
                                         source_src_idx,
-                                        inner_cur_bp: 0,
+                                        inner_cur_bp: *cur_bp,
                                     },
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                });
+                            }
+                            __primary_survived = true;
+                        }
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatLhs {
+                            source_src_idx,
+                        } => {
+                            if __crosscat_lhs_seen.insert(source_src_idx) {
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::category_entry(source_src_idx),
+                                    weight: lex_w(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
+                                        primary_src,
+                                        source_src_idx,
+                                    ),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: *pos,
+                                        cur_bp: *cur_bp,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
                                 });
                             }
                             __primary_survived = true;
@@ -371,10 +394,30 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     ),
                                     new_state: WpdaState::CrossCatDelegate {
                                         source_src_idx,
-                                        inner_cur_bp: 0,
+                                        inner_cur_bp: *cur_bp,
                                     },
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                });
+                            }
+                        }
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatLhs {
+                            source_src_idx,
+                        } => {
+                            if __crosscat_lhs_seen.insert(source_src_idx) {
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::category_entry(source_src_idx),
+                                    weight: lex_w(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
+                                        primary_src,
+                                        source_src_idx,
+                                    ),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: *pos,
+                                        cur_bp: *cur_bp,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
                                 });
                             }
                         }
@@ -417,14 +460,11 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // heads rules in a SOURCE category of a category-changing infix
             // RESULTING in the current state cat (e.g. `int` — cat-Int casts —
             // in a Bool-seeking context entered via the ProcBool projection;
-            // Bool's Pass-0 owns a CrossCatLhs{Int} arm for it) must fall
-            // through to the normal dispatch: the lex-alt table has NO
-            // LexAltRuleKind::CrossCatLhs variant, so forking here would drop
-            // the delegate interpretation and leave only `Ident -> Var` (the
-            // trace-proven cast-then-compare gap: `int(3) == 3` parsed `int`
-            // as VarBool, the EqInt result orphaned in the Int-context worker).
-            // Falling through makes the operand cursor a dispatch-time
-            // d-WORKER whose continuation hosts the infix result natively.
+            // Bool's Pass-0 owns a CrossCatLhs{Int} arm for it) may fall
+            // through to the normal dispatch when the primary token carries
+            // that evidence. Secondary keyword alternatives are represented
+            // directly above by LexAltRuleKind::CrossCatLhs, because normal
+            // dispatch can only inspect the primary token kind.
             // Same-length keyword reservation applies, identically to the
             // primary-rule fall-through above; inner cast levels are
             // owner-context (same-cat primaries), so the fan-out stays
@@ -514,6 +554,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                 __DwW,
             >> = Vec::with_capacity(alts.len() + 1);
             let mut __primary_survived: bool = false;
+            let mut __primary_floor_blocked: bool = false;
 
             if let Some(primary_kind) = tokens.peek_kind(_pos) {
                 let primary_text = tokens.peek_text(_pos).unwrap_or("").to_string();
@@ -547,6 +588,8 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         },
                                 });
                                 __primary_survived = true;
+                            } else {
+                                __primary_floor_blocked = true;
                             }
                         },
                         mettail_prattail::wpda_runtime::LexAltRuleKind::InfixOp {
@@ -591,6 +634,8 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         },
                                 });
                                 __primary_survived = true;
+                            } else {
+                                __primary_floor_blocked = true;
                             }
                         },
                         mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
@@ -634,11 +679,22 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         },
                                 });
                                 __primary_survived = true;
+                            } else {
+                                __primary_floor_blocked = true;
                             }
                         },
                         _ => {},
                     }
                 }
+            }
+
+            if __primary_floor_blocked && !__primary_survived {
+                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: StackSymbolV2::category_entry(primary_src),
+                    weight: lex_one(),
+                    new_state: WpdaState::Unwinding,
+                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::Advance,
+                });
             }
 
             for (sec_idx, alt) in alts.iter().enumerate() {
@@ -855,6 +911,16 @@ mod tests {
         let s = ts.to_string();
         assert!(s.contains("is_ambiguous_at"), "missing is_ambiguous_at: {}", s);
         assert!(s.contains("LexAlt"), "missing LexAlt action_kind: {}", s);
+        assert!(
+            s.contains("LexAltRuleKind :: CrossCatLhs"),
+            "missing cross-cat LHS lex-alt kind: {}",
+            s
+        );
+        assert!(
+            s.contains("ForkActionKind :: PushCrossCatLhs"),
+            "missing cross-cat LHS lex-alt action: {}",
+            s
+        );
         assert!(s.contains("peek_alternatives"), "missing peek_alternatives: {}", s);
     }
 
@@ -866,6 +932,11 @@ mod tests {
         assert!(s.contains("LexAltPostfixOp"), "missing postfix action: {}", s);
         assert!(s.contains("LexAltInfixOp"), "missing infix action: {}", s);
         assert!(s.contains("LexAltMixfixOp"), "missing mixfix action: {}", s);
+        assert!(
+            s.contains("__primary_floor_blocked") && s.contains("ForkActionKind :: Advance"),
+            "missing max-munch Pratt-floor boundary branch: {}",
+            s
+        );
         assert!(
             s.contains("consume_trigger : false"),
             "lex-alt operator actions consume intrinsically: {}",

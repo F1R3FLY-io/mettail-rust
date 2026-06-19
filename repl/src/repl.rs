@@ -415,6 +415,7 @@ mod tests {
                 child_key: b"child".to_vec(),
                 child_index: 0,
             }],
+            rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
         }
     }

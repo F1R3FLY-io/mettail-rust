@@ -98,6 +98,7 @@ pub fn emit_lex_alt_rule_for_fn(
             }
         }
     }
+    emit_prefix_crosscat_lhs_pushes(_language, categories, &mut prefix_pushes);
     let prefix_primary_dispatch_arms = emit_prefix_primary_dispatch_arms(_language, per_cat);
     let prefix_crosscat_lhs_dispatch_arms =
         emit_prefix_crosscat_lhs_dispatch_arms(_language, categories);
@@ -120,6 +121,8 @@ pub fn emit_lex_alt_rule_for_fn(
         ///   trigger (e.g., unary `Neg` or `FloatBin`'s `"float"`).
         /// - `CrossCatProjection { source_src_idx }`: transparent
         ///   wrapper whose source category can consume this token.
+        /// - `CrossCatLhs { source_src_idx }`: source-category LHS
+        ///   delegate whose source category can consume this token.
         #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
         fn lex_alt_rules_for_prefix(
             cat_src_idx: u16,
@@ -157,9 +160,10 @@ pub fn emit_lex_alt_rule_for_fn(
         /// context) falls through to the normal dispatch whose unified Pass-0
         /// arm pushes the `CrossCatLhs{I}` delegate — making the operand
         /// cursor a dispatch-time d-WORKER whose continuation hosts the infix
-        /// result natively (the lex-alt table cannot represent this arm: no
-        /// `LexAltRuleKind::CrossCatLhs` variant). Same-length keyword
-        /// reservation applies, exactly as in the primary-rule fall-through.
+        /// result natively. Same-length keyword reservation applies, exactly
+        /// as in the primary-rule fall-through. Secondary-keyword cases are
+        /// preserved by `LexAltRuleKind::CrossCatLhs` rather than this
+        /// primary-token fall-through path.
         /// Source set mirrors `prefix.rs` Pass-0 (cross_cat_infix_sources).
         #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
         fn prefix_crosscat_lhs_has_dispatch_rule(
@@ -197,9 +201,8 @@ pub fn emit_lex_alt_rule_for_fn(
             if triggers.is_empty() {
                 return false;
             }
-            let mut i = pos + 1;
-            let n = tokens.len();
-            while i < n {
+            let mut next = tokens.next_pos(pos, 0);
+            while let Some(i) = next {
                 if let Some(mettail_prattail::automata::TokenKind::Fixed(t)) =
                     tokens.peek_kind(i)
                 {
@@ -207,7 +210,11 @@ pub fn emit_lex_alt_rule_for_fn(
                         return true;
                     }
                 }
-                i += 1;
+                let following = tokens.next_pos(i, 0);
+                if following == Some(i) {
+                    break;
+                }
+                next = following;
             }
             false
         }
@@ -351,6 +358,53 @@ fn emit_prefix_crosscat_lhs_dispatch_arms(
         }
     }
     arms
+}
+
+fn emit_prefix_crosscat_lhs_pushes(
+    language: &LanguageDef,
+    categories: &[String],
+    prefix_pushes: &mut Vec<TokenStream>,
+) {
+    for (result_idx, result_cat_name) in categories.iter().enumerate() {
+        let result_src_idx = result_idx as u16;
+        let mut sources: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for rule in &language.terms {
+            if rule.category.to_string() != *result_cat_name {
+                continue;
+            }
+            if let Some(info) = super::infix::classify_rule_public(rule) {
+                if info.is_cross_category && info.category != info.result_category {
+                    sources.insert(info.category.clone());
+                }
+            }
+        }
+        for source_cat_name in &sources {
+            let Some(source_src_idx) = categories
+                .iter()
+                .position(|cat| cat == source_cat_name)
+                .map(|idx| idx as u16)
+            else {
+                continue;
+            };
+            for first in first_set_of_category(source_cat_name, language) {
+                let pattern = first.pattern;
+                let guard = first.extra_guard.unwrap_or_else(|| quote! { true });
+                prefix_pushes.push(quote! {
+                    match Some(kind.clone()) {
+                        #pattern if cat_src_idx == #result_src_idx && (#guard) => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #source_src_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatLhs {
+                                    source_src_idx: #source_src_idx,
+                                },
+                            }
+                        ),
+                        _ => {},
+                    }
+                });
+            }
+        }
+    }
 }
 
 /// M6c.6.4.b: Emit local match snippets that push
