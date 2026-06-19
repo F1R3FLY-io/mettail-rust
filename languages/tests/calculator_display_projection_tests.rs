@@ -368,3 +368,19 @@ fn calculator_string_concatenation_lex_forks_keep_accepting_branch() {
     Bool::parse("str(true) ++ str(\"z\") < \"fbb\" ++ \"\" ++ \"fl\"")
         .expect("cross-category string comparison should preserve accepting lex branch");
 }
+
+#[test]
+fn calculator_string_cast_wrapped_source_comparisons_parse() {
+    mettail_runtime::clear_var_cache();
+
+    let cast_wrapped_sources = &[
+        "str(cast_error_float * cast_error_float) > str(error == error)",
+        "str(error == error) < str(error != error)",
+        "str(cast_error_float * cast_error_float) <= str(cast_error_float + cast_error_float)",
+    ];
+    for input in cast_wrapped_sources {
+        Bool::parse(input).unwrap_or_else(|e| {
+            panic!("string comparison should preserve cast-wrapped source operand {input:?}: {e:?}")
+        });
+    }
+}

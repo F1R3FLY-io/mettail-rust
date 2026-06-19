@@ -966,6 +966,18 @@ enum RealizeLazyAbort {
     Cycle,
 }
 
+/// Body-delivery obligation for a CrossCatLhs dispatch key.
+///
+/// GSS edges may converge when their future control behavior is identical,
+/// but an edge can still carry the obligation to publish any later completed
+/// body back to the original CrossCatLhs cohort. Keeping this as side metadata
+/// preserves control-state sharing while making delivery obligations additive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CrossCatLhsBodyOrigin {
+    source_src_idx: u16,
+    origin: crate::gss::CrossCatLhsReentryOrigin,
+}
+
 /// RC-B (2026-06-17): one pop-site prefix-cast wrap synthesis job. Carries
 /// everything `synthesize_prefix_cast_wrap_cursor` needs to fire the
 /// trigger-bearing prefix cast `C_in -> C_out` (e.g. `BoolToInt`) over a
@@ -997,6 +1009,33 @@ struct PrefixCastWrapJob<W: SemiringRef> {
     /// delegate projection edge so its GSS node is the OUTER return frame (the
     /// frame that dispatched the cast). The synthesizer resets its SPPF stack
     /// to hold only the freshly-formed `C_out` symbol.
+    outer_frame: BranchCursor<W>,
+}
+
+/// Stack-safe continuation parked when a direct trigger-bearing prefix cast
+/// launches its body with `ReplaceAndPush(CategoryEntry(C_in))`.
+///
+/// The waiter records the already-evidenced wrapper continuation, not a
+/// recursive parse request. Any later SPPF `C_in[body_start_pos, hi)` symbol
+/// can satisfy it iff the existing drain-time token guards prove that `hi`
+/// rests on the wrapper's structural close.
+struct PrefixCastWaiter<W: SemiringRef> {
+    /// Body category declared by the direct prefix body frame.
+    body_cat: u16,
+    /// Input position immediately after the wrapper's opening delimiter.
+    body_start_pos: usize,
+    /// Cast keyword input position; the synthesized result spans from here.
+    trigger_lo: usize,
+    /// Output category of the direct prefix cast.
+    c_out: u16,
+    /// Local rule index of the direct prefix cast in `c_out`.
+    cast_rule: u16,
+    /// Cast keyword text, reused by the guarded synthesizer.
+    keyword: String,
+    /// Binding-power floor restored after the synthesized cast fires.
+    resume_bp: u8,
+    /// Prefix continuation after popping the wrapper frame and trigger. The
+    /// body weight is multiplied in only when a concrete body symbol matches.
     outer_frame: BranchCursor<W>,
 }
 
@@ -1168,6 +1207,18 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// parse boundary.
     crosscat_lhs_key_edges:
         rustc_hash::FxHashMap<crate::dispatch_cohort::DispatchKey, Vec<crate::gss::GssEdgeId>>,
+    /// CrossCatLhs body-delivery obligations carried by edges that may outlive
+    /// the original visible CrossCatLhs frame. This is a per-edge side table so
+    /// convergent GSS edges can keep their control equivalence while merging
+    /// all body publication obligations attached by deduped arrivals.
+    crosscat_lhs_body_origins:
+        rustc_hash::FxHashMap<crate::gss::GssEdgeId, Vec<CrossCatLhsBodyOrigin>>,
+    /// CrossCatLhs body-delivery obligations carried by SPPF values. A later
+    /// reduction can consume an obligated body as a child after its GSS
+    /// reentry edge is no longer visible on that reducing cursor; this
+    /// side-table keeps the obligation attached to the value derivation.
+    crosscat_lhs_sppf_body_origins:
+        rustc_hash::FxHashMap<crate::sppf::SppfId, Vec<CrossCatLhsBodyOrigin>>,
     /// EP-P1 v3.1 (led_chain root fix, 2026-06-12): once the EOI/no-progress
     /// backstop has begun releasing CrossCatLhs members stranded on
     /// never-resolved InFlight keys, further CrossCatLhs InFlightCollision
@@ -1350,6 +1401,15 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// site is gated on a `CrossCatProjection` pop). See
     /// `docs/design/parser/rc-b-cross-cat-comparison-projection.md` §5.
     pending_prefix_cast_wrap_jobs: Vec<PrefixCastWrapJob<W>>,
+    /// RC-B direct-prefix completion (2026-06-19): wrapper continuations
+    /// parked when a trigger-bearing cast launches its body through the
+    /// ordinary `ReplaceAndPush(CategoryEntry(C_in))` route rather than a
+    /// `CrossCatDelegate` cohort route. Full bodies produced by sibling
+    /// continuations are joined against these waiters by category, span start,
+    /// keyword, and the existing structural-close/min-terminal guards. This
+    /// preserves ambiguity additively: waiters only add sound continuations
+    /// after evidence appears; they never prune candidate parses.
+    parked_prefix_cast_waiters: Vec<PrefixCastWaiter<W>>,
     /// Cohort-revive-rework M1 (2026-05-29): bounded re-drive counter for
     /// EOI orphan revival. `run_to_end_of_input`'s `!progress_made` block
     /// calls `revive_orphaned_cohort_members_once`, which injects
@@ -4006,6 +4066,8 @@ where
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
@@ -4028,6 +4090,7 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
+            parked_prefix_cast_waiters: Vec::new(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4104,6 +4167,8 @@ where
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
@@ -4126,6 +4191,7 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
+            parked_prefix_cast_waiters: Vec::new(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4201,6 +4267,8 @@ where
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
@@ -4223,6 +4291,7 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
+            parked_prefix_cast_waiters: Vec::new(),
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
@@ -4309,6 +4378,7 @@ where
         self.dispatch_cohort_cache.clear();
         self.pending_cohort_drain_keys.clear();
         self.pending_prefix_cast_wrap_jobs.clear();
+        self.parked_prefix_cast_waiters.clear();
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
@@ -4321,6 +4391,8 @@ where
         self.parked_crosscat_lhs_keys.clear();
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
+        self.crosscat_lhs_body_origins.clear();
+        self.crosscat_lhs_sppf_body_origins.clear();
         self.ep_p1_eoi_release = false;
         // EP-P2 (Stage B): the per-parse suffix-class masks are
         // token-source-dependent — drop them at the parse boundary AND on
@@ -4419,6 +4491,7 @@ where
             .clear_entries_preserving_diagnostics();
         self.pending_cohort_drain_keys.clear();
         self.pending_prefix_cast_wrap_jobs.clear();
+        self.parked_prefix_cast_waiters.clear();
         // EP-P1 (R6 measure substrate): edge ids restart with the GSS at
         // the parse boundary — the wrap side table must clear with them.
         self.crosscat_lhs_wrap.clear();
@@ -4431,6 +4504,8 @@ where
         self.parked_crosscat_lhs_keys.clear();
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
+        self.crosscat_lhs_body_origins.clear();
+        self.crosscat_lhs_sppf_body_origins.clear();
         self.ep_p1_eoi_release = false;
         // EP-P2 (Stage B): the per-parse suffix-class masks are
         // token-source-dependent — drop them at the parse boundary AND on
@@ -7826,6 +7901,196 @@ where
         }
     }
 
+    fn crosscat_lhs_reentry_origin_for_edge(
+        &self,
+        edge_id: crate::gss::GssEdgeId,
+        fallback_key_min_bp: u8,
+    ) -> Option<crate::gss::CrossCatLhsReentryOrigin> {
+        let dispatch_node = self.gss.edge_source(edge_id)?;
+        let dispatch_pos = self.gss.node(dispatch_node)?.pos;
+        let key_min_bp = self
+            .crosscat_lhs_min_bp
+            .get(&edge_id)
+            .copied()
+            .unwrap_or(fallback_key_min_bp);
+        let (wrap_cat, wrap_rule) = self.crosscat_lhs_wrap.get(&edge_id).copied()?;
+        Some(crate::gss::CrossCatLhsReentryOrigin {
+            dispatch_pos,
+            key_min_bp,
+            wrap_cat,
+            wrap_rule,
+        })
+    }
+
+    fn push_unique_crosscat_lhs_body_origin(
+        origins: &mut Vec<CrossCatLhsBodyOrigin>,
+        origin: CrossCatLhsBodyOrigin,
+    ) {
+        if !origins.iter().any(|existing| *existing == origin) {
+            origins.push(origin);
+        }
+    }
+
+    fn crosscat_lhs_body_origin_from_scope_edge(
+        &self,
+        edge_id: crate::gss::GssEdgeId,
+        source_src_idx: u16,
+        fallback_key_min_bp: u8,
+    ) -> Option<CrossCatLhsBodyOrigin> {
+        self.crosscat_lhs_reentry_origin_for_edge(edge_id, fallback_key_min_bp)
+            .map(|origin| CrossCatLhsBodyOrigin { source_src_idx, origin })
+    }
+
+    fn crosscat_lhs_body_origins_visible_to_cursor(
+        &self,
+        cursor: &BranchCursor<W>,
+    ) -> Vec<CrossCatLhsBodyOrigin> {
+        let mut origins: Vec<CrossCatLhsBodyOrigin> = Vec::new();
+        self.incoming_edge_stack_arena.for_each_top_down_until(
+            cursor.incoming_edge_stack_id,
+            |edge_id| {
+                match self.gss.edge_kind_ref(edge_id) {
+                    Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) => {
+                        if let Some(origin) = self.crosscat_lhs_body_origin_from_scope_edge(
+                            edge_id,
+                            *source_src_idx,
+                            0,
+                        ) {
+                            Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
+                        }
+                    },
+                    Some(crate::gss::EdgeKind::CrossCatLhsScoped {
+                        source_src_idx,
+                        min_bp,
+                        ..
+                    }) => {
+                        if let Some(origin) = self.crosscat_lhs_body_origin_from_scope_edge(
+                            edge_id,
+                            *source_src_idx,
+                            *min_bp,
+                        ) {
+                            Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
+                        }
+                    },
+                    Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                        source_src_idx,
+                        origin: Some(origin),
+                        ..
+                    }) => {
+                        Self::push_unique_crosscat_lhs_body_origin(
+                            &mut origins,
+                            CrossCatLhsBodyOrigin {
+                                source_src_idx: *source_src_idx,
+                                origin: *origin,
+                            },
+                        );
+                    },
+                    _ => {},
+                }
+                if let Some(stored) = self.crosscat_lhs_body_origins.get(&edge_id) {
+                    for &origin in stored {
+                        Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
+                    }
+                }
+                true
+            },
+        );
+        origins
+    }
+
+    fn record_crosscat_lhs_body_origins_for_edge(
+        &mut self,
+        edge_id: crate::gss::GssEdgeId,
+        origins: Vec<CrossCatLhsBodyOrigin>,
+    ) {
+        if origins.is_empty() {
+            return;
+        }
+        let entry = self.crosscat_lhs_body_origins.entry(edge_id).or_default();
+        for origin in origins {
+            if !entry.iter().any(|existing| *existing == origin) {
+                entry.push(origin);
+            }
+        }
+    }
+
+    fn record_crosscat_lhs_body_origins_for_sppf_id(
+        &mut self,
+        sppf_id: crate::sppf::SppfId,
+        origins: Vec<CrossCatLhsBodyOrigin>,
+    ) {
+        if origins.is_empty() {
+            return;
+        }
+        let entry = self
+            .crosscat_lhs_sppf_body_origins
+            .entry(sppf_id)
+            .or_default();
+        for origin in origins {
+            if !entry.iter().any(|existing| *existing == origin) {
+                entry.push(origin);
+            }
+        }
+    }
+
+    fn collect_crosscat_lhs_body_origins_from_sppf_roots(
+        &self,
+        roots: &[crate::sppf::SppfId],
+        body_lo: usize,
+        origins: &mut Vec<CrossCatLhsBodyOrigin>,
+    ) {
+        let mut stack: Vec<crate::sppf::SppfId> = roots.to_vec();
+        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> = rustc_hash::FxHashSet::default();
+        while let Some(sppf_id) = stack.pop() {
+            if !seen.insert(sppf_id) {
+                continue;
+            }
+            if let Some(stored) = self.crosscat_lhs_sppf_body_origins.get(&sppf_id) {
+                for &origin in stored {
+                    if origin.origin.dispatch_pos == body_lo {
+                        Self::push_unique_crosscat_lhs_body_origin(origins, origin);
+                    }
+                }
+            }
+            match self.sppf.node(sppf_id) {
+                Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                    stack.extend(children.iter().copied());
+                },
+                Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                    stack.extend(items.iter().copied());
+                },
+                _ => {},
+            }
+        }
+    }
+
+    fn crosscat_lhs_body_origins_for_reduction(
+        &self,
+        cursor: &BranchCursor<W>,
+        children: &[crate::sppf::SppfId],
+        body_lo: usize,
+    ) -> Vec<CrossCatLhsBodyOrigin> {
+        if self.ep_p1_mode != EpP1Mode::On {
+            return Vec::new();
+        }
+        let mut origins: Vec<CrossCatLhsBodyOrigin> = Vec::new();
+        for origin in self.crosscat_lhs_body_origins_visible_to_cursor(cursor) {
+            if origin.origin.dispatch_pos == body_lo {
+                Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
+            }
+        }
+        self.collect_crosscat_lhs_body_origins_from_sppf_roots(children, body_lo, &mut origins);
+        origins
+    }
+
+    fn crosscat_lhs_key_is_quiescent(&self, key: &crate::dispatch_cohort::DispatchKey) -> bool {
+        self.crosscat_lhs_live_lineages
+            .get(key)
+            .copied()
+            .unwrap_or(0)
+            == 0
+    }
+
     fn replacement_category_entry_continuation_kind(
         &self,
         cursor: &BranchCursor<W>,
@@ -7874,8 +8139,8 @@ where
                         .unwrap_or(resume_bp),
                 })
             },
-            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp } => {
-                Some(crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp })
+            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp, origin } => {
+                Some(crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp, origin })
             },
             crate::gss::EdgeKind::TransparentSourceReentry { source_src_idx, target_src_idx } => {
                 Some(crate::gss::EdgeKind::TransparentSourceReentry {
@@ -8444,7 +8709,7 @@ where
             source_entry,
             cursor.pos,
             W::one_ref(),
-            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp },
+            crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp, origin: None },
         );
         self.record_crosscat_lhs_resume_on_cursor_top(cursor, min_bp);
     }
@@ -8580,6 +8845,80 @@ where
             Some(produced_cat)
         } else {
             None
+        }
+    }
+
+    fn resolve_crosscat_lhs_body_origin(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        symbol_id: crate::sppf::SppfId,
+        body_origin: CrossCatLhsBodyOrigin,
+        schedule_immediately: bool,
+    ) {
+        if self.ep_p1_mode != EpP1Mode::On {
+            return;
+        }
+        let Some(body_lo) = self.sppf.span_lo(symbol_id).map(|lo| lo as usize) else {
+            return;
+        };
+        let CrossCatLhsBodyOrigin { source_src_idx, origin } = body_origin;
+        if body_lo != origin.dispatch_pos {
+            return;
+        }
+        if self.sppf_symbol_category(symbol_id).is_none() {
+            return;
+        }
+        self.record_crosscat_lhs_body_origins_for_sppf_id(
+            symbol_id,
+            vec![CrossCatLhsBodyOrigin { source_src_idx, origin }],
+        );
+        let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(
+            origin.dispatch_pos,
+            source_src_idx,
+            origin.key_min_bp,
+            origin.wrap_cat,
+            origin.wrap_rule,
+        );
+        let worker_pre = self
+            .dispatch_cohort_cache
+            .read_worker_pre(&key)
+            .unwrap_or_else(W::one_ref);
+        let snap = crate::dispatch_cohort::WorkerSnapshot {
+            worker_inner_state: cursor.inner_state.clone(),
+            worker_last_action_output_cat: cursor.last_action_output_cat,
+            worker_pending_packing_weight: cursor.pending_packing_weight.clone(),
+            worker_weight: cursor.weight.clone(),
+            worker_pre_dispatch_weight: worker_pre,
+        };
+        let outcome = self.dispatch_cohort_cache.resolve(
+            key.clone(),
+            symbol_id,
+            cursor.pos,
+            origin.dispatch_pos,
+            snap,
+        );
+        if matches!(
+            outcome,
+            crate::dispatch_cohort::ResolveOutcome::FirstResolve
+                | crate::dispatch_cohort::ResolveOutcome::SnapshotAppended
+        ) && (schedule_immediately || self.crosscat_lhs_key_is_quiescent(&key))
+        {
+            self.pending_crosscat_lhs_drain_keys.insert(key);
+        }
+    }
+
+    fn resolve_crosscat_lhs_body_origins(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        symbol_id: crate::sppf::SppfId,
+        origins: Vec<CrossCatLhsBodyOrigin>,
+        schedule_immediately: bool,
+    ) {
+        if self.ep_p1_mode != EpP1Mode::On {
+            return;
+        }
+        for origin in origins {
+            self.resolve_crosscat_lhs_body_origin(cursor, symbol_id, origin, schedule_immediately);
         }
     }
 
@@ -10139,6 +10478,7 @@ where
                     cursor.pos,
                     weight.clone(),
                 );
+                self.try_park_direct_prefix_cast_waiter(cursor, replace_symbol, push_symbol);
                 // B9 / Class 2 (2026-05-08): apply emit_push_side_effects
                 // BEFORE pushing the symbol — for CollectionMarker, this
                 // allocates an accumulator id and patches symbol.bp =
@@ -10666,6 +11006,7 @@ where
                                         Some(crate::gss::EdgeKind::CrossCatLhsReentry {
                                             source_src_idx,
                                             min_bp,
+                                            origin: None,
                                         })
                                     }
                                 } else {
@@ -12759,6 +13100,11 @@ where
                                 pos_now,
                                 branch.weight.clone(),
                             );
+                            self.try_park_direct_prefix_cast_waiter(
+                                &child,
+                                replace_symbol,
+                                branch.symbol,
+                            );
                             let mut sym = branch.symbol;
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let _ = self.cursor_gss_push_auto(
@@ -14422,6 +14768,13 @@ where
                     }
                 }
             }
+        }
+        // CrossCatLhs consumption above can stage prefix-cast wrap jobs for
+        // bodies delivered through the cohort consumer rather than a direct
+        // pop. Drain them in the same fanout pass so the enclosing prefix
+        // continuation can consume the structural close immediately.
+        for acc in self.drain_prefix_cast_wrap_jobs(tokens) {
+            new_cursors.push(crate::cohort_lazy::Frame::Concrete(acc));
         }
         self.branch_cursors = new_cursors;
         // Phase F.13 walker-stats (2026-05-20): capture pre-merge peak.
@@ -17756,6 +18109,15 @@ where
                         lo_pos,
                         hi_pos,
                     );
+                    let body_origins = if token_sound {
+                        self.crosscat_lhs_body_origins_for_reduction(
+                            cursor,
+                            &children,
+                            lo_pos as usize,
+                        )
+                    } else {
+                        Vec::new()
+                    };
                     cursor.last_action_output_cat = if token_sound { output_cat } else { None };
                     let packing_weight =
                         std::mem::replace(&mut cursor.pending_packing_weight, W::one_ref());
@@ -17786,8 +18148,18 @@ where
                     // not become ActionArg::Term inputs to later semantic
                     // actions.
                     if token_sound {
+                        self.record_crosscat_lhs_body_origins_for_sppf_id(
+                            symbol_id,
+                            body_origins.clone(),
+                        );
                         self.sppf_symbol_terms
                             .insert(symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
+                        self.resolve_crosscat_lhs_body_origins(
+                            cursor,
+                            symbol_id,
+                            body_origins,
+                            false,
+                        );
                     }
                     return;
                 },
@@ -18304,6 +18676,19 @@ where
             return false;
         };
         let exits_source = body_cat != source_src_idx;
+        let dispatch_pos = cursor.pos;
+        let pred = cursor.node;
+        let (wrap_cat, wrap_rule) = self
+            .gss
+            .node(pred)
+            .map(|n| (n.symbol.category_src_idx, u16::MAX))
+            .unwrap_or((u16::MAX, u16::MAX));
+        let reentry_origin = Some(crate::gss::CrossCatLhsReentryOrigin {
+            dispatch_pos,
+            key_min_bp: source_resume_bp,
+            wrap_cat,
+            wrap_rule,
+        });
         // (1) weight: weight_at_dispatch (pre-set by the caller) ⊗ the
         //     body aggregate.
         let body_w = self.sppf.symbol_weight_sum(symbol_id);
@@ -18316,10 +18701,14 @@ where
         // (3) the body-owned data fields (R7-1/R7-2).
         cursor.last_action_output_cat = worker_last_action_output_cat.or(Some(body_cat));
         cursor.pending_packing_weight = worker_pending_packing_weight;
+        // CrossCatLhs cohort consumption is an alternate stack-safe return
+        // path for a completed body. Prefix-cast reconciliation must see the
+        // same body evidence here that it sees on ordinary CategoryEntry pops.
+        self.try_stage_prefix_cast_body_wrap(cursor, symbol_id);
+        self.try_stage_parked_prefix_cast_waiters(symbol_id);
         // (4) the member tail from the cursor's OWN node (== the pred
         //     the per-cursor pop would have seen; the cursor is
         //     pre-push so cursor.node IS pred_id).
-        let pred = cursor.node;
         let effective = match self.gss.node(pred).map(|n| n.symbol.kind) {
             Some(SymbolKind::CategoryEntry) => WpdaState::InfixLoop {
                 cur_bp: if exits_source {
@@ -18346,6 +18735,7 @@ where
                     crate::gss::EdgeKind::CrossCatLhsReentry {
                         source_src_idx,
                         min_bp: target_resume_bp,
+                        origin: reentry_origin,
                     },
                 );
                 self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
@@ -18374,6 +18764,7 @@ where
                 crate::gss::EdgeKind::CrossCatLhsReentry {
                     source_src_idx,
                     min_bp: source_resume_bp,
+                    origin: reentry_origin,
                 },
             );
             self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
@@ -18494,6 +18885,11 @@ where
                 resume_bp: min_bp,
             };
         }
+        let inherited_body_origins = if self.ep_p1_mode == EpP1Mode::On {
+            self.crosscat_lhs_body_origins_visible_to_cursor(cursor)
+        } else {
+            Vec::new()
+        };
         // Synthesize a fresh root if cursor is at the sentinel —
         // duplicates cursor_gss_push's logic for parity.
         let predecessor = if (cursor.node == 0 && self.gss.node(0).is_none())
@@ -18581,6 +18977,7 @@ where
             None
         };
         let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
+        self.record_crosscat_lhs_body_origins_for_edge(edge_id, inherited_body_origins);
         let fallback_min_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
         if let Some((_, min_bp)) = self
             .gss
@@ -18914,11 +19311,16 @@ where
                     .sppf
                     .span_hi(cur)
                     .expect("synth_binary_chain: acc Symbol must carry hi span");
-                let pack = self
-                    .sppf
-                    .intern_packing(rule_idx, vec![lhs, cur], weight.clone());
+                let children = vec![lhs, cur];
+                let body_origins = self.crosscat_lhs_body_origins_for_reduction(
+                    cursor,
+                    &children,
+                    atom_los[i] as usize,
+                );
+                let pack = self.sppf.intern_packing(rule_idx, children, weight.clone());
                 let sym = self.sppf.intern_symbol(op_nt_tag, atom_los[i], acc_hi);
                 self.sppf.link_packing_to_symbol(sym, pack);
+                self.record_crosscat_lhs_body_origins_for_sppf_id(sym, body_origins);
                 cur = sym;
             }
             acc = cur;
@@ -18928,13 +19330,15 @@ where
             let lo = atom_los[0];
             for i in 1..m {
                 let rhs = atom_symbols[i];
-                let pack = self
-                    .sppf
-                    .intern_packing(rule_idx, vec![cur, rhs], weight.clone());
+                let children = vec![cur, rhs];
+                let body_origins =
+                    self.crosscat_lhs_body_origins_for_reduction(cursor, &children, lo as usize);
+                let pack = self.sppf.intern_packing(rule_idx, children, weight.clone());
                 let sym = self
                     .sppf
                     .intern_symbol(op_nt_tag, lo, self.sppf.span_hi(rhs)?);
                 self.sppf.link_packing_to_symbol(sym, pack);
+                self.record_crosscat_lhs_body_origins_for_sppf_id(sym, body_origins);
                 cur = sym;
             }
             acc = cur;
@@ -19083,11 +19487,16 @@ where
                 .span_hi(cur)
                 .expect("synth_ternary_chain: acc Symbol must carry hi span");
             // EXACTLY 3 children: [cond, then, else]. No `?`/`:` children.
-            let pack =
-                self.sppf
-                    .intern_packing(rule_idx, vec![cond_sym, then_sym, cur], weight.clone());
+            let children = vec![cond_sym, then_sym, cur];
+            let body_origins = self.crosscat_lhs_body_origins_for_reduction(
+                cursor,
+                &children,
+                cond_los[i] as usize,
+            );
+            let pack = self.sppf.intern_packing(rule_idx, children, weight.clone());
             let sym = self.sppf.intern_symbol(op_nt_tag, cond_los[i], acc_hi);
             self.sppf.link_packing_to_symbol(sym, pack);
+            self.record_crosscat_lhs_body_origins_for_sppf_id(sym, body_origins);
             cur = sym;
         }
         let acc = cur;
@@ -20093,6 +20502,140 @@ where
         Some(self.sppf_stack_arena.intern_pop(below_body))
     }
 
+    fn sppf_stack_below_prefix_trigger(
+        &self,
+        cursor: &BranchCursor<W>,
+        owner_cat: u16,
+        owner_rule: u16,
+        trigger_lo: usize,
+    ) -> Option<crate::sppf_stack_arena::StackId> {
+        let trigger_sid = self.sppf_stack_arena.top(cursor.sppf_stack_id)?;
+        let Some(crate::sppf::SppfNode::TriggerTerminal {
+            pos,
+            owner_cat: oc,
+            owner_rule_idx: orx,
+            ..
+        }) = self.sppf.node(trigger_sid)
+        else {
+            return None;
+        };
+        if *oc != owner_cat || *orx != owner_rule {
+            return None;
+        }
+        let pos = match pos {
+            crate::sppf::PosOrSynth::Real(p) | crate::sppf::PosOrSynth::Synthesized(p) => {
+                *p as usize
+            },
+        };
+        if pos != trigger_lo {
+            return None;
+        }
+        Some(self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id))
+    }
+
+    /// Park the continuation for a direct trigger-bearing prefix cast body.
+    ///
+    /// Generated casts such as `int(<Bool>)` launch their body with
+    /// `ReplaceAndPush(RuleAt(Int::BoolToInt, after_body),
+    /// CategoryEntry(Bool))`. The body can complete on a sibling/cached WPDA
+    /// lineage before the direct continuation sees it. This records the wrapper
+    /// continuation once, then `try_stage_parked_prefix_cast_waiters` joins it
+    /// with any later full body symbol that matches by declared category and
+    /// span start.
+    fn try_park_direct_prefix_cast_waiter(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        replace_symbol: StackSymbolV2,
+        push_symbol: StackSymbolV2,
+    ) {
+        if push_symbol.kind != SymbolKind::CategoryEntry {
+            return;
+        }
+        if !matches!(replace_symbol.kind, SymbolKind::RuleAt(_)) {
+            return;
+        }
+        let body_cat = push_symbol.category_src_idx;
+        let c_out = replace_symbol.category_src_idx;
+        let cast_rule = replace_symbol.rule_index_in_category;
+        if self.prefix_cast_rule_into(body_cat, c_out) != Some(cast_rule) {
+            return;
+        }
+        let Some((frame_cat, frame_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) =
+            self.enclosing_prefix_rule_frame(cursor)
+        else {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] direct prefix waiter skipped: no enclosing frame c_out={} rule={} body_cat={} pos={}",
+                    c_out, cast_rule, body_cat, cursor.pos
+                );
+            }
+            return;
+        };
+        if frame_cat != c_out || frame_rule != cast_rule || body_start_pos != cursor.pos {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] direct prefix waiter skipped: frame mismatch frame=({},{}) body_start={} expected=({},{}) pos={}",
+                    frame_cat, frame_rule, body_start_pos, c_out, cast_rule, cursor.pos
+                );
+            }
+            return;
+        }
+        let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, cast_rule)
+        else {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] direct prefix waiter skipped: no trigger c_out={} rule={} pos={}",
+                    c_out, cast_rule, cursor.pos
+                );
+            }
+            return;
+        };
+        match self.engine.prefix_cast_keyword(c_out, cast_rule) {
+            Some(kw) if kw == keyword.as_str() => {},
+            other => {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] direct prefix waiter skipped: keyword mismatch frame_kw={:?} cast_kw={:?} c_out={} rule={}",
+                        keyword, other, c_out, cast_rule
+                    );
+                }
+                return;
+            },
+        }
+        let Some(stack_below_trigger) =
+            self.sppf_stack_below_prefix_trigger(cursor, c_out, cast_rule, trigger_lo)
+        else {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] direct prefix waiter skipped: trigger not on stack c_out={} rule={} trigger_lo={} pos={}",
+                    c_out, cast_rule, trigger_lo, cursor.pos
+                );
+            }
+            return;
+        };
+
+        let mut outer = cursor.clone();
+        outer.node = pred;
+        outer.incoming_edge_stack_id = stack_below_prefix;
+        outer.sppf_stack_id = stack_below_trigger;
+        self.parked_prefix_cast_waiters.push(PrefixCastWaiter {
+            body_cat,
+            body_start_pos,
+            trigger_lo,
+            c_out,
+            cast_rule,
+            keyword,
+            resume_bp,
+            outer_frame: outer,
+        });
+        if trace_actions_enabled() {
+            eprintln!(
+                "[wpds-action] direct prefix waiter parked: body_cat={} start={} c_out={} rule={} trigger_lo={} resume_bp={}",
+                body_cat, body_start_pos, c_out, cast_rule, trigger_lo, resume_bp
+            );
+        }
+    }
+
     /// RC-B (2026-06-17): stage a prefix-cast wrap synthesis job at the
     /// cross-cat projection pop site (§5.1). The body cursor has just resolved
     /// a `CrossCatProjection { source_src_idx = C_in }` with a full-span
@@ -20247,6 +20790,59 @@ where
         });
     }
 
+    /// Join any parked direct-prefix continuations with a resolved body symbol.
+    ///
+    /// This is the stack-safe sibling of the existing pop-site staging helpers:
+    /// it performs no recursive parse and does not reject alternatives. It
+    /// merely turns `(parked wrapper continuation, evidenced C_in body symbol)`
+    /// into the same guarded `PrefixCastWrapJob` that direct pop-site staging
+    /// already uses.
+    fn try_stage_parked_prefix_cast_waiters(&mut self, body_symbol_id: crate::sppf::SppfId) {
+        if self.parked_prefix_cast_waiters.is_empty() {
+            return;
+        }
+        let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
+            return;
+        };
+        let Some(body_lo) = self.sppf.span_lo(body_symbol_id).map(|lo| lo as usize) else {
+            return;
+        };
+        let Some(body_hi) = self.sppf.span_hi(body_symbol_id).map(|hi| hi as usize) else {
+            return;
+        };
+        let body_weight = self.sppf.symbol_weight_sum(body_symbol_id);
+        let mut staged = Vec::new();
+        for waiter in &self.parked_prefix_cast_waiters {
+            if waiter.body_cat != body_cat || waiter.body_start_pos != body_lo {
+                continue;
+            }
+            let mut outer = waiter.outer_frame.clone();
+            outer.weight = outer.weight.times_ref(&body_weight);
+            staged.push(PrefixCastWrapJob {
+                body_sid: body_symbol_id,
+                trigger_lo: waiter.trigger_lo,
+                close_hi: body_hi,
+                c_out: waiter.c_out,
+                cast_rule: waiter.cast_rule,
+                keyword: waiter.keyword.clone(),
+                resume_bp: waiter.resume_bp,
+                outer_frame: outer,
+            });
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] direct prefix waiter matched: body={} body_cat={} span=[{},{}] c_out={} rule={}",
+                    self.sppf_trace_summary(body_symbol_id),
+                    body_cat,
+                    body_lo,
+                    body_hi,
+                    waiter.c_out,
+                    waiter.cast_rule
+                );
+            }
+        }
+        self.pending_prefix_cast_wrap_jobs.extend(staged);
+    }
+
     /// RC-B (2026-06-17): drain the staged prefix-cast wrap jobs into accepting
     /// `C_out` cursors (§5.1). For each job, complete the predicate against the
     /// token source (the resting `pos` must be a structural close, and the
@@ -20268,12 +20864,29 @@ where
             // (a) the resting pos must be the cast's structural close `)`.
             let resting = job.close_hi;
             let Some(close_kind) = tokens.peek_kind(resting) else {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] RC-B prefix-cast wrap skipped: no token at close pos {} for body=sid{} ({},{})",
+                        resting, job.body_sid, job.c_out, job.cast_rule
+                    );
+                }
                 continue;
             };
             if !self
                 .engine
                 .is_structural_close_delimiter(&close_kind, tokens.peek_text(resting))
             {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] RC-B prefix-cast wrap skipped: pos {} is not close ({:?} {:?}) for body=sid{} ({},{})",
+                        resting,
+                        close_kind,
+                        tokens.peek_text(resting),
+                        job.body_sid,
+                        job.c_out,
+                        job.cast_rule
+                    );
+                }
                 continue;
             }
             // The cast result spans [trigger_lo, hi) where hi is past the `)`.
@@ -20321,19 +20934,43 @@ where
         let children = vec![trigger_sid, job.body_sid];
         // +0-cursor "unfired" guard: bail if this exact cast packing exists.
         if self.sppf.packing_exists(global_rule_idx, &children) {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] RC-B prefix-cast wrap skipped: packing exists ({},{}) body=sid{} span=[{},{}]",
+                    job.c_out, job.cast_rule, job.body_sid, lo, hi
+                );
+            }
             return None;
         }
         // Token-soundness: the [lo, hi) span must leave exactly the cast's
         // literal budget (the `(` and `)`) as slack over the children.
         if !self.packing_satisfies_min_terminal_span(global_rule_idx, &children, lo, hi) {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] RC-B prefix-cast wrap skipped: min-terminal guard ({},{}) body=sid{} span=[{},{}]",
+                    job.c_out, job.cast_rule, job.body_sid, lo, hi
+                );
+            }
             return None;
         }
         // Fire the cast action over [body] (the trigger contributes no arg) via
         // the read-only transient — the SAME path emit_fire_action uses.
         let cast_symbol = StackSymbolV2::rule_at(job.c_out, job.cast_rule, 0, None);
         let probe = self.make_probe_cursor();
-        let (result_arc, output_cat, _drains, _) =
-            self.fire_action_via_transient_without_child_coercions(&probe, cast_symbol, &children)?;
+        let (result_arc, output_cat, _drains, _) = match self
+            .fire_action_via_transient_without_child_coercions(&probe, cast_symbol, &children)
+        {
+            Some(value) => value,
+            None => {
+                if trace_actions_enabled() {
+                    eprintln!(
+                            "[wpds-action] RC-B prefix-cast wrap skipped: action failed ({},{}) body=sid{}",
+                            job.c_out, job.cast_rule, job.body_sid
+                        );
+                }
+                return None;
+            },
+        };
         // Intern Packing(cast_rule, [trigger, body]) + Symbol(C_out, lo, hi),
         // link, and store the realized term keyed by the new Symbol id.
         let packing_id = self
@@ -20837,8 +21474,11 @@ where
             .incoming_edge_stack_arena
             .top(cursor.incoming_edge_stack_id)
         {
-            if let Some(crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp }) =
-                self.gss.edge_kind(edge_id)
+            if let Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                source_src_idx,
+                min_bp,
+                origin,
+            }) = self.gss.edge_kind(edge_id)
             {
                 let replacing_grouping_marker = self
                     .gss
@@ -20846,7 +21486,11 @@ where
                     .map(|n| n.symbol.kind == SymbolKind::GroupingMarker)
                     .unwrap_or(false);
                 if replacing_grouping_marker && sym.category_src_idx == source_src_idx {
-                    return crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, min_bp };
+                    return crate::gss::EdgeKind::CrossCatLhsReentry {
+                        source_src_idx,
+                        min_bp,
+                        origin,
+                    };
                 }
             }
         }
@@ -21346,6 +21990,8 @@ where
                 let target_resume_bp = popped_edge_id
                     .and_then(|eid| self.crosscat_lhs_resume_bp.get(&eid).copied())
                     .unwrap_or(reentry_min_bp);
+                let reentry_origin = popped_edge_id
+                    .and_then(|eid| self.crosscat_lhs_reentry_origin_for_edge(eid, reentry_min_bp));
                 let source_entry = StackSymbolV2::category_entry(*source_src_idx);
                 // This is not a root-sentinel CategoryEntry push. It is a
                 // one-pass re-entry above this cursor's concrete predecessor,
@@ -21358,6 +22004,7 @@ where
                     crate::gss::EdgeKind::CrossCatLhsReentry {
                         source_src_idx: *source_src_idx,
                         min_bp: reentry_min_bp,
+                        origin: reentry_origin,
                     },
                 );
                 self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
@@ -21376,6 +22023,9 @@ where
                     let target_resume_bp = popped_edge_id
                         .and_then(|eid| self.crosscat_lhs_resume_bp.get(&eid).copied())
                         .unwrap_or(reentry_min_bp);
+                    let reentry_origin = popped_edge_id.and_then(|eid| {
+                        self.crosscat_lhs_reentry_origin_for_edge(eid, reentry_min_bp)
+                    });
                     let produced_entry = StackSymbolV2::category_entry(produced_cat);
                     let _ = self.cursor_gss_push_with_kind(
                         cursor,
@@ -21385,6 +22035,7 @@ where
                         crate::gss::EdgeKind::CrossCatLhsReentry {
                             source_src_idx: *source_src_idx,
                             min_bp: target_resume_bp,
+                            origin: reentry_origin,
                         },
                     );
                     self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
@@ -21474,9 +22125,11 @@ where
                                     crate::gss::EdgeKind::CrossCatLhsReentry {
                                         source_src_idx,
                                         min_bp,
+                                        origin,
                                     } => Some(crate::gss::EdgeKind::CrossCatLhsReentry {
                                         source_src_idx,
                                         min_bp,
+                                        origin,
                                     }),
                                     _ => None,
                                 });
@@ -21533,6 +22186,7 @@ where
                     crate::gss::EdgeKind::CrossCatLhsReentry {
                         source_src_idx: pred_symbol.category_src_idx,
                         min_bp,
+                        origin: None,
                     },
                 );
                 self.record_crosscat_lhs_resume_on_cursor_top(cursor, min_bp);
@@ -21654,6 +22308,7 @@ where
         if !cursor.inner_state.is_terminal() {
             if let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                 self.try_stage_prefix_cast_body_wrap(cursor, body_symbol_id);
+                self.try_stage_parked_prefix_cast_waiters(body_symbol_id);
             }
         }
         if !cursor.inner_state.is_terminal() {
@@ -21999,6 +22654,28 @@ where
                 }
             }
         }
+        // CrossCatLhs body continuations may discover a later, longer body
+        // after the original source body has already resolved the cohort key.
+        // Preserve the original key on the reentry edge and publish such
+        // later bodies as alternate resolutions rather than forcing the first
+        // raw source body to be complete by construction.
+        if self.ep_p1_mode == EpP1Mode::On {
+            if let Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                source_src_idx, origin, ..
+            }) = popped_edge_kind.clone()
+            {
+                if let (Some(origin), Some(symbol_id)) =
+                    (origin, self.sppf_stack_arena.top(cursor.sppf_stack_id))
+                {
+                    self.resolve_crosscat_lhs_body_origin(
+                        cursor,
+                        symbol_id,
+                        CrossCatLhsBodyOrigin { source_src_idx, origin },
+                        true,
+                    );
+                }
+            }
+        }
         let target = edge_id.and_then(|e| self.gss.edge_target(e));
         cursor.node = target.unwrap_or(crate::gss::GSS_NODE_NONE);
         if self.deterministic {
@@ -22064,6 +22741,11 @@ where
             };
         }
         let kind_for_metadata = kind.clone();
+        let inherited_body_origins = if self.ep_p1_mode == EpP1Mode::On {
+            self.crosscat_lhs_body_origins_visible_to_cursor(cursor)
+        } else {
+            Vec::new()
+        };
         let target = if (cursor.node == 0 && self.gss.node(0).is_none())
             || cursor.node == crate::gss::GSS_NODE_NONE
         {
@@ -22093,6 +22775,7 @@ where
             pos,
             fallback_bp,
         );
+        self.record_crosscat_lhs_body_origins_for_edge(edge_id, inherited_body_origins);
         cursor.node = new_id;
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.intern_pop + intern_push replace Arc::make_mut + pop + push.

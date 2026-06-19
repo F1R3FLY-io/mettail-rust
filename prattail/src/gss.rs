@@ -389,6 +389,14 @@ pub struct WpdaGssNode {
 /// classified — strictly identity-equivalent via `source_id`.
 /// Subsequent H13 iterations will refine Generic call sites into
 /// specific variants as their grammar semantics are formalized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CrossCatLhsReentryOrigin {
+    pub dispatch_pos: usize,
+    pub key_min_bp: u8,
+    pub wrap_cat: u16,
+    pub wrap_rule: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EdgeKind {
     /// Fallback / identity-strict — compared via GssEdgeId equality.
@@ -442,7 +450,11 @@ pub enum EdgeKind {
     /// has returned. Infix dispatch may use this as evidence that a
     /// category-changing operator is allowed, but popping this edge must not
     /// re-enter again.
-    CrossCatLhsReentry { source_src_idx: u16, min_bp: u8 },
+    CrossCatLhsReentry {
+        source_src_idx: u16,
+        min_bp: u8,
+        origin: Option<CrossCatLhsReentryOrigin>,
+    },
     /// Runtime-normalized CrossCatLhs edge whose identity includes both Pratt
     /// floors involved in the handoff. `min_bp` is the delegated source
     /// category's resume floor after its prefix body has completed. This is
@@ -736,6 +748,15 @@ impl<W: SemiringRef> WpdaGss<W> {
             .get(&source)
             .and_then(|v| v.get(edge_index as usize))
             .map(|e| e.target)
+    }
+
+    /// Return the source node encoded in a concrete edge id.
+    pub fn edge_source(&self, id: GssEdgeId) -> Option<GssNodeId> {
+        let (source, edge_index) = unpack_edge_id(id);
+        self.edges
+            .get(&source)
+            .and_then(|v| v.get(edge_index as usize))
+            .map(|_| source)
     }
 
     /// Number of nodes.
@@ -1193,7 +1214,11 @@ mod tests {
             g.add_edge_kind(source, target, lex(1.0, 0, 0), EdgeKind::CategoryEntryRoot);
         let lhs_kind = EdgeKind::CrossCatLhs { source_src_idx: 2 };
         let lhs_edge = g.add_edge_kind(source, target, lex(1.0, 0, 0), lhs_kind.clone());
-        let lhs_reentry_kind = EdgeKind::CrossCatLhsReentry { source_src_idx: 2, min_bp: 0 };
+        let lhs_reentry_kind = EdgeKind::CrossCatLhsReentry {
+            source_src_idx: 2,
+            min_bp: 0,
+            origin: None,
+        };
         let lhs_reentry_edge =
             g.add_edge_kind(source, target, lex(1.0, 0, 0), lhs_reentry_kind.clone());
         let generic_edge = g.add_edge(source, target, lex(1.0, 0, 0));
