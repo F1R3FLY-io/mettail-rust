@@ -732,19 +732,21 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
                     ));
                 }
 
-                let mut extractor =
-                    ::dovetail::extract::Extractor::new(&eg, |_| ::rigail::TropicalWeight(0.0));
                 let mut __derivations = Vec::new();
                 let mut __completeness = ::dovetail::extract::ExtractionCompleteness::Complete;
                 for __root in __roots {
-                    let __extracted = extractor.derivations(eg.find(__root)).collect_checked();
+                    let mut extractor =
+                        ::dovetail::extract::Extractor::new(&eg, |_| ::rigail::TropicalWeight(0.0));
+                    let __extracted = extractor.funded_best(eg.find(__root));
                     if __extracted.completeness
                         == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
                     {
                         __completeness =
                             ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut;
                     }
-                    __derivations.extend(__extracted.value);
+                    if let ::core::option::Option::Some(__derivation) = __extracted.value {
+                        __derivations.push(__derivation);
+                    }
                 }
 
                 let report = ::dovetail::report::report_from_extraction_with_rule_firings(
@@ -814,6 +816,7 @@ mod tests {
         assert!(tokens.contains("dovetail_report_for"));
         assert!(tokens.contains("DovetailSmoke"));
         assert!(tokens.contains("AToB"));
+        assert!(tokens.contains("funded_best"));
         assert!(unsupported.is_empty(), "unexpected unsupported rules: {unsupported:?}");
     }
 
