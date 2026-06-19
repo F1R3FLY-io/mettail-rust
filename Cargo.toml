@@ -90,6 +90,19 @@ codegen-backend = "llvm"
 [profile.test.package.gxhash]
 codegen-backend = "llvm"
 
+# The language crate aggregates multi-megabyte generated parser, AST, display,
+# and Dovetail lowering modules. In practice Cranelift is not the right dev/test
+# backend for this shape of code: the 2026-06-02 nightly Cranelift backend has
+# already ICE'd on this workspace, and focused Calculator test builds exceeded
+# capped local validation envelopes while compiling this generated crate. Keep
+# the rest of the workspace on the fast Cranelift dev loop, but compile the
+# generated aggregation crate through LLVM for the profiles used by cargo test.
+[profile.dev.package.mettail-languages]
+codegen-backend = "llvm"
+
+[profile.test.package.mettail-languages]
+codegen-backend = "llvm"
+
 [profile.release]
 codegen-backend = "llvm"      # Full LLVM optimization for runtime performance
 opt-level = 3
