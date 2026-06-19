@@ -972,7 +972,9 @@ enum RealizeLazyAbort {
 /// full-span chain-folded `C_in` body resting at the cast's structural close,
 /// forming `C_out[lo, close_hi)` (the WHOLE `int(...)` span, including the
 /// keyword trigger and the `(` / `)` literals) and surfacing it as an
-/// accepting cursor. See
+/// accepting cursor. `resume_bp` is the Pratt floor carried by the enclosing
+/// prefix-cast frame; synthesized wraps must resume with the same continuation
+/// a normal Return pop would have used, not at root precedence. See
 /// `docs/design/parser/rc-b-cross-cat-comparison-projection.md` §5.1.
 struct PrefixCastWrapJob<W: SemiringRef> {
     /// The full-span well-typed `C_in` body symbol (e.g. `Bool[2,12)`).
@@ -989,6 +991,8 @@ struct PrefixCastWrapJob<W: SemiringRef> {
     cast_rule: u16,
     /// The cast keyword text (e.g. `"int"`), for the synthetic trigger.
     keyword: String,
+    /// Binding-power floor restored after the synthesized cast fires.
+    resume_bp: u8,
     /// A clone of the resolving body cursor, already advanced past the cast's
     /// delegate projection edge so its GSS node is the OUTER return frame (the
     /// frame that dispatched the cast). The synthesizer resets its SPPF stack
@@ -1559,6 +1563,12 @@ struct TransparentSourceReentry {
     source_src_idx: u16,
     target_src_idx: u16,
     child_symbol_id: crate::sppf::SppfId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProjectionTargetBoundary {
+    source_src_idx: u16,
+    suppress_source_consumption: bool,
 }
 
 /// Stage 3.12 / Class A.i (2026-05-01): per-Fork-branch action
@@ -8599,14 +8609,17 @@ where
 
     /// A source parser running under a cross-category projection must not
     /// monopolize an operator token that the projection target can also see.
-    /// The source-consuming branch and the target handoff branch are both
-    /// evidence-bearing alternatives; later Pratt dispatch decides whether the
-    /// target consumes the token at this floor or unwinds it further outward.
-    fn crosscat_projection_target_boundary_source(
+    /// When the target accepts that token at the projection floor, the
+    /// source-consuming branch and target handoff branch are both
+    /// evidence-bearing alternatives. When the target recognizes but rejects
+    /// the token at that floor, the source branch is evidence-refuted: a
+    /// source category with a larger local binding-power scale must not tunnel
+    /// a target-boundary operator through the enclosing Pratt context.
+    fn crosscat_projection_target_boundary(
         &self,
         cursor: &BranchCursor<W>,
         tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
-    ) -> Option<u16> {
+    ) -> Option<ProjectionTargetBoundary> {
         if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
             return None;
         }
@@ -8641,17 +8654,24 @@ where
             {
                 continue;
             }
+            let target_accepts_at_projection_floor =
+                self.category_accepts_operator_at_floor(wrap_cat, cursor, inner_cur_bp, tokens);
+            let suppress_source_consumption = !target_accepts_at_projection_floor;
             if trace_actions_enabled() {
                 eprintln!(
-                    "[wpds-action] crosscat projection target-boundary source={} target={} pos={} floor={} lookahead={:?}",
+                    "[wpds-action] crosscat projection target-boundary source={} target={} pos={} floor={} lookahead={:?} suppress_source={}",
                     source_src_idx,
                     wrap_cat,
                     cursor.pos,
                     inner_cur_bp,
-                    token_text
+                    token_text,
+                    suppress_source_consumption
                 );
             }
-            return Some(source_src_idx);
+            return Some(ProjectionTargetBoundary {
+                source_src_idx,
+                suppress_source_consumption,
+            });
         }
         None
     }
@@ -8719,30 +8739,43 @@ where
         action: WpdaStepAction<W>,
         tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
     ) -> WpdaStepAction<W> {
-        let Some(source_src_idx) = self.crosscat_projection_target_boundary_source(cursor, tokens)
-        else {
+        let Some(boundary) = self.crosscat_projection_target_boundary(cursor, tokens) else {
             return action;
         };
         match action {
             WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode } => {
+                if boundary.suppress_source_consumption {
+                    return WpdaStepAction::Advance(WpdaState::Unwinding);
+                }
                 WpdaStepAction::Fork {
                     branches: vec![
                         Self::consume_and_push_branch(symbol, weight, new_state, trigger_mode),
-                        Self::crosscat_lhs_boundary_branch(source_src_idx),
+                        Self::crosscat_lhs_boundary_branch(boundary.source_src_idx),
                     ],
                     consume_trigger: false,
                 }
             },
             WpdaStepAction::IterativeChainAbsorb { symbol, weight, new_state, spec } => {
+                if boundary.suppress_source_consumption {
+                    return WpdaStepAction::Advance(WpdaState::Unwinding);
+                }
                 WpdaStepAction::Fork {
                     branches: vec![
                         Self::iterative_chain_normal_branch(symbol, weight, new_state, spec),
-                        Self::crosscat_lhs_boundary_branch(source_src_idx),
+                        Self::crosscat_lhs_boundary_branch(boundary.source_src_idx),
                     ],
                     consume_trigger: false,
                 }
             },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                if boundary.suppress_source_consumption {
+                    if consume_trigger {
+                        return WpdaStepAction::Advance(WpdaState::Unwinding);
+                    }
+                    branches.retain(|branch| !Self::fork_branch_consumes_current_token(branch));
+                    branches.push(Self::crosscat_lhs_boundary_branch(boundary.source_src_idx));
+                    return WpdaStepAction::Fork { branches, consume_trigger: false };
+                }
                 if consume_trigger {
                     if !branches
                         .iter()
@@ -8760,7 +8793,7 @@ where
                 {
                     return WpdaStepAction::Fork { branches, consume_trigger };
                 }
-                branches.push(Self::crosscat_lhs_boundary_branch(source_src_idx));
+                branches.push(Self::crosscat_lhs_boundary_branch(boundary.source_src_idx));
                 WpdaStepAction::Fork { branches, consume_trigger: false }
             },
             other => other,
@@ -19904,16 +19937,17 @@ where
     /// RC-B (2026-06-17): walk the cursor's incoming-edge stack to the nearest
     /// enclosing `PrefixRuleEntry { cat_src, rule_idx }` (the prefix-cast frame
     /// the body sits under). Returns `(cat_src, rule_idx, body_start_pos,
-    /// predecessor_node, stack_below_prefix)`, where `body_start_pos` is the
-    /// position recorded on the prefix rule frame, the predecessor is the GSS
-    /// node the prefix-rule edge targets (the OUTER return frame), and
-    /// `stack_below_prefix` is the incoming-edge continuation after the whole
-    /// prefix rule frame has been popped. `None` if the cursor is not under a
-    /// prefix-rule frame.
+    /// predecessor_node, stack_below_prefix, resume_bp)`, where
+    /// `body_start_pos` is the position recorded on the prefix rule frame, the
+    /// predecessor is the GSS node the prefix-rule edge targets (the OUTER
+    /// return frame), `stack_below_prefix` is the incoming-edge continuation
+    /// after the whole prefix rule frame has been popped, and `resume_bp` is
+    /// the binding-power floor carried by the prefix RuleAt frame. `None` if
+    /// the cursor is not under a prefix-rule frame.
     fn enclosing_prefix_rule_frame(
         &self,
         cursor: &BranchCursor<W>,
-    ) -> Option<(u16, u16, usize, crate::gss::GssNodeId, crate::edge_stack_arena::EdgeStackId)>
+    ) -> Option<(u16, u16, usize, crate::gss::GssNodeId, crate::edge_stack_arena::EdgeStackId, u8)>
     {
         let mut sid = cursor.incoming_edge_stack_id;
         while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
@@ -19921,17 +19955,22 @@ where
                 self.gss.edge_kind(eid)
             {
                 let (source_node, _) = crate::gss::unpack_edge_id(eid);
-                let body_start_pos = self
-                    .gss
-                    .node(source_node)
-                    .map(|node| node.pos)
-                    .unwrap_or(cursor.pos);
+                let source_frame = self.gss.node(source_node);
+                let body_start_pos = source_frame.map(|node| node.pos).unwrap_or(cursor.pos);
+                let resume_bp = source_frame.and_then(|node| node.symbol.bp).unwrap_or(0);
                 let pred = self
                     .gss
                     .edge_target(eid)
                     .unwrap_or(crate::gss::GSS_NODE_NONE);
                 let stack_below_prefix = self.incoming_edge_stack_arena.intern_pop(sid);
-                return Some((cat_src, rule_idx, body_start_pos, pred, stack_below_prefix));
+                return Some((
+                    cat_src,
+                    rule_idx,
+                    body_start_pos,
+                    pred,
+                    stack_below_prefix,
+                    resume_bp,
+                ));
             }
             sid = self.incoming_edge_stack_arena.intern_pop(sid);
         }
@@ -20037,7 +20076,7 @@ where
             return;
         }
         // C_out + the prefix-cast frame: the nearest enclosing PrefixRuleEntry.
-        let Some((c_out, outer_rule, body_start_pos, _pred, _stack_below_prefix)) =
+        let Some((c_out, outer_rule, body_start_pos, _pred, _stack_below_prefix, resume_bp)) =
             self.enclosing_prefix_rule_frame(cursor)
         else {
             return;
@@ -20099,6 +20138,7 @@ where
             c_out,
             cast_rule,
             keyword,
+            resume_bp,
             outer_frame: outer,
         });
     }
@@ -20119,7 +20159,7 @@ where
         let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
             return;
         };
-        let Some((c_out, outer_rule, body_start_pos, pred, stack_below_prefix)) =
+        let Some((c_out, outer_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) =
             self.enclosing_prefix_rule_frame(cursor)
         else {
             return;
@@ -20159,6 +20199,7 @@ where
             c_out,
             cast_rule,
             keyword,
+            resume_bp,
             outer_frame: outer,
         });
     }
@@ -20207,12 +20248,14 @@ where
     /// span). Reuses the proven fire/intern shape of `intern_coercion_over_body`
     /// + `emit_fire_action`'s success arm. The `outer_frame` cursor (rooted at
     /// the outer return frame) receives the formed symbol as its sole SPPF-stack
-    /// entry at `pos = close_hi` in `InfixLoop { cur_bp: 0 }` — the exact
-    /// post-cast-fire state a normally-parsed `int(Bool)` reaches, so the next
-    /// engine step accepts at EOI. The +0-cursor "unfired" guard: if the cast
-    /// already fired on its own lineage, the `(C_out << 16 | cast_rule, [trigger,
-    /// body])` packing already exists and we bail (returning `None`), so the
-    /// passing corpus is byte-identical.
+    /// entry at `pos = close_hi` in the same binding-power floor carried by
+    /// the enclosing prefix frame. This is the exact continuation a normal
+    /// prefix Return pop would have used: root casts resume at `0`, while
+    /// casts synthesized inside a prefix operand resume at that prefix's
+    /// operand floor. The +0-cursor "unfired" guard: if the cast already fired
+    /// on its own lineage, the `(C_out << 16 | cast_rule, [trigger, body])`
+    /// packing already exists and we bail (returning `None`), so the passing
+    /// corpus is byte-identical.
     fn synthesize_prefix_cast_wrap_cursor(
         &mut self,
         job: PrefixCastWrapJob<W>,
@@ -20259,23 +20302,24 @@ where
         self.sppf_symbol_terms
             .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
         // Build the accepting cursor: outer return frame, single-Symbol SPPF
-        // stack, pos past `)`, InfixLoop{0} (the post-cast-fire state).
+        // stack, pos past `)`, and the post-cast-fire binding-power floor.
         let mut acc = job.outer_frame;
         acc.sppf_stack_id = self
             .sppf_stack_arena
             .intern_push(acc.sppf_stack_id, wrapped_symbol_id);
         acc.pos = job.close_hi;
-        acc.inner_state = WpdaState::InfixLoop { cur_bp: 0 };
+        acc.inner_state = WpdaState::InfixLoop { cur_bp: job.resume_bp };
         acc.last_action_output_cat = output_cat.or(Some(job.c_out));
         if trace_actions_enabled() {
             eprintln!(
-                "[wpds-action] RC-B prefix-cast wrap: fired ({},{}) over body=sid{} -> {} span=[{},{}]",
+                "[wpds-action] RC-B prefix-cast wrap: fired ({},{}) over body=sid{} -> {} span=[{},{}] resume_bp={}",
                 job.c_out,
                 job.cast_rule,
                 job.body_sid,
                 self.sppf_trace_summary(wrapped_symbol_id),
                 lo,
                 hi,
+                job.resume_bp,
             );
         }
         Some(acc)

@@ -12,6 +12,7 @@
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 use mettail_ast::language::{LanguageDef, NativeKind};
+use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Ident, Type};
@@ -1162,6 +1163,7 @@ pub fn emit_prefix_arms_for_category(
                 rule_idx,
                 &trigger,
                 &source_cat_name,
+                rule.prefix_bp,
                 language,
             );
             arms.push(arm);
@@ -1185,6 +1187,7 @@ fn emit_cross_cat_prefix_unary_arm(
     rule_idx: u16,
     trigger: &str,
     source_cat_name: &str,
+    explicit_prefix_precedence: Option<u8>,
     language: &LanguageDef,
 ) -> TokenStream {
     let categories = super::collect_category_names_with_literals(language);
@@ -1193,6 +1196,8 @@ fn emit_cross_cat_prefix_unary_arm(
         .position(|c| c == source_cat_name)
         .map(|i| i as u16)
         .unwrap_or(0);
+    let bp_table = super::infix::build_bp_table(language);
+    let operand_bp = compute_prefix_bp(source_cat_name, explicit_prefix_precedence, &bp_table);
     quote! {
         Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
             if __kw == #trigger && state_cat_src_idx == #category_src_idx => {
@@ -1204,13 +1209,13 @@ fn emit_cross_cat_prefix_unary_arm(
                 weight: lex_w(
                     0.0, #category_src_idx, #rule_idx,
                 ),
-                // D-strings fix (2026-05-13): cross-cat prefix-unary
-                // sub-parse starts at the source-cat's own minimum BP
-                // (fresh-operand semantics — the wrapped content is a
-                // complete operand, not a Pratt-RHS).
+                // Cross-cat prefix-unary is still a unary-prefix operator:
+                // parse the source operand at the source category's computed
+                // prefix floor so trailing lower-precedence infix remains
+                // outside the operand instead of being absorbed by delegation.
                 new_state: WpdaState::CrossCatDelegate {
                     source_src_idx: #source_src_idx,
-                    inner_cur_bp: 0,
+                    inner_cur_bp: #operand_bp,
                 },
                 // Phase F.8: cross-cat prefix-unary IS a unary-prefix
                 // trigger — emit TriggerTerminal so the wrapping rule's

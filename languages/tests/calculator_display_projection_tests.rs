@@ -91,6 +91,46 @@ fn calculator_bigrat_bitand_bitor_canonical_display_is_idempotent() {
 }
 
 #[test]
+fn calculator_prefix_cast_wrap_restores_enclosing_prefix_floor() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "bitnot bigrat(0 bitand -1142617375) + error";
+    let parsed = BigRat::parse(input).expect("prefix cast operand should parse");
+    let canonical = format!("{}", parsed);
+    assert_eq!(
+        canonical, input,
+        "trailing lower-precedence infix must stay outside the prefix operand"
+    );
+
+    let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
+    assert_eq!(
+        format!("{}", reparsed),
+        canonical,
+        "prefix/cast display should remain stable after a second parse"
+    );
+}
+
+#[test]
+fn calculator_prefix_syntaxless_projection_restores_enclosing_prefix_floor() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "bitnot 541791495 + bitnot 899164433";
+    let parsed = BigRat::parse(input).expect("prefix projection operand should parse");
+    let canonical = format!("{}", parsed);
+    assert_eq!(
+        canonical, input,
+        "syntaxless projection must preserve the prefix operand floor so + stays outside"
+    );
+
+    let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
+    assert_eq!(
+        format!("{}", reparsed),
+        canonical,
+        "syntaxless projection display should remain stable after a second parse"
+    );
+}
+
+#[test]
 fn calculator_bigrat_projected_prefix_lhs_continues_to_bitand() {
     mettail_runtime::clear_var_cache();
 
