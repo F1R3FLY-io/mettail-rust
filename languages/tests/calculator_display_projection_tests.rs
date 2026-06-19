@@ -240,6 +240,85 @@ fn calculator_bool_chained_projection_surfaces_parse() {
 }
 
 #[test]
+fn calculator_bool_source_body_exits_resume_bool_continuation() {
+    mettail_runtime::clear_var_cache();
+
+    Bool::parse(
+        "(true and false > error != cast_error_int) <= \
+         (str(cast_error_float) <= str(cast_error_float))",
+    )
+    .expect("source-body category exit should resume the produced Bool continuation");
+    Bool::parse("(false <= false == 24835 != cast_error_int) < ((true == false) < false)")
+        .expect("grouped Bool chains should preserve source-exit ambiguity");
+}
+
+#[test]
+fn calculator_bool_source_body_exits_minimal_chain() {
+    mettail_runtime::clear_var_cache();
+
+    Bool::parse("false > (error != cast_error_int)")
+        .expect("Bool comparison RHS should admit a produced Bool from a source comparison");
+    Bool::parse("false > error != cast_error_int")
+        .expect("ambiguous Bool/source comparison chain should keep the produced Bool RHS");
+}
+
+#[test]
+fn calculator_nextest_property_counterexamples_parse() {
+    mettail_runtime::clear_var_cache();
+
+    Proc::parse("(2037137192p0 - cast_error_fixed) % -1697949250p0 bitand cast_error_fixed")
+        .expect("Proc should admit projected Fixed bitwise/modulo chains");
+    BigRat::parse(
+        "-886879249 + (error + 213439954) bitand \
+         fraction(-222099783 , cast_error_bigint)",
+    )
+    .expect("BigRat should continue through prefix RHS after bitand");
+    BigInt::parse("(cast_error_float < cast_error_float) <= \"skdkxs\" != \"gr\"")
+        .expect("BigInt should admit chained Bool surfaces");
+    Bool::parse("error ~ error - int(a , error) != |\"ve\"| % cast_error_int!")
+        .expect("Bool should admit arithmetic RHS with postfix factorial");
+    Float::parse("float(cast_error_int != error , count(bag() , -318922039))")
+        .expect("Float should admit call-style operands with nested Bool/Bag evidence");
+    Str::parse("\"as\" + \"flruphu\" ++ str(a) ++ (str(a) ++ (\"i\" ++ \"as\"))")
+        .expect("Str should continue through mixed +/++ and prefix casts");
+}
+
+#[test]
+fn calculator_uint32_display_groups_transparent_bool_operand() {
+    mettail_runtime::clear_var_cache();
+
+    let term = UInt32::BitAndUInt32(
+        Arc::new(UInt32::BoolToUInt32(Arc::new(Bool::LtEqInt(
+            Arc::new(mettail_languages::calculator::Int::NumLit(816675508)),
+            Arc::new(mettail_languages::calculator::Int::CastErrInt),
+        )))),
+        Arc::new(UInt32::BitOrUInt32(
+            Arc::new(UInt32::BitAndUInt32(
+                Arc::new(UInt32::CastErrUInt32),
+                Arc::new(UInt32::CastErrUInt32),
+            )),
+            Arc::new(UInt32::NumLit(3428493361)),
+        )),
+    );
+
+    let displayed = format!("{}", term);
+    assert!(
+        displayed.starts_with("(816675508 <= cast_error_int) bitand "),
+        "transparent BoolToUInt32 operands must be grouped before UInt32 bitwise \
+         continuations; displayed={displayed:?}"
+    );
+
+    let parsed = UInt32::parse(&displayed).expect("displayed UInt32 should parse");
+    let canonical = format!("{}", parsed);
+    let reparsed = UInt32::parse(&canonical).expect("canonical UInt32 display should parse");
+    assert_eq!(
+        canonical,
+        format!("{}", reparsed),
+        "canonical UInt32 display must remain parse-stable"
+    );
+}
+
+#[test]
 fn calculator_prefix_call_operands_continue_to_infix() {
     mettail_runtime::clear_var_cache();
 

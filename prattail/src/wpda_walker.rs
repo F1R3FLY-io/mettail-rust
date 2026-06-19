@@ -18334,7 +18334,28 @@ where
             None => WpdaState::Unwinding,
         };
         if exits_source {
-            self.set_cursor_inner_state(cursor, effective);
+            let reentry_fires = pred != crate::gss::GSS_NODE_NONE
+                && matches!(effective, WpdaState::InfixLoop { .. } | WpdaState::Unwinding);
+            if reentry_fires {
+                let produced_entry = StackSymbolV2::category_entry(body_cat);
+                let _ = self.cursor_gss_push_with_kind(
+                    cursor,
+                    produced_entry,
+                    cursor.pos,
+                    W::one_ref(),
+                    crate::gss::EdgeKind::CrossCatLhsReentry {
+                        source_src_idx,
+                        min_bp: target_resume_bp,
+                    },
+                );
+                self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
+                self.set_cursor_inner_state(
+                    cursor,
+                    WpdaState::InfixLoop { cur_bp: target_resume_bp },
+                );
+            } else {
+                self.set_cursor_inner_state(cursor, effective);
+            }
             return true;
         }
         let reentry_fires = pred != crate::gss::GSS_NODE_NONE
@@ -20540,7 +20561,20 @@ where
         let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
             return Some(symbol);
         };
-        if body_cat == *wrap_cat {
+        let transparent_unary_self_wrapper = body_cat == *wrap_cat
+            && self
+                .engine
+                .action_for(*wrap_cat, *wrap_rule)
+                .map(|entry| {
+                    entry.arity == 1
+                        && entry.output_cat == *wrap_cat
+                        && entry.expected_input_cats.len() == 1
+                        && (entry.expected_input_cats[0] == crate::wpda_runtime::ANY_CAT
+                            || entry.expected_input_cats[0] == body_cat)
+                        && self.engine.min_terminal_span(*wrap_cat, *wrap_rule) == 0
+                })
+                .unwrap_or(false);
+        if transparent_unary_self_wrapper {
             if trace_actions_enabled() {
                 eprintln!(
                     "[wpds-action] crosscat projection wrapper elided: body already in host cat={} symbol={}",
@@ -21329,12 +21363,8 @@ where
                 self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
                 effective_new_state = WpdaState::InfixLoop { cur_bp: reentry_min_bp };
             } else if let Some(produced_cat) = produced_exits_source {
-                let pred_symbol = self.gss.node(pred_id).map(|n| n.symbol);
                 if popped.kind == SymbolKind::CategoryEntry
                     && pred_id != crate::gss::GSS_NODE_NONE
-                    && pred_symbol
-                        .map(|sym| sym.kind == SymbolKind::CollectionMarker)
-                        .unwrap_or(false)
                     && matches!(
                         &effective_new_state,
                         WpdaState::InfixLoop { .. } | WpdaState::Unwinding
@@ -21343,6 +21373,9 @@ where
                     let reentry_min_bp = popped_edge_id
                         .and_then(|eid| self.crosscat_lhs_min_bp.get(&eid).copied())
                         .unwrap_or(0);
+                    let target_resume_bp = popped_edge_id
+                        .and_then(|eid| self.crosscat_lhs_resume_bp.get(&eid).copied())
+                        .unwrap_or(reentry_min_bp);
                     let produced_entry = StackSymbolV2::category_entry(produced_cat);
                     let _ = self.cursor_gss_push_with_kind(
                         cursor,
@@ -21351,15 +21384,15 @@ where
                         W::one_ref(),
                         crate::gss::EdgeKind::CrossCatLhsReentry {
                             source_src_idx: *source_src_idx,
-                            min_bp: reentry_min_bp,
+                            min_bp: target_resume_bp,
                         },
                     );
-                    self.record_crosscat_lhs_resume_on_cursor_top(cursor, reentry_min_bp);
-                    effective_new_state = WpdaState::InfixLoop { cur_bp: reentry_min_bp };
+                    self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
+                    effective_new_state = WpdaState::InfixLoop { cur_bp: target_resume_bp };
                     if trace_actions_enabled() {
                         eprintln!(
-                            "[wpds-action] crosscat lhs result reenters collection element: source={} produced={} pred={} bp={}",
-                            source_src_idx, produced_cat, pred_id, reentry_min_bp
+                            "[wpds-action] crosscat lhs result reenters produced category: source={} produced={} pred={} bp={}",
+                            source_src_idx, produced_cat, pred_id, target_resume_bp
                         );
                     }
                 } else if trace_actions_enabled() {
@@ -21876,7 +21909,16 @@ where
                             },
                             _ => None,
                         };
-                        if symbol_cat == Some(source_src_idx) {
+                        if symbol_cat
+                            .and_then(|_| {
+                                self.crosscat_lhs_body_category_admitted(
+                                    cursor,
+                                    source_src_idx,
+                                    symbol_id,
+                                )
+                            })
+                            .is_some()
+                        {
                             let (wrap_cat, wrap_rule) = self
                                 .crosscat_lhs_wrap
                                 .get(&eid)

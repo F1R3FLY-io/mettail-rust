@@ -192,6 +192,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // disambiguate early". In that case we MUST Fork (even
             // for a single branch).
             let mut __primary_survived: bool = false;
+            let mut __secondary_survived: bool = false;
             // Cross-category projection does not consume a lexical edge at
             // this site. It delegates to the source category, whose own
             // PrefixDispatch/lex-fork will consume the primary or secondary
@@ -332,6 +333,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             let sym = StackSymbolV2::rule_at(
                                 primary_src, info.rule_idx, 0u8, Some(*cur_bp),
                             ).with_kind_return();
+                            __secondary_survived = true;
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
                                 weight: lex_w_alt(
@@ -356,6 +358,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             let sym = StackSymbolV2::rule_at(
                                 primary_src, info.rule_idx, 1u8, Some(*cur_bp),
                             );
+                            __secondary_survived = true;
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
                                 weight: lex_w_alt(
@@ -382,6 +385,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             source_src_idx,
                         } => {
                             if __crosscat_projection_seen.insert((info.rule_idx, source_src_idx)) {
+                                __secondary_survived = true;
                                 let sym = StackSymbolV2::rule_at(
                                     primary_src, info.rule_idx, 0u8, Some(*cur_bp),
                                 ).with_kind_return();
@@ -405,6 +409,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             source_src_idx,
                         } => {
                             if __crosscat_lhs_seen.insert(source_src_idx) {
+                                __secondary_survived = true;
                                 __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: StackSymbolV2::category_entry(source_src_idx),
                                     weight: lex_w(
@@ -465,6 +470,12 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // that evidence. Secondary keyword alternatives are represented
             // directly above by LexAltRuleKind::CrossCatLhs, because normal
             // dispatch can only inspect the primary token kind.
+            // A surviving secondary branch is also evidence. Normal dispatch
+            // can only inspect the primary token, so cross-cat fall-through is
+            // valid only when it does not erase a secondary lexical path. This
+            // preserves inputs such as a keyword/Ident tie where the keyword
+            // can host a cross-cat operand and the Ident can satisfy the
+            // requested category directly.
             // Same-length keyword reservation applies, identically to the
             // primary-rule fall-through above; inner cast levels are
             // owner-context (same-cat primaries), so the fan-out stays
@@ -511,8 +522,10 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let __fall_through =
                 __branches.is_empty()
                     || (__branches.len() == 1 && __primary_survived)
-                    || ((__primary_has_dispatch || __primary_has_crosscat_lhs)
-                        && __all_alts_same_length);
+                    || (__primary_has_dispatch && __all_alts_same_length)
+                    || (__primary_has_crosscat_lhs
+                        && __all_alts_same_length
+                        && !__secondary_survived);
             // EP-P1 Step-0 diagnostic hook (no-op without the
             // `walker-stats` feature). `crosscat_load_bearing` = the
             // fall-through decided true, would have been FALSE without
@@ -524,7 +537,9 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 __ccl_kind_hit,
                 __primary_has_crosscat_lhs,
                 __fall_through
-                    && (__primary_has_crosscat_lhs && __all_alts_same_length)
+                    && (__primary_has_crosscat_lhs
+                        && __all_alts_same_length
+                        && !__secondary_survived)
                     && !(__branches.is_empty()
                         || (__branches.len() == 1 && __primary_survived)
                         || (__primary_has_dispatch && __all_alts_same_length)),
