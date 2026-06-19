@@ -192,6 +192,20 @@ fn poutput_standalone_parses_at_prefix() {
     }
 }
 
+#[test]
+fn quoted_parallel_output_name_parses_to_eoi() {
+    fresh();
+    let input = "@{a!(Nil) | {a | a}}";
+    let term = Name::parse(input).unwrap_or_else(|e| panic!("parse failed for `{input}`: {e}"));
+    match &term {
+        Name::NQuote(proc) => match proc.as_ref() {
+            Proc::PPar(bag) => assert_eq!(bag.len(), 2, "expected two parallel members"),
+            other => panic!("expected quoted PPar, got {:?}", other),
+        },
+        other => panic!("expected NQuote, got {:?}", other),
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Language-trait surface — verify GuardedRhoLanguage.parse_term works
 // ────────────────────────────────────────────────────────────────────────────

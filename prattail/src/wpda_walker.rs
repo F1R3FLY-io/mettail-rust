@@ -21329,7 +21329,40 @@ where
                 self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
                 effective_new_state = WpdaState::InfixLoop { cur_bp: reentry_min_bp };
             } else if let Some(produced_cat) = produced_exits_source {
-                if trace_actions_enabled() {
+                let pred_symbol = self.gss.node(pred_id).map(|n| n.symbol);
+                if popped.kind == SymbolKind::CategoryEntry
+                    && pred_id != crate::gss::GSS_NODE_NONE
+                    && pred_symbol
+                        .map(|sym| sym.kind == SymbolKind::CollectionMarker)
+                        .unwrap_or(false)
+                    && matches!(
+                        &effective_new_state,
+                        WpdaState::InfixLoop { .. } | WpdaState::Unwinding
+                    )
+                {
+                    let reentry_min_bp = popped_edge_id
+                        .and_then(|eid| self.crosscat_lhs_min_bp.get(&eid).copied())
+                        .unwrap_or(0);
+                    let produced_entry = StackSymbolV2::category_entry(produced_cat);
+                    let _ = self.cursor_gss_push_with_kind(
+                        cursor,
+                        produced_entry,
+                        cursor.pos,
+                        W::one_ref(),
+                        crate::gss::EdgeKind::CrossCatLhsReentry {
+                            source_src_idx: *source_src_idx,
+                            min_bp: reentry_min_bp,
+                        },
+                    );
+                    self.record_crosscat_lhs_resume_on_cursor_top(cursor, reentry_min_bp);
+                    effective_new_state = WpdaState::InfixLoop { cur_bp: reentry_min_bp };
+                    if trace_actions_enabled() {
+                        eprintln!(
+                            "[wpds-action] crosscat lhs result reenters collection element: source={} produced={} pred={} bp={}",
+                            source_src_idx, produced_cat, pred_id, reentry_min_bp
+                        );
+                    }
+                } else if trace_actions_enabled() {
                     eprintln!(
                         "[wpds-action] crosscat lhs result exits source: source={} produced={} pred={} state={:?}",
                         source_src_idx, produced_cat, pred_id, effective_new_state
@@ -25884,7 +25917,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_source_operator_preserves_target_boundary_branch() {
+    fn projection_target_floor_block_suppresses_source_operator_branch() {
         let token_kinds = [TokenKind::Fixed("+".into()), TokenKind::Eof];
         let token_texts = ["+", ""];
         let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
@@ -25915,18 +25948,10 @@ mod tests {
             &token_src,
         );
 
-        let WpdaStepAction::Fork { branches, consume_trigger } = guarded else {
-            panic!("expected projection boundary fork, got {guarded:?}");
-        };
-        assert!(!consume_trigger);
-        assert_eq!(branches.len(), 2);
-        assert!(matches!(
-            branches[0].action_kind,
-            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard }
-        ));
-        assert!(matches!(branches[1].action_kind, ForkActionKind::Advance));
-        assert!(matches!(branches[1].new_state, WpdaState::Unwinding));
-        assert_eq!(branches[1].symbol.category_src_idx, 2);
+        assert!(
+            matches!(guarded, WpdaStepAction::Advance(WpdaState::Unwinding)),
+            "a target-owned operator rejected at the projection floor must suppress source consumption, got {guarded:?}"
+        );
     }
 
     #[test]
