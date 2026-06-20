@@ -664,10 +664,28 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                             &existing.optional_scope_marks,
                             &arc.optional_scope_marks,
                         )
-                        && Arc::ptr_eq(
+                        // Cluster D (2026-06-20): merge on arena CONTENT, not
+                        // just Arc-pointer identity. The cohort fork-out path
+                        // (parent_frame_with_pushed_fork_branch) `Arc::make_mut`s
+                        // the collection arena independently per lexical-fork arm,
+                        // so two arcs that hold BIT-IDENTICAL spliced element ids
+                        // (the 100%-of-cases false divergence the probe found:
+                        // `[[12]]` vs `[[12]]`, both the shared `Proc` Symbol)
+                        // fail `ptr_eq` and refuse to merge. The arena content
+                        // (the spliced element Symbol ids) is the only observable
+                        // on this axis, so equal content is observationally
+                        // identical; `ptr_eq` short-circuits the common shared
+                        // case. Removing this redundant divergence (with the
+                        // lex_fork_path clear in emit_splice_into_collection) lets
+                        // sibling lexical readings of a collection element collapse
+                        // to one arc, killing the O(N^4) frontier cross-product on
+                        // `{0|1|...|N}`. See
+                        // docs/design/rhocalc-collection-fork-explosion.md.
+                        && (Arc::ptr_eq(
                             &existing.sppf_collection_arena,
                             &arc.sppf_collection_arena,
-                        )
+                        ) || *existing.sppf_collection_arena
+                            == *arc.sppf_collection_arena)
                         && existing.visited_dispatch == arc.visited_dispatch
                         && existing.visited_recovery == arc.visited_recovery
                         // Sig-B GLL-descriptor (#9): two arcs whose

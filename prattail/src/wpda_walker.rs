@@ -19579,6 +19579,31 @@ where
             if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                 cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                 Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
+                // Cluster D (2026-06-20): the just-spliced element's lexical
+                // reading is now sealed as an SPPF packing under the shared
+                // element Symbol `top` (the SPPF interns CastInt/CastBigInt/
+                // CastBigRat over the same span to ONE Proc Symbol with 3
+                // weighted packings — sppf.rs intern_symbol/link_packing). The
+                // cursor's `lex_fork_path` sidecar is a REDUNDANT parallel record
+                // of that same lexical choice; left intact it makes the Tomita
+                // merge gate (merge_disambiguator's lex_fork_path.last()) keep
+                // each per-element reading apart, so the per-element x3 lexical
+                // fan multiplies across elements into a 3^N cursor cross-product
+                // (`{0|1|...|19}` -> O(N^4) frontier / ~250s). Clearing the path
+                // once the element is sealed lets the sibling readings re-converge
+                // to one frontier arc (additive 3*N sharing). The path is read
+                // ONLY by merge/equivalence-bucketing consumers (merge_disambiguator,
+                // cohort ~_obs capture which happens at pause-time BEFORE this
+                // splice, walker-stats) -- never by a semantic action or the SPPF
+                // realizer -- so clearing it changes which cursors merge, NOT which
+                // parse is produced. The genuine chained-output distinction
+                // (`@a!(Nil)!(Nil)`) rides on sppf_stack_id, which is untouched.
+                // Stack-free "clear at splice" (red-team-validated equivalent to a
+                // per-element watermark, without its cohort-carrier/underflow
+                // hazards). See docs/design/rhocalc-collection-fork-explosion.md.
+                if !cursor.lex_fork_path.is_empty() {
+                    Arc::make_mut(&mut cursor.lex_fork_path).clear();
+                }
                 // #307 ROOT-F diagnostics (2026-06-11): actions-trace the
                 // splice so arena divergence across lineages is observable.
                 if trace_actions_enabled() {
