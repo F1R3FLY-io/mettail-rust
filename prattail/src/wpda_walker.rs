@@ -6851,6 +6851,15 @@ where
             .collect())
     }
 
+    // 2026-06-20 (Cluster B regression of 655095cf): `packing_priority_cmp`
+    // and this method form of `semiring_priority_cmp` are no longer applied to
+    // realize ordering (see `priority_ordered_packings` for the full rationale
+    // — local packing weight is not a sound basis for choosing between sibling
+    // packings whose subtrees carry different costs). They are retained (not
+    // deleted) because they remain a correct LOCAL comparison should a future
+    // pass need it, and to keep 655095cf's machinery intact; marked
+    // `allow(dead_code)` until then.
+    #[allow(dead_code)]
     fn semiring_priority_cmp(a: &W, b: &W) -> std::cmp::Ordering {
         if a == b {
             return std::cmp::Ordering::Equal;
@@ -6869,6 +6878,7 @@ where
         ))
     }
 
+    #[allow(dead_code)]
     fn packing_priority_cmp(
         &self,
         a: crate::sppf::SppfId,
@@ -6889,9 +6899,41 @@ where
         &self,
         symbol_id: crate::sppf::SppfId,
     ) -> Vec<crate::sppf::SppfId> {
-        let mut packings = self.sppf.packings_of(symbol_id).to_vec();
-        packings.sort_by(|a, b| self.packing_priority_cmp(*a, *b));
-        packings
+        // 2026-06-20 (Cluster B regression of 655095cf): realize packings in
+        // SPPF *insertion order*, NOT sorted by each packing's LOCAL weight.
+        //
+        // `Sppf::Packing.weight` is the RULE-LOCAL contribution of a single
+        // production (see `pending_packing_weight` docs); it deliberately does
+        // NOT include the weights of child Symbols (those live in the child
+        // packings and are accumulated only when the subtree is realized).
+        // Sorting sibling packings by this local weight therefore makes a
+        // LOCALLY-greedy choice that is unsound whenever the discriminating
+        // cost lives in a subtree rather than in the rule itself.
+        //
+        // The canonical victim is the right-associative dangling-else
+        // Opt-Group mechanism (`EPSILON_OPT_SKIP`, rigail::lex_weight): for
+        // `if .. then if .. then 1 else 2`, the outer-SKIP packing carries the
+        // 0.5 epsilon LOCALLY while the outer-TAKE packing carries `one()`
+        // (0.0) locally and defers the *same* 0.5 into its inner-SKIP subtree.
+        // The two derivations are designed to TIE at full weight (0.5) and be
+        // disambiguated by structural/source order (TAKE-first cursor
+        // allocation → innermost-else). Sorting by local weight put the
+        // outer-TAKE packing (0.0) first, so the bounded single-result probe's
+        // `min_by` (which keeps the FIRST entry on a full-weight tie) selected
+        // the outermost-else parse — wrong associativity.
+        //
+        // Correctness of single-result selection is owned by the facade's
+        // `realize_root_to_terms_with_weights(..).min_by(full_weight)` and by
+        // the EOI candidate sort (`sort_eoi_candidates_by_semiring_priority`,
+        // which ranks by the CURSOR's fully-accumulated weight — a sound
+        // basis). Both compare FULL derivation weights, so preferring lower-
+        // cost alternatives (655095cf point 3) is preserved; insertion order
+        // only governs the tie-break, which must follow structural order.
+        //
+        // `packing_priority_cmp` / `semiring_priority_cmp` (method form) are
+        // retained for potential local-weight comparisons but are no longer
+        // applied to realize ordering.
+        self.sppf.packings_of(symbol_id).to_vec()
     }
 
     fn realize_node_lazy_prefix(
@@ -10722,36 +10764,58 @@ where
                     if let Some((root_sid, acc_weight, chain_end)) =
                         self.synth_ternary_chain(cursor, tokens, &spec, weight.clone())
                     {
-                        let chain_start = self
-                            .sppf
-                            .span_lo(root_sid)
-                            .map(|lo| lo as usize)
-                            .unwrap_or(chain_start);
-                        // Pop the head-atom (cond c0) Symbol (root re-spans it).
-                        cursor.sppf_stack_id =
-                            self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
-                        // Push the whole-chain root.
-                        cursor.sppf_stack_id = self
-                            .sppf_stack_arena
-                            .intern_push(cursor.sppf_stack_id, root_sid);
-                        // Jump past the absorbed region.
-                        cursor.pos = chain_end;
-                        if self.deterministic {
-                            self.pos = chain_end;
+                        // Cluster C fix (2026-06-20, regression of 655095cf):
+                        // bail when the token AFTER the synthesized chain is an
+                        // operator the result category recognizes. `synth_ternary_chain`
+                        // recognizes `c ? t : … : e_final` where every operand —
+                        // INCLUDING `e_final` — is a single chain atom. But a
+                        // right-associative ternary's final else extends as far
+                        // right as possible, so `0 ? 0 : 0 ? 0 : 0 * 0` must bind
+                        // `e_final = 0 * 0`, not the bare `0`. The fast-path
+                        // synthesizer would instead absorb `… : 0` and jump to
+                        // `*`, leaving `* 0` unconsumed (parse stalls / trailing
+                        // tokens). 655095cf added exactly this boundary guard to
+                        // the right-assoc BINARY absorb path below
+                        // (`chain_absorption_boundary_has_operator`) but omitted
+                        // it here; mirror it so the ordinary mixfix path takes
+                        // over and lets `e_final` consume its higher-precedence
+                        // continuation. The bare-final cases (boundary = `)`, EOI,
+                        // or a token the category does NOT recognize as an
+                        // operator) still absorb byte-identically.
+                        if self.chain_absorption_boundary_has_operator(tokens, chain_end, &spec) {
+                            crate::stats_inc!(self, chain_earley_returned_none_count);
+                        } else {
+                            let chain_start = self
+                                .sppf
+                                .span_lo(root_sid)
+                                .map(|lo| lo as usize)
+                                .unwrap_or(chain_start);
+                            // Pop the head-atom (cond c0) Symbol (root re-spans it).
+                            cursor.sppf_stack_id =
+                                self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                            // Push the whole-chain root.
+                            cursor.sppf_stack_id = self
+                                .sppf_stack_arena
+                                .intern_push(cursor.sppf_stack_id, root_sid);
+                            // Jump past the absorbed region.
+                            cursor.pos = chain_end;
+                            if self.deterministic {
+                                self.pos = chain_end;
+                            }
+                            // Record the absorbed interval [chain_start, chain_end)
+                            // so cross-cat cohort dispatches strictly inside it are
+                            // suppressed (same R4 contract as the binary path).
+                            self.chain_absorbed_intervals
+                                .entry((spec.op_cat_src_idx, spec.op_rule_idx))
+                                .or_default()
+                                .push((chain_start, chain_end));
+                            self.multiply_cursor_weight(cursor, &acc_weight);
+                            self.set_cursor_inner_state(
+                                cursor,
+                                crate::wpda_runtime::WpdaState::Unwinding,
+                            );
+                            return self.cursor_resolution_check(cursor);
                         }
-                        // Record the absorbed interval [chain_start, chain_end)
-                        // so cross-cat cohort dispatches strictly inside it are
-                        // suppressed (same R4 contract as the binary path).
-                        self.chain_absorbed_intervals
-                            .entry((spec.op_cat_src_idx, spec.op_rule_idx))
-                            .or_default()
-                            .push((chain_start, chain_end));
-                        self.multiply_cursor_weight(cursor, &acc_weight);
-                        self.set_cursor_inner_state(
-                            cursor,
-                            crate::wpda_runtime::WpdaState::Unwinding,
-                        );
-                        return self.cursor_resolution_check(cursor);
                     }
                     // Conservative fall-through: the token pattern looked
                     // chain-shaped, but the synthesizer could not prove every
