@@ -859,6 +859,27 @@ pub fn emit_paren_dispatch_arms(
         // Grouping branches come first, with the current result category
         // first. Source-category branches are grammar-derived alternatives
         // needed by transparent projections and category-changing infix.
+        //
+        // Quote-of-numeral PInputs fix (2026-06-20): when this category owns a
+        // `(`-triggered BINDER rule (e.g. RhoCalc's `PInputs . ns:Vec(Name) …
+        // |- "(" … ")" "." "{" p "}"`), the `(` is structurally claimed by the
+        // binder, not by a bare grouped sub-expression. The extra
+        // SOURCE-category grouping speculations (added for the pure-grouping
+        // case so an outer requested category like `Pred` can grow
+        // `(Num) op …`) then fork spurious cross-cat-LHS grouping cursors at the
+        // binder's open position. With a numeric body inside the bound name
+        // (`(@(0u32)?a).{a}` — `@(0u32)` is a Name whose quoted Proc body is a
+        // numeric cast) those cursors strand the binder continuation, so the
+        // whole parse dies at the `(` (every cursor dead at the open paren).
+        // A pure grouping paren (Pred/Expr in LedTest — NO `(`-binder) still
+        // needs the source-cat branches, so only drop them when a `(`-binder is
+        // present; the result-category grouping branch plus the binder branch
+        // fully cover the binder category's `(` interpretations.
+        let grouping_source_indices: Vec<u16> = if paren_binder_rules.is_empty() {
+            grouping_source_indices
+        } else {
+            vec![result_src_idx]
+        };
         for grouping_src_idx in &grouping_source_indices {
             let action_kind = if *grouping_src_idx == result_src_idx {
                 quote! { mettail_prattail::wpda_walker::ForkActionKind::Push }
