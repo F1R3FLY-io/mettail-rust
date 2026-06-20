@@ -5914,6 +5914,41 @@ where
         variants
     }
 
+    /// Cluster B-recovery (2026-06-20): true if `root` covers the input from
+    /// the logical START position, i.e. its `span_lo` shares the order key of
+    /// position 0 (where every walk begins). A logical-EOI accept whose root
+    /// span begins AFTER the start has discarded a leading prefix of the input
+    /// (a recovery delete/skip artifact) and is not a complete parse.
+    ///
+    /// `SPPF_ID_NONE` (and any root without a realizable span — synthetic-mock
+    /// accepts) returns `true`: there is no span evidence to refute it, and the
+    /// legacy empty-root accept path is preserved unchanged. `position_order_key`
+    /// makes the comparison correct for both linear token sources (key == token
+    /// index) and DAG-backed lattice sources (key == byte position).
+    fn accept_root_covers_input_start(
+        &self,
+        root: crate::sppf::SppfId,
+        tokens: &dyn WpdaTokenSource,
+    ) -> bool {
+        if root == crate::sppf::SPPF_ID_NONE {
+            return true;
+        }
+        let Some(span_lo) = self.sppf.span_lo(root) else {
+            // No intrinsic span (e.g. CollectionId / Predicate root) — no
+            // evidence to refute a deleted leading prefix; keep prior behavior.
+            return true;
+        };
+        match (
+            tokens.position_order_key(span_lo as usize),
+            tokens.position_order_key(0),
+        ) {
+            (Some(lo_key), Some(start_key)) => lo_key == start_key,
+            // If either key is unavailable, fall back to permissive (no
+            // refutation) so we never turn a genuine accept into a failure.
+            _ => true,
+        }
+    }
+
     fn push_eoi_resolution_candidate(
         &mut self,
         snapshot: &mut EoiResolutionSnapshot<W>,
@@ -5977,6 +6012,27 @@ where
             }
             let root = self.cursor_sppf_root(&variant);
             if at_logical_eoi {
+                // Cluster B-recovery (2026-06-20): reject a RECOVERY cursor
+                // (`recovery_depth > 0`) that reaches logical EOI having
+                // DELETED a leading prefix of the input — its SPPF root then
+                // spans only a SUFFIX. Example: `1 + + 2` has no sync token, so
+                // recovery deletes the un-parseable `1 + +` and accepts a bare
+                // `NumLit(2)` whose root spans [3,4], not [0,4]; the recovering
+                // facade would surface `Some(2)` with NO error instead of the
+                // correct `None`. A non-recovery accept (`recovery_depth == 0`)
+                // is NEVER rejected here — grouping legitimately produces a root
+                // whose span starts AFTER a leading `(` (e.g. `(1)` → root span
+                // [1,2]), and a genuine in-stream repair (insert/delete/
+                // substitute splices a token INTO the stream) keeps the root
+                // span anchored at the start. So the discriminator is precisely
+                // "recovery happened AND the leading input was discarded rather
+                // than consumed by the derivation". See
+                // `accept_root_covers_input_start` for the span-coverage test.
+                if variant.recovery_depth > 0
+                    && !self.accept_root_covers_input_start(root, tokens)
+                {
+                    continue;
+                }
                 snapshot.accepting.push(EoiCursorCandidate {
                     weight: variant.weight.clone(),
                     root,
