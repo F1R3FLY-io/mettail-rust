@@ -8740,26 +8740,64 @@ where
     ) -> (WpdaState, u8, u8) {
         let target_resume_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
         let source_resume_bp = target_resume_bp;
-        let normalized_state = Self::raise_state_binding_power_floor(new_state, source_resume_bp);
-        (normalized_state, source_resume_bp, target_resume_bp)
+        // CLUSTER-A FIX (2026-06-20, regression of 655095cf): do NOT clamp the
+        // source-delegate's OWN parse floor up to the enclosing target floor.
+        //
+        // 655095cf added `raise_state_binding_power_floor(new_state,
+        // source_resume_bp)` here (commented out below). `new_state` is the
+        // freshly-spawned source-delegate body state (e.g. a
+        // `CrossCatDelegate`/`PrefixDispatch` for a fresh source primary). The
+        // source body is an independent sub-parse that MUST begin at its own
+        // natural Pratt floor; the enclosing target floor is a RESUME floor that
+        // applies only AFTER the source body completes (it is carried separately
+        // in `source_resume_bp`/`target_resume_bp` and re-applied at the
+        // cross-cat-LHS reentry — see `record_crosscat_lhs_resume_on_cursor_top`
+        // and the `CrossCatLhsReentry` reentry state's `cur_bp`).
+        //
+        // Clamping the source body's own floor up suppresses any source-category
+        // operator whose left binding power is below the enclosing floor. The
+        // canonical victim is a low-bp cross-category operator parsed as the RHS
+        // of a higher-bp target operator: `1 + 2 == 3 and 4 == 4`. After `and`
+        // raises the Pred floor, the source Num delegate for the RHS `4 == 4`
+        // was pushed with its floor clamped to the AndPred floor, so `==`
+        // (the lowest-bp Num operator) could no longer fire and `4 == 4` never
+        // formed (`led_chain_num_to_pred`). The resume floor is still honored
+        // post-body via the unchanged `source_resume_bp`/`target_resume_bp`.
+        //
+        // The floor-raise was introduced for
+        // `calculator_prefix_syntaxless_projection_restores_enclosing_prefix_floor`,
+        // but that test does NOT pass with the floor-raise present either (it is
+        // a separate, still-open incomplete-feature issue), so removing the
+        // raise loses no currently-passing behavior while restoring led_chain.
+        //
+        // let normalized_state =
+        //     Self::raise_state_binding_power_floor(new_state, source_resume_bp);
+        (new_state, source_resume_bp, target_resume_bp)
     }
 
-    fn raise_state_binding_power_floor(state: WpdaState, floor: u8) -> WpdaState {
-        match state {
-            WpdaState::Ready { min_bp } => WpdaState::Ready { min_bp: min_bp.max(floor) },
-            WpdaState::PrefixDispatch { pos, cur_bp } => {
-                WpdaState::PrefixDispatch { pos, cur_bp: cur_bp.max(floor) }
-            },
-            WpdaState::InfixLoop { cur_bp } => WpdaState::InfixLoop { cur_bp: cur_bp.max(floor) },
-            WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } => {
-                WpdaState::CrossCatDelegate {
-                    source_src_idx,
-                    inner_cur_bp: inner_cur_bp.max(floor),
-                }
-            },
-            other => other,
-        }
-    }
+    // CLUSTER-A FIX (2026-06-20): retained but no longer called — see
+    // `normalize_crosscat_lhs_push_state` for the rationale. Kept (commented
+    // out, per repo policy of not deleting disabled code) so the prefix-operand
+    // floor-restoration intent of 655095cf can be revisited via the correct
+    // mechanism (resume-floor at reentry) rather than clamping the source
+    // body's own parse floor.
+    //
+    // fn raise_state_binding_power_floor(state: WpdaState, floor: u8) -> WpdaState {
+    //     match state {
+    //         WpdaState::Ready { min_bp } => WpdaState::Ready { min_bp: min_bp.max(floor) },
+    //         WpdaState::PrefixDispatch { pos, cur_bp } => {
+    //             WpdaState::PrefixDispatch { pos, cur_bp: cur_bp.max(floor) }
+    //         },
+    //         WpdaState::InfixLoop { cur_bp } => WpdaState::InfixLoop { cur_bp: cur_bp.max(floor) },
+    //         WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } => {
+    //             WpdaState::CrossCatDelegate {
+    //                 source_src_idx,
+    //                 inner_cur_bp: inner_cur_bp.max(floor),
+    //             }
+    //         },
+    //         other => other,
+    //     }
+    // }
 
     fn category_entry_resume_bp(
         &self,
@@ -28642,10 +28680,19 @@ mod tests {
         }
     }
 
-    /// CrossCatLhs source parsing inherits the caller's active Pratt floor, and
-    /// its post-body infix continuation resumes at that same floor. Otherwise a
-    /// delegated RHS of a high-precedence operator can later consume a
-    /// lower-precedence category-changing operator.
+    /// CrossCatLhs source parsing starts at the source prefix floor, but its
+    /// post-body infix continuation must resume at the caller's active Pratt
+    /// floor. Otherwise a delegated RHS of a high-precedence operator can later
+    /// consume a lower-precedence category-changing operator.
+    ///
+    /// CLUSTER-A FIX (2026-06-20): restored to its pre-655095cf form. 655095cf
+    /// flipped this assertion (and the production code) to clamp the source
+    /// body's OWN floor up to the caller floor (`cur_bp: 11`), which regressed
+    /// `led_chain_num_to_pred` — the delegated source RHS `4 == 4` of `and`
+    /// could no longer fire its low-bp cross-category `==`. The source body must
+    /// begin at floor 0; only the RESUME floor (`source_resume_bp` /
+    /// `target_resume_bp`) carries the caller's floor, re-applied AFTER the body
+    /// completes. See `normalize_crosscat_lhs_push_state`.
     #[test]
     fn crosscat_lhs_source_resume_uses_caller_floor() {
         let engine = ScriptedEngine::new(vec![]);
@@ -28659,7 +28706,11 @@ mod tests {
                 WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             );
 
-        assert!(matches!(new_state, WpdaState::PrefixDispatch { cur_bp: 11, .. }));
+        // The source body's OWN parse floor is left at its natural value (0):
+        // it is an independent sub-parse, not a continuation of the caller.
+        assert!(matches!(new_state, WpdaState::PrefixDispatch { cur_bp: 0, .. }));
+        // The resume floors still carry the caller's active floor (11) so the
+        // post-body infix continuation resumes at the enclosing precedence.
         assert_eq!(source_resume_bp, 11);
         assert_eq!(target_resume_bp, 11);
     }
