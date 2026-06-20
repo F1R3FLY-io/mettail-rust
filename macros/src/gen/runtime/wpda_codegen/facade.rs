@@ -232,10 +232,11 @@ pub(crate) fn emit_parse_fns(
             /// The semantic prefix/all facades intentionally collapse
             /// transparent wrappers by `semantic_hash`. This helper is the
             /// complementary policy for `Cat::parse`: it walks raw SPPF
-            /// derivations lazily and returns the first realized term whose
-            /// Display exactly reproduces already-observed source text. It
-            /// does not reject, reorder, or discard any ambiguity in the
-            /// public ambiguity-preserving APIs.
+            /// derivations lazily and fairly across accepted SPPF roots,
+            /// returning the first realized term whose Display exactly
+            /// reproduces already-observed source text. It does not reject,
+            /// reorder, or discard any ambiguity in the public
+            /// ambiguity-preserving APIs.
             #[allow(non_snake_case)]
             pub fn #surface_exact_with_source_fn_name(
                 source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
@@ -259,6 +260,44 @@ pub(crate) fn emit_parse_fns(
                     return Ok(None);
                 }
 
+                fn __mettail_wpda_find_surface_exact(
+                    walker: &WpdaWalker<DW, #engine_ident>,
+                    roots: &[mettail_prattail::sppf::SppfId],
+                    expected_display: &str,
+                    max_raw_derivations: usize,
+                ) -> Result<
+                    Option<(#cat_ident, mettail_prattail::automata::lex_weight::LexicographicWeight)>,
+                    WpdaParseError,
+                > {
+                    const INITIAL_RAW_SURFACE_PROBE_LIMIT: usize = 128;
+                    let mut per_root_limit =
+                        max_raw_derivations.min(INITIAL_RAW_SURFACE_PROBE_LIMIT).max(1);
+                    loop {
+                        let mut exhausted_all_roots = true;
+                        for &root in roots {
+                            let realized =
+                                walker.realize_root_to_terms_with_weights(root, Some(per_root_limit));
+                            if realized.len() >= per_root_limit {
+                                exhausted_all_roots = false;
+                            }
+                            for (term, weight) in realized.into_iter() {
+                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                    .map_err(|_| WpdaParseError::EmptyResult)?;
+                                let typed = std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone());
+                                if format!("{}", typed) == expected_display {
+                                    return Ok(Some((typed, weight)));
+                                }
+                            }
+                        }
+                        if exhausted_all_roots || per_root_limit >= max_raw_derivations {
+                            return Ok(None);
+                        }
+                        per_root_limit =
+                            per_root_limit.saturating_mul(4).min(max_raw_derivations);
+                    }
+                }
+
                 const MAX_STEPS: usize = 1_000_000;
                 let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
@@ -272,63 +311,23 @@ pub(crate) fn emit_parse_fns(
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
                         WpdaResolveResult::Accepted { roots, .. } => {
                             *pos = walker.position();
-                            let mut inspected = 0usize;
-                            for &root in &roots {
-                                let remaining = max_raw_derivations.saturating_sub(inspected);
-                                if remaining == 0 {
-                                    break;
-                                }
-                                let realized =
-                                    walker.realize_root_to_terms_with_weights(root, Some(remaining));
-                                for (term, weight) in realized.into_iter() {
-                                    inspected = inspected.saturating_add(1);
-                                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                        .map_err(|_| WpdaParseError::EmptyResult)?;
-                                    let typed = std::sync::Arc::try_unwrap(arc)
-                                        .unwrap_or_else(|arc| (*arc).clone());
-                                    if format!("{}", typed) == expected_display {
-                                        return Ok(Some((typed, weight)));
-                                    }
-                                    if inspected >= max_raw_derivations {
-                                        return Ok(None);
-                                    }
-                                }
-                                if inspected >= max_raw_derivations {
-                                    break;
-                                }
-                            }
-                            Ok(None)
+                            __mettail_wpda_find_surface_exact(
+                                &walker,
+                                &roots,
+                                expected_display,
+                                max_raw_derivations,
+                            )
                         }
                         WpdaResolveResult::AcceptedWithTrailing {
                             roots, position, ..
                         } => {
                             *pos = position;
-                            let mut inspected = 0usize;
-                            for &root in &roots {
-                                let remaining = max_raw_derivations.saturating_sub(inspected);
-                                if remaining == 0 {
-                                    break;
-                                }
-                                let realized =
-                                    walker.realize_root_to_terms_with_weights(root, Some(remaining));
-                                for (term, weight) in realized.into_iter() {
-                                    inspected = inspected.saturating_add(1);
-                                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                        .map_err(|_| WpdaParseError::EmptyResult)?;
-                                    let typed = std::sync::Arc::try_unwrap(arc)
-                                        .unwrap_or_else(|arc| (*arc).clone());
-                                    if format!("{}", typed) == expected_display {
-                                        return Ok(Some((typed, weight)));
-                                    }
-                                    if inspected >= max_raw_derivations {
-                                        return Ok(None);
-                                    }
-                                }
-                                if inspected >= max_raw_derivations {
-                                    break;
-                                }
-                            }
-                            Ok(None)
+                            __mettail_wpda_find_surface_exact(
+                                &walker,
+                                &roots,
+                                expected_display,
+                                max_raw_derivations,
+                            )
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {

@@ -864,6 +864,9 @@ fn generate_projection_surface_display_arm_for_field(
         return None;
     }
     let shape = classify_simple_projection_shape(rule)?;
+    if shape.source_category == shape.target_category {
+        return None;
+    }
     let source_task_variant = format_ident!("Display{}", shape.source_category);
     let (wrapper, param_name) =
         find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
@@ -878,7 +881,11 @@ fn generate_projection_surface_display_arm_for_field(
     let label = &rule.label;
     Some(quote! {
         #category::#label(#field_name) => {
-            #(#forward_ops)*
+            if min_bp == 0 {
+                stack.push(DisplayTask::#source_task_variant(&**#field_name as *const _, 0u8));
+            } else {
+                #(#forward_ops)*
+            }
         }
     })
 }
@@ -2651,6 +2658,34 @@ mod tests {
             generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn auto_syntaxless_projection_is_contextual_not_always_wrapped() {
+        let projection = syntaxless_projection("BoolToBigInt", "Bool", "BigInt", true);
+        let proc_bool = syntaxless_projection("ProcBool", "Bool", "Proc", false);
+        let bigint_cast = rule(
+            "BigintCast",
+            "BigInt",
+            vec![simple_param("a", "Proc")],
+            vec![
+                SyntaxExpr::Literal("bigint".to_string()),
+                SyntaxExpr::Literal("(".to_string()),
+                SyntaxExpr::Param(ident("a")),
+                SyntaxExpr::Literal(")".to_string()),
+            ],
+            false,
+        );
+        let lang = language(vec![projection.clone(), proc_bool, bigint_cast]);
+
+        let arm =
+            generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
+                .expect("auto projection should borrow a wrapper in operand context");
+        let rendered = arm.to_string();
+
+        assert!(rendered.contains("if min_bp == 0"));
+        assert!(rendered.contains("DisplayBool"));
+        assert!(rendered.contains("bigint"));
     }
 
     #[test]

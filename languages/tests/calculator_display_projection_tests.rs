@@ -120,6 +120,42 @@ fn calculator_bigrat_int_projection_add_display_is_idempotent() {
 }
 
 #[test]
+fn calculator_bigrat_fixed_projection_mul_display_is_idempotent() {
+    mettail_runtime::clear_var_cache();
+
+    let var = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
+    let fixed_bin_with_int_error = Fixed::FixedBin(Arc::new(var.clone()), Arc::new(Int::Err));
+    let fixed_bin_with_cast_error =
+        Fixed::FixedBin(Arc::new(var.clone()), Arc::new(Int::CastErrInt));
+
+    let cases = [
+        BigRat::FixedToBigRat(Arc::new(Fixed::MulFixed(
+            Arc::new(fixed_bin_with_int_error.clone()),
+            Arc::new(Fixed::SubFixed(Arc::new(Fixed::CastErrFixed), Arc::new(Fixed::CastErrFixed))),
+        ))),
+        BigRat::FixedToBigRat(Arc::new(Fixed::MulFixed(
+            Arc::new(Fixed::FixedBin(Arc::new(var), Arc::new(Int::NumLit(1_150_929_145)))),
+            Arc::new(fixed_bin_with_cast_error),
+        ))),
+    ];
+
+    for term in cases {
+        let displayed = format!("{}", term);
+        let parsed = BigRat::parse(&displayed).expect("displayed BigRat should parse");
+        let canonical = format!("{}", parsed);
+        let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
+        let recanonical = format!("{}", reparsed);
+
+        assert_eq!(
+            canonical, recanonical,
+            "canonical BigRat display must be stable after parsing; displayed={displayed:?}"
+        );
+    }
+}
+
+#[test]
 fn calculator_proc_bigrat_bit_or_add_display_is_idempotent() {
     mettail_runtime::clear_var_cache();
 
