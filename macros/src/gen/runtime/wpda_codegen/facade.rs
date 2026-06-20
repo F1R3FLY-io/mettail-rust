@@ -111,7 +111,10 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::automata::semiring::SemiringRef;
                 type DW = LexicographicWeight;
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
-                // var overrides via run_to_end_of_input_env_aware.
+                // var overrides via the env-aware runner. The single-result
+                // facade is demand-sensitive: it stops once a live accepting
+                // root for this category exists. Exhaustive callers below use
+                // the full EOI driver.
                 const MAX_STEPS: usize = 1_000_000;
                 let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
@@ -121,7 +124,7 @@ pub(crate) fn emit_parse_fns(
                 let mut recovery_config = mettail_prattail::recovery::RecoveryConfig::default();
                 recovery_config.max_recovery_depth = 0;
                 walker.set_recovery_config(recovery_config);
-                match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
+                match walker.run_to_end_of_input_until_accepting_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
                         WpdaResolveResult::Accepted { roots, .. } => {
                             *pos = walker.position();
@@ -150,33 +153,94 @@ pub(crate) fn emit_parse_fns(
                                 .unwrap_or_else(|arc| (*arc).clone());
                             Ok((typed, dw))
                         }
-                        // Cluster H (2026-05-29): valid-prefix parse with
-                        // trailing tokens. Return the prefix term + weight
-                        // and set `*pos` to the prefix boundary so the
-                        // generated wrapper's `pos < tokens.len()` check
-                        // emits a structured `TrailingTokens` error.
+                        // Demand-sensitive parsing can discover a valid
+                        // prefix before slower alternatives have produced a
+                        // full-input root. Full `parse()` semantics require
+                        // exhausting those alternatives before reporting
+                        // trailing tokens, so retry with the ordinary EOI
+                        // driver. If the exhaustive pass still resolves as
+                        // trailing, return the prefix term + weight and set
+                        // `*pos` to the prefix boundary so the generated
+                        // wrapper's `pos < tokens.len()` check emits a
+                        // structured `TrailingTokens` error.
                         WpdaResolveResult::AcceptedWithTrailing {
-                            roots, position, ..
+                            ..
                         } => {
-                            *pos = position;
-                            let root = roots
-                                .first()
-                                .copied()
-                                .ok_or(WpdaParseError::EmptyResult)?;
-                            const SINGLE_RESULT_RAW_PROBE_CAP: usize = 128;
-                            let (term, dw) = walker
-                                .realize_root_to_terms_with_weights(
-                                    root,
-                                    Some(SINGLE_RESULT_RAW_PROBE_CAP),
-                                )
-                                .into_iter()
-                                .min_by(|(_, a), (_, b)| a.cmp(b))
-                                .ok_or(WpdaParseError::EmptyResult)?;
-                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                .map_err(|_| WpdaParseError::EmptyResult)?;
-                            let typed = std::sync::Arc::try_unwrap(arc)
-                                .unwrap_or_else(|arc| (*arc).clone());
-                            Ok((typed, dw))
+                            let mut walker = WpdaWalker::<DW, _>::new_for_category(
+                                #engine_ident::default(),
+                                #cat_src_idx_u16,
+                                min_bp,
+                            );
+                            let mut recovery_config =
+                                mettail_prattail::recovery::RecoveryConfig::default();
+                            recovery_config.max_recovery_depth = 0;
+                            walker.set_recovery_config(recovery_config);
+                            match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
+                                Ok(()) => match walker.resolve_at_end_of_input(source) {
+                                    WpdaResolveResult::Accepted { roots, .. } => {
+                                        *pos = walker.position();
+                                        let root = roots
+                                            .first()
+                                            .copied()
+                                            .ok_or(WpdaParseError::EmptyResult)?;
+                                        const SINGLE_RESULT_RAW_PROBE_CAP: usize = 128;
+                                        let (term, dw) = walker
+                                            .realize_root_to_terms_with_weights(
+                                                root,
+                                                Some(SINGLE_RESULT_RAW_PROBE_CAP),
+                                            )
+                                            .into_iter()
+                                            .min_by(|(_, a), (_, b)| a.cmp(b))
+                                            .ok_or(WpdaParseError::EmptyResult)?;
+                                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                            .map_err(|_| WpdaParseError::EmptyResult)?;
+                                        let typed = std::sync::Arc::try_unwrap(arc)
+                                            .unwrap_or_else(|arc| (*arc).clone());
+                                        Ok((typed, dw))
+                                    }
+                                    WpdaResolveResult::AcceptedWithTrailing {
+                                        roots,
+                                        position,
+                                        ..
+                                    } => {
+                                        *pos = position;
+                                        let root = roots
+                                            .first()
+                                            .copied()
+                                            .ok_or(WpdaParseError::EmptyResult)?;
+                                        const SINGLE_RESULT_RAW_PROBE_CAP: usize = 128;
+                                        let (term, dw) = walker
+                                            .realize_root_to_terms_with_weights(
+                                                root,
+                                                Some(SINGLE_RESULT_RAW_PROBE_CAP),
+                                            )
+                                            .into_iter()
+                                            .min_by(|(_, a), (_, b)| a.cmp(b))
+                                            .ok_or(WpdaParseError::EmptyResult)?;
+                                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                            .map_err(|_| WpdaParseError::EmptyResult)?;
+                                        let typed = std::sync::Arc::try_unwrap(arc)
+                                            .unwrap_or_else(|arc| (*arc).clone());
+                                        Ok((typed, dw))
+                                    }
+                                    WpdaResolveResult::ParseError { message, position } => {
+                                        Err(WpdaParseError::ParseFailed {
+                                            message,
+                                            position,
+                                            attempts: Vec::new(),
+                                        })
+                                    }
+                                    WpdaResolveResult::MaxStepsExceeded { position } => {
+                                        Err(WpdaParseError::Incomplete { position })
+                                    }
+                                    WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
+                                    }
+                                },
+                                Err(exceeded) => Err(WpdaParseError::Incomplete {
+                                    position: exceeded.position,
+                                }),
+                            }
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {

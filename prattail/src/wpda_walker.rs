@@ -24727,6 +24727,32 @@ where
         }
     }
 
+    /// Env-aware demand-sensitive EOI driver for single-result facades.
+    ///
+    /// This is the `PRATTAIL_MAX_STEPS`/`PRATTAIL_TRACE` counterpart of
+    /// [`Self::run_to_end_of_input_until_accepting`]. Without tracing it stops
+    /// as soon as a live EOI configuration can satisfy the requested root
+    /// category. With tracing enabled, it delegates to the exhaustive env-aware
+    /// driver so diagnostic output remains complete.
+    pub fn run_to_end_of_input_until_accepting_env_aware(
+        &mut self,
+        default_max_steps: usize,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Result<(), WpdaMaxStepsExceeded>
+    where
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
+    {
+        let max_steps = std::env::var("PRATTAIL_MAX_STEPS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(default_max_steps);
+        if EnvTracingConsumer::from_env().is_active() {
+            self.run_to_end_of_input_env_aware(max_steps, tokens)
+        } else {
+            self.run_to_end_of_input_until_accepting(max_steps, tokens)
+        }
+    }
+
     /// Stage 6 G6+ (2026-05-02): drive the walker with a combined
     /// [`WalkerConsumer`] + [`CursorObserver`].
     ///
@@ -26732,6 +26758,10 @@ mod tests {
                 && ((self.integer_has_non_atom_start && matches!(kind, TokenKind::Integer))
                     || matches!(kind, TokenKind::Fixed(text) if text == "wrap"))
         }
+
+        fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
+            cat == 0 && matches!(token_text, "+" | "*")
+        }
     }
 
     use crate::wpda_runtime::{ActionArg, ActionEntry, SemanticBuilder, SliceTokenSource};
@@ -26824,6 +26854,43 @@ mod tests {
             },
             other => panic!("expected synthesized root Symbol, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn left_assoc_chain_boundary_rejects_nonmaximal_same_operator_prefix() {
+        let token_kinds = [
+            TokenKind::Integer,
+            TokenKind::Fixed("+".into()),
+            TokenKind::Integer,
+            TokenKind::Fixed("+".into()),
+            TokenKind::Integer,
+            TokenKind::Fixed("*".into()),
+            TokenKind::Integer,
+        ];
+        let token_texts = ["1", "+", "2", "+", "3", "*", "4"];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let walker = WpdaWalker::new(ChainSynthIntEngine::PLAIN, 0);
+        let spec = crate::binding_power::IterAbsorbSpec {
+            left_bp: 6,
+            right_bp: 7,
+            assoc_right: false,
+            is_mixfix: false,
+            op_cat_src_idx: 0,
+            op_rule_idx: 1,
+            atom_cat_src_idx: 0,
+            atom_lit_rule_idx: 0,
+            trigger: "",
+            sep: "",
+        };
+
+        assert!(
+            walker.chain_absorption_boundary_has_operator(&token_src, 3, &spec),
+            "a same left-associative operator after a synthesized prefix must fall back so the continuation stays visible"
+        );
+        assert!(
+            walker.chain_absorption_boundary_has_operator(&token_src, 5, &spec),
+            "a different category-owned operator remains a boundary"
+        );
     }
 
     #[test]
