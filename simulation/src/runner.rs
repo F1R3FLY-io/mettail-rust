@@ -1844,7 +1844,7 @@ mod tests {
         assert_eq!(trace.steps[1].operation, "runtime:Dovetail:DovetailRunReport");
         assert_eq!(
             trace.steps[1].term_display,
-            "DovetailRunReport(completeness=Complete, roots=[normal-form], terms=1, edges=0)"
+            "DovetailRunReport(completeness=Complete, roots=[normal-form], terms=1, edges=0, rule_firings=0)"
         );
         match trace.outcome {
             TraceOutcome::RuntimeReport { backend, artifact, summary } => {
@@ -1852,7 +1852,7 @@ mod tests {
                 assert_eq!(artifact, "DovetailRunReport");
                 assert_eq!(
                     summary,
-                    "DovetailRunReport(completeness=Complete, roots=[normal-form], terms=1, edges=0)"
+                    "DovetailRunReport(completeness=Complete, roots=[normal-form], terms=1, edges=0, rule_firings=0)"
                 );
             },
             other => panic!("expected RuntimeReport, got {other:?}"),
