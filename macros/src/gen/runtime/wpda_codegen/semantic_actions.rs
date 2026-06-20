@@ -292,6 +292,84 @@ pub fn emit_single_hop_coercion_body(
     }
 }
 
+fn trigger_unary_wrapper_source_cat(rule: &GrammarRule) -> Option<String> {
+    use mettail_ast::grammar::{SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+
+    let tc = rule.term_context.as_ref()?;
+    if tc.len() != 1 {
+        return None;
+    }
+    let TermParam::Simple { name: param_name, ty } = &tc[0] else {
+        return None;
+    };
+    let TypeExpr::Base(source_ident) = ty else {
+        return None;
+    };
+    let sp = rule.syntax_pattern.as_ref()?;
+    if !matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
+        return None;
+    }
+    let refs_param = sp
+        .iter()
+        .any(|e| matches!(e, SyntaxExpr::Param(syn_name) if syn_name == param_name));
+    let is_lone_param = sp.len() == 1
+        && matches!(
+            sp.first(),
+            Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
+        );
+    if refs_param && !is_lone_param {
+        Some(source_ident.to_string())
+    } else {
+        None
+    }
+}
+
+/// RC-B (2026-06-19): emit the body of
+/// `WpdaEngine::trigger_unary_wrappers_into(from_cat, to_cat) -> &'static [u16]`.
+///
+/// This all-candidates table covers every single-argument leading-literal
+/// wrapper, including same-category wrappers such as `float(<Float>)` and
+/// `sin(<Float>)`. The walker filters by keyword and action evidence instead
+/// of using source order as a disambiguator.
+pub fn emit_trigger_unary_wrappers_into_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    let mut table: std::collections::BTreeMap<(u16, u16), Vec<u16>> =
+        std::collections::BTreeMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let to_cat = cat_i as u16;
+        for (rule_idx, rule) in rules {
+            let Some(source_cat_name) = trigger_unary_wrapper_source_cat(rule) else {
+                continue;
+            };
+            let from_cat = categories
+                .iter()
+                .position(|c| c == &source_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(0);
+            table.entry((from_cat, to_cat)).or_default().push(*rule_idx);
+        }
+    }
+    if table.is_empty() {
+        return quote! { &[] };
+    }
+    let mut arms: Vec<TokenStream> = Vec::with_capacity(table.len());
+    for ((from_cat, to_cat), rule_idxs) in table {
+        let rules: Vec<TokenStream> = rule_idxs.iter().map(|ri| quote! { #ri }).collect();
+        arms.push(quote! {
+            (#from_cat, #to_cat) => &[#(#rules),*],
+        });
+    }
+    quote! {
+        match (from_cat, to_cat) {
+            #(#arms)*
+            _ => &[],
+        }
+    }
+}
+
 /// RC-B (2026-06-17): emit the body of
 /// `WpdaEngine::prefix_cast_into(from_cat, to_cat) -> Option<u16>`.
 ///
@@ -315,48 +393,15 @@ pub fn emit_prefix_cast_into_body(
     categories: &[String],
     per_cat: &[Vec<(u16, &GrammarRule)>],
 ) -> TokenStream {
-    use mettail_ast::grammar::{SyntaxExpr, TermParam};
-    use mettail_ast::types::TypeExpr;
     // `(from_cat, to_cat) -> rule_idx` (first match wins per pair).
     let mut table: std::collections::BTreeMap<(u16, u16), u16> = std::collections::BTreeMap::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let to_cat = cat_i as u16;
         for (rule_idx, rule) in rules {
-            // Single Simple param of a foreign Base category (the cast operand).
-            let Some(tc) = rule.term_context.as_ref() else {
+            let Some(source_cat_name) = trigger_unary_wrapper_source_cat(rule) else {
                 continue;
             };
-            if tc.len() != 1 {
-                continue;
-            }
-            let TermParam::Simple { name: param_name, ty } = &tc[0] else {
-                continue;
-            };
-            let TypeExpr::Base(source_ident) = ty else {
-                continue;
-            };
-            let source_cat_name = source_ident.to_string();
             if source_cat_name == rule.category.to_string() {
-                continue;
-            }
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            // TRIGGER-BEARING wrapper: the syntax pattern references the single
-            // param (so the cast forwards exactly one operand) AND contains at
-            // least one Literal (the keyword / brackets) — i.e. it is NOT the
-            // span-0 lone-`Param` transparent projection that
-            // `single_hop_coercion` captures.
-            let refs_param = sp
-                .iter()
-                .any(|e| matches!(e, SyntaxExpr::Param(syn_name) if syn_name == param_name));
-            let has_literal = sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_)));
-            let is_lone_param = sp.len() == 1
-                && matches!(
-                    sp.first(),
-                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
-                );
-            if !(refs_param && has_literal && !is_lone_param) {
                 continue;
             }
             let from_cat = categories
@@ -402,47 +447,19 @@ pub fn emit_prefix_cast_keyword_body(
     categories: &[String],
     per_cat: &[Vec<(u16, &GrammarRule)>],
 ) -> TokenStream {
-    use mettail_ast::grammar::{SyntaxExpr, TermParam};
-    use mettail_ast::types::TypeExpr;
+    use mettail_ast::grammar::SyntaxExpr;
     // `(to_cat, rule_idx) -> keyword` for every trigger-bearing prefix cast.
     let mut table: std::collections::BTreeMap<(u16, u16), String> =
         std::collections::BTreeMap::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let to_cat = cat_i as u16;
         for (rule_idx, rule) in rules {
-            // SAME filter as emit_prefix_cast_into_body: single Simple param of
-            // a foreign Base category, trigger-bearing wrapper (refs param +
-            // has a Literal + not a lone param).
-            let Some(tc) = rule.term_context.as_ref() else {
-                continue;
-            };
-            if tc.len() != 1 {
-                continue;
-            }
-            let TermParam::Simple { name: param_name, ty } = &tc[0] else {
-                continue;
-            };
-            let TypeExpr::Base(source_ident) = ty else {
-                continue;
-            };
-            if source_ident.to_string() == rule.category.to_string() {
+            if trigger_unary_wrapper_source_cat(rule).is_none() {
                 continue;
             }
             let Some(sp) = rule.syntax_pattern.as_ref() else {
                 continue;
             };
-            let refs_param = sp
-                .iter()
-                .any(|e| matches!(e, SyntaxExpr::Param(syn_name) if syn_name == param_name));
-            let has_literal = sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_)));
-            let is_lone_param = sp.len() == 1
-                && matches!(
-                    sp.first(),
-                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
-                );
-            if !(refs_param && has_literal && !is_lone_param) {
-                continue;
-            }
             // The leading keyword = the FIRST Literal in the syntax pattern.
             let Some(keyword) = sp.iter().find_map(|e| match e {
                 SyntaxExpr::Literal(text) => Some(text.clone()),

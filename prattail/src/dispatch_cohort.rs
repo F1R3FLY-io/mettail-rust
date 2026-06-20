@@ -353,6 +353,11 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// only revive known bodies/park members until another body is added,
         /// keeping fallback exploration bounded by MAX_RESOLVED_BODIES_PER_KEY.
         resolved_hit_worker_spawned: bool,
+        /// The bounded body/snapshot tables have refused at least one
+        /// observable alternative for this key. From that point onward a
+        /// cache hit must also run the uncached worker path; the cached bodies
+        /// are useful reuse evidence, but no longer complete evidence.
+        cache_saturated: bool,
         /// Phase F.13 H12 Stage 1.5.3 (2026-05-21): the root worker's
         /// pre-dispatch weight, preserved through the InFlight→Resolved
         /// transition. Used by `read_worker_pre()` for cohort revive
@@ -407,6 +412,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 snapshots_drained,
                 alternate_bodies,
                 resolved_hit_worker_spawned,
+                cache_saturated,
                 ..
             } => f
                 .debug_struct("Resolved")
@@ -415,6 +421,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 .field("worker_snapshots_len", &worker_snapshots.len())
                 .field("alternate_bodies_len", &alternate_bodies.len())
                 .field("resolved_hit_worker_spawned", resolved_hit_worker_spawned)
+                .field("cache_saturated", cache_saturated)
                 .field("pending_members_len", &pending_members.len())
                 .field("full_pending_members_len", &full_pending_members.len())
                 .field("snapshots_drained", snapshots_drained)
@@ -855,10 +862,15 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     /// for experiment #9 — a non-zero count on a failing cross-cat test is
     /// the empirical signature that the body-splice fired.
     pub crosswrap_splices_total: u64,
-    /// Unresolved evidence produced by cohort-cache caps. This is deliberately
-    /// separate from cursor-frontier caps: the cache keeps memory bounded, but
-    /// the walker must report the overflow instead of accepting with hidden
-    /// snapshots or bodies.
+    /// One-shot drain jobs for bodies/snapshots that exceeded the cache's
+    /// persistent storage caps. These preserve the semantic fanout for members
+    /// already waiting at the key while allowing the storage cap to remain a
+    /// storage cap, not a parse-completeness failure.
+    uncached_body_drain_jobs: rustc_hash::FxHashMap<DispatchKey, Vec<CohortDrainJob<W>>>,
+    /// Unresolved evidence produced by cache conditions that cannot be safely
+    /// replayed. Plain body/snapshot storage saturation must not set this:
+    /// those paths queue one-shot uncached drains and mark the entry saturated
+    /// so future hits run uncached workers.
     unresolved_overflow_evidence: Option<CohortOverflowEvidence>,
     pub snapshot_overflows_total: u64,
     pub resolved_body_overflows_total: u64,
@@ -884,6 +896,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             // Sig-B Blocker-2 (2026-05-31): fresh idempotence set + counter.
             crosswrap_drained: rustc_hash::FxHashSet::default(),
             crosswrap_splices_total: 0,
+            uncached_body_drain_jobs: rustc_hash::FxHashMap::default(),
             unresolved_overflow_evidence: None,
             snapshot_overflows_total: 0,
             resolved_body_overflows_total: 0,
@@ -911,6 +924,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // would be unsound to honor against a fresh SPPF arena.
         self.crosswrap_drained.clear();
         self.crosswrap_splices_total = 0;
+        self.uncached_body_drain_jobs.clear();
         self.unresolved_overflow_evidence = None;
         self.snapshot_overflows_total = 0;
         self.resolved_body_overflows_total = 0;
@@ -924,18 +938,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.entries.clear();
         self.next_member_id = 0;
         self.crosswrap_drained.clear();
+        self.uncached_body_drain_jobs.clear();
         self.unresolved_overflow_evidence = None;
-    }
-
-    #[inline]
-    fn record_unresolved_overflow(&mut self, evidence: CohortOverflowEvidence) {
-        match self.unresolved_overflow_evidence {
-            Some(existing)
-                if existing.actual > evidence.actual
-                    || (existing.actual == evidence.actual
-                        && existing.position <= evidence.position) => {},
-            _ => self.unresolved_overflow_evidence = Some(evidence),
-        }
     }
 
     #[inline]
@@ -990,11 +994,14 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_snapshots,
                 alternate_bodies,
                 resolved_hit_worker_spawned,
+                cache_saturated,
                 ..
             }) => {
                 self.resolved_hits_total += 1;
-                let spawn_worker = !*resolved_hit_worker_spawned;
-                *resolved_hit_worker_spawned = true;
+                let spawn_worker = *cache_saturated || !*resolved_hit_worker_spawned;
+                if !*cache_saturated {
+                    *resolved_hit_worker_spawned = true;
+                }
                 RegisterOutcome::ResolvedHit {
                     bodies: resolved_hit_bodies(
                         *symbol_id,
@@ -1031,6 +1038,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         let mut increment_snapshot_appends = false;
         let mut snapshot_overflow = None;
         let mut body_overflow = None;
+        let mut uncached_body_drain_job = None;
         let entry = match self.entries.get_mut(&key) {
             Some(e) => e,
             None => return ResolveOutcome::NoOp,
@@ -1063,6 +1071,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     snapshots_drained: 0,
                     alternate_bodies: Vec::new(),
                     resolved_hit_worker_spawned: false,
+                    cache_saturated: false,
                     worker_pre_dispatch_weight: preserved_pre,
                     cohort_shell: preserved_shell,
                     pending_members: preserved_members,
@@ -1079,6 +1088,10 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_snapshots,
                 alternate_bodies,
                 resolved_hit_worker_spawned,
+                cache_saturated,
+                cohort_shell,
+                pending_members,
+                full_pending_members,
                 ..
             } => {
                 if resolved_body_matches(
@@ -1089,6 +1102,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     hi_pos,
                     pos_at_dispatch,
                 ) {
+                    let overflow_snap = snap.clone();
                     match append_snapshot_bounded(worker_snapshots, snap) {
                         SnapshotInsertOutcome::Appended => {
                             increment_snapshot_appends = true;
@@ -1096,11 +1110,25 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         },
                         SnapshotInsertOutcome::Duplicate => ResolveOutcome::SnapshotDuplicate,
                         SnapshotInsertOutcome::Overflow { actual } => {
+                            *cache_saturated = true;
                             snapshot_overflow = Some(CohortOverflowEvidence {
                                 budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
                                 actual,
                                 position: key.pos,
                             });
+                            if has_pending_members(pending_members, full_pending_members) {
+                                uncached_body_drain_job = Some(CohortDrainJob {
+                                    symbol_id,
+                                    hi_pos,
+                                    pos_at_dispatch,
+                                    snapshots: vec![overflow_snap],
+                                    members: materialize_pending_members(
+                                        cohort_shell,
+                                        pending_members,
+                                        full_pending_members,
+                                    ),
+                                });
+                            }
                             ResolveOutcome::SnapshotOverflow {
                                 budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
                                 actual,
@@ -1117,6 +1145,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         pos_at_dispatch,
                     )
                 }) {
+                    let overflow_snap = snap.clone();
                     match append_snapshot_bounded(&mut body.worker_snapshots, snap) {
                         SnapshotInsertOutcome::Appended => {
                             increment_snapshot_appends = true;
@@ -1124,11 +1153,25 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         },
                         SnapshotInsertOutcome::Duplicate => ResolveOutcome::SnapshotDuplicate,
                         SnapshotInsertOutcome::Overflow { actual } => {
+                            *cache_saturated = true;
                             snapshot_overflow = Some(CohortOverflowEvidence {
                                 budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
                                 actual,
                                 position: key.pos,
                             });
+                            if has_pending_members(pending_members, full_pending_members) {
+                                uncached_body_drain_job = Some(CohortDrainJob {
+                                    symbol_id,
+                                    hi_pos,
+                                    pos_at_dispatch,
+                                    snapshots: vec![overflow_snap],
+                                    members: materialize_pending_members(
+                                        cohort_shell,
+                                        pending_members,
+                                        full_pending_members,
+                                    ),
+                                });
+                            }
                             ResolveOutcome::SnapshotOverflow {
                                 budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
                                 actual,
@@ -1136,10 +1179,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         },
                     }
                 } else {
-                    // Memory cap: refuse further bodies beyond cap. The cap is
-                    // a hard memory bound, but overflow is unresolved evidence:
-                    // it must be reported by the walker, not hidden behind a
-                    // successful cache hit.
+                    // Memory cap: refuse to PERSIST further bodies beyond cap.
+                    // This is a storage bound, not evidence that the parse path
+                    // is invalid. The overflowing body is replayed once for the
+                    // members already waiting at this key, and the entry is
+                    // marked saturated so future cache hits run an uncached
+                    // worker in parallel with cached reuse.
                     //
                     // 2026-05-25: experimental bump to 64 caused chain_1000
                     // memory explosion to 4.5 GB RSS at 28 s wall-time
@@ -1176,6 +1221,20 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         let actual = budget.saturating_add(1);
                         body_overflow =
                             Some(CohortOverflowEvidence { budget, actual, position: key.pos });
+                        *cache_saturated = true;
+                        if has_pending_members(pending_members, full_pending_members) {
+                            uncached_body_drain_job = Some(CohortDrainJob {
+                                symbol_id,
+                                hi_pos,
+                                pos_at_dispatch,
+                                snapshots: vec![snap],
+                                members: materialize_pending_members(
+                                    cohort_shell,
+                                    pending_members,
+                                    full_pending_members,
+                                ),
+                            });
+                        }
                         ResolveOutcome::ResolvedBodyOverflow { budget, actual }
                     }
                 }
@@ -1188,13 +1247,17 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         if increment_snapshot_appends {
             self.snapshot_appends_total += 1;
         }
-        if let Some(evidence) = snapshot_overflow {
+        if let Some(_evidence) = snapshot_overflow {
             self.snapshot_overflows_total += 1;
-            self.record_unresolved_overflow(evidence);
         }
-        if let Some(evidence) = body_overflow {
+        if let Some(_evidence) = body_overflow {
             self.resolved_body_overflows_total += 1;
-            self.record_unresolved_overflow(evidence);
+        }
+        if let Some(job) = uncached_body_drain_job {
+            self.uncached_body_drain_jobs
+                .entry(key)
+                .or_default()
+                .push(job);
         }
         outcome
     }
@@ -1240,10 +1303,14 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     }
 
     pub fn take_pending_for_drain_all(&mut self, key: &DispatchKey) -> Vec<CohortDrainJob<W>> {
+        let mut jobs = self
+            .uncached_body_drain_jobs
+            .remove(key)
+            .unwrap_or_default();
         let Some(entry) = self.entries.get_mut(key) else {
-            return Vec::new();
+            return jobs;
         };
-        match entry {
+        let mut cached_jobs = match entry {
             DispatchCacheEntry::Resolved {
                 symbol_id,
                 hi_pos,
@@ -1252,6 +1319,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 snapshots_drained,
                 alternate_bodies,
                 resolved_hit_worker_spawned: _,
+                cache_saturated: _,
                 worker_pre_dispatch_weight: _,
                 cohort_shell,
                 pending_members,
@@ -1318,7 +1386,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     .collect()
             },
             _ => Vec::new(),
-        }
+        };
+        jobs.append(&mut cached_jobs);
+        jobs
     }
 
     /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): own-wrap-gated
@@ -2624,7 +2694,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_cap_records_unresolved_evidence() {
+    fn snapshot_cap_queues_uncached_replay_without_unresolved_evidence() {
         let key = DispatchKey::new(3, 7, 0, 2, 16);
         let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
         assert!(matches!(
@@ -2636,6 +2706,7 @@ mod tests {
             cache.resolve(key.clone(), 42, 4, 3, worker_snapshot_with_rule(0)),
             ResolveOutcome::FirstResolve,
         );
+        assert!(cache.pause_cohort_member(key.clone(), cohort_member(branch_cursor())));
         for i in 1..MAX_WORKER_SNAPSHOTS_PER_KEY {
             assert_eq!(
                 cache.resolve(key.clone(), 42, 4, 3, worker_snapshot_with_rule(i as u16)),
@@ -2658,14 +2729,21 @@ mod tests {
             },
         );
         assert_eq!(cache.snapshot_overflows_total, 1);
-        assert_eq!(
-            cache.unresolved_overflow_evidence(),
-            Some(CohortOverflowEvidence {
-                budget: MAX_WORKER_SNAPSHOTS_PER_KEY,
-                actual: MAX_WORKER_SNAPSHOTS_PER_KEY + 1,
-                position: key.pos,
-            }),
-        );
+        assert_eq!(cache.unresolved_overflow_evidence(), None);
+
+        match cache.register(key.clone(), lex_one()) {
+            RegisterOutcome::ResolvedHit { spawn_worker, .. } => {
+                assert!(spawn_worker, "saturated snapshot cache must spawn an uncached worker");
+            },
+            _ => panic!("expected ResolvedHit from saturated cache"),
+        }
+
+        let jobs = cache.take_pending_for_drain_all(&key);
+        assert_eq!(jobs.len(), 2, "cached snapshots plus one uncached overflow replay");
+        assert!(jobs.iter().any(|job| job.snapshots.len() == 1));
+        assert!(jobs
+            .iter()
+            .any(|job| job.snapshots.len() == MAX_WORKER_SNAPSHOTS_PER_KEY));
     }
 
     #[test]
@@ -2777,7 +2855,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_body_cap_records_unresolved_evidence() {
+    fn resolved_body_cap_queues_uncached_replay_without_unresolved_evidence() {
         let key = DispatchKey::new(3, 7, 0, 2, 16);
         let mut cache = DispatchCohortCache::<LexicographicWeight>::new();
         assert!(matches!(
@@ -2789,6 +2867,7 @@ mod tests {
             cache.resolve(key.clone(), 42, 4, 3, worker_snapshot()),
             ResolveOutcome::FirstResolve,
         );
+        assert!(cache.pause_cohort_member(key.clone(), cohort_member(branch_cursor())));
         for i in 0..MAX_RESOLVED_BODIES_PER_KEY {
             assert_eq!(
                 cache.resolve(key.clone(), 100 + i as SppfId, 5 + i, 3, worker_snapshot()),
@@ -2800,14 +2879,21 @@ mod tests {
         let overflow = cache.resolve(key.clone(), 999, 99, 3, worker_snapshot());
         assert_eq!(overflow, ResolveOutcome::ResolvedBodyOverflow { budget, actual: budget + 1 },);
         assert_eq!(cache.resolved_body_overflows_total, 1);
-        assert_eq!(
-            cache.unresolved_overflow_evidence(),
-            Some(CohortOverflowEvidence {
-                budget,
-                actual: budget + 1,
-                position: key.pos,
-            }),
-        );
+        assert_eq!(cache.unresolved_overflow_evidence(), None);
+
+        match cache.register(key.clone(), lex_one()) {
+            RegisterOutcome::ResolvedHit { bodies, spawn_worker } => {
+                assert_eq!(bodies.len(), budget);
+                assert!(spawn_worker, "saturated body cache must spawn an uncached worker");
+            },
+            _ => panic!("expected ResolvedHit from saturated cache"),
+        }
+
+        let jobs = cache.take_pending_for_drain_all(&key);
+        assert_eq!(jobs.len(), budget + 1);
+        assert!(jobs
+            .iter()
+            .any(|job| job.symbol_id == 999 && job.hi_pos == 99 && job.snapshots.len() == 1));
     }
 
     #[test]

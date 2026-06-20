@@ -883,6 +883,46 @@ fn generate_projection_surface_display_arm_for_field(
     })
 }
 
+fn contextual_projection_surface_ops_for_field(
+    rule: &GrammarRule,
+    field_name: &syn::Ident,
+    language: &LanguageDef,
+) -> Option<Vec<TokenStream>> {
+    let shape = classify_simple_projection_shape(rule)?;
+    if shape.source_category == shape.target_category {
+        return None;
+    }
+    let source_task_variant = format_ident!("Display{}", shape.source_category);
+    let (wrapper, param_name) =
+        find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
+    let syntax_pattern = wrapper.syntax_pattern.as_ref()?;
+    simple_literal_param_pattern_ops(syntax_pattern, &param_name, &source_task_variant, field_name)
+}
+
+fn generate_contextual_projection_surface_display_arm_for_field(
+    rule: &GrammarRule,
+    field_name: &syn::Ident,
+    language: &LanguageDef,
+) -> Option<TokenStream> {
+    let shape = classify_simple_projection_shape(rule)?;
+    if shape.source_category == shape.target_category {
+        return None;
+    }
+    let category = &rule.category;
+    let label = &rule.label;
+    let source_task_variant = format_ident!("Display{}", shape.source_category);
+    let wrapper_ops = contextual_projection_surface_ops_for_field(rule, field_name, language)?;
+    Some(quote! {
+        #category::#label(#field_name) => {
+            if min_bp == 0 {
+                stack.push(DisplayTask::#source_task_variant(&**#field_name as *const _, 0u8));
+            } else {
+                #(#wrapper_ops)*
+            }
+        }
+    })
+}
+
 fn generate_projection_surface_display_arm(
     rule: &GrammarRule,
     field_names: &[syn::Ident],
@@ -916,6 +956,17 @@ fn generate_engine_regular_arm(
         generate_projection_surface_display_arm(rule, field_names, _language)
     {
         return auto_projection_arm;
+    }
+    if field_names.len() == 1 {
+        if let Some(contextual_projection_arm) =
+            generate_contextual_projection_surface_display_arm_for_field(
+                rule,
+                &field_names[0],
+                _language,
+            )
+        {
+            return contextual_projection_arm;
+        }
     }
     let forwards_projection_min_bp = is_syntaxless_single_child_projection(rule);
 
@@ -1376,6 +1427,15 @@ fn generate_engine_syntax_pattern_arm(
             generate_projection_surface_display_arm_for_field(rule, &field_ident, _language)
         {
             return surface_projection_arm;
+        }
+        if let Some(contextual_projection_arm) =
+            generate_contextual_projection_surface_display_arm_for_field(
+                rule,
+                &field_ident,
+                _language,
+            )
+        {
+            return contextual_projection_arm;
         }
     }
 
@@ -2591,5 +2651,31 @@ mod tests {
             generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn explicit_syntaxless_projection_can_use_wrapper_in_operand_context() {
+        let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
+        let proc_int = syntaxless_projection("ProcInt", "Int", "Proc", false);
+        let bigint_cast = rule(
+            "BigintCast",
+            "BigInt",
+            vec![simple_param("a", "Proc")],
+            vec![
+                SyntaxExpr::Literal("bigint".to_string()),
+                SyntaxExpr::Literal("(".to_string()),
+                SyntaxExpr::Param(ident("a")),
+                SyntaxExpr::Literal(")".to_string()),
+            ],
+            false,
+        );
+        let lang = language(vec![projection.clone(), proc_int, bigint_cast]);
+
+        assert!(generate_contextual_projection_surface_display_arm_for_field(
+            &projection,
+            &ident("v"),
+            &lang
+        )
+        .is_some());
     }
 }

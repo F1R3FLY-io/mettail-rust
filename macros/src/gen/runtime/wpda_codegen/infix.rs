@@ -508,10 +508,11 @@ fn emit_infix_bp_fn(
 /// can only inspect a single operator at a time; the I1 invariant
 /// requires a per-category scan.
 ///
-/// At codegen time, also filters by `op.result_category == category`
-/// to ensure the rule is in the dispatched category's table. Same-
-/// category invariant guaranteed by `is_iterative_candidate`'s
-/// `!is_cross_category` gate.
+/// At codegen time, the eligibility stays category-local: every same-category
+/// iterative operator that is unique within its category may be summarized in
+/// that category. Cross-category ambiguity is preserved as distinct WPDA
+/// alternatives; the absorber only changes the representation of an
+/// individual category-local derivation.
 fn emit_iter_eligible_fn(
     bp_table: &BindingPowerTable,
     category: &str,
@@ -521,14 +522,7 @@ fn emit_iter_eligible_fn(
     cat_lit_rule_idx: &std::collections::HashMap<String, u16>,
     cat_is_value_home: &std::collections::HashMap<String, bool>,
 ) -> TokenStream {
-    // Resolve a category NAME → its source index (position in `categories`).
-    let cat_pos = |name: &str| categories.iter().position(|c| c == name).map(|p| p as u16);
-    // Value-home rank: 0 if the category parses its operand literal via a
-    // tier-0.0 polymorphic home prefix arm (integer-home), else 1. Mirrors
-    // the walker's lex-min primary key so the canonical winner matches the
-    // category the convergent normal walker selects at EOI.
-    let value_home_rank =
-        |name: &str| -> u8 { u8::from(!*cat_is_value_home.get(name).unwrap_or(&false)) };
+    let _ = (categories, cat_is_value_home);
     let cat_ops: Vec<&InfixOperator> = bp_table
         .operators
         .iter()
@@ -537,14 +531,6 @@ fn emit_iter_eligible_fn(
     let arms: Vec<TokenStream> = cat_ops
         .iter()
         .filter(|op| op.is_iterative_candidate())
-        // D1 (cross-category canonical): only the lex-min WINNER category for
-        // each terminal is eligible — lowest `(value_home_rank, src_idx,
-        // label)` — so exactly ONE category absorbs a chain over that terminal
-        // and the rest stay on the convergent normal walker (prevents the
-        // WALK-S1.5 cross-cat fanout). The value-home key makes a bare-integer
-        // chain converge on Int even when a non-integer-home category (BigRat)
-        // has a lower src_idx.
-        .filter(|op| bp_table.is_canonical_iter_op(op, &cat_pos, &value_home_rank))
         .filter_map(|op| {
             // I1 (within-category): no other operator in this category shares
             // the same (terminal, left_bp) pair, so the singleton InfixLoop

@@ -239,6 +239,418 @@ pub fn emit_lex_alt_rule_for_fn(
     }
 }
 
+/// Emit the body of `WpdaEngine::chain_atom_rules_for_token`.
+///
+/// This is deliberately narrower than `lex_alt_rules_for_prefix`: it returns
+/// only token-consuming atomic rules that can form a complete single-token
+/// chain atom. It includes exact terminal keywords (`"error"`,
+/// `"cast_error_int"`, etc.) because chain absorption needs them even though
+/// they are not lexical-alternative producers.
+pub(crate) fn emit_chain_atom_rules_for_token_body(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
+    let mut pushes: Vec<TokenStream> = Vec::new();
+    for (cat_src_idx, rules) in per_cat.iter().enumerate() {
+        let cat_src_idx_u16 = cat_src_idx as u16;
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            let rule_idx_u16 = rule_idx as u16;
+            let shape = classify_atomic(rule, language);
+            emit_chain_atom_pushes_for_shape(&shape, cat_src_idx_u16, rule_idx_u16, &mut pushes);
+        }
+    }
+    quote! {
+        let mut out: Vec<u16> = Vec::new();
+        let _ = text;
+        #(#pushes)*
+        out
+    }
+}
+
+/// Emit the body of `WpdaEngine::chain_atom_producers_for_token`.
+///
+/// Direct producers are the same token-consuming atomic rules returned by
+/// `chain_atom_rules_for_token`. Projected producers add exactly one declared
+/// transparent projection from a token atom's source category into the
+/// requested chain category, mirroring `single_hop_coercion`.
+pub(crate) fn emit_chain_atom_producers_for_token_body(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
+) -> TokenStream {
+    let mut pushes: Vec<TokenStream> = Vec::new();
+    for (cat_src_idx, rules) in per_cat.iter().enumerate() {
+        let cat_src_idx_u16 = cat_src_idx as u16;
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            let rule_idx_u16 = rule_idx as u16;
+            let shape = classify_atomic(rule, language);
+            emit_chain_atom_producer_pushes_for_shape(
+                &shape,
+                cat_src_idx_u16,
+                quote! {
+                    mettail_prattail::wpda_walker::ChainAtomProducer::direct(
+                        #cat_src_idx_u16,
+                        #rule_idx_u16,
+                    )
+                },
+                &mut pushes,
+            );
+        }
+    }
+
+    for (from_cat, to_cat, wrap_rule_idx) in transparent_projection_rules(per_cat, categories) {
+        let Some(source_rules) = per_cat.get(from_cat as usize) else {
+            continue;
+        };
+        for (atom_rule_idx, atom_rule) in source_rules.iter().enumerate() {
+            let atom_rule_idx_u16 = atom_rule_idx as u16;
+            let shape = classify_atomic(atom_rule, language);
+            emit_chain_atom_producer_pushes_for_shape(
+                &shape,
+                to_cat,
+                quote! {
+                    mettail_prattail::wpda_walker::ChainAtomProducer::projected(
+                        #from_cat,
+                        #atom_rule_idx_u16,
+                        #wrap_rule_idx,
+                    )
+                },
+                &mut pushes,
+            );
+        }
+    }
+
+    quote! {
+        let mut out: Vec<mettail_prattail::wpda_walker::ChainAtomProducer> = Vec::new();
+        let _ = text;
+        #(#pushes)*
+        out
+    }
+}
+
+fn transparent_projection_rules(
+    per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
+) -> Vec<(u16, u16, u16)> {
+    use mettail_ast::grammar::TermParam;
+    use mettail_ast::types::TypeExpr;
+
+    let mut out = Vec::new();
+    for (to_cat_idx, rules) in per_cat.iter().enumerate() {
+        let to_cat = to_cat_idx as u16;
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            let Some(term_context) = rule.term_context.as_ref() else {
+                continue;
+            };
+            if term_context.len() != 1 {
+                continue;
+            }
+            let TermParam::Simple { name: param_name, ty } = &term_context[0] else {
+                continue;
+            };
+            let TypeExpr::Base(source_ident) = ty else {
+                continue;
+            };
+            let source_cat_name = source_ident.to_string();
+            if source_cat_name == rule.category.to_string() {
+                continue;
+            }
+            let Some(syntax_pattern) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            let is_transparent = syntax_pattern.len() == 1
+                && matches!(
+                    syntax_pattern.first(),
+                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
+                );
+            if !is_transparent {
+                continue;
+            }
+            let Some(from_cat) = categories
+                .iter()
+                .position(|category| category == &source_cat_name)
+                .map(|idx| idx as u16)
+            else {
+                continue;
+            };
+            out.push((from_cat, to_cat, rule_idx as u16));
+        }
+    }
+    out
+}
+
+fn emit_chain_atom_pushes_for_shape(
+    shape: &AtomicShape,
+    cat_src_idx: u16,
+    rule_idx: u16,
+    pushes: &mut Vec<TokenStream>,
+) {
+    let push_simple_atomic = |k: TokenStream, pushes: &mut Vec<TokenStream>| {
+        pushes.push(quote! {
+            match Some(kind.clone()) {
+                Some(#k) if cat_src_idx == #cat_src_idx => out.push(#rule_idx),
+                _ => {},
+            }
+        });
+    };
+    let push_payload_eq_atomic = |k: TokenStream, expected: &str, pushes: &mut Vec<TokenStream>| {
+        pushes.push(quote! {
+            match Some(kind.clone()) {
+                Some(#k) if cat_src_idx == #cat_src_idx && __cat == #expected => {
+                    out.push(#rule_idx)
+                },
+                _ => {},
+            }
+        });
+    };
+
+    match shape {
+        AtomicShape::LiteralInteger => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::Integer }, pushes);
+        },
+        AtomicShape::LiteralBoolean => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::True }, pushes);
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::False }, pushes);
+            push_simple_atomic(
+                quote! { mettail_prattail::automata::TokenKind::BooleanLit },
+                pushes,
+            );
+        },
+        AtomicShape::LiteralString => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::StringLit }, pushes);
+        },
+        AtomicShape::LiteralFloat => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::Float }, pushes);
+        },
+        AtomicShape::LiteralPatterned { cat_name, family, .. } => {
+            let cat_name_lit = cat_name.as_str();
+            match family {
+                LiteralFamily::Integer => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Integer },
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::IntegerLit(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
+                LiteralFamily::Rational => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::RationalLit(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
+                LiteralFamily::FixedPoint => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::FixedPointLit(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
+                LiteralFamily::Float => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Float },
+                        pushes,
+                    );
+                },
+                LiteralFamily::Boolean => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::True },
+                        pushes,
+                    );
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::False },
+                        pushes,
+                    );
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::BooleanLit },
+                        pushes,
+                    );
+                },
+                LiteralFamily::String => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::StringLit },
+                        pushes,
+                    );
+                },
+            }
+        },
+        AtomicShape::TerminalKeyword { terminal_text, .. } => {
+            let terminal_lit = terminal_text.as_str();
+            pushes.push(quote! {
+                match Some(kind.clone()) {
+                    Some(mettail_prattail::automata::TokenKind::Fixed(__t))
+                        if cat_src_idx == #cat_src_idx && __t == #terminal_lit => {
+                            out.push(#rule_idx)
+                        },
+                    _ => {},
+                }
+            });
+        },
+        AtomicShape::VarRule { .. } => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::Ident }, pushes);
+        },
+        AtomicShape::CrossCatProjection { .. }
+        | AtomicShape::CrossCatPrefixUnary { .. }
+        | AtomicShape::PrefixOperator { .. }
+        | AtomicShape::NonAtomic => {},
+    }
+}
+
+fn emit_chain_atom_producer_pushes_for_shape(
+    shape: &AtomicShape,
+    target_cat_src_idx: u16,
+    producer: TokenStream,
+    pushes: &mut Vec<TokenStream>,
+) {
+    let push_simple_atomic = |k: TokenStream, pushes: &mut Vec<TokenStream>| {
+        pushes.push(quote! {
+            match Some(kind.clone()) {
+                Some(#k) if cat_src_idx == #target_cat_src_idx => out.push(#producer),
+                _ => {},
+            }
+        });
+    };
+    let push_payload_eq_atomic = |k: TokenStream, expected: &str, pushes: &mut Vec<TokenStream>| {
+        pushes.push(quote! {
+            match Some(kind.clone()) {
+                Some(#k) if cat_src_idx == #target_cat_src_idx && __cat == #expected => {
+                    out.push(#producer)
+                },
+                _ => {},
+            }
+        });
+    };
+
+    match shape {
+        AtomicShape::LiteralInteger => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::Integer }, pushes);
+        },
+        AtomicShape::LiteralBoolean => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::True }, pushes);
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::False }, pushes);
+            push_simple_atomic(
+                quote! { mettail_prattail::automata::TokenKind::BooleanLit },
+                pushes,
+            );
+        },
+        AtomicShape::LiteralString => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::StringLit }, pushes);
+        },
+        AtomicShape::LiteralFloat => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::Float }, pushes);
+        },
+        AtomicShape::LiteralPatterned { cat_name, family, .. } => {
+            let cat_name_lit = cat_name.as_str();
+            match family {
+                LiteralFamily::Integer => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Integer },
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::IntegerLit(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
+                LiteralFamily::Rational => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::RationalLit(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
+                LiteralFamily::FixedPoint => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::FixedPointLit(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
+                LiteralFamily::Float => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Float },
+                        pushes,
+                    );
+                },
+                LiteralFamily::Boolean => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::True },
+                        pushes,
+                    );
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::False },
+                        pushes,
+                    );
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::BooleanLit },
+                        pushes,
+                    );
+                },
+                LiteralFamily::String => {
+                    push_simple_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::StringLit },
+                        pushes,
+                    );
+                },
+            }
+        },
+        AtomicShape::TerminalKeyword { terminal_text, .. } => {
+            let terminal_lit = terminal_text.as_str();
+            pushes.push(quote! {
+                match Some(kind.clone()) {
+                    Some(mettail_prattail::automata::TokenKind::Fixed(__t))
+                        if cat_src_idx == #target_cat_src_idx && __t == #terminal_lit => {
+                            out.push(#producer)
+                        },
+                    _ => {},
+                }
+            });
+        },
+        AtomicShape::VarRule { .. } => {
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::Ident }, pushes);
+        },
+        AtomicShape::CrossCatProjection { .. }
+        | AtomicShape::CrossCatPrefixUnary { .. }
+        | AtomicShape::PrefixOperator { .. }
+        | AtomicShape::NonAtomic => {},
+    }
+}
+
 fn emit_prefix_primary_dispatch_arms(
     language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],

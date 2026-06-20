@@ -408,6 +408,10 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let parse_via_wpda_prefix_fn = format_ident!("parse_{}_via_wpda_prefix", cat);
             let parse_via_wpda_prefix_with_source_fn =
                 format_ident!("parse_{}_via_wpda_prefix_with_source", cat);
+            let parse_via_wpda_surface_exact_fn =
+                format_ident!("parse_{}_via_wpda_surface_exact", cat);
+            let parse_via_wpda_surface_exact_with_source_fn =
+                format_ident!("parse_{}_via_wpda_surface_exact_with_source", cat);
             let parse_via_wpda_method = quote! {
                 /// WPDS-driven parser entry point.
                 ///
@@ -571,6 +575,74 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             })
                         }
                     }
+                }
+
+                /// Lazy raw-realization probe used only by
+                /// `parse_structured` to choose a surface-faithful
+                /// representative when the single-result WPDA parse lands on
+                /// a semantically equivalent transparent-wrapper alternate.
+                ///
+                /// Ambiguity-preserving APIs remain semantic-prefix based;
+                /// this helper never rejects a parse and never prunes the
+                /// underlying SPPF. It only returns `Some` when an already
+                /// realized raw derivation displays exactly as `input`.
+                fn parse_via_wpda_surface_exact(
+                    input: &str,
+                    max_raw_derivations: usize,
+                ) -> Option<#cat> {
+                    mettail_prattail::hang_dump::install_hang_dump_handler();
+                    let dag = match lex_dag(input) {
+                        Ok(dag) => dag,
+                        Err(_) => return None,
+                    };
+                    if dag.has_ambiguity() {
+                        let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
+                        use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
+                        let mut pos = 0usize;
+                        let exact = #parse_via_wpda_surface_exact_with_source_fn(
+                            &source,
+                            &mut pos,
+                            0,
+                            input,
+                            max_raw_derivations,
+                        )
+                        .ok()
+                        .flatten();
+                        if let Some((term, _weight)) = exact {
+                            if pos == source.eof_node() {
+                                return Some(term);
+                            }
+                        }
+                        return None;
+                    }
+
+                    let tokens = match lex(input) {
+                        Ok(tokens) => tokens,
+                        Err(_) => return None,
+                    };
+                    let kinds: Vec<mettail_prattail::automata::TokenKind> =
+                        tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
+                    let texts: Vec<&str> = tokens
+                        .iter()
+                        .map(|(t, r)| token_text(t, input, *r))
+                        .collect();
+                    let mut pos = 0usize;
+                    let exact = #parse_via_wpda_surface_exact_fn(
+                        &kinds,
+                        &texts,
+                        &mut pos,
+                        0,
+                        input,
+                        max_raw_derivations,
+                    )
+                    .ok()
+                    .flatten();
+                    if let Some((term, _weight)) = exact {
+                        if pos >= tokens.len() || matches!(tokens[pos].0, Token::Eof) {
+                            return Some(term);
+                        }
+                    }
+                    None
                 }
 
                 /// M8 (2026-05-14): multi-result WPDS-driven parser entry.
@@ -1017,8 +1089,61 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // `Cat::parse_structured` shares the explicit WPDS string entry
             // point so lexical-DAG ambiguity handling cannot diverge between
             // `parse()`, `parse_structured()`, and `parse_via_wpda()`.
+            // Surface-faithful representative selection for the single-result
+            // convenience parser. The ambiguity-preserving WPDA APIs still
+            // expose all alternatives; this path only replaces the returned
+            // representative when concrete display evidence exists in a
+            // bounded, lazy raw-realization probe before semantic dedup.
             let parse_structured_body = quote! {
-                Self::parse_via_wpda(input)
+                {
+                    let parsed = Self::parse_via_wpda(input)?;
+                    const DISPLAY_REPRESENTATIVE_REPAIR_MAX_INPUT_BYTES: usize = 2_048;
+                    if input.len() > DISPLAY_REPRESENTATIVE_REPAIR_MAX_INPUT_BYTES {
+                        return Ok(parsed);
+                    }
+
+                    let mut display = format!("{}", parsed);
+                    if display == input {
+                        return Ok(parsed);
+                    }
+
+                    // Prefer the normal parser/display fixpoint before raw
+                    // surface reconstruction. Raw SPPF realization is still
+                    // available as a bounded repair when the canonical
+                    // representative does not stabilize, but a deep legal
+                    // input whose first representative already has a stable
+                    // display must not pay an exact-source reconstruction
+                    // cost just because redundant grouping was normalized.
+                    let mut stable = parsed;
+                    const DISPLAY_FIXPOINT_PARSE_PASSES: usize = 4;
+                    for _ in 0..DISPLAY_FIXPOINT_PARSE_PASSES {
+                        let reparsed = match Self::parse_via_wpda(&display) {
+                            Ok(reparsed) => reparsed,
+                            Err(_) => break,
+                        };
+                        let redisplay = format!("{}", reparsed);
+                        if redisplay == display {
+                            return Ok(reparsed);
+                        }
+                        stable = reparsed;
+                        display = redisplay;
+                    }
+
+                    const SURFACE_PRESERVING_RAW_DERIVATION_DEMAND: usize = 128;
+                    if let Some(surface_exact) = Self::parse_via_wpda_surface_exact(
+                        input,
+                        SURFACE_PRESERVING_RAW_DERIVATION_DEMAND,
+                    ) {
+                        return Ok(surface_exact);
+                    }
+                    if let Some(surface_exact) = Self::parse_via_wpda_surface_exact(
+                        &display,
+                        SURFACE_PRESERVING_RAW_DERIVATION_DEMAND,
+                    ) {
+                        return Ok(surface_exact);
+                    }
+                    Ok(stable)
+                }
             };
             quote! {
                 impl #cat {

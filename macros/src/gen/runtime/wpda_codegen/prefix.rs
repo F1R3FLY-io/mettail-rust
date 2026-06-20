@@ -1065,34 +1065,78 @@ pub fn emit_prefix_arms_for_category(
     // via BigInt's transitive FIRST chain) is resolved by lex-min over
     // `from_cost(0.0, src, rule_idx)` — preserves source-order tiebreak.
 
-    // B7 (2026-05-07): atomic-shape descriptors fold into the SAME
-    // unified bucket map as cross-cat-LHS sources above. When a (pat,
-    // guard) key appears in BOTH cross-cat-LHS and atomic, the bucket
+    // B7 (2026-05-07): home prefix descriptors fold into the SAME unified
+    // bucket map as cross-cat-LHS sources above. When a (pat, guard) key
+    // appears in BOTH cross-cat-LHS and a home prefix alternative, the bucket
     // emits a Fork mixing both branch kinds with the per-tier weights
-    // documented above. When only one kind appears, emission is
-    // byte-identical to pre-B7.
+    // documented above. When only one kind appears, emission is byte-identical
+    // to pre-B7.
+    //
+    // G-PREFIX-AMB (2026-06-19): same-category binder/prefix rules are part of
+    // this same bucket. They used to be emitted by `binder.rs` before
+    // `all_prefix_arms`, which made Rust first-match-wins discard transparent
+    // projection alternatives sharing the same trigger (for example
+    // `UInt32::BitNotUInt32` shadowing `UInt32::BoolToUInt32` on `bitnot`).
+    // Keeping every literal-start alternative in one bucket preserves the
+    // ambiguity until runtime evidence rejects a branch.
     let mut atomic_descriptors: Vec<PrefixArmDescriptor> = Vec::new();
     for &(rule_idx, rule) in rules_in_category {
         let shape = classify_atomic(rule, language);
         atomic_descriptors.extend(atomic_arm_descriptors(category_src_idx, rule_idx, &shape));
+        if let AtomicShape::CrossCatPrefixUnary {
+            trigger,
+            source_cat_name,
+            wrapper_variant: _,
+        } = &shape
+        {
+            let source_src_idx = categories
+                .iter()
+                .position(|c| c == source_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(category_src_idx);
+            let bp_table = super::infix::build_bp_table(language);
+            let operand_bp = compute_prefix_bp(source_cat_name, rule.prefix_bp, &bp_table);
+            insert_unified_descriptor(
+                &mut unified_buckets,
+                &mut unified_order,
+                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+                Some(quote! { __kw == #trigger }),
+                UnifiedDescriptor::CrossCatPrefixUnary { rule_idx, source_src_idx, operand_bp },
+            );
+            continue;
+        }
+        if matches!(shape, AtomicShape::CrossCatProjection { .. }) {
+            continue;
+        }
+        if let Some(shape) = super::binder::classify_binder(rule) {
+            let Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) =
+                rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
+            else {
+                continue;
+            };
+            if trigger == "(" {
+                continue;
+            }
+            let body_src_idx = super::binder::binder_initial_body_cat(&shape)
+                .and_then(|name| categories.iter().position(|c| c == name).map(|i| i as u16))
+                .unwrap_or(category_src_idx);
+            insert_unified_descriptor(
+                &mut unified_buckets,
+                &mut unified_order,
+                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+                Some(quote! { __kw == #trigger }),
+                UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx },
+            );
+        }
     }
     for desc in atomic_descriptors {
-        let pat_str = desc.pattern.to_string();
-        let guard_str = desc
-            .extra_guard
-            .as_ref()
-            .map(|g| g.to_string())
-            .unwrap_or_default();
-        let key = (pat_str, guard_str);
-        if !unified_buckets.contains_key(&key) {
-            unified_order.push(key.clone());
-        }
-        let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
-            pat: desc.pattern.clone(),
-            extra_guard: desc.extra_guard.clone(),
-            descs: Vec::new(),
-        });
-        entry.descs.push(UnifiedDescriptor::Atomic(desc));
+        insert_unified_descriptor(
+            &mut unified_buckets,
+            &mut unified_order,
+            desc.pattern.clone(),
+            desc.extra_guard.clone(),
+            UnifiedDescriptor::Atomic(desc),
+        );
     }
     // B10 / Option κ Fix B (2026-05-07): fold Pass 2a CrossCatProjection
     // arms into the SAME unified_buckets so collisions with Pass 0/1
@@ -1113,24 +1157,13 @@ pub fn emit_prefix_arms_for_category(
                 .map(|i| i as u16)
                 .unwrap_or(0);
             for ft in first_set_of_category(&source_cat_name, language) {
-                let pat_str = ft.pattern.to_string();
-                let guard_str = ft
-                    .extra_guard
-                    .as_ref()
-                    .map(|g| g.to_string())
-                    .unwrap_or_default();
-                let key = (pat_str, guard_str);
-                if !unified_buckets.contains_key(&key) {
-                    unified_order.push(key.clone());
-                }
-                let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
-                    pat: ft.pattern.clone(),
-                    extra_guard: ft.extra_guard.clone(),
-                    descs: Vec::new(),
-                });
-                entry
-                    .descs
-                    .push(UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx });
+                insert_unified_descriptor(
+                    &mut unified_buckets,
+                    &mut unified_order,
+                    ft.pattern.clone(),
+                    ft.extra_guard.clone(),
+                    UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx },
+                );
             }
         }
     }
@@ -1148,27 +1181,6 @@ pub fn emit_prefix_arms_for_category(
             .expect("bucket present in order");
         arms.push(emit_unified_arm(category_src_idx, &entry));
     }
-    // Pass 2b: cross-cat-prefix-unary arms (trigger-literal + delegation).
-    // No shipped grammar shares a unary trigger across rules in the same
-    // result category, so single-arm-per-rule emission is sufficient.
-    for &(rule_idx, rule) in rules_in_category {
-        if let AtomicShape::CrossCatPrefixUnary {
-            trigger,
-            source_cat_name,
-            wrapper_variant: _,
-        } = classify_atomic(rule, language)
-        {
-            let arm = emit_cross_cat_prefix_unary_arm(
-                category_src_idx,
-                rule_idx,
-                &trigger,
-                &source_cat_name,
-                rule.prefix_bp,
-                language,
-            );
-            arms.push(arm);
-        }
-    }
     quote! { #(#arms)* }
 }
 
@@ -1182,6 +1194,7 @@ pub fn emit_prefix_arms_for_category(
 // code via Rust's first-match-wins.
 
 /// Stage 1.1: emit a single prefix arm for a cross-cat prefix unary rule.
+#[allow(dead_code)]
 fn emit_cross_cat_prefix_unary_arm(
     category_src_idx: u16,
     rule_idx: u16,
@@ -1337,6 +1350,17 @@ enum UnifiedDescriptor {
     /// home-category leaf rule (literal, var, terminal-keyword, etc.).
     /// Per-tier weight: `0.0` (atomic-home).
     Atomic(PrefixArmDescriptor),
+    /// Literal-leading binder/prefix rule. Consumes its own trigger token,
+    /// pushes `RuleAt(slot=1)`, and enters `BinderRule`.
+    BinderPrefix { rule_idx: u16, body_src_idx: u16 },
+    /// Cross-category prefix-unary rule. Consumes its own trigger token,
+    /// pushes the wrapper Return frame, and delegates the operand to the
+    /// source category at that source's prefix floor.
+    CrossCatPrefixUnary {
+        rule_idx: u16,
+        source_src_idx: u16,
+        operand_bp: u8,
+    },
     /// B10 / Option κ Fix B — Pass 2a CrossCatProjection delegation arm.
     /// Pushes `rule_at(category, rule_idx, 0).with_kind_return()` and
     /// transitions to `CrossCatDelegate { source_src_idx, outer_bp }`.
@@ -1351,6 +1375,30 @@ struct UnifiedBucket {
     pat: TokenStream,
     extra_guard: Option<TokenStream>,
     descs: Vec<UnifiedDescriptor>,
+}
+
+fn insert_unified_descriptor(
+    unified_buckets: &mut std::collections::BTreeMap<(String, String), UnifiedBucket>,
+    unified_order: &mut Vec<(String, String)>,
+    pattern: TokenStream,
+    extra_guard: Option<TokenStream>,
+    desc: UnifiedDescriptor,
+) {
+    let pat_str = pattern.to_string();
+    let guard_str = extra_guard
+        .as_ref()
+        .map(|g| g.to_string())
+        .unwrap_or_default();
+    let key = (pat_str, guard_str);
+    if !unified_buckets.contains_key(&key) {
+        unified_order.push(key.clone());
+    }
+    let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
+        pat: pattern,
+        extra_guard,
+        descs: Vec::new(),
+    });
+    entry.descs.push(desc);
 }
 
 /// B7 (2026-05-07) — emit a unified bucket as either a singleton arm
@@ -1395,6 +1443,49 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 }
             },
             UnifiedDescriptor::Atomic(desc) => emit_atomic_arm_singleton(desc),
+            UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
+                let rule_idx = *rule_idx;
+                let body_src_idx = *body_src_idx;
+                quote! {
+                    #pat if #guard => {
+                        return WpdaStepAction::ConsumeAndPush {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::BinderRule {
+                                result_src_idx: #category_src_idx,
+                                rule_idx: #rule_idx,
+                                body_src_idx: #body_src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                            trigger_mode:
+                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                        };
+                    }
+                }
+            },
+            UnifiedDescriptor::CrossCatPrefixUnary { rule_idx, source_src_idx, operand_bp } => {
+                let rule_idx = *rule_idx;
+                let source_src_idx = *source_src_idx;
+                let operand_bp = *operand_bp;
+                quote! {
+                    #pat if #guard => {
+                        return WpdaStepAction::ConsumeAndPush {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                            ).with_kind_return(),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::CrossCatDelegate {
+                                source_src_idx: #source_src_idx,
+                                inner_cur_bp: #operand_bp,
+                            },
+                            trigger_mode:
+                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                        };
+                    }
+                }
+            },
             UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
@@ -1464,6 +1555,55 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             new_state: WpdaState::Unwinding,
                             action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
+                        }
+                    }
+                }
+                UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
+                    let rule_idx = *rule_idx;
+                    let body_src_idx = *body_src_idx;
+                    quote! {
+                        mettail_prattail::wpda_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::BinderRule {
+                                result_src_idx: #category_src_idx,
+                                rule_idx: #rule_idx,
+                                body_src_idx: #body_src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                    trigger_mode:
+                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                },
+                        }
+                    }
+                }
+                UnifiedDescriptor::CrossCatPrefixUnary {
+                    rule_idx,
+                    source_src_idx,
+                    operand_bp,
+                } => {
+                    let rule_idx = *rule_idx;
+                    let source_src_idx = *source_src_idx;
+                    let operand_bp = *operand_bp;
+                    quote! {
+                        mettail_prattail::wpda_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
+                            ).with_kind_return(),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::CrossCatDelegate {
+                                source_src_idx: #source_src_idx,
+                                inner_cur_bp: #operand_bp,
+                            },
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                    trigger_mode:
+                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                },
                         }
                     }
                 }
@@ -1748,8 +1888,9 @@ fn literal_patterned_pattern_and_guard_for_kind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::grammar::GrammarItem;
+    use mettail_ast::grammar::{GrammarItem, SyntaxExpr, TermParam};
     use mettail_ast::language::{LangType, TokenDef};
+    use mettail_ast::types::TypeExpr;
     use proc_macro2::Span;
     use syn::{parse_quote, Ident};
 
@@ -1803,6 +1944,37 @@ mod tests {
             bindings: Vec::new(),
             term_context: None,
             syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
+        }
+    }
+
+    fn judgement_rule(
+        label: &str,
+        cat: &str,
+        params: &[(&str, &str)],
+        syntax: Vec<SyntaxExpr>,
+    ) -> GrammarRule {
+        GrammarRule {
+            label: Ident::new(label, Span::call_site()),
+            category: Ident::new(cat, Span::call_site()),
+            items: Vec::new(),
+            bindings: Vec::new(),
+            term_context: Some(
+                params
+                    .iter()
+                    .map(|(name, ty)| TermParam::Simple {
+                        name: Ident::new(name, Span::call_site()),
+                        ty: TypeExpr::Base(Ident::new(ty, Span::call_site())),
+                    })
+                    .collect(),
+            ),
+            syntax_pattern: Some(syntax),
             rust_code: None,
             eval_mode: None,
             is_right_assoc: false,
@@ -2051,5 +2223,65 @@ mod tests {
         assert!(s.contains("IntegerLit"));
         assert!(s.contains("\"Int\""));
         assert!(s.contains("2u16"));
+    }
+
+    #[test]
+    fn prefix_operator_and_projection_share_one_ambiguity_bucket() {
+        let mut lang = empty_lang();
+        lang.types.push(LangType {
+            name: Ident::new("UInt32", Span::call_site()),
+            native_type: Some(parse_quote!(u32)),
+            collection_kind: None,
+        });
+        lang.types.push(LangType {
+            name: Ident::new("Bool", Span::call_site()),
+            native_type: Some(parse_quote!(bool)),
+            collection_kind: None,
+        });
+
+        let bool_first = judgement_rule(
+            "BitNotBool",
+            "Bool",
+            &[("b", "Bool")],
+            vec![
+                SyntaxExpr::Literal("bitnot".into()),
+                SyntaxExpr::Param(Ident::new("b", Span::call_site())),
+            ],
+        );
+        let direct_prefix = judgement_rule(
+            "BitNotUInt32",
+            "UInt32",
+            &[("u", "UInt32")],
+            vec![
+                SyntaxExpr::Literal("bitnot".into()),
+                SyntaxExpr::Param(Ident::new("u", Span::call_site())),
+            ],
+        );
+        let projection = judgement_rule(
+            "BoolToUInt32",
+            "UInt32",
+            &[("b", "Bool")],
+            vec![SyntaxExpr::Param(Ident::new("b", Span::call_site()))],
+        );
+        lang.terms = vec![direct_prefix.clone(), projection.clone(), bool_first];
+
+        let ts = emit_prefix_arms_for_category(
+            &lang,
+            0,
+            "UInt32",
+            &[(0, &direct_prefix), (1, &projection)],
+        );
+        let s = ts.to_string();
+        let guard = "__kw == \"bitnot\" && state_cat_src_idx == 0u16";
+        assert_eq!(
+            s.matches(guard).count(),
+            1,
+            "same fixed-token evidence must emit one arm, not first-match shadow arms: {s}"
+        );
+        assert!(s.contains("WpdaStepAction :: Fork"), "{s}");
+        assert!(s.contains("ForkActionKind :: ConsumeAndPush"), "{s}");
+        assert!(s.contains("ForkActionKind :: Push"), "{s}");
+        assert!(s.contains("source_src_idx : 1u16"), "{s}");
+        assert!(s.contains("consume_trigger : false"), "{s}");
     }
 }

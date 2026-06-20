@@ -249,6 +249,40 @@ use crate::wpda_runtime::{
     WpdaState, WpdaTokenSource, WpdaTraceEntry, WpdaTransition,
 };
 
+/// Token-level atom producer available to stack-safe chain synthesis.
+///
+/// `atom_cat_src_idx`/`atom_rule_idx` identify the rule that consumes the
+/// input token. `wrap_rule_idx == Some(r)` means the token atom is then wrapped
+/// by the declared transparent projection `(cat_src_idx, r)` into the chain's
+/// requested category. Generated engines report only grammar-declared shapes;
+/// the walker still validates every action before realizing the atom.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ChainAtomProducer {
+    pub atom_cat_src_idx: u16,
+    pub atom_rule_idx: u16,
+    pub wrap_rule_idx: Option<u16>,
+}
+
+impl ChainAtomProducer {
+    #[inline]
+    pub const fn direct(atom_cat_src_idx: u16, atom_rule_idx: u16) -> Self {
+        Self {
+            atom_cat_src_idx,
+            atom_rule_idx,
+            wrap_rule_idx: None,
+        }
+    }
+
+    #[inline]
+    pub const fn projected(atom_cat_src_idx: u16, atom_rule_idx: u16, wrap_rule_idx: u16) -> Self {
+        Self {
+            atom_cat_src_idx,
+            atom_rule_idx,
+            wrap_rule_idx: Some(wrap_rule_idx),
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Step engine interface
 // ══════════════════════════════════════════════════════════════════════════════
@@ -283,6 +317,45 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
         let _ = (src_idx, rule_idx);
         None
+    }
+
+    /// Return the token-consuming atomic prefix rules in `cat_src_idx` that
+    /// can consume `kind` as a single chain atom.
+    ///
+    /// The default is empty so handwritten test engines remain valid. Codegen
+    /// overrides this from the same atomic-prefix classification tables used
+    /// by normal prefix dispatch. The chain synthesizer only realizes
+    /// generated rules whose semantic action validates against the concrete
+    /// token; when no generated rule validates, it falls back to the ordinary
+    /// WPDA path rather than inventing an atom.
+    fn chain_atom_rules_for_token(
+        &self,
+        cat_src_idx: u16,
+        kind: &TokenKind,
+        text: Option<&str>,
+    ) -> Vec<u16> {
+        let _ = (cat_src_idx, kind, text);
+        Vec::new()
+    }
+
+    /// Return complete single-token producers for a chain atom in
+    /// `cat_src_idx`.
+    ///
+    /// The default adapts the older direct-rule hook. Generated engines
+    /// override this to include declared transparent projections such as
+    /// `Int -> BigRat`, which lets chain synthesis summarize the same
+    /// token-level derivations the ordinary WPDA would discover without
+    /// choosing among ambiguous alternatives.
+    fn chain_atom_producers_for_token(
+        &self,
+        cat_src_idx: u16,
+        kind: &TokenKind,
+        text: Option<&str>,
+    ) -> Vec<ChainAtomProducer> {
+        self.chain_atom_rules_for_token(cat_src_idx, kind, text)
+            .into_iter()
+            .map(|rule_idx| ChainAtomProducer::direct(cat_src_idx, rule_idx))
+            .collect()
     }
 
     /// EP-P2 (Stage B): the token-class bit-index of `kind` for the Parikh
@@ -493,6 +566,45 @@ pub trait WpdaEngine<W: SemiringRef> {
         &[]
     }
 
+    /// Weight applied when an end-of-input root-category reconciliation
+    /// interposes one of [`single_hop_coercion`]`'s` declared transparent
+    /// projection rules. Generated engines override this with the same tier
+    /// used by prefix-dispatch cross-category projection branches, so EOI
+    /// reconciliation participates in the normal evidence ordering instead
+    /// of behaving like a free cast.
+    fn single_hop_coercion_weight(
+        &self,
+        from_cat: u16,
+        to_cat: u16,
+        coercion_cat: u16,
+        rule_idx: u16,
+        span_len: u32,
+    ) -> W {
+        let _ = (from_cat, to_cat, coercion_cat, rule_idx, span_len);
+        W::one_ref()
+    }
+
+    /// Additional weight applied at the reduction point of a live
+    /// cross-category projection, after the delegated body span is known.
+    ///
+    /// Prefix dispatch can only charge a lower-bound projection weight because
+    /// the source body has not been parsed yet. Generated engines use this
+    /// hook to add the span-dependent remainder to the wrapper packing, so a
+    /// projection over a whole expression is more expensive than otherwise
+    /// equivalent local projections over the expression's operands. The default
+    /// is identity for engines whose projection weights are span-invariant.
+    fn single_hop_coercion_completion_weight(
+        &self,
+        from_cat: u16,
+        to_cat: u16,
+        coercion_cat: u16,
+        rule_idx: u16,
+        span_len: u32,
+    ) -> W {
+        let _ = (from_cat, to_cat, coercion_cat, rule_idx, span_len);
+        W::one_ref()
+    }
+
     /// RC-B (2026-06-17): the local rule index in `to_cat` of the
     /// TRIGGER-BEARING single-argument prefix cast `from_cat -> to_cat`
     /// (a `kw "(" a ")"` cast such as `BoolToInt`), or `None` if no such cast
@@ -506,6 +618,19 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn prefix_cast_into(&self, from_cat: u16, to_cat: u16) -> Option<u16> {
         let _ = (from_cat, to_cat);
         None
+    }
+
+    /// Grammar-level table of trigger-bearing unary wrappers.
+    ///
+    /// This generalizes `prefix_cast_into`: every returned rule is a
+    /// single-argument, leading-literal wrapper from `from_cat` to `to_cat`,
+    /// including identity wrappers such as `float(<Float>)` and operator
+    /// wrappers such as `sin(<Float>)`. Multiple rules may share the same
+    /// `(from_cat, to_cat)` pair; callers must use keyword and action evidence
+    /// instead of selecting a source-order default.
+    fn trigger_unary_wrappers_into(&self, from_cat: u16, to_cat: u16) -> &'static [u16] {
+        let _ = (from_cat, to_cat);
+        &[]
     }
 
     /// RC-B (2026-06-17): the LEADING keyword literal of the trigger-bearing
@@ -531,6 +656,17 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// preserves fail-closed behavior for tests and synthetic walkers.
     fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
         let _ = (cat, token_text);
+        false
+    }
+
+    /// Grammar-level operator acceptance query at a category-local Pratt floor.
+    ///
+    /// Binding-power values are not comparable across categories. The walker
+    /// uses this hook when a transparent projection reaches an operator token:
+    /// the target category's own table decides whether the token may stay in
+    /// the projected source body or must be handed back to the target context.
+    fn category_accepts_operator_at_floor(&self, cat: u16, token_text: &str, floor: u8) -> bool {
+        let _ = (cat, token_text, floor);
         false
     }
 
@@ -991,12 +1127,21 @@ struct CrossCatLhsBodyOrigin {
 struct PrefixCastWrapJob<W: SemiringRef> {
     /// The full-span well-typed `C_in` body symbol (e.g. `Bool[2,12)`).
     body_sid: crate::sppf::SppfId,
+    /// Input position where the wrapper's body parse was dispatched. The
+    /// semantic body symbol may start later only when intervening tokens are
+    /// transparent grouping opens proven at drain time.
+    body_start_pos: usize,
     /// The cast keyword's input position (the trigger's `lo`; the cast result
     /// spans `[trigger_lo, close_hi)`).
     trigger_lo: usize,
     /// One past the structural close `)` — the cast result's `hi` and the
     /// synthesized cursor's resting position.
     close_hi: usize,
+    /// True when the wrapper syntax has a post-parameter structural close
+    /// that the drain must consume (for example `float(<body>)`). Plain
+    /// prefix wrappers such as `-(<body>)` resume at the body cursor's
+    /// contextual position instead.
+    consume_structural_close: bool,
     /// Output category `C_out` of the cast (e.g. `Int`).
     c_out: u16,
     /// Local rule index of the cast in `C_out` (e.g. `BoolToInt`).
@@ -1015,8 +1160,10 @@ struct PrefixCastWrapJob<W: SemiringRef> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct PrefixCastWrapJobKey {
     body_sid: crate::sppf::SppfId,
+    body_start_pos: usize,
     trigger_lo: usize,
     close_hi: usize,
+    consume_structural_close: bool,
     c_out: u16,
     cast_rule: u16,
     resume_bp: u8,
@@ -1715,7 +1862,9 @@ enum TransparentSourceReentryDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ProjectionTargetBoundary {
     source_src_idx: u16,
-    suppress_source_consumption: bool,
+    target_src_idx: u16,
+    source_accepts_at_source_floor: bool,
+    target_accepts_at_projection_floor: bool,
 }
 
 /// Stage 3.12 / Class A.i (2026-05-01): per-Fork-branch action
@@ -3476,6 +3625,12 @@ struct EoiResolutionSnapshot<W: SemiringRef> {
     ep_p2_refuted_then_accepted: [u64; crate::walker_stats::WPDA_STATE_CLASS_COUNT * 2],
 }
 
+fn sort_eoi_candidates_by_semiring_priority<W: SemiringRef>(
+    candidates: &mut [EoiCursorCandidate<W>],
+) {
+    candidates.sort_by(|a, b| semiring_priority_cmp(&a.weight, &b.weight));
+}
+
 impl<W: SemiringRef> LazyContinuationQueue<W> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -3971,45 +4126,168 @@ fn extract_proj_descriptor<W: SemiringRef>(
     }
 }
 
+fn token_alt_count(tokens: &dyn WpdaTokenSource, pos: usize) -> usize {
+    if tokens.peek_kind(pos).is_some() {
+        1 + tokens.peek_alternatives(pos).len()
+    } else {
+        0
+    }
+}
+
+fn token_alt_kind(tokens: &dyn WpdaTokenSource, pos: usize, alt_idx: usize) -> Option<TokenKind> {
+    if alt_idx == 0 {
+        tokens.peek_kind(pos)
+    } else {
+        tokens
+            .peek_alternatives(pos)
+            .get(alt_idx - 1)
+            .map(|alt| alt.kind.clone())
+    }
+}
+
+fn token_alt_text(tokens: &dyn WpdaTokenSource, pos: usize, alt_idx: usize) -> Option<&str> {
+    if alt_idx == 0 {
+        tokens.peek_text(pos)
+    } else {
+        tokens
+            .peek_alternatives(pos)
+            .get(alt_idx - 1)
+            .map(|alt| alt.text.as_str())
+    }
+}
+
+fn primary_next_pos_ordered(tokens: &dyn WpdaTokenSource, pos: usize) -> Option<usize> {
+    let next = tokens.next_pos(pos, 0)?;
+    if next == pos {
+        return None;
+    }
+    let before = tokens.position_order_key(pos)?;
+    let after = tokens.position_order_key(next)?;
+    if after <= before {
+        return None;
+    }
+    Some(next)
+}
+
+fn all_token_alts_share_next(
+    tokens: &dyn WpdaTokenSource,
+    pos: usize,
+    expected_next: usize,
+) -> bool {
+    for alt_idx in 1..token_alt_count(tokens, pos) {
+        if tokens.next_pos(pos, alt_idx) != Some(expected_next) {
+            return false;
+        }
+    }
+    true
+}
+
+fn token_has_only_expected_text_to_next(
+    tokens: &dyn WpdaTokenSource,
+    pos: usize,
+    expected_text: &str,
+) -> Option<usize> {
+    if token_alt_text(tokens, pos, 0)? != expected_text {
+        return None;
+    }
+    let next = primary_next_pos_ordered(tokens, pos)?;
+    for alt_idx in 1..token_alt_count(tokens, pos) {
+        if token_alt_text(tokens, pos, alt_idx) != Some(expected_text)
+            || tokens.next_pos(pos, alt_idx) != Some(next)
+        {
+            return None;
+        }
+    }
+    Some(next)
+}
+
+fn token_is_chain_atom_text(tokens: &dyn WpdaTokenSource, pos: usize, forbidden: &[&str]) -> bool {
+    let Some(text) = tokens.peek_text(pos) else {
+        return false;
+    };
+    tokens.peek_kind(pos).is_some() && !forbidden.iter().any(|op| text == *op)
+}
+
+fn same_target_chain_atom_next(
+    tokens: &dyn WpdaTokenSource,
+    pos: usize,
+    forbidden: &[&str],
+) -> Option<usize> {
+    if !token_is_chain_atom_text(tokens, pos, forbidden) {
+        return None;
+    }
+    let next = primary_next_pos_ordered(tokens, pos)?;
+    if !all_token_alts_share_next(tokens, pos, next) {
+        return None;
+    }
+    Some(next)
+}
+
 /// C1-R (WALK-S1, 2026-05-28): forward peek confirming a deterministic
 /// binary chain of `>= min_atoms` atoms over the SAME (atom, op)
-/// token-kind pair, starting from the head atom at `op_pos - 1` with the
+/// token-kind pair, starting from the already parsed head atom with the
 /// leading operator at `op_pos`. O(N), zero-alloc. Returns `true` iff the
 /// InfixLoop pre-fork trigger (codegen, `engine_impl.rs`) should suppress
 /// the fork and absorb the chain as a single right-nested AST.
+///
+/// The scan follows `WpdaTokenSource::next_pos` rather than arithmetic
+/// adjacency. For lattice sources, node ids are allocation ids, so `pos + 1`
+/// can name an unrelated ambiguity tail. Ambiguous atoms are absorbable only
+/// when every token alternative rejoins at the same next node; different-target
+/// ambiguity falls back to the ordinary WPDA path so no parse evidence is
+/// discarded.
 ///
 /// Free function (not a `WpdaWalker` method) because it is weight- and
 /// engine-agnostic — the codegen call site invokes it without the
 /// `WpdaWalker<W, E>` turbofish.
 pub fn peek_binary_chain(tokens: &dyn WpdaTokenSource, op_pos: usize, min_atoms: usize) -> bool {
-    if op_pos == 0 {
-        return false;
-    }
-    let head_pos = op_pos - 1;
-    let atom_kind = match tokens.peek_kind(head_pos) {
-        Some(k) => k,
-        None => return false,
-    };
     let op_kind = match tokens.peek_kind(op_pos) {
         Some(k) => k,
         None => return false,
     };
-    if atom_kind == op_kind {
+    let op_next = match primary_next_pos_ordered(tokens, op_pos) {
+        Some(next) => next,
+        None => return false,
+    };
+    if !all_token_alts_share_next(tokens, op_pos, op_next) {
         return false;
     }
     let mut atom_count = 1usize; // head atom
     let mut probe = op_pos;
+    let mut atom_kind: Option<TokenKind> = None;
     loop {
         match tokens.peek_kind(probe).as_ref() {
             Some(k) if *k == op_kind => {},
             _ => break,
         }
-        match tokens.peek_kind(probe + 1).as_ref() {
-            Some(k) if *k == atom_kind => {},
-            _ => break,
+        let atom_pos = match primary_next_pos_ordered(tokens, probe) {
+            Some(next) => next,
+            None => break,
+        };
+        if !all_token_alts_share_next(tokens, probe, atom_pos) {
+            return false;
+        }
+        let next_probe = match same_target_chain_atom_next(tokens, atom_pos, &[]) {
+            Some(next) => next,
+            None => return false,
+        };
+        if !all_token_alts_share_next(tokens, atom_pos, next_probe) {
+            return false;
+        }
+        let this_atom_kind = match tokens.peek_kind(atom_pos) {
+            Some(k) => k,
+            None => break,
+        };
+        if this_atom_kind == op_kind {
+            return false;
+        }
+        match &atom_kind {
+            Some(expected) if expected != &this_atom_kind => break,
+            None => atom_kind = Some(this_atom_kind),
+            _ => {},
         }
         atom_count += 1;
-        probe += 2;
+        probe = next_probe;
         if atom_count >= min_atoms {
             return true;
         }
@@ -4046,60 +4324,33 @@ pub fn peek_ternary_chain(
     sep: &str,
     min_levels: usize,
 ) -> bool {
-    if trigger_pos == 0 {
-        // Need a parsed LHS cond at trigger_pos - 1.
-        return false;
-    }
-    // The position must actually be ON the trigger.
-    match tokens.peek_text(trigger_pos) {
-        Some(t) if t == trigger => {},
-        _ => return false,
-    }
-    // Predicate: is `pos` an operand atom? (`Some` kind, text is neither
-    // the trigger nor the separator). Conds/thens/else are arbitrary Int
-    // atoms; this excludes the two operator strings without assuming a
-    // specific literal TokenKind.
-    let is_atom = |pos: usize| -> bool {
-        if tokens.peek_kind(pos).is_none() {
-            return false;
-        }
-        match tokens.peek_text(pos) {
-            Some(t) => t != trigger && t != sep,
-            None => false,
-        }
-    };
-    // The head cond c0 must be an atom (defensive; mirrors binary's
-    // head-atom check).
-    if !is_atom(trigger_pos - 1) {
-        return false;
-    }
+    let forbidden = [trigger, sep];
     let mut levels = 0usize;
     let mut probe = trigger_pos;
     loop {
-        // `?`
-        match tokens.peek_text(probe) {
-            Some(t) if t == trigger => {},
-            _ => break,
-        }
-        // then-atom t_i
-        if !is_atom(probe + 1) {
-            return false;
-        }
-        // `:`
-        match tokens.peek_text(probe + 2) {
-            Some(t) if t == sep => {},
-            _ => return false,
-        }
-        // The atom at probe+3 is either the next cond c_{i+1} or e_final.
-        if !is_atom(probe + 3) {
-            return false;
-        }
+        let then_pos = match token_has_only_expected_text_to_next(tokens, probe, trigger) {
+            Some(next) => next,
+            None if levels == 0 => return false,
+            None => break,
+        };
+        let sep_pos = match same_target_chain_atom_next(tokens, then_pos, &forbidden) {
+            Some(next) => next,
+            None => return false,
+        };
+        let trailing_pos = match token_has_only_expected_text_to_next(tokens, sep_pos, sep) {
+            Some(next) => next,
+            None => return false,
+        };
+        let after_trailing = match same_target_chain_atom_next(tokens, trailing_pos, &forbidden) {
+            Some(next) => next,
+            None => return false,
+        };
         levels += 1;
-        // Disambiguate: if probe+4 is another trigger, probe+3 was a cond
-        // and the chain continues; otherwise probe+3 was e_final.
-        match tokens.peek_text(probe + 4) {
+        // Disambiguate: if the next token is another trigger, the trailing
+        // atom was a cond and the chain continues; otherwise it was e_final.
+        match tokens.peek_text(after_trailing) {
             Some(t) if t == trigger => {
-                probe += 4;
+                probe = after_trailing;
             },
             _ => break,
         }
@@ -5212,6 +5463,39 @@ where
         // satisfies both bounds.
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
+        self.run_to_end_of_input_with_accept_demand(max_steps, tokens, false)
+    }
+
+    /// Demand-sensitive single-result EOI driver.
+    ///
+    /// Stops once a live EOI accepting configuration can satisfy the requested
+    /// root category. Multi-result callers must use [`Self::run_to_end_of_input`],
+    /// which continues through the full EOI revival path so ambiguity-preserving
+    /// APIs can surface every sound alternative.
+    pub fn run_to_end_of_input_until_accepting(
+        &mut self,
+        max_steps: usize,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Result<(), WpdaMaxStepsExceeded>
+    where
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
+    {
+        self.run_to_end_of_input_with_accept_demand(max_steps, tokens, true)
+    }
+
+    fn run_to_end_of_input_with_accept_demand(
+        &mut self,
+        max_steps: usize,
+        tokens: &dyn WpdaTokenSource,
+        stop_when_accepting: bool,
+    ) -> Result<(), WpdaMaxStepsExceeded>
+    where
+        // Orphan revival and realization both rely on idempotent/closed
+        // semiring operations. Every real walker instantiation (production +
+        // `ScriptedEngine` unit tests) uses `LexicographicWeight`, which
+        // satisfies both bounds.
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
+    {
         // Phase F.13 Task #117 (2026-05-23): pin recovery cache/config
         // for the duration of the parse loop so the codegen-emitted
         // recovery path can find them via TLS without changing the
@@ -5256,8 +5540,16 @@ where
             if self.state.is_terminal() {
                 return Ok(());
             }
+            if stop_when_accepting && self.live_frontier_has_demand_resolvable_accept(tokens) {
+                return Ok(());
+            }
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
                 if self.fanout_frontier_terminal_step_quiescent() {
+                    if stop_when_accepting
+                        && self.live_frontier_has_demand_resolvable_accept(tokens)
+                    {
+                        return Ok(());
+                    }
                     match self.revive_orphaned_cohort_members_once(tokens) {
                         OrphanRevivalOutcome::Injected(_) => continue,
                         OrphanRevivalOutcome::Idle => return Ok(()),
@@ -5354,6 +5646,11 @@ where
                     )
                 };
                 if !progress_made {
+                    if stop_when_accepting
+                        && self.live_frontier_has_demand_resolvable_accept(tokens)
+                    {
+                        return Ok(());
+                    }
                     // True fixed point — every cursor's engine.step
                     // returned Idle (or transitioned to itself), so no
                     // further state movement is possible.
@@ -5580,6 +5877,20 @@ where
                 .get(&wrapped_sid)
                 .and_then(|term| term.output_cat)
                 .or(Some(target_cat));
+            let span_len = self
+                .sppf
+                .span_lo(root_sid)
+                .zip(self.sppf.span_hi(root_sid))
+                .map(|(lo, hi)| hi.saturating_sub(lo).max(1))
+                .unwrap_or(1);
+            let coercion_weight = self.engine.single_hop_coercion_weight(
+                root_cat,
+                target_cat,
+                coercion_cat,
+                coercion_rule,
+                span_len,
+            );
+            variant.weight = variant.weight.times_ref(&coercion_weight);
             variants.push(variant);
         }
         variants
@@ -6067,11 +6378,12 @@ where
             };
         }
         let EoiResolutionSnapshot {
-            accepting,
+            mut accepting,
             prefix_trailing_candidates,
             max_dead_pos,
             ..
         } = snapshot;
+        sort_eoi_candidates_by_semiring_priority(&mut accepting);
         // Fanout mode: resolve over the lazy logical-cursor snapshot.
         // Stage 3.5b (2026-05-01): use `pos >= tokens.len()` rather than
         // `pos == tokens.len()`. Real-grammar codegen never advances pos
@@ -6521,6 +6833,49 @@ where
             .collect())
     }
 
+    fn semiring_priority_cmp(a: &W, b: &W) -> std::cmp::Ordering {
+        if a == b {
+            return std::cmp::Ordering::Equal;
+        }
+        let joined = a.plus_ref(b);
+        if joined == *a {
+            return std::cmp::Ordering::Less;
+        }
+        if joined == *b {
+            return std::cmp::Ordering::Greater;
+        }
+        (a.lex_alt_idx(), a.lex_src_idx(), a.lex_rule_idx()).cmp(&(
+            b.lex_alt_idx(),
+            b.lex_src_idx(),
+            b.lex_rule_idx(),
+        ))
+    }
+
+    fn packing_priority_cmp(
+        &self,
+        a: crate::sppf::SppfId,
+        b: crate::sppf::SppfId,
+    ) -> std::cmp::Ordering {
+        let aw = match self.sppf.node(a) {
+            Some(crate::sppf::SppfNode::Packing { weight, .. }) => weight,
+            _ => return std::cmp::Ordering::Equal,
+        };
+        let bw = match self.sppf.node(b) {
+            Some(crate::sppf::SppfNode::Packing { weight, .. }) => weight,
+            _ => return std::cmp::Ordering::Equal,
+        };
+        Self::semiring_priority_cmp(aw, bw)
+    }
+
+    fn priority_ordered_packings(
+        &self,
+        symbol_id: crate::sppf::SppfId,
+    ) -> Vec<crate::sppf::SppfId> {
+        let mut packings = self.sppf.packings_of(symbol_id).to_vec();
+        packings.sort_by(|a, b| self.packing_priority_cmp(*a, *b));
+        packings
+    }
+
     fn realize_node_lazy_prefix(
         &self,
         id: crate::sppf::SppfId,
@@ -6626,8 +6981,9 @@ where
                     };
 
                     let mut pending = None;
-                    while next_idx < self.sppf.packings_of(id).len() {
-                        let packing = self.sppf.packings_of(id)[next_idx];
+                    let packings = self.priority_ordered_packings(id);
+                    while next_idx < packings.len() {
+                        let packing = packings[next_idx];
                         next_idx += 1;
                         if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
                             self.sppf.node(packing)
@@ -6852,7 +7208,7 @@ where
                 // this is identity; for non-idempotent W the multiplier
                 // captures the cycle's closed-semiring contribution.
                 let mut out: Vec<(ActionArg, W)> = Vec::new();
-                for &p in self.sppf.packings_of(id) {
+                for p in self.priority_ordered_packings(id) {
                     let p_color = colors.get(&p).copied();
                     // Pass-2c token-soundness backstop (2026-05-30): reject a
                     // packing whose result-Symbol span does NOT leave room for
@@ -8135,6 +8491,19 @@ where
         }
     }
 
+    fn publish_crosscat_lhs_body_origins_for_synth_symbol(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        symbol_id: crate::sppf::SppfId,
+        origins: Vec<CrossCatLhsBodyOrigin>,
+    ) {
+        if origins.is_empty() {
+            return;
+        }
+        self.record_crosscat_lhs_body_origins_for_sppf_id(symbol_id, origins.clone());
+        self.resolve_crosscat_lhs_body_origins(cursor, symbol_id, origins, false);
+    }
+
     fn collect_crosscat_lhs_body_origins_from_sppf_roots(
         &self,
         roots: &[crate::sppf::SppfId],
@@ -8353,7 +8722,25 @@ where
     ) -> (WpdaState, u8, u8) {
         let target_resume_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
         let source_resume_bp = target_resume_bp;
-        (new_state, source_resume_bp, target_resume_bp)
+        let normalized_state = Self::raise_state_binding_power_floor(new_state, source_resume_bp);
+        (normalized_state, source_resume_bp, target_resume_bp)
+    }
+
+    fn raise_state_binding_power_floor(state: WpdaState, floor: u8) -> WpdaState {
+        match state {
+            WpdaState::Ready { min_bp } => WpdaState::Ready { min_bp: min_bp.max(floor) },
+            WpdaState::PrefixDispatch { pos, cur_bp } => {
+                WpdaState::PrefixDispatch { pos, cur_bp: cur_bp.max(floor) }
+            },
+            WpdaState::InfixLoop { cur_bp } => WpdaState::InfixLoop { cur_bp: cur_bp.max(floor) },
+            WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } => {
+                WpdaState::CrossCatDelegate {
+                    source_src_idx,
+                    inner_cur_bp: inner_cur_bp.max(floor),
+                }
+            },
+            other => other,
+        }
     }
 
     fn category_entry_resume_bp(
@@ -8723,23 +9110,14 @@ where
         cur_bp: u8,
         tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
     ) -> bool {
-        let source_frontier = crate::gss::WpdaGssNode {
-            pos: cursor.pos,
-            symbol: StackSymbolV2::category_entry(cat_src_idx),
+        let Some(token_text) = tokens.peek_text(cursor.pos) else {
+            return false;
         };
-        let action = self.engine.step(
-            &WpdaState::InfixLoop { cur_bp },
-            &self.gss,
-            Some(&source_frontier),
-            cursor.pos,
-            tokens,
-        );
-        !matches!(
-            action,
-            WpdaStepAction::Advance(WpdaState::Unwinding)
-                | WpdaStepAction::Idle
-                | WpdaStepAction::Error(_)
-        )
+        if token_text.is_empty() {
+            return false;
+        }
+        self.engine
+            .category_accepts_operator_at_floor(cat_src_idx, token_text, cur_bp)
     }
 
     fn reenter_transparent_projection_source(
@@ -9087,14 +9465,54 @@ where
         }
     }
 
+    fn crosscat_boundary_target_for_edge(
+        &self,
+        edge_id: crate::gss::GssEdgeId,
+        kind: &crate::gss::EdgeKind,
+        fallback_bp: u8,
+    ) -> Option<(u16, u8)> {
+        match kind {
+            crate::gss::EdgeKind::CrossCatProjection { inner_cur_bp, wrap_cat, .. } => {
+                Some((*wrap_cat, *inner_cur_bp))
+            },
+            crate::gss::EdgeKind::CrossCatLhs { .. } => {
+                let (wrap_cat, _) = self.crosscat_lhs_wrap.get(&edge_id).copied()?;
+                let target_bp = self
+                    .crosscat_lhs_resume_bp
+                    .get(&edge_id)
+                    .copied()
+                    .unwrap_or(fallback_bp);
+                Some((wrap_cat, target_bp))
+            },
+            crate::gss::EdgeKind::CrossCatLhsScoped { resume_bp, .. } => {
+                let (wrap_cat, _) = self.crosscat_lhs_wrap.get(&edge_id).copied()?;
+                let target_bp = self
+                    .crosscat_lhs_resume_bp
+                    .get(&edge_id)
+                    .copied()
+                    .unwrap_or(*resume_bp);
+                Some((wrap_cat, target_bp))
+            },
+            crate::gss::EdgeKind::CrossCatLhsReentry { min_bp, origin, .. } => {
+                let origin = origin.as_ref()?;
+                let target_bp = self
+                    .crosscat_lhs_resume_bp
+                    .get(&edge_id)
+                    .copied()
+                    .unwrap_or(*min_bp);
+                Some((origin.wrap_cat, target_bp))
+            },
+            _ => None,
+        }
+    }
+
     /// A source parser running under a cross-category projection must not
     /// monopolize an operator token that the projection target can also see.
-    /// When the target accepts that token at the projection floor, the
-    /// source-consuming branch and target handoff branch are both
-    /// evidence-bearing alternatives. When the target recognizes but rejects
-    /// the token at that floor, the source branch is evidence-refuted: a
-    /// source category with a larger local binding-power scale must not tunnel
-    /// a target-boundary operator through the enclosing Pratt context.
+    /// Target recognition creates a handoff branch. Source consumption remains
+    /// live only when the source accepts at its own floor and the target does
+    /// not reject the same token at the enclosing target floor; binding-power
+    /// numbers are category-local, so each check is evaluated in its own
+    /// category.
     fn crosscat_projection_target_boundary(
         &self,
         cursor: &BranchCursor<W>,
@@ -9112,47 +9530,44 @@ where
         if token_text.is_empty() {
             return None;
         }
+        let fallback_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
         self.incoming_edge_stack_arena
             .find_top_down(cursor.incoming_edge_stack_id, |edge_id| {
-                let Some(crate::gss::EdgeKind::CrossCatProjection {
-                    source_src_idx,
-                    inner_cur_bp,
-                    wrap_cat,
-                    ..
-                }) = self.gss.edge_kind_ref(edge_id)
-                else {
-                    return None;
-                };
-                if *source_src_idx != source_cat {
-                    return None;
-                }
+                let kind = self.gss.edge_kind_ref(edge_id)?;
+                let (target_cat, target_floor) =
+                    self.crosscat_boundary_target_for_edge(edge_id, kind, fallback_bp)?;
                 if !self
                     .engine
-                    .category_recognizes_operator(*wrap_cat, token_text)
+                    .category_recognizes_operator(target_cat, token_text)
                 {
                     return None;
                 }
                 let target_accepts_at_projection_floor = self.category_accepts_operator_at_floor(
-                    *wrap_cat,
+                    target_cat,
                     cursor,
-                    *inner_cur_bp,
+                    target_floor,
                     tokens,
                 );
-                let suppress_source_consumption = !target_accepts_at_projection_floor;
+                let source_accepts_at_source_floor =
+                    self.category_accepts_operator_at_floor(source_cat, cursor, fallback_bp, tokens);
                 if trace_actions_enabled() {
                     eprintln!(
-                        "[wpds-action] crosscat projection target-boundary source={} target={} pos={} floor={} lookahead={:?} suppress_source={}",
-                        source_src_idx,
-                        wrap_cat,
+                        "[wpds-action] crosscat target-boundary source={} target={} pos={} source_floor={} target_floor={} lookahead={:?} source_accepts={} target_accepts={}",
+                        source_cat,
+                        target_cat,
                         cursor.pos,
-                        inner_cur_bp,
+                        fallback_bp,
+                        target_floor,
                         token_text,
-                        suppress_source_consumption
+                        source_accepts_at_source_floor,
+                        target_accepts_at_projection_floor,
                     );
                 }
                 Some(ProjectionTargetBoundary {
-                    source_src_idx: *source_src_idx,
-                    suppress_source_consumption,
+                    source_src_idx: source_cat,
+                    target_src_idx: target_cat,
+                    source_accepts_at_source_floor,
+                    target_accepts_at_projection_floor,
                 })
             })
     }
@@ -9214,6 +9629,50 @@ where
         )
     }
 
+    fn source_transition_satisfies_projection_target(
+        &self,
+        transition: Option<(u16, u16)>,
+        boundary: ProjectionTargetBoundary,
+    ) -> bool {
+        let Some((source, result)) = transition else {
+            return false;
+        };
+        source == boundary.source_src_idx
+            && self.category_transparently_satisfies(result, boundary.target_src_idx)
+    }
+
+    fn source_symbol_transition_satisfies_projection_target(
+        &self,
+        symbol: &StackSymbolV2,
+        new_state: &WpdaState,
+        boundary: ProjectionTargetBoundary,
+    ) -> bool {
+        self.source_transition_satisfies_projection_target(
+            Self::category_changing_infix_transition(symbol, new_state),
+            boundary,
+        )
+    }
+
+    fn source_branch_satisfies_projection_target(
+        &self,
+        branch: &ForkBranch<W>,
+        boundary: ProjectionTargetBoundary,
+    ) -> bool {
+        self.source_transition_satisfies_projection_target(
+            Self::branch_category_changing_infix_transition(branch),
+            boundary,
+        )
+    }
+
+    fn suppress_projection_source_action(
+        &self,
+        boundary: ProjectionTargetBoundary,
+        satisfies_projection_target: bool,
+    ) -> bool {
+        !boundary.source_accepts_at_source_floor
+            || (!boundary.target_accepts_at_projection_floor && !satisfies_projection_target)
+    }
+
     fn guard_crosscat_projection_target_boundary(
         &self,
         cursor: &BranchCursor<W>,
@@ -9225,7 +9684,11 @@ where
         };
         match action {
             WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode } => {
-                if boundary.suppress_source_consumption {
+                let satisfies_projection_target = self
+                    .source_symbol_transition_satisfies_projection_target(
+                        &symbol, &new_state, boundary,
+                    );
+                if self.suppress_projection_source_action(boundary, satisfies_projection_target) {
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
                 WpdaStepAction::Fork {
@@ -9237,7 +9700,11 @@ where
                 }
             },
             WpdaStepAction::IterativeChainAbsorb { symbol, weight, new_state, spec } => {
-                if boundary.suppress_source_consumption {
+                let satisfies_projection_target = self
+                    .source_symbol_transition_satisfies_projection_target(
+                        &symbol, &new_state, boundary,
+                    );
+                if self.suppress_projection_source_action(boundary, satisfies_projection_target) {
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
                 WpdaStepAction::Fork {
@@ -9249,11 +9716,36 @@ where
                 }
             },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
-                if boundary.suppress_source_consumption {
+                if !boundary.source_accepts_at_source_floor
+                    || !boundary.target_accepts_at_projection_floor
+                {
                     if consume_trigger {
-                        return WpdaStepAction::Advance(WpdaState::Unwinding);
+                        branches.retain(|branch| {
+                            !self.suppress_projection_source_action(
+                                boundary,
+                                self.source_branch_satisfies_projection_target(branch, boundary),
+                            )
+                        });
+                        if branches.is_empty() {
+                            return WpdaStepAction::Advance(WpdaState::Unwinding);
+                        }
+                        for branch in &mut branches {
+                            if matches!(branch.action_kind, ForkActionKind::Push) {
+                                branch.action_kind = ForkActionKind::ConsumeAndPush {
+                                    trigger_mode: TriggerMode::Discard,
+                                };
+                            }
+                        }
+                        branches.push(Self::crosscat_lhs_boundary_branch(boundary.source_src_idx));
+                        return WpdaStepAction::Fork { branches, consume_trigger: false };
                     }
-                    branches.retain(|branch| !Self::fork_branch_consumes_current_token(branch));
+                    branches.retain(|branch| {
+                        !Self::fork_branch_consumes_current_token(branch)
+                            || !self.suppress_projection_source_action(
+                                boundary,
+                                self.source_branch_satisfies_projection_target(branch, boundary),
+                            )
+                    });
                     branches.push(Self::crosscat_lhs_boundary_branch(boundary.source_src_idx));
                     return WpdaStepAction::Fork { branches, consume_trigger: false };
                 }
@@ -10122,6 +10614,11 @@ where
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state, spec } => {
+                let active_floor =
+                    Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
+                if spec.left_bp < active_floor {
+                    return CursorOutcome::Drop;
+                }
                 // C1-R (WALK-S1, 2026-05-28) + C1-M (WALK-S2, 2026-05-28):
                 // dispatch on associativity / mixfix.
                 //   - MIXFIX ternary (`? :`, pre-fork mixfix-tier trigger):
@@ -10414,11 +10911,12 @@ where
                     // re-validates — so the gate fires ONLY on a genuine flat
                     // `atom (op atom)*` chain over one (atom_kind, op_kind)
                     // pair. `cursor.pos` is on the leading operator (head atom
-                    // at cursor.pos - 1); `min_atoms = 5` matches the prior
-                    // "≥ 4 atoms AFTER the head" threshold (head + 4 = 5 total,
-                    // m >= 5). Flat single-op literal chains absorb
-                    // byte-identically (perf preserved; chain Welch unaffected).
-                    if peek_binary_chain(tokens, cursor.pos, 5) {
+                    // at cursor.pos - 1). Short grouped binary regions are also
+                    // eligible, but only when the token after the same-operator
+                    // run is not another operator in this category; otherwise
+                    // constructs like `a + b * c` must fall back so the RHS can
+                    // consume its higher-precedence continuation.
+                    if peek_binary_chain(tokens, cursor.pos, 2) {
                         let cat = symbol.category_src_idx;
                         let rule = symbol.rule_index_in_category;
                         crate::stats_inc!(self, chain_earley_trigger_count);
@@ -10434,62 +10932,67 @@ where
                         if let Some((root_sid, acc_weight, chain_end)) =
                             self.synth_binary_chain(cursor, tokens, &spec, weight.clone())
                         {
-                            let chain_start = self
-                                .sppf
-                                .span_lo(root_sid)
-                                .map(|lo| lo as usize)
-                                .unwrap_or(chain_start);
-                            crate::stats_inc!(self, chain_earley_succeeded_count);
-                            // atoms absorbed = (chain_end - chain_start)/2 + 1
-                            // (m total atoms in the chain, head included).
-                            // Inlined into the (feature-gated) stat macro so
-                            // there is no unused binding when walker-stats is
-                            // off.
-                            crate::stats_add!(
-                                self,
-                                chain_earley_atoms_absorbed_sum,
-                                (chain_end.saturating_sub(chain_start)) / 2 + 1
-                            );
-                            // Pop the single head-atom Symbol — the
-                            // whole-chain root re-spans it (S1/S2
-                            // post-absorb contract). The chart path
-                            // pushed WITHOUT popping and folded a[0]
-                            // separately via the normal walker; the
-                            // direct synth includes a[0] in the root, so
-                            // we pop-then-push to keep the stack depth
-                            // invariant (depth-1 winner at the head
-                            // cursor).
-                            cursor.sppf_stack_id =
-                                self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
-                            cursor.sppf_stack_id = self
-                                .sppf_stack_arena
-                                .intern_push(cursor.sppf_stack_id, root_sid);
-                            // Jump past the absorbed region.
-                            cursor.pos = chain_end;
-                            if self.deterministic {
-                                self.pos = chain_end;
+                            if self.chain_absorption_boundary_has_operator(tokens, chain_end, &spec)
+                            {
+                                crate::stats_inc!(self, chain_earley_returned_none_count);
+                            } else {
+                                let chain_start = self
+                                    .sppf
+                                    .span_lo(root_sid)
+                                    .map(|lo| lo as usize)
+                                    .unwrap_or(chain_start);
+                                crate::stats_inc!(self, chain_earley_succeeded_count);
+                                // atoms absorbed = (chain_end - chain_start)/2 + 1
+                                // (m total atoms in the chain, head included).
+                                // Inlined into the (feature-gated) stat macro so
+                                // there is no unused binding when walker-stats is
+                                // off.
+                                crate::stats_add!(
+                                    self,
+                                    chain_earley_atoms_absorbed_sum,
+                                    (chain_end.saturating_sub(chain_start)) / 2 + 1
+                                );
+                                // Pop the single head-atom Symbol — the
+                                // whole-chain root re-spans it (S1/S2
+                                // post-absorb contract). The chart path
+                                // pushed WITHOUT popping and folded a[0]
+                                // separately via the normal walker; the
+                                // direct synth includes a[0] in the root, so
+                                // we pop-then-push to keep the stack depth
+                                // invariant (depth-1 winner at the head
+                                // cursor).
+                                cursor.sppf_stack_id =
+                                    self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                                cursor.sppf_stack_id = self
+                                    .sppf_stack_arena
+                                    .intern_push(cursor.sppf_stack_id, root_sid);
+                                // Jump past the absorbed region.
+                                cursor.pos = chain_end;
+                                if self.deterministic {
+                                    self.pos = chain_end;
+                                }
+                                // R4: record the absorbed interval
+                                // [chain_start, chain_end) (the whole chain,
+                                // head included) for this (cat, rule).
+                                // Cross-cat cohort dispatches strictly inside
+                                // it are suppressed (the chain interior is
+                                // fully parsed by this single absorption —
+                                // see allocate_fork_push_child suppression).
+                                self.chain_absorbed_intervals
+                                    .entry((cat, rule))
+                                    .or_default()
+                                    .push((chain_start, chain_end));
+                                // Accumulated weight = iter_weight^(m-1), one
+                                // per step packing (equivalent to the chart's
+                                // iter_weight^(m-2) absorb + the separate
+                                // head-fold's +1 — see the arm header note).
+                                self.multiply_cursor_weight(cursor, &acc_weight);
+                                self.set_cursor_inner_state(
+                                    cursor,
+                                    crate::wpda_runtime::WpdaState::Unwinding,
+                                );
+                                return self.cursor_resolution_check(cursor);
                             }
-                            // R4: record the absorbed interval
-                            // [chain_start, chain_end) (the whole chain,
-                            // head included) for this (cat, rule).
-                            // Cross-cat cohort dispatches strictly inside
-                            // it are suppressed (the chain interior is
-                            // fully parsed by this single absorption —
-                            // see allocate_fork_push_child suppression).
-                            self.chain_absorbed_intervals
-                                .entry((cat, rule))
-                                .or_default()
-                                .push((chain_start, chain_end));
-                            // Accumulated weight = iter_weight^(m-1), one
-                            // per step packing (equivalent to the chart's
-                            // iter_weight^(m-2) absorb + the separate
-                            // head-fold's +1 — see the arm header note).
-                            self.multiply_cursor_weight(cursor, &acc_weight);
-                            self.set_cursor_inner_state(
-                                cursor,
-                                crate::wpda_runtime::WpdaState::Unwinding,
-                            );
-                            return self.cursor_resolution_check(cursor);
                         }
                         // Defensive: peek-confirmed chain failed to
                         // synthesize (should not happen — the >= 4-atom
@@ -13650,6 +14153,31 @@ where
         self.branch_cursors.iter().any(|frame| match frame {
             crate::cohort_lazy::Frame::Concrete(c) => {
                 self.cursor_root_can_satisfy_requested_category(c, tokens)
+            },
+            crate::cohort_lazy::Frame::Cohort(_) => false,
+        })
+    }
+
+    /// Demand-stop accept predicate for single-result parsing.
+    ///
+    /// The broader EOI predicate above is correct for the fanout snapshot and
+    /// orphan-revival gate because those paths classify parked `InfixLoop` /
+    /// entry-`Unwinding` cursors themselves. Deterministic resolution has a
+    /// stricter contract: it can return immediately only from
+    /// `WpdaState::Accepted`. Keeping this distinction explicit prevents the
+    /// single-result optimization from observing an intermediate EOI state that
+    /// still needs one terminal transition before `resolve_at_end_of_input`.
+    fn live_frontier_has_demand_resolvable_accept(&self, tokens: &dyn WpdaTokenSource) -> bool {
+        if !self.deterministic {
+            return self.live_frontier_has_accepting_config(tokens);
+        }
+        if !matches!(self.state, WpdaState::Accepted) {
+            return false;
+        }
+        self.branch_cursors.iter().any(|frame| match frame {
+            crate::cohort_lazy::Frame::Concrete(c) => {
+                matches!(c.inner_state, WpdaState::Accepted)
+                    && self.cursor_root_can_satisfy_requested_category(c, tokens)
             },
             crate::cohort_lazy::Frame::Cohort(_) => false,
         })
@@ -18082,10 +18610,11 @@ where
         // count is returned and decrements cursor.collection_stack_depth
         // below.
         //
-        // On elide / arity-mismatch (transient returns None), set BOTH
-        // cursor.inner_state AND walker state to Error so the cursor
-        // aborts cleanly via cursor_resolution_check :: Drop on the
-        // next step.
+        // On elide / arity-mismatch (transient returns None), mark the
+        // cursor as Error so that alternative can be rejected. In
+        // deterministic mode the cursor is the live computation, so the
+        // walker state mirrors the error; in fanout mode the error is
+        // branch-local evidence and must not poison viable siblings.
 
         // C3 dual-mode: capture symbol identity for SPPF, look up arity
         // BEFORE firing (the entry table is invariant; arity is the same
@@ -18144,7 +18673,9 @@ where
             );
             let err = WpdaState::Error { message };
             cursor.inner_state = err.clone();
-            self.state = err;
+            if self.deterministic {
+                self.state = err;
+            }
             cursor.last_action_output_cat = None;
             return;
         }
@@ -18435,6 +18966,8 @@ where
                             body_origins,
                             false,
                         );
+                        self.try_stage_prefix_cast_body_wrap(cursor, symbol_id);
+                        self.try_stage_parked_prefix_cast_waiters(symbol_id);
                     }
                     return;
                 },
@@ -19388,20 +19921,28 @@ where
         false
     }
 
-    /// C1-R (WALK-S1): synthesize the SPPF Symbol for ONE atom leaf at
-    /// `pos`. Mirrors the chart's per-atom emit but goes through the
-    /// operand category's literal-injection rule (`spec.atom_lit_rule_idx`
-    /// = `NumLit`) instead of the chart's bare-`outer_rule_idx`-for-atoms
-    /// bug (plan V7). The leaf shape is:
+    /// C1-R (WALK-S1): synthesize the SPPF Symbol for ONE single-token atom
+    /// leaf at `pos`. Mirrors the chart's per-atom emit but goes through the
+    /// generated token-consuming atomic-prefix rule table for the operand
+    /// category instead of assuming the operand's numeric literal rule. The
+    /// leaf shape is:
     ///
     ///   Terminal(kind, Real(pos))
     ///     ← Packing((atom_cat<<16)|atom_lit_rule, [Terminal], one)
-    ///        ← Symbol(atom_cat, pos, pos+1)
+    ///        ← Symbol(atom_cat, pos, next_pos(pos))
     ///
-    /// `realize_packing_call` realizes the Symbol → the single NumLit
-    /// packing → `Int::NumLit(v)`. Idempotent: every intern is dedup'd by
-    /// `(kind, pos, …)` / `(rule_idx, children)` / `(nt, lo, hi)`, so two
-    /// cursors synthesizing the same atom collapse to one SppfId.
+    /// `realize_packing_call` realizes the Symbol through the rule-specific
+    /// packing. Idempotent: every intern is dedup'd by `(kind, pos, …)` /
+    /// `(rule_idx, children)` / `(nt, lo, hi)`, so two cursors synthesizing
+    /// the same atom collapse to one SppfId.
+    ///
+    /// Ambiguity discipline: if multiple token/projection producers validate,
+    /// they become multiple packings under the same atom Symbol. The chain
+    /// absorber never chooses among them; SPPF realization keeps the
+    /// alternatives lazy until ordinary evidence or caller demand selects one.
+    /// If any same-target lexical alternative cannot be represented as a
+    /// single-token atom, synthesis declines and the ordinary WPDA path keeps
+    /// the non-atomic alternative alive.
     ///
     /// The atom packing carries `W::one_ref()` (atoms contribute identity
     /// to the chain weight per the verified `earley_outboard_chain` weight
@@ -19413,63 +19954,209 @@ where
         spec: &crate::binding_power::IterAbsorbSpec,
         tokens: &dyn WpdaTokenSource,
     ) -> Option<crate::sppf::SppfId> {
-        let kind = tokens.peek_kind(pos)?;
-        let text = tokens.peek_text(pos)?;
-        let (value, output_cat) = {
-            let entry = self
-                .engine
-                .action_for(spec.atom_cat_src_idx, spec.atom_lit_rule_idx)?;
-            let arity = entry.arity as usize;
-            if arity != 1 || entry.expected_input_cats.len() != 1 {
+        let hi = primary_next_pos_ordered(tokens, pos)?;
+        if !all_token_alts_share_next(tokens, pos, hi) {
+            return None;
+        }
+
+        let mut successful: Vec<(ChainAtomProducer, TokenKind, String)> = Vec::new();
+        for alt_idx in 0..token_alt_count(tokens, pos) {
+            let kind = token_alt_kind(tokens, pos, alt_idx)?;
+            let text = token_alt_text(tokens, pos, alt_idx)?;
+            let mut producers = self.engine.chain_atom_producers_for_token(
+                spec.atom_cat_src_idx,
+                &kind,
+                Some(text),
+            );
+            producers.sort_unstable();
+            producers.dedup();
+
+            let mut alt_successful: Vec<(ChainAtomProducer, TokenKind, String)> = Vec::new();
+            for producer in producers {
+                let Some((atom_value, atom_output_cat)) = self.eval_token_atom_action(
+                    producer.atom_cat_src_idx,
+                    producer.atom_rule_idx,
+                    &kind,
+                    text,
+                    pos,
+                ) else {
+                    continue;
+                };
+                let realized_atom_cat = atom_output_cat.unwrap_or(producer.atom_cat_src_idx);
+                if realized_atom_cat != producer.atom_cat_src_idx {
+                    continue;
+                }
+                if let Some(wrap_rule_idx) = producer.wrap_rule_idx {
+                    if !self
+                        .engine
+                        .single_hop_coercion(producer.atom_cat_src_idx, spec.atom_cat_src_idx)
+                        .iter()
+                        .any(|&(wrap_cat, rule)| {
+                            wrap_cat == spec.atom_cat_src_idx && rule == wrap_rule_idx
+                        })
+                        || self
+                            .engine
+                            .min_terminal_span(spec.atom_cat_src_idx, wrap_rule_idx)
+                            != 0
+                    {
+                        continue;
+                    }
+                    let Some((_, wrapped_output_cat)) = self.eval_unary_term_action(
+                        spec.atom_cat_src_idx,
+                        wrap_rule_idx,
+                        producer.atom_cat_src_idx,
+                        &atom_value,
+                    ) else {
+                        continue;
+                    };
+                    let realized_wrap_cat = wrapped_output_cat.unwrap_or(spec.atom_cat_src_idx);
+                    if realized_wrap_cat != spec.atom_cat_src_idx {
+                        continue;
+                    }
+                } else if producer.atom_cat_src_idx != spec.atom_cat_src_idx {
+                    continue;
+                }
+                alt_successful.push((producer, kind.clone(), text.to_string()));
+            }
+            if alt_successful.is_empty() {
                 return None;
             }
-            if entry.output_cat != spec.atom_cat_src_idx {
-                return None;
+            successful.extend(alt_successful);
+        }
+        if successful.is_empty() {
+            return None;
+        }
+
+        let target_sym =
+            self.sppf
+                .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, hi as u32);
+        successful.sort_unstable();
+        successful.dedup();
+        for (producer, kind, text) in successful {
+            let atom_sym = self.intern_chain_atom_symbol(
+                pos,
+                hi,
+                &kind,
+                &text,
+                producer.atom_cat_src_idx,
+                producer.atom_rule_idx,
+            )?;
+            if let Some(wrap_rule_idx) = producer.wrap_rule_idx {
+                let wrap_rule = ((spec.atom_cat_src_idx as u32) << 16) | (wrap_rule_idx as u32);
+                if !self.packing_satisfies_min_terminal_span(
+                    wrap_rule,
+                    &[atom_sym],
+                    pos as u32,
+                    hi as u32,
+                ) {
+                    return None;
+                }
+                let pack = self
+                    .sppf
+                    .intern_packing(wrap_rule, vec![atom_sym], W::one_ref());
+                self.sppf.link_packing_to_symbol(target_sym, pack);
             }
-            let action_fn = entry.action_fn;
-            let mut sb = SemanticBuilder::new();
-            sb.push_token(kind.clone(), text.to_string(), pos);
-            let pre_len = sb.len();
-            let popped = sb.pop_args(arity);
-            action_fn(&mut sb, popped);
-            let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
-            if sb.len() != expected_len {
-                return None;
-            }
-            let output_cat = sb
-                .top_term_type_name()
-                .and_then(|tn| self.engine.cat_of_type_name(tn));
-            if matches!(output_cat, Some(cat) if cat != spec.atom_cat_src_idx) {
-                return None;
-            }
-            let value = sb.take_dyn_result()?;
-            (value, output_cat)
-        };
+        }
+        Some(target_sym)
+    }
+
+    fn eval_token_atom_action(
+        &self,
+        cat_src_idx: u16,
+        rule_idx: u16,
+        kind: &TokenKind,
+        text: &str,
+        pos: usize,
+    ) -> Option<(Arc<dyn std::any::Any + Send + Sync>, Option<u16>)> {
+        let entry = self.engine.action_for(cat_src_idx, rule_idx)?;
+        let arity = entry.arity as usize;
+        if arity != 1
+            || entry.expected_input_cats.len() != 1
+            || entry.expected_input_cats[0] != crate::wpda_runtime::ANY_CAT
+            || entry.output_cat != cat_src_idx
+        {
+            return None;
+        }
+        let action_fn = entry.action_fn;
+        let mut sb = SemanticBuilder::new();
+        sb.push_token(kind.clone(), text.to_string(), pos);
+        let pre_len = sb.len();
+        let popped = sb.pop_args(arity);
+        action_fn(&mut sb, popped);
+        let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
+        if sb.len() != expected_len {
+            return None;
+        }
+        let output_cat = sb
+            .top_term_type_name()
+            .and_then(|tn| self.engine.cat_of_type_name(tn));
+        if matches!(output_cat, Some(cat) if cat != cat_src_idx) {
+            return None;
+        }
+        sb.take_dyn_result().map(|value| (value, output_cat))
+    }
+
+    fn eval_unary_term_action(
+        &self,
+        cat_src_idx: u16,
+        rule_idx: u16,
+        input_cat: u16,
+        input_value: &Arc<dyn std::any::Any + Send + Sync>,
+    ) -> Option<(Arc<dyn std::any::Any + Send + Sync>, Option<u16>)> {
+        let entry = self.engine.action_for(cat_src_idx, rule_idx)?;
+        if entry.arity != 1
+            || entry.expected_input_cats.len() != 1
+            || entry.output_cat != cat_src_idx
+            || !self.action_accepts_single_body_category(cat_src_idx, rule_idx, input_cat)
+        {
+            return None;
+        }
+        let action_fn = entry.action_fn;
+        let mut sb = SemanticBuilder::new();
+        sb.push_term_arc(Arc::clone(input_value));
+        let pre_len = sb.len();
+        let popped = sb.pop_args(1);
+        action_fn(&mut sb, popped);
+        let expected_len = pre_len;
+        if sb.len() != expected_len {
+            return None;
+        }
+        let output_cat = sb
+            .top_term_type_name()
+            .and_then(|tn| self.engine.cat_of_type_name(tn));
+        if matches!(output_cat, Some(cat) if cat != cat_src_idx) {
+            return None;
+        }
+        sb.take_dyn_result().map(|value| (value, output_cat))
+    }
+
+    fn intern_chain_atom_symbol(
+        &mut self,
+        pos: usize,
+        hi: usize,
+        kind: &TokenKind,
+        text: &str,
+        atom_cat_src_idx: u16,
+        atom_rule_idx: u16,
+    ) -> Option<crate::sppf::SppfId> {
         let term = self.sppf.intern_terminal(
-            kind,
+            kind.clone(),
             crate::sppf::PosOrSynth::Real(pos as u32),
             Some(text),
             false,
         );
-        let atom_rule_idx =
-            ((spec.atom_cat_src_idx as u32) << 16) | (spec.atom_lit_rule_idx as u32);
-        if !self.packing_satisfies_min_terminal_span(
-            atom_rule_idx,
-            &[term],
-            pos as u32,
-            (pos + 1) as u32,
-        ) {
+        let atom_rule_idx = ((atom_cat_src_idx as u32) << 16) | (atom_rule_idx as u32);
+        if !self.packing_satisfies_min_terminal_span(atom_rule_idx, &[term], pos as u32, hi as u32)
+        {
             return None;
         }
         let pack = self
             .sppf
             .intern_packing(atom_rule_idx, vec![term], W::one_ref());
-        let sym =
-            self.sppf
-                .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, (pos + 1) as u32);
+        let sym = self
+            .sppf
+            .intern_symbol(atom_cat_src_idx as u32, pos as u32, hi as u32);
         self.sppf.link_packing_to_symbol(sym, pack);
-        self.sppf_symbol_terms
-            .insert(sym, SppfSymbolTerm { value, output_cat, drains_count: 0 });
         Some(sym)
     }
 
@@ -19488,6 +20175,19 @@ where
             },
             _ => None,
         }
+    }
+
+    fn chain_absorption_boundary_has_operator(
+        &self,
+        tokens: &dyn WpdaTokenSource,
+        chain_end: usize,
+        spec: &crate::binding_power::IterAbsorbSpec,
+    ) -> bool {
+        let Some(next_text) = tokens.peek_text(chain_end) else {
+            return false;
+        };
+        self.engine
+            .category_recognizes_operator(spec.op_cat_src_idx, next_text)
     }
 
     /// C1-R (WALK-S1): direct O(N) synthesizer for a WHOLE binary chain,
@@ -19537,8 +20237,12 @@ where
         // be a compound expression whose final token is not its semantic atom
         // (for example, a postfix expression).
         let (head_symbol, head_lo, _) = self.chain_head_symbol(cursor, spec)?;
-        let rhs_atom_kind = tokens.peek_kind(cursor.pos + 1)?;
         let op_kind = tokens.peek_kind(cursor.pos)?;
+        let first_atom_pos = primary_next_pos_ordered(tokens, cursor.pos)?;
+        if !all_token_alts_share_next(tokens, cursor.pos, first_atom_pos) {
+            return None;
+        }
+        let rhs_atom_kind = tokens.peek_kind(first_atom_pos)?;
         if rhs_atom_kind == op_kind {
             return None;
         }
@@ -19557,15 +20261,26 @@ where
                 Some(k) if *k == op_kind => {},
                 _ => break,
             }
-            match tokens.peek_kind(probe + 1).as_ref() {
+            let atom_pos = match primary_next_pos_ordered(tokens, probe) {
+                Some(next) => next,
+                None => break,
+            };
+            if !all_token_alts_share_next(tokens, probe, atom_pos) {
+                return None;
+            }
+            match tokens.peek_kind(atom_pos).as_ref() {
                 Some(k) if *k == rhs_atom_kind => {},
                 _ => break,
             }
-            let atom = self.synth_atom_symbol(probe + 1, spec, tokens)?;
+            let atom = self.synth_atom_symbol(atom_pos, spec, tokens)?;
             let lo = self.sppf.span_lo(atom)?;
             atom_symbols.push(atom);
             atom_los.push(lo);
-            probe += 2;
+            let next_probe = match same_target_chain_atom_next(tokens, atom_pos, &[]) {
+                Some(next) => next,
+                _ => break,
+            };
+            probe = next_probe;
         }
         let chain_end = probe;
         let m = atom_symbols.len();
@@ -19595,7 +20310,7 @@ where
                 let pack = self.sppf.intern_packing(rule_idx, children, weight.clone());
                 let sym = self.sppf.intern_symbol(op_nt_tag, atom_los[i], acc_hi);
                 self.sppf.link_packing_to_symbol(sym, pack);
-                self.record_crosscat_lhs_body_origins_for_sppf_id(sym, body_origins);
+                self.publish_crosscat_lhs_body_origins_for_synth_symbol(cursor, sym, body_origins);
                 cur = sym;
             }
             acc = cur;
@@ -19613,7 +20328,7 @@ where
                     .sppf
                     .intern_symbol(op_nt_tag, lo, self.sppf.span_hi(rhs)?);
                 self.sppf.link_packing_to_symbol(sym, pack);
-                self.record_crosscat_lhs_body_origins_for_sppf_id(sym, body_origins);
+                self.publish_crosscat_lhs_body_origins_for_synth_symbol(cursor, sym, body_origins);
                 cur = sym;
             }
             acc = cur;
@@ -19677,19 +20392,7 @@ where
         if trigger.is_empty() || sep.is_empty() {
             return None;
         }
-        // The position must be ON the trigger.
-        match tokens.peek_text(cursor.pos) {
-            Some(t) if t == trigger => {},
-            _ => return None,
-        }
-        // Operand-atom predicate (Some kind, text is neither operator).
-        let is_atom = |pos: usize| -> bool {
-            tokens.peek_kind(pos).is_some()
-                && match tokens.peek_text(pos) {
-                    Some(t) => t != trigger && t != sep,
-                    None => false,
-                }
-        };
+        let forbidden = [trigger, sep];
         // Forward peek: recover per-level (cond, then) positions + the
         // final else position + chain_end. Pattern from head_pos:
         //   c0 [trigger] t0 [sep] c1 [trigger] t1 [sep] … e_final
@@ -19704,41 +20407,27 @@ where
         let mut probe = cursor.pos;
         let e_final: crate::sppf::SppfId;
         loop {
-            // [trigger] at probe
-            match tokens.peek_text(probe) {
-                Some(t) if t == trigger => {},
-                _ => return None,
-            }
-            // then-atom t_i at probe+1
-            if !is_atom(probe + 1) {
-                return None;
-            }
-            let then_sym = self.synth_atom_symbol(probe + 1, spec, tokens)?;
-            // [sep] at probe+2
-            match tokens.peek_text(probe + 2) {
-                Some(t) if t == sep => {},
-                _ => return None,
-            }
-            // trailing atom at probe+3 (next cond or e_final)
-            if !is_atom(probe + 3) {
-                return None;
-            }
-            let trailing_sym = self.synth_atom_symbol(probe + 3, spec, tokens)?;
+            let then_pos = token_has_only_expected_text_to_next(tokens, probe, trigger)?;
+            let sep_pos = same_target_chain_atom_next(tokens, then_pos, &forbidden)?;
+            let then_sym = self.synth_atom_symbol(then_pos, spec, tokens)?;
+            let trailing_pos = token_has_only_expected_text_to_next(tokens, sep_pos, sep)?;
+            let after_trailing = same_target_chain_atom_next(tokens, trailing_pos, &forbidden)?;
+            let trailing_sym = self.synth_atom_symbol(trailing_pos, spec, tokens)?;
             let trailing_lo = self.sppf.span_lo(trailing_sym)?;
             cond_symbols.push(cur_cond);
             cond_los.push(cur_cond_lo);
             then_symbols.push(then_sym);
-            // Disambiguate: another trigger at probe+4 ⇒ probe+3 is the
-            // next level's cond; otherwise probe+3 is e_final.
-            match tokens.peek_text(probe + 4) {
+            // Disambiguate: another trigger after the trailing atom means it is
+            // the next level's cond; otherwise it is e_final.
+            match tokens.peek_text(after_trailing) {
                 Some(t) if t == trigger => {
                     cur_cond = trailing_sym;
                     cur_cond_lo = trailing_lo;
-                    probe += 4;
+                    probe = after_trailing;
                 },
                 _ => {
                     e_final = trailing_sym;
-                    probe += 4;
+                    probe = after_trailing;
                     break;
                 },
             }
@@ -19771,7 +20460,7 @@ where
             let pack = self.sppf.intern_packing(rule_idx, children, weight.clone());
             let sym = self.sppf.intern_symbol(op_nt_tag, cond_los[i], acc_hi);
             self.sppf.link_packing_to_symbol(sym, pack);
-            self.record_crosscat_lhs_body_origins_for_sppf_id(sym, body_origins);
+            self.publish_crosscat_lhs_body_origins_for_synth_symbol(cursor, sym, body_origins);
             cur = sym;
         }
         let acc = cur;
@@ -20637,28 +21326,51 @@ where
     /// sound by construction). Called ONLY by the span-anchored revival when
     /// `body_cat != tgt_cat` (clause-4 matched via a coercion); the depth-1
     /// `single_hop_coercion` table guarantees at most one hop.
-    /// RC-B (2026-06-17): the trigger-bearing prefix cast `C_in -> C_out` for a
-    /// body of category `C_in` whose enclosing prefix-rule frame produces
-    /// `C_out`. Pure category-graph query (the engine's `prefix_cast_into` table,
-    /// the trigger-bearing sibling of `single_hop_coercion`): a UNARY cast whose
-    /// single input cat is `C_in`, whose output is `C_out`, and which carries
-    /// trigger literals (a real `kw "(" a ")"` cast, NOT a span-0 supertype
-    /// injection such as `ProcBool`). Validated against `action_for` +
-    /// `min_terminal_span` so a stale/empty table can never admit a wrong cast.
-    /// Returns the local rule index in `C_out`, or `None`. No comparison/arity
-    /// coupling; works for any single-arg prefix cast.
-    fn prefix_cast_rule_into(&self, c_in: u16, c_out: u16) -> Option<u16> {
-        let rule = self.engine.prefix_cast_into(c_in, c_out)?;
-        let entry = self.engine.action_for(c_out, rule)?;
-        if entry.arity == 1
-            && entry.output_cat == c_out
-            && entry.expected_input_cats == [c_in]
-            && self.engine.min_terminal_span(c_out, rule) > 0
-        {
-            Some(rule)
-        } else {
-            None
+    /// RC-B (2026-06-19): validate that `rule` is a trigger-bearing unary
+    /// wrapper from `C_in` to `C_out`.
+    ///
+    /// This is intentionally action-table based. The generated wrapper lookup
+    /// can be broad, but a candidate is usable only when its semantic action
+    /// consumes exactly one `C_in`, produces `C_out`, and owns real literals in
+    /// its span.
+    fn trigger_unary_wrapper_rule_valid(&self, c_in: u16, c_out: u16, rule: u16) -> bool {
+        let Some(entry) = self.engine.action_for(c_out, rule) else {
+            return false;
+        };
+        entry.arity == 1 && entry.output_cat == c_out && entry.expected_input_cats == [c_in]
+    }
+
+    fn trigger_unary_wrapper_consumes_structural_close(&self, c_out: u16, rule: u16) -> bool {
+        self.engine.min_terminal_span(c_out, rule) > 0
+    }
+
+    fn trigger_unary_wrapper_rules_for_keyword(
+        &self,
+        c_in: u16,
+        c_out: u16,
+        keyword: &str,
+    ) -> Vec<u16> {
+        let mut rules = Vec::new();
+        for &rule in self.engine.trigger_unary_wrappers_into(c_in, c_out) {
+            if !self.trigger_unary_wrapper_rule_valid(c_in, c_out, rule) {
+                continue;
+            }
+            if self.engine.prefix_cast_keyword(c_out, rule) == Some(keyword) {
+                rules.push(rule);
+            }
         }
+        rules
+    }
+
+    fn trigger_unary_wrapper_rule_matches(
+        &self,
+        c_in: u16,
+        c_out: u16,
+        rule: u16,
+        keyword: &str,
+    ) -> bool {
+        self.trigger_unary_wrapper_rule_valid(c_in, c_out, rule)
+            && self.engine.prefix_cast_keyword(c_out, rule) == Some(keyword)
     }
 
     /// RC-B (2026-06-17): walk the cursor's incoming-edge stack to the nearest
@@ -20844,8 +21556,10 @@ where
     fn prefix_cast_wrap_job_key(&self, job: &PrefixCastWrapJob<W>) -> PrefixCastWrapJobKey {
         PrefixCastWrapJobKey {
             body_sid: job.body_sid,
+            body_start_pos: job.body_start_pos,
             trigger_lo: job.trigger_lo,
             close_hi: job.close_hi,
+            consume_structural_close: job.consume_structural_close,
             c_out: job.c_out,
             cast_rule: job.cast_rule,
             resume_bp: job.resume_bp,
@@ -20898,9 +21612,6 @@ where
         let body_cat = push_symbol.category_src_idx;
         let c_out = replace_symbol.category_src_idx;
         let cast_rule = replace_symbol.rule_index_in_category;
-        if self.prefix_cast_rule_into(body_cat, c_out) != Some(cast_rule) {
-            return;
-        }
         let Some((frame_cat, frame_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) =
             self.enclosing_prefix_rule_frame(cursor)
         else {
@@ -20931,17 +21642,14 @@ where
             }
             return;
         };
-        match self.engine.prefix_cast_keyword(c_out, cast_rule) {
-            Some(kw) if kw == keyword.as_str() => {},
-            other => {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] direct prefix waiter skipped: keyword mismatch frame_kw={:?} cast_kw={:?} c_out={} rule={}",
-                        keyword, other, c_out, cast_rule
-                    );
-                }
-                return;
-            },
+        if !self.trigger_unary_wrapper_rule_matches(body_cat, c_out, cast_rule, &keyword) {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] direct prefix waiter skipped: wrapper mismatch frame_kw={:?} c_out={} rule={} body_cat={}",
+                    keyword, c_out, cast_rule, body_cat
+                );
+            }
+            return;
         }
         let Some(stack_below_trigger) =
             self.sppf_stack_below_prefix_trigger(cursor, c_out, cast_rule, trigger_lo)
@@ -20996,12 +21704,9 @@ where
         dispatch_pos: usize,
         projection_edge_id: crate::gss::GssEdgeId,
     ) {
-        // The full-span guard: the body's span must start at the projection's
-        // dispatch pos (the cast body start). A shorter/longer symbol on the
-        // sppf top is not the cast's whole body.
-        if self.sppf.span_lo(body_symbol_id).map(|l| l as usize) != Some(dispatch_pos) {
-            return;
-        }
+        // The body may begin at `dispatch_pos` or after transparent grouping
+        // opens. The token-source proof in `drain_prefix_cast_wrap_jobs`
+        // decides that; staging must not compare DAG node ids as positions.
         // C_out + the prefix-cast frame: the nearest enclosing PrefixRuleEntry.
         let Some((c_out, outer_rule, body_start_pos, _pred, _stack_below_prefix, resume_bp)) =
             self.enclosing_prefix_rule_frame(cursor)
@@ -21011,29 +21716,15 @@ where
         if dispatch_pos != body_start_pos {
             return;
         }
-        // Category-graph witness: a trigger-bearing cast C_in -> C_out exists.
-        let Some(cast_rule) = self.prefix_cast_rule_into(c_in, c_out) else {
-            return;
-        };
         // The cast keyword + its input position (from the outer prefix rule's
         // trigger; the outer rule and the cast share the keyword).
         let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, outer_rule)
         else {
             return;
         };
-        // KEYWORD-AGREEMENT guard (RC-B token-soundness): the candidate cast
-        // `cast_rule` must share the enclosing `kw "(" .. ")"` frame's keyword.
-        // `prefix_cast_rule_into` returns ANY single-arg trigger-bearing
-        // `C_in -> C_out` producer, which in the calculator also matches the
-        // `|·|` (`Len`) and `length(·)` / `maplength(·)` (`LenList`/`LenMap`)
-        // length operators — synthesizing those with the enclosing `int`
-        // keyword fabricates terminals (e.g. `int(a)` -> `|a|`). Reject any
-        // cast whose own leading keyword differs from the frame's. This is the
-        // category-graph witness that the wrap is the SAME wrapper the frame
-        // would have fired, keeping the synthesis token-sound and +0-cursors.
-        match self.engine.prefix_cast_keyword(c_out, cast_rule) {
-            Some(kw) if kw == keyword.as_str() => {},
-            _ => return,
+        let cast_rules = self.trigger_unary_wrapper_rules_for_keyword(c_in, c_out, &keyword);
+        if cast_rules.is_empty() {
+            return;
         }
         let Some(stack_below_prefix_body) = self.sppf_stack_below_prefix_body_and_trigger(
             cursor,
@@ -21058,16 +21749,21 @@ where
             .incoming_edge_stack_arena
             .intern_pop(outer.incoming_edge_stack_id);
         outer.sppf_stack_id = stack_below_prefix_body;
-        self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
-            body_sid: body_symbol_id,
-            trigger_lo,
-            close_hi: cursor.pos, // refined to next_pos(close) at drain
-            c_out,
-            cast_rule,
-            keyword,
-            resume_bp,
-            outer_frame: outer,
-        });
+        for cast_rule in cast_rules {
+            self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
+                body_sid: body_symbol_id,
+                body_start_pos: dispatch_pos,
+                trigger_lo,
+                close_hi: cursor.pos, // refined to next_pos(close) at drain
+                consume_structural_close: self
+                    .trigger_unary_wrapper_consumes_structural_close(c_out, cast_rule),
+                c_out,
+                cast_rule,
+                keyword: keyword.clone(),
+                resume_bp,
+                outer_frame: outer.clone(),
+            });
+        }
     }
 
     /// RC-B generalization (2026-06-18): stage the same prefix-cast wrap when
@@ -21091,19 +21787,15 @@ where
         else {
             return;
         };
-        if self.sppf.span_lo(body_symbol_id).map(|lo| lo as usize) != Some(body_start_pos) {
-            return;
-        }
-        let Some(cast_rule) = self.prefix_cast_rule_into(body_cat, c_out) else {
-            return;
-        };
+        // The body may begin at `body_start_pos` or after transparent grouping
+        // opens. The drain proves that gap against the token source.
         let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, outer_rule)
         else {
             return;
         };
-        match self.engine.prefix_cast_keyword(c_out, cast_rule) {
-            Some(kw) if kw == keyword.as_str() => {},
-            _ => return,
+        let cast_rules = self.trigger_unary_wrapper_rules_for_keyword(body_cat, c_out, &keyword);
+        if cast_rules.is_empty() {
+            return;
         }
         let Some(stack_below_prefix_body) = self.sppf_stack_below_prefix_body_and_trigger(
             cursor,
@@ -21119,16 +21811,21 @@ where
         outer.node = pred;
         outer.incoming_edge_stack_id = stack_below_prefix;
         outer.sppf_stack_id = stack_below_prefix_body;
-        self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
-            body_sid: body_symbol_id,
-            trigger_lo,
-            close_hi: cursor.pos,
-            c_out,
-            cast_rule,
-            keyword,
-            resume_bp,
-            outer_frame: outer,
-        });
+        for cast_rule in cast_rules {
+            self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
+                body_sid: body_symbol_id,
+                body_start_pos,
+                trigger_lo,
+                close_hi: cursor.pos,
+                consume_structural_close: self
+                    .trigger_unary_wrapper_consumes_structural_close(c_out, cast_rule),
+                c_out,
+                cast_rule,
+                keyword: keyword.clone(),
+                resume_bp,
+                outer_frame: outer.clone(),
+            });
+        }
     }
 
     /// Join any parked direct-prefix continuations with a resolved body symbol.
@@ -21154,15 +21851,20 @@ where
         let body_weight = self.sppf.symbol_weight_sum(body_symbol_id);
         let mut staged = Vec::new();
         for waiter in &self.parked_prefix_cast_waiters {
-            if waiter.body_cat != body_cat || waiter.body_start_pos != body_lo {
+            if waiter.body_cat != body_cat {
                 continue;
             }
             let mut outer = waiter.outer_frame.clone();
             outer.weight = outer.weight.times_ref(&body_weight);
             staged.push(PrefixCastWrapJob {
                 body_sid: body_symbol_id,
+                body_start_pos: waiter.body_start_pos,
                 trigger_lo: waiter.trigger_lo,
                 close_hi: body_hi,
+                consume_structural_close: self.trigger_unary_wrapper_consumes_structural_close(
+                    waiter.c_out,
+                    waiter.cast_rule,
+                ),
                 c_out: waiter.c_out,
                 cast_rule: waiter.cast_rule,
                 keyword: waiter.keyword.clone(),
@@ -21186,6 +21888,149 @@ where
         }
     }
 
+    #[inline]
+    fn token_position_order_le(tokens: &dyn WpdaTokenSource, start: usize, end: usize) -> bool {
+        if start == end {
+            return true;
+        }
+        match (tokens.position_order_key(start), tokens.position_order_key(end)) {
+            (Some(start_key), Some(end_key)) => start_key <= end_key,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn token_position_order_lt(tokens: &dyn WpdaTokenSource, start: usize, end: usize) -> bool {
+        if start == end {
+            return false;
+        }
+        match (tokens.position_order_key(start), tokens.position_order_key(end)) {
+            (Some(start_key), Some(end_key)) => start_key < end_key,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn structural_delimiter_matches(
+        &self,
+        kind: &TokenKind,
+        text: Option<&str>,
+        want_open: bool,
+    ) -> bool {
+        if want_open {
+            self.engine.is_structural_open_delimiter(kind, text)
+        } else {
+            self.engine.is_structural_close_delimiter(kind, text)
+        }
+    }
+
+    fn structural_delimiter_successors(
+        &self,
+        tokens: &dyn WpdaTokenSource,
+        pos: usize,
+        want_open: bool,
+    ) -> Vec<usize> {
+        let mut out = Vec::new();
+        if let Some(kind) = tokens.peek_kind(pos) {
+            if self.structural_delimiter_matches(&kind, tokens.peek_text(pos), want_open) {
+                if let Some(next) = tokens.next_pos(pos, 0) {
+                    if Self::token_position_order_lt(tokens, pos, next) {
+                        out.push(next);
+                    }
+                }
+            }
+        }
+        for (idx, alt) in tokens.peek_alternatives(pos).iter().enumerate() {
+            if self.structural_delimiter_matches(&alt.kind, Some(alt.text.as_str()), want_open) {
+                if let Some(next) = tokens.next_pos(pos, idx + 1) {
+                    if Self::token_position_order_lt(tokens, pos, next) {
+                        out.push(next);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    fn structural_delimiter_path_counts_between(
+        &self,
+        tokens: &dyn WpdaTokenSource,
+        start: usize,
+        end: usize,
+        want_open: bool,
+    ) -> Vec<usize> {
+        if start == end {
+            return vec![0];
+        }
+        if !Self::token_position_order_le(tokens, start, end) {
+            return Vec::new();
+        }
+        let max_edges = tokens.len().saturating_add(1);
+        let mut counts = Vec::new();
+        let mut stack = vec![(start, 0usize)];
+        let mut seen: rustc_hash::FxHashSet<(usize, usize)> = rustc_hash::FxHashSet::default();
+        while let Some((pos, count)) = stack.pop() {
+            if !seen.insert((pos, count)) || count > max_edges {
+                continue;
+            }
+            if pos == end {
+                counts.push(count);
+                continue;
+            }
+            if !Self::token_position_order_le(tokens, pos, end) {
+                continue;
+            }
+            for next in self.structural_delimiter_successors(tokens, pos, want_open) {
+                if Self::token_position_order_le(tokens, next, end) {
+                    stack.push((next, count.saturating_add(1)));
+                }
+            }
+        }
+        counts.sort_unstable();
+        counts.dedup();
+        counts
+    }
+
+    fn consume_structural_closes(
+        &self,
+        tokens: &dyn WpdaTokenSource,
+        pos: usize,
+        count: usize,
+        job: &PrefixCastWrapJob<W>,
+    ) -> Vec<usize> {
+        if count == 0 {
+            return vec![pos];
+        }
+        let max_edges = tokens.len().saturating_add(1);
+        let mut out = Vec::new();
+        let mut stack = vec![(pos, 0usize)];
+        let mut seen: rustc_hash::FxHashSet<(usize, usize)> = rustc_hash::FxHashSet::default();
+        while let Some((cur, consumed)) = stack.pop() {
+            if !seen.insert((cur, consumed)) || consumed > count || consumed > max_edges {
+                continue;
+            }
+            if consumed == count {
+                out.push(cur);
+                continue;
+            }
+            let successors = self.structural_delimiter_successors(tokens, cur, false);
+            if successors.is_empty() && trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] RC-B prefix-cast wrap skipped: no close edge at pos {} for body=sid{} ({},{})",
+                    cur, job.body_sid, job.c_out, job.cast_rule
+                );
+            }
+            for next in successors {
+                stack.push((next, consumed.saturating_add(1)));
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// RC-B (2026-06-17): drain the staged prefix-cast wrap jobs into accepting
     /// `C_out` cursors (§5.1). For each job, complete the predicate against the
     /// token source (the resting `pos` must be a structural close, and the
@@ -21204,38 +22049,74 @@ where
         let jobs = std::mem::take(&mut self.pending_prefix_cast_wrap_jobs);
         let mut out = Vec::new();
         for mut job in jobs {
-            // (a) the resting pos must be the cast's structural close `)`.
-            let resting = job.close_hi;
-            let Some(close_kind) = tokens.peek_kind(resting) else {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] RC-B prefix-cast wrap skipped: no token at close pos {} for body=sid{} ({},{})",
-                        resting, job.body_sid, job.c_out, job.cast_rule
-                    );
-                }
+            let Some(body_lo) = self.sppf.span_lo(job.body_sid).map(|lo| lo as usize) else {
                 continue;
             };
-            if !self
-                .engine
-                .is_structural_close_delimiter(&close_kind, tokens.peek_text(resting))
+            let Some(body_hi) = self.sppf.span_hi(job.body_sid).map(|hi| hi as usize) else {
+                continue;
+            };
+            if !Self::token_position_order_le(tokens, job.body_start_pos, body_lo)
+                || !Self::token_position_order_le(tokens, body_lo, body_hi)
+                || !Self::token_position_order_le(tokens, body_hi, job.close_hi)
             {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] RC-B prefix-cast wrap skipped: pos {} is not close ({:?} {:?}) for body=sid{} ({},{})",
-                        resting,
-                        close_kind,
-                        tokens.peek_text(resting),
-                        job.body_sid,
-                        job.c_out,
-                        job.cast_rule
-                    );
-                }
                 continue;
             }
-            // The cast result spans [trigger_lo, hi) where hi is past the `)`.
-            job.close_hi = tokens.next_pos(resting, 0).unwrap_or(resting + 1);
-            if let Some(acc) = self.synthesize_prefix_cast_wrap_cursor(job) {
-                out.push(acc);
+            let open_counts = self.structural_delimiter_path_counts_between(
+                tokens,
+                job.body_start_pos,
+                body_lo,
+                true,
+            );
+            if open_counts.is_empty() {
+                continue;
+            };
+            let already_consumed_close_counts =
+                self.structural_delimiter_path_counts_between(tokens, body_hi, job.close_hi, false);
+            if already_consumed_close_counts.is_empty() {
+                continue;
+            };
+            let mut emitted_close_his: rustc_hash::FxHashSet<usize> =
+                rustc_hash::FxHashSet::default();
+            for open_count in open_counts {
+                for already_consumed_closes in &already_consumed_close_counts {
+                    if *already_consumed_closes > open_count {
+                        continue;
+                    }
+                    let remaining_group_closes = open_count - *already_consumed_closes;
+                    for after_group_closes in self.consume_structural_closes(
+                        tokens,
+                        job.close_hi,
+                        remaining_group_closes,
+                        &job,
+                    ) {
+                        if job.consume_structural_close {
+                            for after_wrapper_close in
+                                self.consume_structural_closes(tokens, after_group_closes, 1, &job)
+                            {
+                                if emitted_close_his.insert(after_wrapper_close) {
+                                    job.close_hi = after_wrapper_close;
+                                    if let Some(acc) = self.synthesize_prefix_cast_wrap_cursor(&job)
+                                    {
+                                        out.push(acc);
+                                    }
+                                }
+                            }
+                        } else if emitted_close_his.insert(after_group_closes) {
+                            job.close_hi = after_group_closes;
+                            if let Some(acc) = self.synthesize_prefix_cast_wrap_cursor(&job) {
+                                out.push(acc);
+                            }
+                        }
+                    }
+                }
+            }
+            if emitted_close_his.is_empty() {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] RC-B prefix-cast wrap skipped: no structural close completion for body=sid{} ({},{})",
+                        job.body_sid, job.c_out, job.cast_rule
+                    );
+                }
             }
         }
         out
@@ -21257,7 +22138,7 @@ where
     /// corpus is byte-identical.
     fn synthesize_prefix_cast_wrap_cursor(
         &mut self,
-        job: PrefixCastWrapJob<W>,
+        job: &PrefixCastWrapJob<W>,
     ) -> Option<BranchCursor<W>> {
         let global_rule_idx: u32 = ((job.c_out as u32) << 16) | (job.cast_rule as u32);
         let lo = job.trigger_lo as u32;
@@ -21285,17 +22166,10 @@ where
             }
             return None;
         }
-        // Token-soundness: the [lo, hi) span must leave exactly the cast's
-        // literal budget (the `(` and `)`) as slack over the children.
-        if !self.packing_satisfies_min_terminal_span(global_rule_idx, &children, lo, hi) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] RC-B prefix-cast wrap skipped: min-terminal guard ({},{}) body=sid{} span=[{},{}]",
-                    job.c_out, job.cast_rule, job.body_sid, lo, hi
-                );
-            }
-            return None;
-        }
+        // Token-soundness was proved by `drain_prefix_cast_wrap_jobs` using
+        // real token-source paths. Re-running the numeric min-span guard here
+        // would be unsound for lattice sources, whose SPPF positions are DAG
+        // node ids rather than linear token indexes.
         // Fire the cast action over [body] (the trigger contributes no arg) via
         // the read-only transient — the SAME path emit_fire_action uses.
         let cast_symbol = StackSymbolV2::rule_at(job.c_out, job.cast_rule, 0, None);
@@ -21332,7 +22206,7 @@ where
         );
         // Build the accepting cursor: outer return frame, single-Symbol SPPF
         // stack, pos past `)`, and the post-cast-fire binding-power floor.
-        let mut acc = job.outer_frame;
+        let mut acc = job.outer_frame.clone();
         acc.sppf_stack_id = self
             .sppf_stack_arena
             .intern_push(acc.sppf_stack_id, wrapped_symbol_id);
@@ -21366,6 +22240,7 @@ where
         // min_terminal_span filter rejects any token-unsound packing).
         let lo = self.sppf.span_lo(body_symbol_id)?;
         let hi = self.sppf.span_hi(body_symbol_id)?;
+        let body_cat = self.sppf_symbol_category(body_symbol_id)?;
         let global_rule_idx: u32 = ((coercion_cat as u32) << 16) | (coercion_rule as u32);
         let children = [body_symbol_id];
         if !self.packing_satisfies_min_terminal_span(global_rule_idx, &children, lo, hi) {
@@ -21401,9 +22276,16 @@ where
         // Intern Packing(coercion_rule, [body]) + Symbol(coercion_cat, lo, hi),
         // link, and store the realized Term keyed by the new Symbol id (so a
         // subsequent fire consuming THIS Symbol as a child reconstructs it).
-        let packing_id = self
-            .sppf
-            .intern_packing(global_rule_idx, children.to_vec(), W::one_ref());
+        let packing_weight = self.engine.single_hop_coercion_weight(
+            body_cat,
+            coercion_cat,
+            coercion_cat,
+            coercion_rule,
+            hi.saturating_sub(lo).max(1),
+        );
+        let packing_id =
+            self.sppf
+                .intern_packing(global_rule_idx, children.to_vec(), packing_weight);
         let wrapped_symbol_id = self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
         self.sppf
             .link_packing_to_symbol(wrapped_symbol_id, packing_id);
@@ -21627,6 +22509,54 @@ where
             );
         }
         Some(symbol)
+    }
+
+    fn apply_crosscat_projection_completion_weight(
+        &self,
+        cursor: &mut BranchCursor<W>,
+        popped_edge_kind: Option<&crate::gss::EdgeKind>,
+        popped_symbol: Option<StackSymbolV2>,
+    ) {
+        let Some(symbol) = popped_symbol else {
+            return;
+        };
+        if symbol.kind != SymbolKind::Return {
+            return;
+        }
+        let Some(crate::gss::EdgeKind::CrossCatProjection { .. }) = popped_edge_kind else {
+            return;
+        };
+        let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) else {
+            return;
+        };
+        let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
+            return;
+        };
+        let target_cat = symbol.category_src_idx;
+        let declared_projection = self
+            .engine
+            .single_hop_coercion(body_cat, target_cat)
+            .iter()
+            .any(|&(coercion_cat, coercion_rule)| {
+                coercion_cat == target_cat && coercion_rule == symbol.rule_index_in_category
+            });
+        if !declared_projection {
+            return;
+        }
+        let span_len = self
+            .sppf
+            .span_lo(body_symbol_id)
+            .zip(self.sppf.span_hi(body_symbol_id))
+            .map(|(lo, hi)| hi.saturating_sub(lo).max(1))
+            .unwrap_or(1);
+        let completion_weight = self.engine.single_hop_coercion_completion_weight(
+            body_cat,
+            target_cat,
+            target_cat,
+            symbol.rule_index_in_category,
+            span_len,
+        );
+        cursor.pending_packing_weight = cursor.pending_packing_weight.times_ref(&completion_weight);
     }
 
     /// Sig-B Blocker-3 §2.4a/§2.4c (2026-06-01, pgmcp experiment #9): drain
@@ -22042,6 +22972,11 @@ where
                         | SymbolKind::MixfixMarker
                 )
             {
+                self.apply_crosscat_projection_completion_weight(
+                    cursor,
+                    popped_edge_kind,
+                    Some(symbol),
+                );
                 self.emit_fire_action(cursor, symbol);
             }
         }
@@ -22836,13 +23771,15 @@ where
                                     self.pending_cohort_drain_keys.insert(key);
                                 },
                                 crate::dispatch_cohort::ResolveOutcome::NoOp
-                                | crate::dispatch_cohort::ResolveOutcome::SnapshotDuplicate
-                                | crate::dispatch_cohort::ResolveOutcome::SnapshotOverflow {
+                                | crate::dispatch_cohort::ResolveOutcome::SnapshotDuplicate => {},
+                                crate::dispatch_cohort::ResolveOutcome::SnapshotOverflow {
                                     ..
                                 }
                                 | crate::dispatch_cohort::ResolveOutcome::ResolvedBodyOverflow {
                                     ..
-                                } => {},
+                                } => {
+                                    self.pending_cohort_drain_keys.insert(key);
+                                },
                             }
                             // RC-B (2026-06-17): a full-span well-typed `C_in`
                             // body (`symbol_cat == source_src_idx`) resolved
@@ -23953,6 +24890,38 @@ mod tests {
         assert_eq!(queue.pop().expect("second").0.pos, 20);
         assert_eq!(queue.pop().expect("third").0.pos, 30);
         assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn eoi_candidate_sort_prefers_semiring_min_and_preserves_ties() {
+        let tied = lex(1.0, 0, 7);
+        let mut candidates = vec![
+            EoiCursorCandidate {
+                cursor: queue_cursor(10, lex(5.0, 0, 0)),
+                weight: lex(5.0, 0, 0),
+                root: 10,
+            },
+            EoiCursorCandidate {
+                cursor: queue_cursor(20, tied),
+                weight: tied,
+                root: 20,
+            },
+            EoiCursorCandidate {
+                cursor: queue_cursor(30, lex(0.5, 0, 0)),
+                weight: lex(0.5, 0, 0),
+                root: 30,
+            },
+            EoiCursorCandidate {
+                cursor: queue_cursor(40, tied),
+                weight: tied,
+                root: 40,
+            },
+        ];
+
+        sort_eoi_candidates_by_semiring_priority(&mut candidates);
+
+        let roots: Vec<crate::sppf::SppfId> = candidates.iter().map(|c| c.root).collect();
+        assert_eq!(roots, vec![30, 20, 40, 10]);
     }
 
     #[test]
@@ -25915,7 +26884,7 @@ mod tests {
     }
 
     #[test]
-    fn cohort_cache_overflow_blocks_accepted_parse() {
+    fn cohort_cache_storage_saturation_does_not_block_accepted_parse() {
         let tokens = [TokenKind::Integer, TokenKind::Eof];
         let texts = ["42", ""];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
@@ -25978,14 +26947,12 @@ mod tests {
 
         walker
             .run_to_end_of_input(4, &token_src)
-            .expect("overflow is reported through the resolve result");
+            .expect("storage saturation should not poison a valid accepted parse");
         match walker.resolve_at_end_of_input(&token_src) {
-            WpdaResolveResult::AmbiguityBudget { budget, actual, position, .. } => {
-                assert_eq!(budget, crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY);
-                assert_eq!(actual, crate::dispatch_cohort::MAX_WORKER_SNAPSHOTS_PER_KEY + 1);
-                assert_eq!(position, 1);
+            WpdaResolveResult::Accepted { terms, .. } => {
+                assert_eq!(terms.len(), 1);
             },
-            other => panic!("expected AmbiguityBudget, got {other:?}"),
+            other => panic!("expected Accepted, got {other:?}"),
         }
     }
 
@@ -26951,6 +27918,15 @@ mod tests {
         fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
             cat == 1 && token_text == "+"
         }
+
+        fn category_accepts_operator_at_floor(
+            &self,
+            cat: u16,
+            token_text: &str,
+            floor: u8,
+        ) -> bool {
+            cat == 1 && token_text == "+" && floor <= 2
+        }
     }
 
     #[test]
@@ -27012,6 +27988,16 @@ mod tests {
         fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
             matches!((cat, token_text), (1, "+") | (2, "+"))
         }
+
+        fn category_accepts_operator_at_floor(
+            &self,
+            cat: u16,
+            token_text: &str,
+            floor: u8,
+        ) -> bool {
+            matches!((cat, token_text), (1, "+") if floor <= 2)
+                || matches!((cat, token_text), (2, "+") if floor <= 4)
+        }
     }
 
     #[test]
@@ -27050,6 +28036,52 @@ mod tests {
             matches!(guarded, WpdaStepAction::Advance(WpdaState::Unwinding)),
             "a target-owned operator rejected at the projection floor must suppress source consumption, got {guarded:?}"
         );
+    }
+
+    #[test]
+    fn projection_target_floor_keeps_source_operator_that_produces_target() {
+        let token_kinds = [TokenKind::Fixed("+".into()), TokenKind::Eof];
+        let token_texts = ["+", ""];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let mut w = WpdaWalker::new(ProjectionBoundaryProbeEngine, 0);
+        let mut cursor = w.branch_cursors_for_test()[0].clone();
+        cursor.inner_state = WpdaState::InfixLoop { cur_bp: 3 };
+        let _ = w.cursor_gss_push_with_kind(
+            &mut cursor,
+            StackSymbolV2::category_entry(2),
+            0,
+            lex(0.0, 2, 0),
+            crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx: 2,
+                inner_cur_bp: 3,
+                wrap_cat: 1,
+                wrap_rule: 0,
+            },
+        );
+
+        let guarded = w.guard_crosscat_projection_target_boundary(
+            &cursor,
+            WpdaStepAction::ConsumeAndPush {
+                symbol: StackSymbolV2::rule_at(1, 0, 0, Some(3)).with_kind_return(),
+                weight: lex(0.0, 1, 0),
+                new_state: WpdaState::CrossCatDelegate { source_src_idx: 2, inner_cur_bp: 5 },
+                trigger_mode: TriggerMode::Discard,
+            },
+            &token_src,
+        );
+
+        let WpdaStepAction::Fork { branches, consume_trigger } = guarded else {
+            panic!("expected category-changing source fork, got {guarded:?}");
+        };
+        assert!(!consume_trigger);
+        assert_eq!(branches.len(), 2);
+        assert!(matches!(
+            branches[0].action_kind,
+            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard }
+        ));
+        assert!(matches!(branches[0].new_state, WpdaState::CrossCatDelegate { .. }));
+        assert!(matches!(branches[1].action_kind, ForkActionKind::Advance));
+        assert!(matches!(branches[1].new_state, WpdaState::Unwinding));
     }
 
     #[test]
@@ -27143,10 +28175,48 @@ mod tests {
         assert_eq!(branches[1].symbol.category_src_idx, 2);
     }
 
-    /// CrossCatLhs source parsing starts at the source prefix floor, but its
-    /// post-body infix continuation must resume at the caller's active Pratt
-    /// floor. Otherwise a delegated RHS of a high-precedence operator can later
-    /// consume a lower-precedence category-changing operator.
+    #[test]
+    fn synthesized_chain_body_origin_resolves_crosscat_lhs_cohort() {
+        let mut w = WpdaWalker::new(ScriptedEngine::new(vec![]), 0);
+        let mut cursor = w.branch_cursors_for_test()[0].clone();
+        cursor.pos = 5;
+        cursor.inner_state = WpdaState::Unwinding;
+        cursor.last_action_output_cat = Some(7);
+
+        let key = crate::dispatch_cohort::DispatchKey::new_crosscat_lhs(0, 2, 0, 7, u16::MAX);
+        assert!(matches!(
+            w.dispatch_cohort_cache
+                .register(key.clone(), lex(0.0, 0, 0)),
+            crate::dispatch_cohort::RegisterOutcome::WorkerInserted
+        ));
+
+        let symbol_id = w.sppf.intern_symbol(7, 0, 5);
+        let origin = CrossCatLhsBodyOrigin {
+            source_src_idx: 2,
+            origin: crate::gss::CrossCatLhsReentryOrigin {
+                dispatch_pos: 0,
+                key_min_bp: 0,
+                wrap_cat: 7,
+                wrap_rule: u16::MAX,
+            },
+        };
+
+        w.publish_crosscat_lhs_body_origins_for_synth_symbol(&cursor, symbol_id, vec![origin]);
+
+        match w.dispatch_cohort_cache.register(key, lex(0.0, 0, 0)) {
+            crate::dispatch_cohort::RegisterOutcome::ResolvedHit { bodies, .. } => {
+                assert_eq!(bodies.len(), 1);
+                assert_eq!(bodies[0].symbol_id, symbol_id);
+                assert_eq!(bodies[0].hi_pos, 5);
+            },
+            _ => panic!("expected synthesized body to resolve cohort"),
+        }
+    }
+
+    /// CrossCatLhs source parsing inherits the caller's active Pratt floor, and
+    /// its post-body infix continuation resumes at that same floor. Otherwise a
+    /// delegated RHS of a high-precedence operator can later consume a
+    /// lower-precedence category-changing operator.
     #[test]
     fn crosscat_lhs_source_resume_uses_caller_floor() {
         let engine = ScriptedEngine::new(vec![]);
@@ -27160,7 +28230,7 @@ mod tests {
                 WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
             );
 
-        assert!(matches!(new_state, WpdaState::PrefixDispatch { cur_bp: 0, .. }));
+        assert!(matches!(new_state, WpdaState::PrefixDispatch { cur_bp: 11, .. }));
         assert_eq!(source_resume_bp, 11);
         assert_eq!(target_resume_bp, 11);
     }

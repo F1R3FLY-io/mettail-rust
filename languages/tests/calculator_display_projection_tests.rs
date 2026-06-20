@@ -91,6 +91,139 @@ fn calculator_bigrat_bitand_bitor_canonical_display_is_idempotent() {
 }
 
 #[test]
+fn calculator_bigrat_int_projection_add_display_is_idempotent() {
+    mettail_runtime::clear_var_cache();
+
+    let term = BigRat::AddBigRat(
+        Arc::new(BigRat::IntToBigRat(Arc::new(Int::AddInt(
+            Arc::new(Int::NumLit(353703189)),
+            Arc::new(Int::NumLit(353703189)),
+        )))),
+        Arc::new(BigRat::Err),
+    );
+
+    let displayed = format!("{}", term);
+    assert!(
+        displayed.contains("bigrat("),
+        "cross-category projection used as an operand should preserve its source syntax with an explicit wrapper: {displayed:?}"
+    );
+
+    let parsed = BigRat::parse(&displayed).expect("displayed BigRat should parse");
+    let canonical = format!("{}", parsed);
+    let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
+    let recanonical = format!("{}", reparsed);
+
+    assert_eq!(
+        canonical, recanonical,
+        "canonical BigRat display must be stable after parsing; displayed={displayed:?}"
+    );
+}
+
+#[test]
+fn calculator_proc_bigrat_bit_or_add_display_is_idempotent() {
+    mettail_runtime::clear_var_cache();
+
+    let term = Proc::ProcBigRat(Arc::new(BigRat::AddBigRat(
+        Arc::new(BigRat::BitOrBigRat(Arc::new(BigRat::Err), Arc::new(BigRat::Err))),
+        Arc::new(BigRat::AddBigRat(
+            Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                num_rational::Ratio::from_integer(num_bigint::BigInt::from(-719987712)),
+            ))),
+            Arc::new(BigRat::Err),
+        )),
+    )));
+
+    let displayed = format!("{}", term);
+    let parsed = Proc::parse(&displayed).expect("displayed Proc should parse");
+    let canonical = format!("{}", parsed);
+    let reparsed = Proc::parse(&canonical).expect("canonical Proc display should parse");
+    let recanonical = format!("{}", reparsed);
+
+    assert_eq!(
+        canonical, recanonical,
+        "canonical Proc display must be stable after parsing; displayed={displayed:?}"
+    );
+}
+
+#[test]
+fn calculator_bigrat_projected_integer_add_tree_keeps_surface_representative() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "353703189 + 353703189 + (353703189 + 353703189) + \
+                 (353703189 + 353703189 + (353703189 + 353703189))";
+
+    let parsed = BigRat::parse(input).expect("ambiguous integer BigRat addition tree should parse");
+    let canonical = format!("{}", parsed);
+
+    let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse again");
+    assert_eq!(
+        format!("{}", reparsed),
+        canonical,
+        "single-result parsing should converge to a stable display representative from input={input:?}"
+    );
+}
+
+#[test]
+fn calculator_str_cast_nested_bool_comparison_parses_without_snapshot_overflow() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "str(0 + error != int(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000566938))";
+    Str::parse(input).expect("displayed Str cast over an ambiguous Bool should parse");
+}
+
+#[test]
+fn calculator_proc_fixed_comparison_parses_without_snapshot_overflow() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "cast_error_fixed + cast_error_fixed > 508886636p0 bitor 1425960177p0";
+    Proc::parse(input).expect("displayed Proc comparison over Fixed operators should parse");
+}
+
+#[test]
+fn calculator_float_cast_parenthesized_prefix_operand_parses() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "float(-(1.0 + cast_error_float))";
+    let parsed = Float::parse(input).expect("FloatId should parse a grouped NegFloat operand");
+    assert_eq!(format!("{}", parsed), input);
+}
+
+#[test]
+fn calculator_float_infix_rhs_keeps_prefix_operand_path() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "float(a , 1) ^ -1.0 * (cast_error_float ^ 0.1 * cast_error_float)";
+    let parsed = Float::parse(input).expect("Float infix RHS should admit prefix negation");
+    assert_eq!(format!("{}", parsed), input);
+}
+
+#[test]
+fn calculator_same_category_cast_body_waits_for_infix_completion() {
+    mettail_runtime::clear_var_cache();
+
+    BigRat::parse("bigrat(error) + (error + error)")
+        .expect("BigratCast body completion must not hide the outer BigRat infix");
+    Proc::parse("bigrat(error) + (error + error)")
+        .expect("ProcBigRat display should preserve the same complete BigRat parse path");
+}
+
+#[test]
+fn calculator_bool_cast_and_comparison_chains_keep_later_infix() {
+    mettail_runtime::clear_var_cache();
+
+    Bool::parse("(bool(0.0000000000000001) > (false == false)) >= |\"whbaaa\"| >= error")
+        .expect("Bool cast/comparison chains should retain later Bool continuations");
+}
+
+#[test]
+fn calculator_bigrat_infix_rhs_keeps_prefix_operand_path() {
+    mettail_runtime::clear_var_cache();
+
+    BigRat::parse("bigrat(160208597) / -error")
+        .expect("BigRat infix RHS should admit prefix negation over Err");
+}
+
+#[test]
 fn calculator_prefix_cast_wrap_restores_enclosing_prefix_floor() {
     mettail_runtime::clear_var_cache();
 
@@ -115,11 +248,19 @@ fn calculator_prefix_syntaxless_projection_restores_enclosing_prefix_floor() {
     mettail_runtime::clear_var_cache();
 
     let input = "bitnot 541791495 + bitnot 899164433";
+    let raw = BigRat::parse_via_wpda(input).expect("raw WPDA prefix projection should parse");
+    let raw_display = format!("{}", raw);
+    let expected = "bitnot bigrat(541791495) + bitnot bigrat(899164433)";
+    assert_eq!(
+        raw_display, expected,
+        "raw WPDA parse should preserve the prefix operand floor before representative stabilization"
+    );
     let parsed = BigRat::parse(input).expect("prefix projection operand should parse");
     let canonical = format!("{}", parsed);
     assert_eq!(
-        canonical, input,
-        "syntaxless projection must preserve the prefix operand floor so + stays outside"
+        canonical, expected,
+        "syntaxless projection must preserve the prefix operand floor so + stays outside while \
+         retaining contextual projection wrappers"
     );
 
     let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
@@ -127,6 +268,20 @@ fn calculator_prefix_syntaxless_projection_restores_enclosing_prefix_floor() {
         format!("{}", reparsed),
         canonical,
         "syntaxless projection display should remain stable after a second parse"
+    );
+}
+
+#[test]
+fn calculator_uint32_bool_projection_keeps_source_comparison() {
+    mettail_runtime::clear_var_cache();
+
+    let input = "bitnot 840384306 < bitnot 840384306";
+    let parsed = UInt32::parse(input)
+        .expect("UInt32 syntaxless Bool projection should keep the Int comparison path");
+    assert_eq!(
+        format!("{}", parsed),
+        input,
+        "BoolToUInt32 over an Int comparison must remain parseable from its surface display"
     );
 }
 
@@ -281,6 +436,76 @@ fn calculator_nextest_property_counterexamples_parse() {
         .expect("Float should admit call-style operands with nested Bool/Bag evidence");
     Str::parse("\"as\" + \"flruphu\" ++ str(a) ++ (str(a) ++ (\"i\" ++ \"as\"))")
         .expect("Str should continue through mixed +/++ and prefix casts");
+}
+
+#[test]
+fn calculator_infix_rhs_keeps_function_prefix_atoms() {
+    mettail_runtime::clear_var_cache();
+
+    let str_term = Str::AddStr(
+        Arc::new(Str::AddStr(
+            Arc::new(Str::StringLit("a".to_string())),
+            Arc::new(Str::Concat(
+                Arc::new(Str::StringLit("daecaba".to_string())),
+                Arc::new(Str::StringLit("x".to_string())),
+            )),
+        )),
+        Arc::new(Str::BoolToStr(Arc::new(Bool::BoolLit(false)))),
+    );
+    let str_display = format!("{}", str_term);
+    let parsed_str = Str::parse(&str_display)
+        .unwrap_or_else(|err| panic!("displayed Str should parse: {str_display:?}: {err}"));
+    assert_eq!(format!("{}", parsed_str), str_display);
+
+    let proc_term = Proc::ProcStr(Arc::new(Str::AddStr(
+        Arc::new(Str::AddStr(
+            Arc::new(Str::StringLit("aa".to_string())),
+            Arc::new(Str::StringLit("eackaa".to_string())),
+        )),
+        Arc::new(Str::StrId(Arc::new(Str::StringLit("acka".to_string())))),
+    )));
+    let proc_display = format!("{}", proc_term);
+    let parsed_proc = Proc::parse(&proc_display)
+        .unwrap_or_else(|err| panic!("displayed Proc should parse: {proc_display:?}: {err}"));
+    assert_eq!(format!("{}", parsed_proc), proc_display);
+}
+
+#[test]
+fn calculator_bool_rhs_keeps_cross_category_comparison_atoms() {
+    mettail_runtime::clear_var_cache();
+
+    let term = Bool::EqBool(
+        Arc::new(Bool::And(
+            Arc::new(Bool::EqFloat(
+                Arc::new(Float::CastErrFloat),
+                Arc::new(Float::FloatLit(0.0.into())),
+            )),
+            Arc::new(Bool::NeFloat(Arc::new(Float::CastErrFloat), Arc::new(Float::CastErrFloat))),
+        )),
+        Arc::new(Bool::GtStr(
+            Arc::new(Str::BoolToStr(Arc::new(Bool::BoolLit(false)))),
+            Arc::new(Str::StringLit(String::new())),
+        )),
+    );
+    let displayed = format!("{}", term);
+    let parsed = Bool::parse(&displayed)
+        .unwrap_or_else(|err| panic!("displayed Bool should parse: {displayed:?}: {err}"));
+    assert_eq!(format!("{}", parsed), displayed);
+}
+
+#[test]
+fn calculator_bigint_grouped_infix_cast_rhs_display_parses() {
+    mettail_runtime::clear_var_cache();
+
+    let cast = BigInt::BigintCast(Arc::new(Proc::ProcBigInt(Arc::new(BigInt::CastErrBigInt))));
+    let term = BigInt::BitAndBigInt(
+        Arc::new(BigInt::BitAndBigInt(Arc::new(BigInt::CastErrBigInt), Arc::new(cast))),
+        Arc::new(BigInt::CastErrBigInt),
+    );
+    let displayed = format!("{}", term);
+    let parsed = BigInt::parse(&displayed)
+        .unwrap_or_else(|err| panic!("displayed BigInt should parse: {displayed:?}: {err}"));
+    assert_eq!(format!("{}", parsed), displayed);
 }
 
 #[test]

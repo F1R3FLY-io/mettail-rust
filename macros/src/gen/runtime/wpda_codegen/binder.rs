@@ -1033,6 +1033,7 @@ pub(crate) fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
 /// (Pre-F7 history: this used a FIRST-set lookup table + paren-depth scan
 /// + fallback-rule heuristic. The principled Fork-based replacement
 /// fulfills `feedback_use_wpds_disambiguation_not_heuristics.md`.)
+#[allow(dead_code)]
 pub(crate) fn emit_binder_prefix_arms(
     _language: &mettail_ast::language::LanguageDef,
     categories: &[String],

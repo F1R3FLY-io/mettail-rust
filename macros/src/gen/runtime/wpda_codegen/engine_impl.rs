@@ -80,9 +80,11 @@ pub(crate) fn emit_engine_impl_full(
     // arm to suppress the default FireAction.
     let is_binder_internal_collection_lookup =
         super::collection::emit_is_binder_internal_collection_lookup(per_cat);
-    // Phase 5: binder rule prefix arms (recognize trigger literal of binder
-    // rules) + BinderRule state body (multi-step state machine per rule).
-    let binder_arms = super::binder::emit_binder_prefix_arms(language, categories, per_cat);
+    // Phase 5: BinderRule state body (multi-step state machine per rule).
+    // Literal-leading binder/prefix entry arms are emitted by
+    // prefix::emit_prefix_arms_for_category so they share one ambiguity bucket
+    // with atomics, cross-category LHS delegation, and transparent projection
+    // alternatives that have the same first-token evidence.
     // Stage 3.27d (G-PREFIX-BP, 2026-04-30): build the unary-prefix BP map
     // once per language; consumed by ParamParse arms in BinderRule and
     // OptionalGroup state bodies. Empty map => non-unary-prefix rules use
@@ -132,6 +134,12 @@ pub(crate) fn emit_engine_impl_full(
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
+    let chain_atom_rules_for_token_body =
+        super::kind_dispatch::emit_chain_atom_rules_for_token_body(language, per_cat);
+    let chain_atom_producers_for_token_body =
+        super::kind_dispatch::emit_chain_atom_producers_for_token_body(
+            language, per_cat, categories,
+        );
     // Pass-2c token-soundness backstop (2026-05-30): per-rule in-span literal
     // count consumed by the realize-time soundness filter.
     let min_terminal_span_body =
@@ -148,6 +156,8 @@ pub(crate) fn emit_engine_impl_full(
     // reconciliation to fire e.g. `BoolToInt` over a chain-folded `Bool` body.
     let prefix_cast_into_body =
         semantic_actions::emit_prefix_cast_into_body(categories, &per_cat_indexed);
+    let trigger_unary_wrappers_into_body =
+        semantic_actions::emit_trigger_unary_wrappers_into_body(categories, &per_cat_indexed);
     // RC-B (2026-06-17): the leading keyword of each prefix-cast rule (the
     // SAME set), so the pop-site wrap synthesis can reject a candidate whose
     // keyword differs from the enclosing `kw "(" .. ")"` frame's (token-sound).
@@ -173,6 +183,8 @@ pub(crate) fn emit_engine_impl_full(
     // lookahead-conditional GroupingClosePreservingInner branch.
     let category_recognizes_token_dispatch = emit_category_recognizes_token_dispatch(categories);
     let category_recognizes_operator_body = emit_category_recognizes_operator_body(categories);
+    let category_accepts_operator_at_floor_body =
+        emit_category_accepts_operator_at_floor_body(categories);
     // D8 fix (2026-05-13): per-language `type_name → cat_src_idx`
     // lookup body, consumed by the walker's
     // `GroupingClosePreservingInner` sentinel resolution.
@@ -406,8 +418,10 @@ pub(crate) fn emit_engine_impl_full(
                             // `Fixed("list")` — unambiguous in PrefixDispatch
                             // context.
                             #collection_arms
-                            // Phase 5: binder-rule trigger-literal arms.
-                            #binder_arms
+                            // Generic unified prefix arms. These include
+                            // literal-leading binder/prefix rules; keeping
+                            // them bucketed here prevents first-match-wins
+                            // shadowing of projection alternatives.
                             #all_prefix_arms
                             _ => {
                                 // Stage 3.20 / L12 (Commit D, 2026-05-06):
@@ -1927,6 +1941,24 @@ pub(crate) fn emit_engine_impl_full(
                 #action_for_body
             }
 
+            fn chain_atom_rules_for_token(
+                &self,
+                cat_src_idx: u16,
+                kind: &mettail_prattail::automata::TokenKind,
+                text: Option<&str>,
+            ) -> Vec<u16> {
+                #chain_atom_rules_for_token_body
+            }
+
+            fn chain_atom_producers_for_token(
+                &self,
+                cat_src_idx: u16,
+                kind: &mettail_prattail::automata::TokenKind,
+                text: Option<&str>,
+            ) -> Vec<mettail_prattail::wpda_walker::ChainAtomProducer> {
+                #chain_atom_producers_for_token_body
+            }
+
             // EP-P2 (Stage B): delegate the obligation-gate functions to the
             // generated module-level tables (beside WPDA_RULES).
             fn parikh_class_of(
@@ -2043,6 +2075,49 @@ pub(crate) fn emit_engine_impl_full(
                 #single_hop_coercion_body
             }
 
+            fn single_hop_coercion_weight(
+                &self,
+                from_cat: u16,
+                to_cat: u16,
+                coercion_cat: u16,
+                rule_idx: u16,
+                span_len: u32,
+            ) -> mettail_prattail::automata::lex_weight::LexicographicWeight {
+                let _ = (from_cat, to_cat);
+                if coercion_cat == to_cat {
+                    mettail_prattail::wpda_runtime::lex_w(
+                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION
+                            * f64::from(span_len.max(1)),
+                        coercion_cat,
+                        rule_idx,
+                    )
+                } else {
+                    mettail_prattail::wpda_runtime::lex_one()
+                }
+            }
+
+            fn single_hop_coercion_completion_weight(
+                &self,
+                from_cat: u16,
+                to_cat: u16,
+                coercion_cat: u16,
+                rule_idx: u16,
+                span_len: u32,
+            ) -> mettail_prattail::automata::lex_weight::LexicographicWeight {
+                let _ = (from_cat, to_cat);
+                let extra_span = span_len.saturating_sub(1);
+                if coercion_cat == to_cat && extra_span > 0 {
+                    mettail_prattail::wpda_runtime::lex_w(
+                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION
+                            * f64::from(extra_span),
+                        coercion_cat,
+                        rule_idx,
+                    )
+                } else {
+                    mettail_prattail::wpda_runtime::lex_one()
+                }
+            }
+
             fn prefix_cast_into(&self, from_cat: u16, to_cat: u16) -> Option<u16> {
                 // RC-B (2026-06-17): trigger-bearing prefix cast table — the
                 // local rule index in `to_cat` of the `kw "(" a ")"` cast
@@ -2052,6 +2127,14 @@ pub(crate) fn emit_engine_impl_full(
                 // walker re-validates every hit against `action_for` +
                 // `min_terminal_span`.
                 #prefix_cast_into_body
+            }
+
+            fn trigger_unary_wrappers_into(&self, from_cat: u16, to_cat: u16) -> &'static [u16] {
+                // RC-B (2026-06-19): all trigger-bearing unary wrappers for
+                // `(from_cat, to_cat)`, including same-category wrappers.
+                // Callers filter by keyword and action evidence so ambiguity
+                // is preserved until the observed wrapper token rejects it.
+                #trigger_unary_wrappers_into_body
             }
 
             fn prefix_cast_keyword(&self, to_cat: u16, rule_idx: u16) -> Option<&'static str> {
@@ -2066,6 +2149,15 @@ pub(crate) fn emit_engine_impl_full(
 
             fn category_recognizes_operator(&self, cat: u16, token_text: &str) -> bool {
                 #category_recognizes_operator_body
+            }
+
+            fn category_accepts_operator_at_floor(
+                &self,
+                cat: u16,
+                token_text: &str,
+                floor: u8,
+            ) -> bool {
+                #category_accepts_operator_at_floor_body
             }
 
             fn is_structural_open_delimiter(
@@ -2259,6 +2351,40 @@ fn emit_category_recognizes_operator_body(categories: &[String]) -> TokenStream 
                 #infix_fn(token_text).is_some()
                     || #postfix_fn(token_text).is_some()
                     || #mixfix_fn(token_text).is_some()
+            }
+        }
+    });
+    quote! {
+        match cat {
+            #(#arms,)*
+            _ => false,
+        }
+    }
+}
+
+/// Body for `WpdaEngine::category_accepts_operator_at_floor(cat, token_text, floor)`.
+///
+/// Binding-power values are category-local, so this query intentionally uses
+/// only the queried category's own operator tables. It answers whether the
+/// category recognizes `token_text` as an operator whose left binding power is
+/// high enough for the active Pratt floor.
+fn emit_category_accepts_operator_at_floor_body(categories: &[String]) -> TokenStream {
+    let arms = categories.iter().enumerate().map(|(i, cat)| {
+        let i_u16 = i as u16;
+        let infix_fn = quote::format_ident!("infix_bp_{}", cat.to_lowercase());
+        let postfix_fn = quote::format_ident!("postfix_bp_{}", cat.to_lowercase());
+        let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
+        quote! {
+            #i_u16 => {
+                #infix_fn(token_text)
+                    .map(|(left_bp, _, _, _)| left_bp >= floor)
+                    .unwrap_or(false)
+                    || #postfix_fn(token_text)
+                        .map(|(left_bp, _, _)| left_bp >= floor)
+                        .unwrap_or(false)
+                    || #mixfix_fn(token_text)
+                        .map(|(left_bp, _, _)| left_bp >= floor)
+                        .unwrap_or(false)
             }
         }
     });

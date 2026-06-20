@@ -215,6 +215,16 @@ fn test_pow_right_associativity() {
 }
 
 #[test]
+fn test_pow_right_assoc_cast_error_chain_parses() {
+    mettail_runtime::clear_var_cache();
+    Int::parse(
+        "cast_error_int ^ cast_error_int ^ cast_error_int ^ cast_error_int ^ \
+         cast_error_int ^ cast_error_int ^ cast_error_int ^ cast_error_int",
+    )
+    .expect("right-associative power chain with keyword operands should parse");
+}
+
+#[test]
 fn test_pow_simple() {
     mettail_runtime::clear_var_cache();
     let result = Int::parse("2 ^ 10").expect("should parse");
