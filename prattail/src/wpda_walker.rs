@@ -358,6 +358,24 @@ pub trait WpdaEngine<W: SemiringRef> {
             .collect()
     }
 
+    /// Return true when `kind` has a live non-atomic prefix path in
+    /// `cat_src_idx` through the ordinary PrefixDispatch machinery.
+    ///
+    /// Chain synthesis may ignore same-span lexical alternatives that do not
+    /// inhabit the requested category. It must not ignore an alternative that
+    /// can start that category but is not fully represented as a complete
+    /// single-token atom, such as `bigrat` in `bigrat(...)`; those alternatives
+    /// remain live evidence and require the ordinary WPDA path.
+    fn prefix_token_has_non_atom_start(
+        &self,
+        cat_src_idx: u16,
+        kind: &TokenKind,
+        text: Option<&str>,
+    ) -> bool {
+        let _ = (cat_src_idx, kind, text);
+        false
+    }
+
     /// EP-P2 (Stage B): the token-class bit-index of `kind` for the Parikh
     /// suffix-obligation gate (`WPDA_PARIKH_CLASS_OF`). One class per
     /// grammar-declared cross-cat infix-trigger terminal + one coarse
@@ -10774,11 +10792,15 @@ where
                         return self.cursor_resolution_check(cursor);
                     }
                     // Defensive fall-through: peek-confirmed chain failed to
-                    // synthesize (should not happen). Treat as a plain
-                    // single-op consume+push so the parse still progresses.
+                    // synthesize (should not happen). Resume the ordinary
+                    // infix RHS sub-parse; the pre-fork absorb action's
+                    // `new_state` is the post-absorb state, not a valid
+                    // fallback continuation.
+                    let fallback_state =
+                        self.normal_infix_rhs_state_for_iter_absorb(cursor, tokens, &spec);
                     self.emit_push_side_effects(cursor, &mut symbol);
                     let edge_kind =
-                        self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                        self.edge_kind_for_push_transition(cursor.node, &symbol, &fallback_state);
                     let _ = self.cursor_gss_push_with_kind(
                         cursor,
                         symbol,
@@ -10788,7 +10810,7 @@ where
                     );
                     self.advance_cursor_pos(cursor, tokens, 1);
                     self.multiply_cursor_weight(cursor, &weight);
-                    self.set_cursor_inner_state(cursor, new_state);
+                    self.set_cursor_inner_state(cursor, fallback_state);
                     return self.cursor_resolution_check(cursor);
                 }
                 // ── LEFT-assoc path (C1 WALK-S3: direct synth_binary_chain) ──
@@ -19971,7 +19993,6 @@ where
             producers.sort_unstable();
             producers.dedup();
 
-            let mut alt_successful: Vec<(ChainAtomProducer, TokenKind, String)> = Vec::new();
             for producer in producers {
                 let Some((atom_value, atom_output_cat)) = self.eval_token_atom_action(
                     producer.atom_cat_src_idx,
@@ -20016,12 +20037,14 @@ where
                 } else if producer.atom_cat_src_idx != spec.atom_cat_src_idx {
                     continue;
                 }
-                alt_successful.push((producer, kind.clone(), text.to_string()));
+                successful.push((producer, kind.clone(), text.to_string()));
             }
-            if alt_successful.is_empty() {
+            if self
+                .engine
+                .prefix_token_has_non_atom_start(spec.atom_cat_src_idx, &kind, Some(text))
+            {
                 return None;
             }
-            successful.extend(alt_successful);
         }
         if successful.is_empty() {
             return None;
@@ -20188,6 +20211,32 @@ where
         };
         self.engine
             .category_recognizes_operator(spec.op_cat_src_idx, next_text)
+    }
+
+    fn normal_infix_rhs_state_for_iter_absorb(
+        &self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+        spec: &crate::binding_power::IterAbsorbSpec,
+    ) -> WpdaState {
+        let state_cat_src_idx = self
+            .gss
+            .node(cursor.node)
+            .map(|node| node.symbol.category_src_idx)
+            .unwrap_or(spec.atom_cat_src_idx);
+        if spec.op_cat_src_idx != state_cat_src_idx {
+            WpdaState::CrossCatDelegate {
+                source_src_idx: state_cat_src_idx,
+                inner_cur_bp: spec.right_bp,
+            }
+        } else {
+            WpdaState::PrefixDispatch {
+                pos: tokens
+                    .next_pos(cursor.pos, 0)
+                    .unwrap_or_else(|| cursor.pos.saturating_add(1)),
+                cur_bp: spec.right_bp,
+            }
+        }
     }
 
     /// C1-R (WALK-S1): direct O(N) synthesizer for a WHOLE binary chain,
@@ -26618,7 +26667,320 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct ChainSynthIntEngine {
+        integer_has_non_atom_start: bool,
+    }
+
+    impl ChainSynthIntEngine {
+        const PLAIN: Self = Self { integer_has_non_atom_start: false };
+        const INTEGER_AMBIGUOUS: Self = Self { integer_has_non_atom_start: true };
+    }
+
+    impl WpdaEngine<LexicographicWeight> for ChainSynthIntEngine {
+        fn step(
+            &self,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
+            _pos: usize,
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            WpdaStepAction::Idle
+        }
+
+        fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
+            fn int_lit_action(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+                let arg = args.into_iter().next().expect("arity 1");
+                let text = arg.as_token_text().unwrap_or("0");
+                let parsed: i64 = text.parse().unwrap_or(0);
+                b.push_term::<i64>(parsed);
+            }
+            static ACTION: ActionEntry = ActionEntry {
+                action_fn: int_lit_action,
+                arity: 1,
+                expected_input_cats: &[crate::wpda_runtime::ANY_CAT],
+                output_cat: 0,
+            };
+            if src_idx == 0 && rule_idx == 0 {
+                Some(&ACTION)
+            } else {
+                None
+            }
+        }
+
+        fn chain_atom_producers_for_token(
+            &self,
+            cat_src_idx: u16,
+            kind: &TokenKind,
+            _text: Option<&str>,
+        ) -> Vec<ChainAtomProducer> {
+            if cat_src_idx == 0 && matches!(kind, TokenKind::Integer) {
+                vec![ChainAtomProducer::direct(0, 0)]
+            } else {
+                Vec::new()
+            }
+        }
+
+        fn prefix_token_has_non_atom_start(
+            &self,
+            cat_src_idx: u16,
+            kind: &TokenKind,
+            _text: Option<&str>,
+        ) -> bool {
+            cat_src_idx == 0
+                && ((self.integer_has_non_atom_start && matches!(kind, TokenKind::Integer))
+                    || matches!(kind, TokenKind::Fixed(text) if text == "wrap"))
+        }
+    }
+
     use crate::wpda_runtime::{ActionArg, ActionEntry, SemanticBuilder, SliceTokenSource};
+
+    fn lex_alt(
+        kind: TokenKind,
+        text: &str,
+        end_byte: usize,
+        weight: f64,
+    ) -> crate::lexer_types::LexAlternative {
+        crate::lexer_types::LexAlternative {
+            kind,
+            text: text.to_string(),
+            end_byte,
+            weight: crate::automata::semiring::TropicalWeight(weight),
+        }
+    }
+
+    #[test]
+    fn right_assoc_chain_synthesis_ignores_irrelevant_same_span_lex_alts() {
+        let stream = crate::lexer_types::LexStream {
+            entries: vec![
+                crate::lexer_types::LexEntry {
+                    byte_start: 0,
+                    alternatives: vec![
+                        lex_alt(TokenKind::Integer, "2", 1, 0.0),
+                        lex_alt(TokenKind::Ident, "2", 1, 1.0),
+                    ],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 2,
+                    alternatives: vec![lex_alt(TokenKind::Fixed("^".into()), "^", 3, 0.0)],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 4,
+                    alternatives: vec![
+                        lex_alt(TokenKind::Integer, "2", 5, 0.0),
+                        lex_alt(TokenKind::Ident, "2", 5, 1.0),
+                    ],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 6,
+                    alternatives: vec![lex_alt(TokenKind::Fixed("^".into()), "^", 7, 0.0)],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 8,
+                    alternatives: vec![
+                        lex_alt(TokenKind::Integer, "2", 9, 0.0),
+                        lex_alt(TokenKind::Ident, "2", 9, 1.0),
+                    ],
+                },
+            ],
+        };
+        let token_src = crate::wpda_runtime::MultiTokenSource::new(stream);
+        assert!(peek_binary_chain(&token_src, 1, 3));
+
+        let mut walker = WpdaWalker::new(ChainSynthIntEngine::PLAIN, 0);
+        let mut cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::InfixLoop { cur_bp: 0 },
+        );
+        let head = walker
+            .intern_chain_atom_symbol(0, 1, &TokenKind::Integer, "2", 0, 0)
+            .expect("head atom should intern");
+        cursor.sppf_stack_id = walker
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, head);
+        let spec = crate::binding_power::IterAbsorbSpec {
+            left_bp: 27,
+            right_bp: 26,
+            assoc_right: true,
+            is_mixfix: false,
+            op_cat_src_idx: 0,
+            op_rule_idx: 1,
+            atom_cat_src_idx: 0,
+            atom_lit_rule_idx: 0,
+            trigger: "",
+            sep: "",
+        };
+
+        let (root, _weight, chain_end) = walker
+            .synth_binary_chain(&cursor, &token_src, &spec, LexicographicWeight::one())
+            .expect("typed Int chain synthesis should ignore non-Int lex alternatives");
+        assert_eq!(chain_end, 5);
+        match walker.sppf.node(root).expect("root must exist") {
+            crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. } => {
+                assert_eq!((*non_terminal_tag, *lo_pos, *hi_pos), (0, 0, 5));
+            },
+            other => panic!("expected synthesized root Symbol, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chain_synthesis_declines_category_starting_non_atom_lex_alts() {
+        let stream = crate::lexer_types::LexStream {
+            entries: vec![
+                crate::lexer_types::LexEntry {
+                    byte_start: 0,
+                    alternatives: vec![lex_alt(TokenKind::Integer, "2", 1, 0.0)],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 2,
+                    alternatives: vec![lex_alt(TokenKind::Fixed("*".into()), "*", 3, 0.0)],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 4,
+                    alternatives: vec![
+                        lex_alt(TokenKind::Integer, "2", 5, 0.0),
+                        lex_alt(TokenKind::Fixed("wrap".into()), "wrap", 5, 1.0),
+                    ],
+                },
+            ],
+        };
+        let token_src = crate::wpda_runtime::MultiTokenSource::new(stream);
+        assert!(peek_binary_chain(&token_src, 1, 2));
+
+        let mut walker = WpdaWalker::new(ChainSynthIntEngine::PLAIN, 0);
+        let mut cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::InfixLoop { cur_bp: 0 },
+        );
+        let head = walker
+            .intern_chain_atom_symbol(0, 1, &TokenKind::Integer, "2", 0, 0)
+            .expect("head atom should intern");
+        cursor.sppf_stack_id = walker
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, head);
+        let spec = crate::binding_power::IterAbsorbSpec {
+            left_bp: 20,
+            right_bp: 21,
+            assoc_right: false,
+            is_mixfix: false,
+            op_cat_src_idx: 0,
+            op_rule_idx: 1,
+            atom_cat_src_idx: 0,
+            atom_lit_rule_idx: 0,
+            trigger: "",
+            sep: "",
+        };
+
+        assert!(
+            walker
+                .synth_binary_chain(&cursor, &token_src, &spec, LexicographicWeight::one())
+                .is_none(),
+            "a same-span non-atomic prefix alternative must stay with the ordinary WPDA path",
+        );
+    }
+
+    #[test]
+    fn chain_synthesis_declines_same_token_non_atom_start_with_atom_producer() {
+        let stream = crate::lexer_types::LexStream {
+            entries: vec![
+                crate::lexer_types::LexEntry {
+                    byte_start: 0,
+                    alternatives: vec![lex_alt(TokenKind::Integer, "2", 1, 0.0)],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 2,
+                    alternatives: vec![lex_alt(TokenKind::Fixed("*".into()), "*", 3, 0.0)],
+                },
+                crate::lexer_types::LexEntry {
+                    byte_start: 4,
+                    alternatives: vec![lex_alt(TokenKind::Integer, "2", 5, 0.0)],
+                },
+            ],
+        };
+        let token_src = crate::wpda_runtime::MultiTokenSource::new(stream);
+        assert!(peek_binary_chain(&token_src, 1, 2));
+
+        let mut walker = WpdaWalker::new(ChainSynthIntEngine::INTEGER_AMBIGUOUS, 0);
+        let mut cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            1,
+            LexicographicWeight::one(),
+            WpdaState::InfixLoop { cur_bp: 0 },
+        );
+        let head = walker
+            .intern_chain_atom_symbol(0, 1, &TokenKind::Integer, "2", 0, 0)
+            .expect("head atom should intern");
+        cursor.sppf_stack_id = walker
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, head);
+        let spec = crate::binding_power::IterAbsorbSpec {
+            left_bp: 20,
+            right_bp: 21,
+            assoc_right: false,
+            is_mixfix: false,
+            op_cat_src_idx: 0,
+            op_rule_idx: 1,
+            atom_cat_src_idx: 0,
+            atom_lit_rule_idx: 0,
+            trigger: "",
+            sep: "",
+        };
+
+        assert!(
+            walker
+                .synth_binary_chain(&cursor, &token_src, &spec, LexicographicWeight::one())
+                .is_none(),
+            "a token with both an atom producer and a non-atomic prefix path must stay ambiguous",
+        );
+    }
+
+    #[test]
+    fn right_assoc_absorb_fallback_reconstructs_normal_rhs_state() {
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let token_kinds = [TokenKind::Fixed("^".into()), TokenKind::Integer];
+        let token_texts = ["^", "2"];
+        let token_src = SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let mut cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            0,
+            LexicographicWeight::one(),
+            WpdaState::InfixLoop { cur_bp: 0 },
+        );
+        let _ = walker.cursor_gss_push_with_kind(
+            &mut cursor,
+            StackSymbolV2::category_entry(7),
+            0,
+            LexicographicWeight::one(),
+            crate::gss::EdgeKind::Generic,
+        );
+        let same_cat = crate::binding_power::IterAbsorbSpec {
+            left_bp: 11,
+            right_bp: 10,
+            assoc_right: true,
+            is_mixfix: false,
+            op_cat_src_idx: 7,
+            op_rule_idx: 3,
+            atom_cat_src_idx: 7,
+            atom_lit_rule_idx: 0,
+            trigger: "",
+            sep: "",
+        };
+        assert!(matches!(
+            walker.normal_infix_rhs_state_for_iter_absorb(&cursor, &token_src, &same_cat),
+            WpdaState::PrefixDispatch { pos: 1, cur_bp: 10 }
+        ));
+
+        let cross_cat = crate::binding_power::IterAbsorbSpec { op_cat_src_idx: 9, ..same_cat };
+        assert!(matches!(
+            walker.normal_infix_rhs_state_for_iter_absorb(&cursor, &token_src, &cross_cat),
+            WpdaState::CrossCatDelegate { source_src_idx: 7, inner_cur_bp: 10 }
+        ));
+    }
 
     fn install_atomic_int_success_root(
         walker: &mut WpdaWalker<LexicographicWeight, AtomicIntEngine>,

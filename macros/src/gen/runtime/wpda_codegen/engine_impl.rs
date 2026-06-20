@@ -1959,6 +1959,22 @@ pub(crate) fn emit_engine_impl_full(
                 #chain_atom_producers_for_token_body
             }
 
+            fn prefix_token_has_non_atom_start(
+                &self,
+                cat_src_idx: u16,
+                kind: &mettail_prattail::automata::TokenKind,
+                text: Option<&str>,
+            ) -> bool {
+                let _ = text;
+                lex_alt_rules_for_prefix(cat_src_idx, kind).into_iter().any(|info| {
+                    !matches!(
+                        info.kind,
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic
+                    )
+                }) || prefix_primary_has_non_atom_dispatch_rule(cat_src_idx, kind)
+                    || prefix_crosscat_lhs_has_dispatch_rule(cat_src_idx, kind)
+            }
+
             // EP-P2 (Stage B): delegate the obligation-gate functions to the
             // generated module-level tables (beside WPDA_RULES).
             fn parikh_class_of(

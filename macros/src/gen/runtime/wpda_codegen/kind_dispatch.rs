@@ -100,6 +100,8 @@ pub fn emit_lex_alt_rule_for_fn(
     }
     emit_prefix_crosscat_lhs_pushes(_language, categories, &mut prefix_pushes);
     let prefix_primary_dispatch_arms = emit_prefix_primary_dispatch_arms(_language, per_cat);
+    let prefix_primary_non_atom_dispatch_arms =
+        emit_prefix_primary_non_atom_dispatch_arms(_language, per_cat);
     let prefix_crosscat_lhs_dispatch_arms =
         emit_prefix_crosscat_lhs_dispatch_arms(_language, categories);
     let prefix_crosscat_lhs_trigger_set_arms =
@@ -144,6 +146,21 @@ pub fn emit_lex_alt_rule_for_fn(
         ) -> bool {
             match (cat_src_idx, kind) {
                 #( #prefix_primary_dispatch_arms )*
+                _ => false,
+            }
+        }
+
+        /// Returns true when normal PrefixDispatch has a primary-token arm
+        /// for a prefix path that is not fully represented as a single-token
+        /// atom. Chain synthesis uses this as live evidence to stay on the
+        /// ordinary WPDA path instead of collapsing the ambiguous prefix.
+        #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+        fn prefix_primary_has_non_atom_dispatch_rule(
+            cat_src_idx: u16,
+            kind: &mettail_prattail::automata::TokenKind,
+        ) -> bool {
+            match (cat_src_idx, kind) {
+                #( #prefix_primary_non_atom_dispatch_arms )*
                 _ => false,
             }
         }
@@ -673,6 +690,49 @@ fn emit_prefix_primary_dispatch_arms(
                     }
                 },
                 _ => {},
+            }
+        }
+    }
+
+    fixed_triggers
+        .into_iter()
+        .map(|(cat_src_idx, terminal)| {
+            quote! {
+                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                    if __t == #terminal => true,
+            }
+        })
+        .collect()
+}
+
+fn emit_prefix_primary_non_atom_dispatch_arms(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> Vec<TokenStream> {
+    let mut fixed_triggers = std::collections::BTreeSet::<(u16, String)>::new();
+    for (cat_src_idx, rules) in per_cat.iter().enumerate() {
+        let cat_src_idx = cat_src_idx as u16;
+        for rule in rules {
+            match classify_atomic(rule, language) {
+                AtomicShape::PrefixOperator { trigger: terminal_text, .. }
+                | AtomicShape::CrossCatPrefixUnary { trigger: terminal_text, .. } => {
+                    fixed_triggers.insert((cat_src_idx, terminal_text));
+                },
+                AtomicShape::NonAtomic => {
+                    if let Some(sp) = rule.syntax_pattern.as_ref() {
+                        if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first() {
+                            fixed_triggers.insert((cat_src_idx, text.clone()));
+                        }
+                    }
+                },
+                AtomicShape::TerminalKeyword { .. }
+                | AtomicShape::LiteralInteger
+                | AtomicShape::LiteralBoolean
+                | AtomicShape::LiteralString
+                | AtomicShape::LiteralFloat
+                | AtomicShape::LiteralPatterned { .. }
+                | AtomicShape::VarRule { .. }
+                | AtomicShape::CrossCatProjection { .. } => {},
             }
         }
     }
