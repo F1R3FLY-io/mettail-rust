@@ -1132,6 +1132,52 @@ struct CrossCatLhsBodyOrigin {
     origin: crate::gss::CrossCatLhsReentryOrigin,
 }
 
+/// Perf (deep-nesting fix, 2026-06-20): a tiny bitset recording which
+/// "interesting" edge kinds appear ANYWHERE within an incoming-edge stack.
+/// Memoized per interned `EdgeStackId` (see `crosscat_lhs_stack_scope_flags`)
+/// so the several "nearest enclosing edge of kind K" per-step queries can
+/// short-circuit in `O(1)` instead of re-walking the whole `O(depth)` stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct EdgeStackScopeFlags(u8);
+
+impl EdgeStackScopeFlags {
+    /// Any cross-category-family edge: the union searched by
+    /// `nearest_cross_cat_lhs_context` and `crosscat_projection_target_boundary`
+    /// (`CrossCatLhs`, `CrossCatLhsScoped`, `CrossCatLhsReentry`,
+    /// `TransparentSourceReentry`, `CrossCatProjection`).
+    const CROSSCAT: u8 = 0b0000_0001;
+    /// Any `PrefixRuleEntry` edge (searched by `enclosing_prefix_rule_frame`).
+    const PREFIX_RULE: u8 = 0b0000_0010;
+
+    #[inline]
+    fn empty() -> Self {
+        EdgeStackScopeFlags(0)
+    }
+
+    #[inline]
+    fn union(self, other: Self) -> Self {
+        EdgeStackScopeFlags(self.0 | other.0)
+    }
+
+    #[inline]
+    fn has_crosscat(self) -> bool {
+        self.0 & Self::CROSSCAT != 0
+    }
+
+    #[inline]
+    fn has_prefix_rule(self) -> bool {
+        self.0 & Self::PREFIX_RULE != 0
+    }
+
+    /// Whether all tracked bits are already set (the recurrence can stop
+    /// short-circuiting once the running union is saturated).
+    #[inline]
+    fn is_saturated(self) -> bool {
+        self.0 & (Self::CROSSCAT | Self::PREFIX_RULE)
+            == (Self::CROSSCAT | Self::PREFIX_RULE)
+    }
+}
+
 /// RC-B (2026-06-17): one pop-site prefix-cast wrap synthesis job. Carries
 /// everything `synthesize_prefix_cast_wrap_cursor` needs to fire the
 /// trigger-bearing prefix cast `C_in -> C_out` (e.g. `BoolToInt`) over a
@@ -1210,6 +1256,13 @@ struct PrefixCastWaiter<W: SemiringRef> {
     body_cat: u16,
     /// Input position immediately after the wrapper's opening delimiter.
     body_start_pos: usize,
+    /// `position_order_key(body_start_pos)` captured at park time. Used by
+    /// `try_stage_parked_prefix_cast_waiters` to skip waiters that fail the
+    /// drain-necessary `body_start_pos ≤ body_lo` (position-order) condition
+    /// WITHOUT re-deriving it from the token source, and to range-bound the
+    /// per-category index (`parked_prefix_cast_waiters_by_cat`). `None` if the
+    /// position had no order key at park (treated as never-matching).
+    body_start_pos_order_key: Option<usize>,
     /// Cast keyword input position; the synthesized result spans from here.
     trigger_lo: usize,
     /// Output category of the direct prefix cast.
@@ -1420,6 +1473,50 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// all body publication obligations attached by deduped arrivals.
     crosscat_lhs_body_origins:
         rustc_hash::FxHashMap<crate::gss::GssEdgeId, Vec<CrossCatLhsBodyOrigin>>,
+    /// Perf (deep-nesting fix, 2026-06-20): memo of the FULL set of
+    /// CrossCatLhs body-origins visible from a given incoming-edge stack,
+    /// keyed by the interned `EdgeStackId`.
+    ///
+    /// `crosscat_lhs_body_origins_visible_to_cursor` previously re-walked the
+    /// ENTIRE incoming-edge stack on every GSS push/replace, making a parse of
+    /// `N`-deep single-category nesting (e.g. `((((1))))` or `- - - 1`) pay
+    /// `O(N)` per reduce → `O(N²)` overall. The visible set is a pure function
+    /// of the (content-addressed) edge stack: each edge's own origins are
+    /// FINAL at the moment it becomes the stack top (recorded at push time,
+    /// before the push; never mutated for an interior edge afterward — see
+    /// `record_crosscat_lhs_body_origins_for_edge`, whose only two callers
+    /// stamp the freshly-created top edge). So the visible set is memoizable
+    /// and computed incrementally as `own(top) ∪ visible(parent)`, giving
+    /// amortized `O(|delta|)` per push (`O(1)` when no cross-category casts are
+    /// in scope, as for pure arithmetic nesting). Cleared with the other
+    /// per-parse CrossCatLhs tables on `reset`/source change.
+    crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap<
+        crate::edge_stack_arena::EdgeStackId,
+        std::sync::Arc<Vec<CrossCatLhsBodyOrigin>>,
+    >,
+    /// Perf (deep-nesting fix, 2026-06-20): memo of "which interesting edge
+    /// kinds appear ANYWHERE in this incoming-edge stack", as a small bitset,
+    /// keyed by interned `EdgeStackId`.
+    ///
+    /// Several per-step queries (`nearest_cross_cat_lhs_context`,
+    /// `crosscat_projection_target_boundary`, `enclosing_prefix_rule_frame`)
+    /// previously walked the WHOLE incoming-edge stack top-down looking for the
+    /// nearest edge of a given kind. For `N`-deep single-category nesting that
+    /// carries none of those kinds, each walk is `O(N)` → `O(N²)` overall. The
+    /// "stack contains kind K" predicate is monotone along the stack
+    /// (`flags(stack) = own_flags(top) | flags(parent)`) and the stack is
+    /// content-addressed, so it is memoizable and `O(1)`-amortized. When a
+    /// query's bit is clear, it short-circuits without walking. See
+    /// [`EdgeStackScopeFlags`]. Cleared with the other per-parse tables.
+    ///
+    /// `RefCell` because some consulting call chains
+    /// (`nearest_cross_cat_lhs_context` → guard helpers) are `&self`; the cell is
+    /// only ever borrowed transiently inside the predicate (no re-entrancy) and
+    /// the walker is single-threaded per parse, so this is a pure read-through
+    /// cache, not shared mutable state.
+    crosscat_lhs_stack_scope_flags: std::cell::RefCell<
+        rustc_hash::FxHashMap<crate::edge_stack_arena::EdgeStackId, EdgeStackScopeFlags>,
+    >,
     /// CrossCatLhs body-delivery obligations carried by SPPF values. A later
     /// reduction can consume an obligated body as a child after its GSS
     /// reentry edge is no longer visible on that reducing cursor; this
@@ -1617,6 +1714,23 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// preserves ambiguity additively: waiters only add sound continuations
     /// after evidence appears; they never prune candidate parses.
     parked_prefix_cast_waiters: Vec<PrefixCastWaiter<W>>,
+    /// Perf (deep-nesting fix, 2026-06-20): per-`body_cat` index of parked
+    /// waiters, keyed by `body_start_pos_order_key`, mapping to the indices into
+    /// `parked_prefix_cast_waiters` parked at that position.
+    ///
+    /// `try_stage_parked_prefix_cast_waiters` joins a fired body (category
+    /// `body_cat`, span-low `body_lo`) only with waiters whose body could begin
+    /// at-or-after the wrapper open, i.e. `body_start_pos ≤ body_lo` in token
+    /// position order — a NECESSARY condition the `drain_prefix_cast_wrap_jobs`
+    /// guard already enforces. Previously the staging loop scanned ALL parked
+    /// waiters on EVERY fire; for a `N`-deep prefix chain (`- - - 1`) that is
+    /// `O(N)` per fire → `O(N²)`. This `BTreeMap` lets the staging restrict to
+    /// the `..= order_key(body_lo)` range of the matching category, which is
+    /// empty for left-anchored bodies (the common deep-nesting shape), turning
+    /// the scan into `O(log N + matches)`. Append-only (waiters are never
+    /// removed mid-parse); cleared with `parked_prefix_cast_waiters`.
+    parked_prefix_cast_waiters_by_cat:
+        rustc_hash::FxHashMap<u16, std::collections::BTreeMap<usize, Vec<usize>>>,
     /// Idempotence index for `pending_prefix_cast_wrap_jobs`.
     ///
     /// Prefix-cast reconciliation is an additive join between a parked
@@ -4423,6 +4537,10 @@ where
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_stack_scope_flags: std::cell::RefCell::new(
+                rustc_hash::FxHashMap::default(),
+            ),
             crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
@@ -4447,6 +4565,7 @@ where
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
+            parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
             pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
             parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
             transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
@@ -4527,6 +4646,10 @@ where
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_stack_scope_flags: std::cell::RefCell::new(
+                rustc_hash::FxHashMap::default(),
+            ),
             crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
@@ -4551,6 +4674,7 @@ where
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
+            parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
             pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
             parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
             transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
@@ -4630,6 +4754,10 @@ where
             parked_crosscat_lhs_outstanding: 0,
             crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
             crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap::default(),
+            crosscat_lhs_stack_scope_flags: std::cell::RefCell::new(
+                rustc_hash::FxHashMap::default(),
+            ),
             crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
@@ -4654,6 +4782,7 @@ where
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
+            parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
             pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
             parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
             transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
@@ -4744,6 +4873,7 @@ where
         self.pending_cohort_drain_keys.clear();
         self.pending_prefix_cast_wrap_jobs.clear();
         self.parked_prefix_cast_waiters.clear();
+        self.parked_prefix_cast_waiters_by_cat.clear();
         self.pending_prefix_cast_wrap_job_keys.clear();
         self.parked_prefix_cast_waiter_keys.clear();
         self.transparent_source_reentry_keys.clear();
@@ -4760,6 +4890,8 @@ where
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
         self.crosscat_lhs_body_origins.clear();
+        self.crosscat_lhs_visible_origins_cache.clear();
+        self.crosscat_lhs_stack_scope_flags.borrow_mut().clear();
         self.crosscat_lhs_sppf_body_origins.clear();
         self.ep_p1_eoi_release = false;
         // EP-P2 (Stage B): the per-parse suffix-class masks are
@@ -4860,6 +4992,7 @@ where
         self.pending_cohort_drain_keys.clear();
         self.pending_prefix_cast_wrap_jobs.clear();
         self.parked_prefix_cast_waiters.clear();
+        self.parked_prefix_cast_waiters_by_cat.clear();
         self.pending_prefix_cast_wrap_job_keys.clear();
         self.parked_prefix_cast_waiter_keys.clear();
         self.transparent_source_reentry_keys.clear();
@@ -4876,6 +5009,8 @@ where
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
         self.crosscat_lhs_body_origins.clear();
+        self.crosscat_lhs_visible_origins_cache.clear();
+        self.crosscat_lhs_stack_scope_flags.borrow_mut().clear();
         self.crosscat_lhs_sppf_body_origins.clear();
         self.ep_p1_eoi_release = false;
         // EP-P2 (Stage B): the per-parse suffix-class masks are
@@ -8515,61 +8650,111 @@ where
             .map(|origin| CrossCatLhsBodyOrigin { source_src_idx, origin })
     }
 
-    fn crosscat_lhs_body_origins_visible_to_cursor(
+    /// Append the CrossCatLhs body-origins contributed by a SINGLE incoming
+    /// edge (its scope-kind-derived origin plus any stored obligations). Pure
+    /// function of immutable per-edge data; the result is FINAL once the edge
+    /// is pushed (see `crosscat_lhs_visible_origins_cache`).
+    fn crosscat_lhs_own_body_origins_for_edge(
         &self,
+        edge_id: crate::gss::GssEdgeId,
+        origins: &mut Vec<CrossCatLhsBodyOrigin>,
+    ) {
+        match self.gss.edge_kind_ref(edge_id) {
+            Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) => {
+                if let Some(origin) =
+                    self.crosscat_lhs_body_origin_from_scope_edge(edge_id, *source_src_idx, 0)
+                {
+                    Self::push_unique_crosscat_lhs_body_origin(origins, origin);
+                }
+            },
+            Some(crate::gss::EdgeKind::CrossCatLhsScoped {
+                source_src_idx,
+                min_bp,
+                ..
+            }) => {
+                if let Some(origin) =
+                    self.crosscat_lhs_body_origin_from_scope_edge(edge_id, *source_src_idx, *min_bp)
+                {
+                    Self::push_unique_crosscat_lhs_body_origin(origins, origin);
+                }
+            },
+            Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                source_src_idx,
+                origin: Some(origin),
+                ..
+            }) => {
+                Self::push_unique_crosscat_lhs_body_origin(
+                    origins,
+                    CrossCatLhsBodyOrigin {
+                        source_src_idx: *source_src_idx,
+                        origin: *origin,
+                    },
+                );
+            },
+            _ => {},
+        }
+        if let Some(stored) = self.crosscat_lhs_body_origins.get(&edge_id) {
+            for &origin in stored {
+                Self::push_unique_crosscat_lhs_body_origin(origins, origin);
+            }
+        }
+    }
+
+    /// Memoized full visible-origin set for an interned incoming-edge stack.
+    ///
+    /// Computes `visible(stack) = own(top) ∪ visible(parent)` incrementally,
+    /// walking down only as far as the nearest already-cached ancestor and
+    /// caching every stack-id on the way back up. This turns the previously
+    /// `O(stack_depth)`-per-call rescan into amortized `O(|delta|)` (and `O(1)`
+    /// for the common case of no cross-category scope on the stack), which is
+    /// what restores linear-time deep single-category nesting. Soundness: see
+    /// the `crosscat_lhs_visible_origins_cache` field doc — per-edge origins are
+    /// final once an edge becomes the stack top, and the stack is
+    /// content-addressed, so a cached entry can never go stale within a parse.
+    fn crosscat_lhs_visible_origins(
+        &mut self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> std::sync::Arc<Vec<CrossCatLhsBodyOrigin>> {
+        if let Some(cached) = self.crosscat_lhs_visible_origins_cache.get(&stack_id) {
+            return cached.clone();
+        }
+        // Walk down to the nearest cached ancestor (or the root), recording the
+        // uncached suffix top-first.
+        let mut uncached: Vec<(crate::edge_stack_arena::EdgeStackId, crate::gss::GssEdgeId)> =
+            Vec::new();
+        let mut cur = stack_id;
+        let base: Vec<CrossCatLhsBodyOrigin> = loop {
+            if cur == crate::edge_stack_arena::EDGE_STACK_ID_ROOT {
+                break Vec::new();
+            }
+            if let Some(cached) = self.crosscat_lhs_visible_origins_cache.get(&cur) {
+                break (**cached).clone();
+            }
+            let Some(top_edge) = self.incoming_edge_stack_arena.top(cur) else {
+                break Vec::new();
+            };
+            uncached.push((cur, top_edge));
+            cur = self.incoming_edge_stack_arena.intern_pop(cur);
+        };
+        // Rebuild from the cached/root base up to `stack_id`: each step unions
+        // the parent's visible set with the edge's own origins, then caches it.
+        let mut visible = base;
+        for (sid, edge_id) in uncached.into_iter().rev() {
+            self.crosscat_lhs_own_body_origins_for_edge(edge_id, &mut visible);
+            let arc = std::sync::Arc::new(visible.clone());
+            self.crosscat_lhs_visible_origins_cache.insert(sid, arc);
+        }
+        self.crosscat_lhs_visible_origins_cache
+            .get(&stack_id)
+            .cloned()
+            .unwrap_or_else(|| std::sync::Arc::new(visible))
+    }
+
+    fn crosscat_lhs_body_origins_visible_to_cursor(
+        &mut self,
         cursor: &BranchCursor<W>,
     ) -> Vec<CrossCatLhsBodyOrigin> {
-        let mut origins: Vec<CrossCatLhsBodyOrigin> = Vec::new();
-        self.incoming_edge_stack_arena.for_each_top_down_until(
-            cursor.incoming_edge_stack_id,
-            |edge_id| {
-                match self.gss.edge_kind_ref(edge_id) {
-                    Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }) => {
-                        if let Some(origin) = self.crosscat_lhs_body_origin_from_scope_edge(
-                            edge_id,
-                            *source_src_idx,
-                            0,
-                        ) {
-                            Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
-                        }
-                    },
-                    Some(crate::gss::EdgeKind::CrossCatLhsScoped {
-                        source_src_idx,
-                        min_bp,
-                        ..
-                    }) => {
-                        if let Some(origin) = self.crosscat_lhs_body_origin_from_scope_edge(
-                            edge_id,
-                            *source_src_idx,
-                            *min_bp,
-                        ) {
-                            Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
-                        }
-                    },
-                    Some(crate::gss::EdgeKind::CrossCatLhsReentry {
-                        source_src_idx,
-                        origin: Some(origin),
-                        ..
-                    }) => {
-                        Self::push_unique_crosscat_lhs_body_origin(
-                            &mut origins,
-                            CrossCatLhsBodyOrigin {
-                                source_src_idx: *source_src_idx,
-                                origin: *origin,
-                            },
-                        );
-                    },
-                    _ => {},
-                }
-                if let Some(stored) = self.crosscat_lhs_body_origins.get(&edge_id) {
-                    for &origin in stored {
-                        Self::push_unique_crosscat_lhs_body_origin(&mut origins, origin);
-                    }
-                }
-                true
-            },
-        );
-        origins
+        (*self.crosscat_lhs_visible_origins(cursor.incoming_edge_stack_id)).clone()
     }
 
     fn record_crosscat_lhs_body_origins_for_edge(
@@ -8652,7 +8837,7 @@ where
     }
 
     fn crosscat_lhs_body_origins_for_reduction(
-        &self,
+        &mut self,
         cursor: &BranchCursor<W>,
         children: &[crate::sppf::SppfId],
         body_lo: usize,
@@ -8954,7 +9139,99 @@ where
             })
     }
 
+    /// The scope flags contributed by a SINGLE edge: which tracked kinds the
+    /// edge itself is. Cross-cat family is the UNION searched by
+    /// `nearest_cross_cat_lhs_context` (CrossCatLhs / Scoped / Reentry /
+    /// TransparentSourceReentry) and `crosscat_projection_target_boundary`
+    /// (CrossCatProjection + the same CrossCatLhs family); `PrefixRuleEntry` is
+    /// searched by `enclosing_prefix_rule_frame`. Being a superset of each
+    /// individual scan's match set makes the stack-level memo a SOUND fast-reject
+    /// for all of them.
+    fn edge_own_scope_flags(&self, edge_id: crate::gss::GssEdgeId) -> EdgeStackScopeFlags {
+        let mut bits = 0u8;
+        match self.gss.edge_kind_ref(edge_id) {
+            Some(
+                crate::gss::EdgeKind::CrossCatLhs { .. }
+                | crate::gss::EdgeKind::CrossCatLhsScoped { .. }
+                | crate::gss::EdgeKind::CrossCatLhsReentry { .. }
+                | crate::gss::EdgeKind::TransparentSourceReentry { .. }
+                | crate::gss::EdgeKind::CrossCatProjection { .. },
+            ) => bits |= EdgeStackScopeFlags::CROSSCAT,
+            Some(crate::gss::EdgeKind::PrefixRuleEntry { .. }) => {
+                bits |= EdgeStackScopeFlags::PREFIX_RULE
+            },
+            _ => {},
+        }
+        EdgeStackScopeFlags(bits)
+    }
+
+    /// Memoized union of [`EdgeStackScopeFlags`] over every edge in an
+    /// incoming-edge stack. `flags(stack) = own_flags(top) | flags(parent)`;
+    /// computed by walking down only to the nearest cached ancestor (or root)
+    /// and caching each stack-id on the way up. Amortized `O(1)` per push.
+    fn crosscat_lhs_stack_scope_flags_for(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> EdgeStackScopeFlags {
+        if let Some(&cached) = self.crosscat_lhs_stack_scope_flags.borrow().get(&stack_id) {
+            return cached;
+        }
+        // Read-phase: collect the uncached suffix top-first and find the base
+        // value (a cached ancestor's flags, or empty at the root).
+        let mut uncached: Vec<crate::edge_stack_arena::EdgeStackId> = Vec::new();
+        let mut cur = stack_id;
+        let mut base = EdgeStackScopeFlags::empty();
+        loop {
+            if cur == crate::edge_stack_arena::EDGE_STACK_ID_ROOT {
+                break;
+            }
+            if let Some(&cached) = self.crosscat_lhs_stack_scope_flags.borrow().get(&cur) {
+                base = cached;
+                break;
+            }
+            uncached.push(cur);
+            cur = self.incoming_edge_stack_arena.intern_pop(cur);
+        }
+        // Write-phase: fill bottom-up. The running union is monotone, so once it
+        // saturates we can stop inspecting further edges.
+        let mut acc = base;
+        let mut cache = self.crosscat_lhs_stack_scope_flags.borrow_mut();
+        for sid in uncached.into_iter().rev() {
+            if !acc.is_saturated() {
+                if let Some(top_edge) = self.incoming_edge_stack_arena.top(sid) {
+                    acc = acc.union(self.edge_own_scope_flags(top_edge));
+                }
+            }
+            cache.insert(sid, acc);
+        }
+        acc
+    }
+
+    /// Fast-reject helper: does the stack contain ANY cross-category-family edge?
+    fn crosscat_lhs_stack_has_scope_edge(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> bool {
+        self.crosscat_lhs_stack_scope_flags_for(stack_id).has_crosscat()
+    }
+
+    /// Fast-reject helper: does the stack contain ANY `PrefixRuleEntry` edge?
+    fn crosscat_lhs_stack_has_prefix_rule_entry(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> bool {
+        self.crosscat_lhs_stack_scope_flags_for(stack_id)
+            .has_prefix_rule()
+    }
+
     fn nearest_cross_cat_lhs_context(&self, cursor: &BranchCursor<W>) -> Option<(u16, bool)> {
+        // Fast reject (deep-nesting fix): when no cross-category-family edge is
+        // anywhere on the incoming-edge stack, there is nothing to find. This
+        // turns the previously O(stack_depth)-per-call walk into O(1) for pure
+        // single-category nesting (the deep-parens / deep-unary regression).
+        if !self.crosscat_lhs_stack_has_scope_edge(cursor.incoming_edge_stack_id) {
+            return None;
+        }
         let top = self.gss.node(cursor.node)?;
         let top_cat = top.symbol.category_src_idx;
         self.incoming_edge_stack_arena
@@ -9673,6 +9950,13 @@ where
         tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
     ) -> Option<ProjectionTargetBoundary> {
         if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return None;
+        }
+        // Fast reject (deep-nesting fix): no cross-category-family edge anywhere
+        // on the stack ⇒ `crosscat_boundary_target_for_edge` matches nothing.
+        // Avoids the O(stack_depth)-per-step walk for pure single-category
+        // nesting (the deep-parens / deep-unary regression).
+        if !self.crosscat_lhs_stack_has_scope_edge(cursor.incoming_edge_stack_id) {
             return None;
         }
         let top = self.gss.node(cursor.node)?;
@@ -10476,6 +10760,7 @@ where
                                         b.hi_pos,
                                         __cat,
                                         __ppw,
+                                        tokens,
                                     ) {
                                         return CursorOutcome::Drop;
                                     }
@@ -10508,6 +10793,7 @@ where
                                         b.hi_pos,
                                         __cat,
                                         __ppw,
+                                        tokens,
                                     ) {
                                         __children.push(__child);
                                     }
@@ -11015,7 +11301,7 @@ where
                     if !self.iterative_chain_rhs_category_admissible(cursor, symbol) {
                         return CursorOutcome::Drop;
                     }
-                    self.emit_fire_action(cursor, symbol);
+                    self.emit_fire_action(cursor, symbol, tokens);
                     if cursor.inner_state.is_terminal() {
                         return self.cursor_resolution_check(cursor);
                     }
@@ -11323,7 +11609,12 @@ where
                     cursor.pos,
                     weight.clone(),
                 );
-                self.try_park_direct_prefix_cast_waiter(cursor, replace_symbol, push_symbol);
+                self.try_park_direct_prefix_cast_waiter(
+                    cursor,
+                    replace_symbol,
+                    push_symbol,
+                    tokens,
+                );
                 // B9 / Class 2 (2026-05-08): apply emit_push_side_effects
                 // BEFORE pushing the symbol — for CollectionMarker, this
                 // allocates an accumulator id and patches symbol.bp =
@@ -11884,6 +12175,7 @@ where
                                 push_edge_kind,
                                 None,
                                 child_source_priority,
+                                tokens,
                             );
                             for child in new_children {
                                 children.push(child);
@@ -13320,6 +13612,7 @@ where
                                 None,
                                 Some(lex_fork_stamp),
                                 child_source_priority,
+                                tokens,
                             );
                             for child in new_children {
                                 children.push(child);
@@ -13949,6 +14242,7 @@ where
                                 &child,
                                 replace_symbol,
                                 branch.symbol,
+                                tokens,
                             );
                             let mut sym = branch.symbol;
                             self.emit_push_side_effects(&mut child, &mut sym);
@@ -14365,7 +14659,7 @@ where
 
     fn revive_orphaned_cohort_members_once(
         &mut self,
-        _tokens: &dyn WpdaTokenSource,
+        tokens: &dyn WpdaTokenSource,
     ) -> OrphanRevivalOutcome
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
@@ -14420,6 +14714,7 @@ where
                             hi_pos,
                             cat,
                             ppw.clone(),
+                            tokens,
                         );
                         self.parked_crosscat_lhs_outstanding =
                             self.parked_crosscat_lhs_outstanding.saturating_sub(1);
@@ -14457,7 +14752,7 @@ where
         // `ep_p1_eoi_release` engage so the uniform-Proceed prep (which exists
         // solely for the re-drive below) is not engaged when the re-drive is
         // skipped.
-        if self.live_frontier_has_accepting_config(_tokens) {
+        if self.live_frontier_has_accepting_config(tokens) {
             crate::stats_inc!(self, dbg_ccl_accept_present_skip);
             return OrphanRevivalOutcome::Idle;
         }
@@ -15633,6 +15928,7 @@ where
                             hi_pos,
                             cat,
                             ppw.clone(),
+                            tokens,
                         );
                         self.parked_crosscat_lhs_outstanding =
                             self.parked_crosscat_lhs_outstanding.saturating_sub(1);
@@ -18766,7 +19062,12 @@ where
     }
 
     #[inline(always)]
-    fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
+    fn emit_fire_action(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        symbol: StackSymbolV2,
+        tokens: &dyn WpdaTokenSource,
+    ) {
         // Phase F.3c.3 (2026-05-20): action fires on a TRANSIENT
         // SemanticBuilder constructed per-call from sppf_stack-reconstructed
         // args (`fire_action_via_transient`). The persistent
@@ -19147,7 +19448,7 @@ where
                             false,
                         );
                         self.try_stage_prefix_cast_body_wrap(cursor, symbol_id);
-                        self.try_stage_parked_prefix_cast_waiters(symbol_id);
+                        self.try_stage_parked_prefix_cast_waiters(symbol_id, tokens);
                     }
                     return;
                 },
@@ -19657,6 +19958,7 @@ where
         hi_pos: usize,
         worker_last_action_output_cat: Option<u16>,
         worker_pending_packing_weight: W,
+        tokens: &dyn WpdaTokenSource,
     ) -> bool {
         let Some(body_cat) =
             self.crosscat_lhs_body_category_admitted(cursor, source_src_idx, symbol_id)
@@ -19693,7 +19995,7 @@ where
         // path for a completed body. Prefix-cast reconciliation must see the
         // same body evidence here that it sees on ordinary CategoryEntry pops.
         self.try_stage_prefix_cast_body_wrap(cursor, symbol_id);
-        self.try_stage_parked_prefix_cast_waiters(symbol_id);
+        self.try_stage_parked_prefix_cast_waiters(symbol_id, tokens);
         // (4) the member tail from the cursor's OWN node (== the pred
         //     the per-cursor pop would have seen; the cursor is
         //     pre-push so cursor.node IS pred_id).
@@ -20931,6 +21233,7 @@ where
         push_edge_kind: Option<crate::gss::EdgeKind>,
         lex_fork_stamp: Option<LexForkStamp>,
         child_source_priority: u32,
+        tokens: &dyn WpdaTokenSource,
     ) -> Vec<BranchCursor<W>> {
         let mut push_edge_kind = push_edge_kind;
         if matches!(&branch.action_kind, ForkActionKind::Push) {
@@ -21051,6 +21354,7 @@ where
                                 b.hi_pos,
                                 cat,
                                 ppw,
+                                tokens,
                             ) {
                                 children.push(child);
                             }
@@ -21595,6 +21899,13 @@ where
         cursor: &BranchCursor<W>,
     ) -> Option<(u16, u16, usize, crate::gss::GssNodeId, crate::edge_stack_arena::EdgeStackId, u8)>
     {
+        // Fast reject (deep-nesting fix): no PrefixRuleEntry anywhere on the
+        // stack ⇒ this nearest-enclosing-frame walk finds nothing. Avoids the
+        // O(stack_depth)-per-call walk for deep nesting that carries no prefix
+        // rule frame (e.g. pure grouping `((((1))))`).
+        if !self.crosscat_lhs_stack_has_prefix_rule_entry(cursor.incoming_edge_stack_id) {
+            return None;
+        }
         let mut sid = cursor.incoming_edge_stack_id;
         while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
             if let Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, .. }) =
@@ -21756,6 +22067,19 @@ where
     fn push_prefix_cast_waiter_once(&mut self, waiter: PrefixCastWaiter<W>) {
         let key = self.prefix_cast_waiter_key(&waiter);
         if self.parked_prefix_cast_waiter_keys.insert(key) {
+            let idx = self.parked_prefix_cast_waiters.len();
+            // Mirror into the per-category position index used by the staging
+            // fast path. Waiters with no order key never satisfy the staging
+            // position guard, so they are NOT indexed (the staging loop would
+            // skip them anyway); they remain in the Vec for completeness.
+            if let Some(order_key) = waiter.body_start_pos_order_key {
+                self.parked_prefix_cast_waiters_by_cat
+                    .entry(waiter.body_cat)
+                    .or_default()
+                    .entry(order_key)
+                    .or_default()
+                    .push(idx);
+            }
             self.parked_prefix_cast_waiters.push(waiter);
         }
     }
@@ -21809,6 +22133,7 @@ where
         cursor: &BranchCursor<W>,
         replace_symbol: StackSymbolV2,
         push_symbol: StackSymbolV2,
+        tokens: &dyn WpdaTokenSource,
     ) {
         if push_symbol.kind != SymbolKind::CategoryEntry {
             return;
@@ -21877,6 +22202,7 @@ where
         self.push_prefix_cast_waiter_once(PrefixCastWaiter {
             body_cat,
             body_start_pos,
+            body_start_pos_order_key: tokens.position_order_key(body_start_pos),
             trigger_lo,
             c_out,
             cast_rule,
@@ -22042,7 +22368,11 @@ where
     /// merely turns `(parked wrapper continuation, evidenced C_in body symbol)`
     /// into the same guarded `PrefixCastWrapJob` that direct pop-site staging
     /// already uses.
-    fn try_stage_parked_prefix_cast_waiters(&mut self, body_symbol_id: crate::sppf::SppfId) {
+    fn try_stage_parked_prefix_cast_waiters(
+        &mut self,
+        body_symbol_id: crate::sppf::SppfId,
+        tokens: &dyn WpdaTokenSource,
+    ) {
         if self.parked_prefix_cast_waiters.is_empty() {
             return;
         }
@@ -22055,12 +22385,38 @@ where
         let Some(body_hi) = self.sppf.span_hi(body_symbol_id).map(|hi| hi as usize) else {
             return;
         };
+        // Perf (deep-nesting fix): restrict to waiters whose body could begin
+        // at-or-after the wrapper open — `body_start_pos ≤ body_lo` in token
+        // position order — a NECESSARY condition `drain_prefix_cast_wrap_jobs`
+        // re-checks. Only such waiters can yield a surviving job, so this is a
+        // SOUND pruning of doomed staging work (never removes a candidate the
+        // drain would accept). The per-category `BTreeMap` is range-queried over
+        // `..= order_key(body_lo)`; for a left-anchored fired body (the deep
+        // prefix-chain shape) that range is empty, replacing the former
+        // O(parked-waiters)-per-fire scan with O(log + matches).
+        let Some(body_lo_key) = tokens.position_order_key(body_lo) else {
+            return;
+        };
+        let candidate_indices: Vec<usize> = match self
+            .parked_prefix_cast_waiters_by_cat
+            .get(&body_cat)
+        {
+            Some(by_pos) => by_pos
+                .range(..=body_lo_key)
+                .flat_map(|(_, idxs)| idxs.iter().copied())
+                .collect(),
+            None => return,
+        };
+        if candidate_indices.is_empty() {
+            return;
+        }
         let body_weight = self.sppf.symbol_weight_sum(body_symbol_id);
         let mut staged = Vec::new();
-        for waiter in &self.parked_prefix_cast_waiters {
-            if waiter.body_cat != body_cat {
-                continue;
-            }
+        for idx in candidate_indices {
+            let waiter = &self.parked_prefix_cast_waiters[idx];
+            // The index only holds same-`body_cat` waiters with an order key
+            // ≤ body_lo_key, so the prior `body_cat` filter is already implied.
+            debug_assert_eq!(waiter.body_cat, body_cat);
             let mut outer = waiter.outer_frame.clone();
             outer.weight = outer.weight.times_ref(&body_weight);
             staged.push(PrefixCastWrapJob {
@@ -22079,6 +22435,7 @@ where
                 outer_frame: outer,
             });
             if trace_actions_enabled() {
+                let waiter = &self.parked_prefix_cast_waiters[idx];
                 eprintln!(
                     "[wpds-action] direct prefix waiter matched: body={} body_cat={} span=[{},{}] c_out={} rule={}",
                     self.sppf_trace_summary(body_symbol_id),
@@ -23184,7 +23541,7 @@ where
                     popped_edge_kind,
                     Some(symbol),
                 );
-                self.emit_fire_action(cursor, symbol);
+                self.emit_fire_action(cursor, symbol, tokens);
             }
         }
         let mut transparent_reentry_error: Option<String> = None;
@@ -23822,7 +24179,7 @@ where
         if !cursor.inner_state.is_terminal() {
             if let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                 self.try_stage_prefix_cast_body_wrap(cursor, body_symbol_id);
-                self.try_stage_parked_prefix_cast_waiters(body_symbol_id);
+                self.try_stage_parked_prefix_cast_waiters(body_symbol_id, tokens);
             }
         }
         if !cursor.inner_state.is_terminal() {
