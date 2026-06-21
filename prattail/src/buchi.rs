@@ -432,7 +432,11 @@ pub fn buchi_intersect<W: Semiring>(
                                 }
                             },
                             2 => 0,
-                            _ => unreachable!(),
+                            // Unreachable: `phase` ranges over `0..3usize`, so only
+                            // 0/1/2 occur (the 3-phase Büchi degeneralization rank).
+                            _ => unreachable!(
+                                "buchi: phase is bound by `for phase in 0..3usize`, so only 0/1/2 are possible"
+                            ),
                         };
 
                         let from_id = product_id(q1_from, q2_from, phase);
