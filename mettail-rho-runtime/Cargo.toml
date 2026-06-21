@@ -15,11 +15,16 @@ description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's R
 # integrated; only the heavy generated rhocalc language is feature-gated below.
 
 [features]
-default = ["runtime-report"]
-# Default production surface: expose conversion from typed Rho observation
-# reports into mettail_runtime::RuntimeBackendReport plus the generic Language
-# backend installer wrappers. This does not pull in generated languages or the
-# Ascent oracle; those remain explicit opt-in features below.
+# Rholang integration is a FIRST-CLASS, default-on citizen (MeTTaIL == Rholang 1.4):
+# the default surface compiles the AST-first rhocalc lowering + the source-oracle
+# helpers so the end-to-end Rholang-VM integration tests (rho_rhocalc_ast,
+# rho_comm_oracle, rho_guard_oracle, rho_structured_ast_send) build and run on every
+# default `cargo nextest --workspace`. `rhocalc-runtime` transitively enables
+# `runtime-report`. The opt-in feature names below are retained only so a
+# `--no-default-features` build can still drop the heavy generated-language surface.
+default = ["rhocalc-runtime", "source-oracle"]
+# Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
+# plus the generic Language backend installer wrappers.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
 # Pulls in the generated rhocalc language for the production-shaped AST-first
 # rhocalc-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
