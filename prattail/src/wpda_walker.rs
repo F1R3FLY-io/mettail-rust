@@ -340,7 +340,9 @@ impl InfixLexclearMode {
 /// the `prefix_cast_stage_memo_enabled` field doc.
 fn prefix_cast_stage_memo_enabled_from_env() -> bool {
     !matches!(
-        std::env::var("PRATTAIL_PREFIX_CAST_STAGE_MEMO").ok().as_deref(),
+        std::env::var("PRATTAIL_PREFIX_CAST_STAGE_MEMO")
+            .ok()
+            .as_deref(),
         Some("0") | Some("off") | Some("OFF") | Some("Off")
     )
 }
@@ -1304,8 +1306,7 @@ impl EdgeStackScopeFlags {
     /// short-circuiting once the running union is saturated).
     #[inline]
     fn is_saturated(self) -> bool {
-        self.0 & (Self::CROSSCAT | Self::PREFIX_RULE)
-            == (Self::CROSSCAT | Self::PREFIX_RULE)
+        self.0 & (Self::CROSSCAT | Self::PREFIX_RULE) == (Self::CROSSCAT | Self::PREFIX_RULE)
     }
 }
 
@@ -6478,10 +6479,7 @@ where
             // evidence to refute a deleted leading prefix; keep prior behavior.
             return true;
         };
-        match (
-            tokens.position_order_key(span_lo as usize),
-            tokens.position_order_key(0),
-        ) {
+        match (tokens.position_order_key(span_lo as usize), tokens.position_order_key(0)) {
             (Some(lo_key), Some(start_key)) => lo_key == start_key,
             // If either key is unavailable, fall back to permissive (no
             // refutation) so we never turn a genuine accept into a failure.
@@ -6568,8 +6566,7 @@ where
                 // "recovery happened AND the leading input was discarded rather
                 // than consumed by the derivation". See
                 // `accept_root_covers_input_start` for the span-coverage test.
-                if variant.recovery_depth > 0
-                    && !self.accept_root_covers_input_start(root, tokens)
+                if variant.recovery_depth > 0 && !self.accept_root_covers_input_start(root, tokens)
                 {
                     continue;
                 }
@@ -9072,11 +9069,7 @@ where
                     Self::push_unique_crosscat_lhs_body_origin(origins, origin);
                 }
             },
-            Some(crate::gss::EdgeKind::CrossCatLhsScoped {
-                source_src_idx,
-                min_bp,
-                ..
-            }) => {
+            Some(crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, min_bp, .. }) => {
                 if let Some(origin) =
                     self.crosscat_lhs_body_origin_from_scope_edge(edge_id, *source_src_idx, *min_bp)
                 {
@@ -9617,7 +9610,8 @@ where
         &self,
         stack_id: crate::edge_stack_arena::EdgeStackId,
     ) -> bool {
-        self.crosscat_lhs_stack_scope_flags_for(stack_id).has_crosscat()
+        self.crosscat_lhs_stack_scope_flags_for(stack_id)
+            .has_crosscat()
     }
 
     /// Fast-reject helper: does the stack contain ANY `PrefixRuleEntry` edge?
@@ -17487,8 +17481,7 @@ where
         // size (preallocation is a best practice — at most one survivor per
         // input frame, so `frame_count` is the exact upper bound).
         let frame_count = self.branch_cursors.len();
-        let drained: Vec<crate::cohort_lazy::Frame<W>> =
-            std::mem::take(&mut self.branch_cursors);
+        let drained: Vec<crate::cohort_lazy::Frame<W>> = std::mem::take(&mut self.branch_cursors);
         let mut survivors: Vec<crate::cohort_lazy::Frame<W>> = Vec::with_capacity(frame_count);
 
         // Each Phase-1 bucket holds the survivor indices (into `survivors`)
@@ -17536,8 +17529,8 @@ where
                             // `register_arc_with_aggregation` use. `combined`
                             // IS the `⊕` fold of both weights.
                             let combined = surv.weight.plus_ref(&cursor.weight);
-                            let incoming_wins = combined != surv.weight
-                                && combined == cursor.weight;
+                            let incoming_wins =
+                                combined != surv.weight && combined == cursor.weight;
                             let tie = combined == surv.weight && combined == cursor.weight;
                             // Source-priority is the SAME final tiebreak the
                             // strict merge applies on a weight tie (lower wins
@@ -17554,8 +17547,7 @@ where
                                 // fidelity).
                                 let loser_own = survivor_mut.p5_steps_own;
                                 let loser_lineage = survivor_mut.p5_steps_lineage;
-                                let loser_pending =
-                                    survivor_mut.pending_packing_weight.clone();
+                                let loser_pending = survivor_mut.pending_packing_weight.clone();
                                 let mut replacement = cursor.clone();
                                 replacement.weight = combined;
                                 // Heavy fields are exactly equal (gate above),
@@ -17563,9 +17555,8 @@ where
                                 // incoming's; the `⊕` fold is idempotent on a
                                 // tie and lex-min otherwise — match the strict
                                 // merge's `pending_packing_weight` ⊕ fold.
-                                replacement.pending_packing_weight = replacement
-                                    .pending_packing_weight
-                                    .plus_ref(&loser_pending);
+                                replacement.pending_packing_weight =
+                                    replacement.pending_packing_weight.plus_ref(&loser_pending);
                                 replacement.p5_steps_own =
                                     replacement.p5_steps_own.saturating_add(loser_own);
                                 replacement.p5_steps_lineage =
@@ -17583,9 +17574,8 @@ where
                                 survivor_mut.p5_steps_own = survivor_mut
                                     .p5_steps_own
                                     .saturating_add(cursor.p5_steps_own);
-                                survivor_mut.p5_steps_lineage = survivor_mut
-                                    .p5_steps_lineage
-                                    .max(cursor.p5_steps_lineage);
+                                survivor_mut.p5_steps_lineage =
+                                    survivor_mut.p5_steps_lineage.max(cursor.p5_steps_lineage);
                             }
                             crate::stats_inc!(self, cursors_dropped_via_sr_subsume);
                             folded = true;
@@ -23083,11 +23073,9 @@ where
         } else {
             0
         };
-        let candidate_indices: Vec<usize> = match self
-            .parked_prefix_cast_waiters_by_cat
-            .get(&body_cat)
-        {
-            Some(by_pos) => by_pos
+        let candidate_indices: Vec<usize> =
+            match self.parked_prefix_cast_waiters_by_cat.get(&body_cat) {
+                Some(by_pos) => by_pos
                 .range(..=body_lo_key)
                 .flat_map(|(_, idxs)| idxs.iter().copied())
                 // Only waiters not already considered for this (body, weight); the
@@ -23095,17 +23083,17 @@ where
                 // memo is disabled `effective_watermark == 0`, so all match.)
                 .filter(|&idx| idx >= effective_watermark)
                 .collect(),
-            None => {
-                // No waiters of this category at all; still advance the watermark
-                // so a later re-publication short-circuits without re-deriving
-                // category/position from the token source.
-                if self.prefix_cast_stage_memo_enabled {
-                    self.prefix_cast_stage_watermark
-                        .insert(body_symbol_id, (current_waiter_count, body_weight.clone()));
-                }
-                return;
-            },
-        };
+                None => {
+                    // No waiters of this category at all; still advance the watermark
+                    // so a later re-publication short-circuits without re-deriving
+                    // category/position from the token source.
+                    if self.prefix_cast_stage_memo_enabled {
+                        self.prefix_cast_stage_watermark
+                            .insert(body_symbol_id, (current_waiter_count, body_weight.clone()));
+                    }
+                    return;
+                },
+            };
         // Record that this body (at this weight) has now been staged against every
         // currently parked waiter, regardless of how many survived the position
         // filter.
@@ -31400,10 +31388,8 @@ mod tests {
         b.sppf_stack_id = w
             .sppf_stack_arena
             .intern_push(crate::sppf_stack_arena::STACK_ID_ROOT, 1);
-        w.branch_cursors = vec![
-            crate::cohort_lazy::Frame::Concrete(a),
-            crate::cohort_lazy::Frame::Concrete(b),
-        ];
+        w.branch_cursors =
+            vec![crate::cohort_lazy::Frame::Concrete(a), crate::cohort_lazy::Frame::Concrete(b)];
 
         w.subsume_weight_dominated_when_single_result();
 
@@ -31437,10 +31423,8 @@ mod tests {
         let a = queue_cursor(5, lex(1.0, 0, 0));
         let mut b = a.clone();
         b.weight = lex(3.0, 1, 2);
-        w.branch_cursors = vec![
-            crate::cohort_lazy::Frame::Concrete(a),
-            crate::cohort_lazy::Frame::Concrete(b),
-        ];
+        w.branch_cursors =
+            vec![crate::cohort_lazy::Frame::Concrete(a), crate::cohort_lazy::Frame::Concrete(b)];
 
         w.subsume_weight_dominated_when_single_result();
 
@@ -31477,10 +31461,8 @@ mod tests {
         let a = queue_cursor(5, lex(1.0, 0, 0));
         let mut b = a.clone();
         b.weight = lex(3.0, 1, 2);
-        w.branch_cursors = vec![
-            crate::cohort_lazy::Frame::Concrete(a),
-            crate::cohort_lazy::Frame::Concrete(b),
-        ];
+        w.branch_cursors =
+            vec![crate::cohort_lazy::Frame::Concrete(a), crate::cohort_lazy::Frame::Concrete(b)];
 
         w.subsume_weight_dominated_when_single_result();
 
@@ -31500,16 +31482,14 @@ mod tests {
         let mut w = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
         w.single_result_demand = true; // demand path
         w.sr_subsume_mode = SrSubsumeMode::Off; // but kill switch off
-        // Cloned pair (shared recovery_deltas Arc) at the SAME config — these
-        // WOULD collapse if the kill switch were On, so the assert is a
-        // genuine guard, not a vacuous pass.
+                                                // Cloned pair (shared recovery_deltas Arc) at the SAME config — these
+                                                // WOULD collapse if the kill switch were On, so the assert is a
+                                                // genuine guard, not a vacuous pass.
         let a = queue_cursor(5, lex(1.0, 0, 0));
         let mut b = a.clone();
         b.weight = lex(3.0, 1, 2);
-        w.branch_cursors = vec![
-            crate::cohort_lazy::Frame::Concrete(a),
-            crate::cohort_lazy::Frame::Concrete(b),
-        ];
+        w.branch_cursors =
+            vec![crate::cohort_lazy::Frame::Concrete(a), crate::cohort_lazy::Frame::Concrete(b)];
 
         w.subsume_weight_dominated_when_single_result();
 
@@ -31534,18 +31514,15 @@ mod tests {
         b.weight = lex(3.0, 1, 2);
         // Give B a non-empty visited_proj_descriptors set ⇒ heavy_fields_equal
         // returns false ⇒ the two are NOT folded together.
-        b.visited_proj_descriptors =
-            b.visited_proj_descriptors.update(ProjDescriptorKey {
-                gss_node: 1,
-                sppf_stack: 0,
-                pos: 5,
-                cat_src: 2,
-                cur_bp: 0,
-            });
-        w.branch_cursors = vec![
-            crate::cohort_lazy::Frame::Concrete(a),
-            crate::cohort_lazy::Frame::Concrete(b),
-        ];
+        b.visited_proj_descriptors = b.visited_proj_descriptors.update(ProjDescriptorKey {
+            gss_node: 1,
+            sppf_stack: 0,
+            pos: 5,
+            cat_src: 2,
+            cur_bp: 0,
+        });
+        w.branch_cursors =
+            vec![crate::cohort_lazy::Frame::Concrete(a), crate::cohort_lazy::Frame::Concrete(b)];
 
         w.subsume_weight_dominated_when_single_result();
 
