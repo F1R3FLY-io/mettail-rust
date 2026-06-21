@@ -257,6 +257,82 @@ impl SrSubsumeMode {
     }
 }
 
+/// Infix-operand-seal `lex_fork_path` truncation mode, read once per walker
+/// construction from `PRATTAIL_INFIX_LEXCLEAR` (P-series convention: a
+/// per-walker field, not a process `OnceLock`, so one process can run all
+/// arms in an A/B/C differential).
+///
+/// Design: `docs/design/calculator-broad-parse-slowdown.md` §4. This is the
+/// INFIX twin of the committed rhocalc collection-splice clear
+/// (`emit_splice_into_collection`, commit `cc91d291`). The calculator's
+/// deeply-nested INFIX arithmetic (`a + b - c bitand d …`) is `O(dᴺ)`: the
+/// arithmetic operators (`+ - * / bitand bitor`) are shared across ~7 numeric
+/// categories, so the InfixLoop lex-fork emitter
+/// (`emit_lex_fork_at_infix_loop`) forks one cohort arm per category, each
+/// appending a distinct [`LexForkStamp`] to the cursor's `lex_fork_path`
+/// sidecar. Because `lex_fork_path.last()` is a KEPT axis of both the strict
+/// merge `ConfigKey` and the committed `SubsumeConfigKey`, the per-operator
+/// cross-cat cohort never re-converges and the fan multiplies across the
+/// infix spine. The SPPF already shares this ADDITIVELY (one weighted packing
+/// per category under one shared Symbol per span); the cursor frontier
+/// carries a REDUNDANT parallel record of that lexical choice.
+///
+/// Once an infix operand's sub-parse is sealed (its Symbol reduced onto the
+/// SPPF working stack, returning the cursor to `InfixLoop` via
+/// [`Self::apply_pop_body_to_cursor`]'s final state write), the within-operand
+/// `lex_fork` stamps are already SPPF packings, so they are redundant cursor
+/// bookkeeping and may be dropped to let sibling category-arms re-converge.
+/// The path is read ONLY by merge/equivalence-bucketing consumers
+/// (`merge_disambiguator`'s `lex_fork_path.last()`, `ConfigKey` /
+/// `SubsumeConfigKey`, the H12 cohort `~_obs` capture, `walker-stats`
+/// diagnostics) — NEVER by `engine.step`, a `WpdaStepAction`, the SPPF
+/// realizer, or a semantic builder mutation — so clearing it changes which
+/// cursors MERGE, not which parse is produced (design §4.2 L1). The genuine
+/// `-3!` lex distinction also rides the `LexicographicWeight` provenance
+/// triple (`lex_alt_idx, weight_src_idx, weight_rule_idx`), which this
+/// truncation does NOT touch, and chained output (`@a!(Nil)!(Nil)`) rides
+/// `sppf_stack_id`, also untouched (design §4.4 S1/S2).
+///
+/// `Clear` is the DEFAULT (the red-team-validated stack-free form, matching
+/// the committed rhocalc fix): clear the cursor's `lex_fork_path` entirely at
+/// the infix-operand seal. `PRATTAIL_INFIX_LEXCLEAR=0` / `off` is the kill
+/// switch (reverts the truncation without touching the plumbing) so a
+/// soundness regression can disable it in isolation for the ON/OFF
+/// differential. `watermark` selects the per-operand-watermark variant
+/// (truncate to the `lex_fork_path.len()` captured when the cursor last
+/// entered `InfixLoop`), retained as a stricter A/B comparison lever — the
+/// red-team measured it BIT-IDENTICAL to `Clear` on the infix battery (design
+/// §4.1 "Implemented"); `Clear` is preferred because it is stack-free, cannot
+/// underflow, and needs no cohort-shell carrier.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum InfixLexclearMode {
+    /// Disable the truncation entirely; the frontier is byte-identical to the
+    /// pre-fix behavior (the kill switch).
+    Off,
+    /// Clear the cursor's `lex_fork_path` entirely at the infix-operand seal
+    /// (the DEFAULT — stack-free, the committed rhocalc form lifted to infix).
+    Clear,
+    /// Truncate `lex_fork_path` to the watermark captured at the prior
+    /// `InfixLoop` entry (the per-operand-watermark A/B comparison variant).
+    Watermark,
+}
+
+impl InfixLexclearMode {
+    /// Read `PRATTAIL_INFIX_LEXCLEAR` ONCE per walker construction. `0` /
+    /// `off` (any case) disables the truncation; `watermark` selects the
+    /// per-operand watermark; unset and any other value default to `Clear`
+    /// (the recommended fix is the default per the design §4).
+    fn from_env() -> Self {
+        match std::env::var("PRATTAIL_INFIX_LEXCLEAR").ok().as_deref() {
+            Some("0") | Some("off") | Some("OFF") | Some("Off") => InfixLexclearMode::Off,
+            Some("watermark") | Some("WATERMARK") | Some("Watermark") => {
+                InfixLexclearMode::Watermark
+            },
+            _ => InfixLexclearMode::Clear,
+        }
+    }
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -1640,6 +1716,24 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// pass without touching the plumbing. See the `SrSubsumeMode` docs
     /// and `docs/design/calculator-map-crosscat-fanout.md` §4.5 M3.
     sr_subsume_mode: SrSubsumeMode,
+    /// Infix-operand-seal `lex_fork_path` truncation mode, read once from
+    /// `PRATTAIL_INFIX_LEXCLEAR` at construction (P-series convention).
+    /// `Clear` (default) clears the cursor's `lex_fork_path` at the
+    /// infix-operand seal in [`Self::apply_pop_body_to_cursor`]; `Off`
+    /// (`PRATTAIL_INFIX_LEXCLEAR=0`) disables it; `Watermark` truncates to the
+    /// prior `InfixLoop`-entry watermark. See the [`InfixLexclearMode`] docs
+    /// and `docs/design/calculator-broad-parse-slowdown.md` §4.
+    infix_lexclear_mode: InfixLexclearMode,
+    /// Per-cursor-INDEPENDENT scratch watermark for the `Watermark` variant of
+    /// [`InfixLexclearMode`]: the `lex_fork_path.len()` captured the last time
+    /// `set_cursor_inner_state` wrote an `InfixLoop` state. Used ONLY when
+    /// `infix_lexclear_mode == Watermark`. This is a walker-global scalar (not
+    /// a per-cursor carrier) deliberately: it is a comparison-only A/B lever,
+    /// and the rhocalc red-team proved a per-element watermark STACK underflows
+    /// pervasively across cohort revival yet stays term-identical to the
+    /// stack-free clear (`rhocalc-collection-fork-explosion.md` §8.1). For the
+    /// production `Clear` default this field is never read.
+    infix_lexclear_watermark: usize,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -4757,6 +4851,8 @@ where
             // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
+            infix_lexclear_mode: InfixLexclearMode::from_env(),
+            infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -4872,6 +4968,8 @@ where
             // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
+            infix_lexclear_mode: InfixLexclearMode::from_env(),
+            infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -4986,6 +5084,8 @@ where
             // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
+            infix_lexclear_mode: InfixLexclearMode::from_env(),
+            infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -22189,6 +22289,20 @@ where
             p5_steps_lineage: parent.p5_steps_lineage,
         };
         if let Some(stamp) = lex_fork_stamp {
+            // Infix-operand-seal watermark (comparison-only `Watermark`
+            // variant of `InfixLexclearMode`): the path length BEFORE this
+            // operand's lex-fork stamp is the operand-open watermark. The
+            // matching seal in `apply_pop_body_to_cursor` truncates back to it,
+            // dropping ONLY the stamps appended inside the just-opened operand
+            // and KEEPING any enclosing-operator stamps (the precedence-
+            // climbing `a + b*c` case: when `*` seals, the outer `+` stamp
+            // survives). Walker-global scalar (comparison-only; production
+            // default is `Clear`, which ignores this). The last writer before
+            // the matching seal wins — under-truncation is benign (a no-op),
+            // mirroring the rhocalc collection-watermark red-team finding.
+            if self.infix_lexclear_mode == InfixLexclearMode::Watermark {
+                self.infix_lexclear_watermark = child.lex_fork_path.len();
+            }
             std::sync::Arc::make_mut(&mut child.lex_fork_path).push(stamp);
         }
         if let Some(trigger) = trigger_terminal.as_ref() {
@@ -24651,6 +24765,80 @@ where
             if let Some(body_symbol_id) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                 self.try_stage_prefix_cast_body_wrap(cursor, body_symbol_id);
                 self.try_stage_parked_prefix_cast_waiters(body_symbol_id, tokens);
+            }
+        }
+        // ── Infix-operand-seal `lex_fork_path` truncation (2026-06-21) ──────
+        // The INFIX twin of the committed rhocalc collection-splice clear
+        // (`emit_splice_into_collection`, commit `cc91d291`). This pop has
+        // reduced an infix OPERAND's sub-parse onto the SPPF working stack and
+        // is about to return the cursor to `InfixLoop` to look for the next
+        // operator. The operand's lexical-disambiguation choice is, by this
+        // point, already interned as an SPPF packing under the operand's
+        // Symbol (`emit_fire_action` / `emit_splice_into_collection` ran
+        // above, strictly before this state write). The cursor's
+        // `lex_fork_path` sidecar is a REDUNDANT parallel record of that same
+        // choice; left intact, the Tomita merge gate
+        // (`merge_disambiguator`'s `lex_fork_path.last()`) keeps each shared-
+        // operator category-arm apart, so the per-operator cross-cat cohort
+        // (one arm per category sharing `+`/`-`/`*`/`/`/`bitand`/`bitor`)
+        // multiplies across the infix spine into an O(dᴺ) cursor frontier
+        // (`a + b - c bitand …` -> peak ~1296 vs baseline ~20). Truncating
+        // the path once the operand is sealed lets the sibling readings re-
+        // converge to one frontier arc (additive d·N sharing).
+        //
+        // SOUNDNESS (design `docs/design/calculator-broad-parse-slowdown.md`
+        // §4.2-§4.4): the path is read ONLY by merge / equivalence-bucketing
+        // consumers (`merge_disambiguator`, `ConfigKey`, `SubsumeConfigKey`,
+        // the H12 cohort `~_obs` capture which precedes this pop, walker-
+        // stats) — NEVER by `engine.step`, a `WpdaStepAction`, the SPPF
+        // realizer (`intern_symbol`/`intern_packing`/`link_packing_to_symbol`),
+        // or a semantic builder mutation — so clearing it changes which
+        // cursors MERGE, not which parse is produced (L1). The genuine `-3!`
+        // lex distinction ALSO rides the `LexicographicWeight` provenance
+        // triple (`lex_alt_idx, weight_src_idx, weight_rule_idx`), a SECOND
+        // sticky lexical-identity copy that this truncation does NOT touch and
+        // that is independently kept in `ConfigKey` / `merge_disambiguator`;
+        // chained output (`@a!(Nil)!(Nil)`) rides `sppf_stack_id`, also
+        // untouched. So the redundant `lex_fork` axis collapses while every
+        // genuinely-distinct cursor stays apart on a KEPT axis.
+        //
+        // GATE: only when `resolved_new_state` is `InfixLoop` (the operand-
+        // seal-into-the-infix-loop transition). `Unwinding` / `Error` /
+        // grouping-close / accept transitions are NOT operand seals and are
+        // left untouched. `Clear` is the stack-free production form (the
+        // committed rhocalc variant lifted to infix); `Watermark` is a
+        // comparison-only A/B lever truncating to the prior `InfixLoop`-entry
+        // length; `Off` is the kill switch. The merge gate
+        // (`merge_disambiguator` / `register_arc_with_aggregation`) is
+        // UNTOUCHED, so the live-fork invariant unit tests
+        // (`aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs`,
+        // `arc_merge_disambiguator_distinguishes_lex_fork_stamp`) — which
+        // build arcs by hand and assert the gate distinguishes them — pass
+        // unchanged (the fix changes the gate's INPUT, not its comparison).
+        if !cursor.inner_state.is_terminal()
+            && matches!(resolved_new_state, WpdaState::InfixLoop { .. })
+            && !cursor.lex_fork_path.is_empty()
+        {
+            match self.infix_lexclear_mode {
+                InfixLexclearMode::Off => {
+                    // Kill switch: leave the sidecar intact (pre-fix behavior).
+                },
+                InfixLexclearMode::Clear => {
+                    // Stack-free clear-all at the infix-operand seal (the
+                    // committed rhocalc form lifted to the infix boundary).
+                    std::sync::Arc::make_mut(&mut cursor.lex_fork_path).clear();
+                },
+                InfixLexclearMode::Watermark => {
+                    // Per-operand watermark: truncate to the length captured at
+                    // the prior `InfixLoop` entry (the comparison-only variant).
+                    // A watermark exceeding the current length degrades to a
+                    // no-op (benign under-truncation), exactly as the rhocalc
+                    // red-team observed for the collection watermark.
+                    let watermark = self.infix_lexclear_watermark;
+                    if cursor.lex_fork_path.len() > watermark {
+                        std::sync::Arc::make_mut(&mut cursor.lex_fork_path).truncate(watermark);
+                    }
+                },
             }
         }
         if !cursor.inner_state.is_terminal() {
