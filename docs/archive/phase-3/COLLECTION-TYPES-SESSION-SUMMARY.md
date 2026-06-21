@@ -144,22 +144,22 @@ let fields: Vec<(String, Option<&syn::Ident>)> = rule.items
 ## Files Modified
 
 ### Runtime
-- `mettail-runtime/src/hashbag.rs` (NEW, 575 lines)
-- `mettail-runtime/src/lib.rs` (export HashBag)
-- `mettail-runtime/Cargo.toml` (add rustc-hash)
+- `runtime/src/hashbag.rs` (NEW, 575 lines)
+- `runtime/src/lib.rs` (export HashBag)
+- `runtime/Cargo.toml` (add rustc-hash)
 
 ### Macro System
-- `mettail-macros/src/ast.rs` (Collection variant, parsing)
-- `mettail-macros/src/codegen.rs` (Collection fields in enums)
-- `mettail-macros/src/display_gen.rs` (Collection in Display match) **← CRITICAL FIX**
-- `mettail-macros/src/lalrpop_gen.rs` (LALRPOP generation)
-- `mettail-macros/src/subst_gen.rs` (Collection substitution)
-- `mettail-macros/src/rewrite_gen.rs` (Collection field counting)
-- `mettail-macros/src/ascent_gen.rs` (Skip collections in congruence)
-- `mettail-macros/src/termgen_gen.rs` (Skip collections)
-- `mettail-macros/src/random_generation.rs` (Skip collections)
-- `mettail-macros/src/typechecker.rs` (Collection element types)
-- `mettail-macros/src/parser_gen.rs` (Placeholder)
+- `macros/src/ast.rs` (Collection variant, parsing)
+- `macros/src/codegen.rs` (Collection fields in enums)
+- `macros/src/display_gen.rs` (Collection in Display match) **← CRITICAL FIX**
+- `macros/src/lalrpop_gen.rs` (LALRPOP generation)
+- `macros/src/subst_gen.rs` (Collection substitution)
+- `macros/src/rewrite_gen.rs` (Collection field counting)
+- `macros/src/ascent_gen.rs` (Skip collections in congruence)
+- `macros/src/termgen_gen.rs` (Skip collections)
+- `macros/src/random_generation.rs` (Skip collections)
+- `macros/src/typechecker.rs` (Collection element types)
+- `macros/src/parser_gen.rs` (Placeholder)
 
 ### Tests & Examples
 - `examples/test_minimal.rs` (NEW - end-to-end test)

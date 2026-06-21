@@ -104,7 +104,7 @@ Two orthogonal mitigations, both honoring the invariant (neither drops an altern
 
 ### Fix 1 — J parse-failures: re-run, confirm cascade, fix only residual (§1.1)
 - **M1.0 establishes the residual.** For any case still failing:
-  - **J-A residual** (grouped/mixed arith still failing): trace with `--features mettail-prattail/walker-stats --no-capture` on the minimal input; inspect `chain_earley_trigger_count` / `chain_earley_returned_none_count`. If the gate now correctly does NOT trigger but completion still fails, the residual is the chart-completion gap the master plan's Phase 3 reserved (`complete_to_fixpoint` retired to dead_code) — revive equivalent inline completion for the sub-4-atom/non-chain case. **Restore completion; do not narrow the cursor/alternative set.**
+  - **J-A residual** (grouped/mixed arith still failing): trace with `--features prattail/walker-stats --no-capture` on the minimal input; inspect `chain_earley_trigger_count` / `chain_earley_returned_none_count`. If the gate now correctly does NOT trigger but completion still fails, the residual is the chart-completion gap the master plan's Phase 3 reserved (`complete_to_fixpoint` retired to dead_code) — revive equivalent inline completion for the sub-4-atom/non-chain case. **Restore completion; do not narrow the cursor/alternative set.**
   - **J-B residual** (nested casts): this is the cast-family B3 transitive cross-wrap frontier (see the `prattail/docs/design/plans/sigb-blocker3-*.md` design docs). If B3 transitive splicing has not fully landed, J-B residual is expected and is OUT OF SCOPE for this plan — record it as blocked-on-B3, do not attempt a J-local hack.
   - **J-C/J-D residual** (binder-heavy / prefix): targeted parser-completion for the specific Name·Proc cross-cat / prefix nesting, same invariant. If a specific surface form is genuinely ambiguous (two valid parses), change the template's Test 4 to accept the `Ambiguous` alternative set rather than forcing one.
 - No product change is made speculatively; if re-run is fully green, Fix 1 is a no-op (record the cascade).
@@ -125,19 +125,19 @@ Two orthogonal mitigations, both honoring the invariant (neither drops an altern
 ## §3 — Milestone breakdown (M*.0 = measure-first; gauntlet + op-suite gate after EVERY change)
 
 **Universal per-change gate (run after each milestone that changes any file):**
-1. Gauntlet: `cargo test --release -p mettail-prattail --lib` → expect 4220/0 (HEAD baseline per b3 logs; the master plan's "4206" predates cast-family).
-2. Op-suites: `cargo nextest run -p mettail-languages --test gen_calculator_op --test gen_rhocalc_op --test gen_calculator_unit --test gen_rhocalc_unit` → no NEW fails (gen_rhocalc_op 532/0; gen_calculator_op ≥1331 per b2 final).
+1. Gauntlet: `cargo test --release -p prattail --lib` → expect 4220/0 (HEAD baseline per b3 logs; the master plan's "4206" predates cast-family).
+2. Op-suites: `cargo nextest run -p languages --test gen_calculator_op --test gen_rhocalc_op --test gen_calculator_unit --test gen_rhocalc_unit` → no NEW fails (gen_rhocalc_op 532/0; gen_calculator_op ≥1331 per b2 final).
 3. Disambiguation-preservation: `-3!` ambiguity-ladder (`edge_case_tests` + `probe_neg_zero` 23/0) + `wpda_parity_calculator` / `wpda_parity_calculator_cross_cat` / `wpda_parity_lambda` stay green.
 4. Welch (p<0.05, QUIET, N≥15, release) ONLY for runtime-behavioral changes (Fix 2-differs, Fix 3c). Not for test-template/test-input/test-expectation changes.
 
 All builds: serial foreground, `systemd-run --user --scope -p MemoryMax=32G` (16G per individual test, 8G per campaign), one worktree, self-clean. Tee every expensive run to `/var/tmp/suite-green/cjz-<milestone>-*.log`.
 
 ### M0 — Re-run to establish CURRENT residual (NO code changes) — load-bearing
-- **M0.0** Build the `mettail-languages` test artifacts once (foreground, capped). Then run the full J suite targeting only the J binaries:
-  `cargo nextest run -p mettail-languages -E 'test(/_display_parse_roundtrip/) | test(/_strong_roundtrip/) | test(/_parse_determinism/)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-jsuite.log`.
+- **M0.0** Build the `languages` test artifacts once (foreground, capped). Then run the full J suite targeting only the J binaries:
+  `cargo nextest run -p languages -E 'test(/_display_parse_roundtrip/) | test(/_strong_roundtrip/) | test(/_parse_determinism/)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-jsuite.log`.
 - **M0.1** Classify the residual against §0.2/§0.3: mark each of the 24 parse-failures + 5-7 mismatches as {cascade-green / residual-parse / residual-mismatch / reclassified-C-or-B-or-F}. Confirm `gen_class3multi_prop proc_parse_determinism` is Cluster C (or green if Phase 2 landed).
 - **M0.2** Slow-Z probe (bounded): run the 2 hangs ALONE under the ci profile with the 1800 s cap, capped at 8 G:
-  `cargo nextest run -p mettail-languages -E 'test(gen_ambient_prop::proc_display_parse_roundtrip) | test(gen_rhocalc_prop::sim_rhocalc_proptest_campaign)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-slowz.log`. Record: complete-within-cap vs terminated; capture timing.
+  `cargo nextest run -p languages -E 'test(gen_ambient_prop::proc_display_parse_roundtrip) | test(gen_rhocalc_prop::sim_rhocalc_proptest_campaign)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-slowz.log`. Record: complete-within-cap vs terminated; capture timing.
 - **Gate:** record the residual table in the ledger. **No fix milestone (M1-M3) starts for a sub-cluster until M0.1 confirms it has a residual.** If M0 is fully green for a sub-cluster, that sub-cluster's milestone is a documented no-op (cascade win).
 
 ### M1 — J parse-failure residual (only if M0.1 shows residual) — Fix 1

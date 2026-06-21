@@ -51,7 +51,7 @@ One diagnostic is emitted per grammar.
 
 ```toml
 [dependencies]
-mettail-prattail = { version = "0.1", features = [] }
+prattail = { version = "0.1", features = [] }
 # Note: wfst-log is NOT in the feature list
 ```
 
@@ -79,7 +79,7 @@ warning[I04] (TestGrammar): beam_width: auto requires feature `wfst-log`; fallin
 
    ```toml
    [dependencies]
-   mettail-prattail = { version = "0.1", features = ["wfst-log"] }
+   prattail = { version = "0.1", features = ["wfst-log"] }
    ```
 
    This enables log-semiring WFST construction and entropy-based automatic

@@ -3,9 +3,9 @@
  * flip-gated backend plan, not merely a raw validated artifact.
  *
  * Rust image:
- *   - `mettail_rho_codegen::RhoDefaultBackendPlan` is created only when the
+ *   - `mettail_rholang_codegen::RhoDefaultBackendPlan` is created only when the
  *     coverage/artifact/deadlock gate accepts.
- *   - `mettail_rho_runtime::PlannedRhoBackend` is built from that plan and is
+ *   - `mettail_rholang_runtime::PlannedRhoBackend` is built from that plan and is
  *     the generated-backend execution boundary.
  *   - raw `ValidatedRhoProgram` execution remains available for oracle/debug
  *     code, but it is not the generated-backend entry point.

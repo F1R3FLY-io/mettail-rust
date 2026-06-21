@@ -9,7 +9,7 @@ All 11 parsing tests passing with precedence-aware grammar generation!
 ## What We Built
 
 ### 1. Precedence-Aware Grammar Generation
-**File:** `mettail-macros/src/lalrpop_gen.rs`
+**File:** `macros/src/lalrpop_gen.rs`
 
 - **Infix Detection:** Automatically identifies rules like `Proc ::= Proc "|" Proc`
 - **Tier System:** Generates 3-tier rules for proper precedence:
@@ -19,7 +19,7 @@ All 11 parsing tests passing with precedence-aware grammar generation!
 - **Parentheses:** Automatic support for `(...)` to override precedence
 
 ### 2. Generated Grammar Structure
-**Generated:** `mettail-runtime/src/rhocalc.lalrpop`
+**Generated:** `runtime/src/rhocalc.lalrpop`
 
 ```lalrpop
 pub Proc: Proc = {
@@ -135,15 +135,15 @@ ProcAtom: Proc = {
 ## File Changes
 
 ### Created
-- `mettail-runtime/tests/rhocalc_full_parsing_tests.rs` - Full test suite
+- `runtime/tests/rhocalc_full_parsing_tests.rs` - Full test suite
 - `docs/phase-2/PARSING-SUCCESS.md` - Phase 2 summary
 - `docs/phase-2/QUICK-START.md` - Quick reference
 
 ### Modified
-- `mettail-macros/src/lalrpop_gen.rs` - Added precedence handling
-- `mettail-macros/src/lib.rs` - Re-enabled grammar generation
+- `macros/src/lalrpop_gen.rs` - Added precedence handling
+- `macros/src/lib.rs` - Re-enabled grammar generation
 - `theories/rhocalc.rs` - Fixed `NQuote` syntax
-- `mettail-runtime/src/rhocalc.lalrpop` - Generated grammar
+- `runtime/src/rhocalc.lalrpop` - Generated grammar
 
 ### Key Functions
 - `generate_category_production()` - Routes to tiered or simple

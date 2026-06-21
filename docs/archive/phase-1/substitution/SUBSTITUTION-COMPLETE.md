@@ -11,7 +11,7 @@ We've successfully implemented **generated capture-avoiding substitution** for M
 
 ## Key Design: Generated, Not Manual
 
-The critical insight is that **substitution must be generated for each theory's AST**, not hand-written for specific cases. The `mettail-macros/src/substitution.rs` module generates custom substitution code for any theory definition.
+The critical insight is that **substitution must be generated for each theory's AST**, not hand-written for specific cases. The `macros/src/substitution.rs` module generates custom substitution code for any theory definition.
 
 ##Generated Code Structure
 
@@ -135,7 +135,7 @@ if replacement_free_vars.contains(&binder.0) {
 
 ### File Structure
 
-**`mettail-macros/src/substitution.rs`**:
+**`macros/src/substitution.rs`**:
 - `generate_substitution(theory)` - Main entry point
 - `generate_category_substitution(category, rules)` - Per-category impl
 - `generate_substitution_arm(category, rule)` - Per-constructor match arm

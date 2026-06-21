@@ -2,7 +2,7 @@
  * RhoScalarOperatorTyping: type-sensitive classifier for scalar Rho lowering.
  *
  * Rust bridge:
- *   mettail-rho-codegen/src/lower.rs
+ *   rholang-codegen/src/lower.rs
  *
  * The lowerer may not choose a Rholang expression from the surface token alone.
  * Calculator has both `Int "+" Int -> Int` and `Str "+" Str -> Str`; the former

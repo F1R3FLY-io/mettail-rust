@@ -37,32 +37,32 @@ The current proof and coverage sources are
 | total-or-reject lowering | `RhoLoweringTotalOrRejects.v` | proved every rule lowers or is rejected |
 | rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or blank-rule dispositions block the default-backend gate; advisory rejected-rule classifications preserve rule identity and still require explicit disposition before becoming accepted coverage |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text; checked scalar-contract invocation preserves ABI payloads, rejects arity mismatches, selects the observation report shape from the ABI result type, structured dynamic payloads preserve list, map, and bag literals across the AST boundary, and the codegen-owned `RhoScalarContractInvocation` payload normalizes to the same AST call without becoming source text |
-| type-sensitive scalar operator lowering and generated scalar ABI | `RhoScalarOperatorTyping.v`, `mettail-rho-codegen::{lower,plan_scalar_invocations,RhoScalarContractInvocation}`, generated `rho-codegen` helpers | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, unary `not` and unary integer negation lower only at their matching scalar types, ill-typed or mixed scalar operators are rejected, every accepted scalar rule yields a generated `RhoScalarContractAbi` with operands first and the return channel last, ABI-derived invocation plans preserve constructor label, operand order, and result family, and generated language crates emit codegen-owned invocation payloads instead of linking directly to `mettail-rho-runtime` |
-| rhocalc AST-first lowering | `RhocalcAstLowering.v`, `mettail-rho-runtime::{lower_rhocalc_proc,lower_rhocalc_term}`, `mettail-rho-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
+| type-sensitive scalar operator lowering and generated scalar ABI | `RhoScalarOperatorTyping.v`, `rholang-codegen::{lower,plan_scalar_invocations,RhoScalarContractInvocation}`, generated `rho-codegen` helpers | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, unary `not` and unary integer negation lower only at their matching scalar types, ill-typed or mixed scalar operators are rejected, every accepted scalar rule yields a generated `RhoScalarContractAbi` with operands first and the return channel last, ABI-derived invocation plans preserve constructor label, operand order, and result family, and generated language crates emit codegen-owned invocation payloads instead of linking directly to `rholang-runtime` |
+| rhocalc AST-first lowering | `RhocalcAstLowering.v`, `rholang-runtime::{lower_rhocalc_proc,lower_rhocalc_term}`, `rholang-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
-| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `mettail-rho-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
+| resting-space fingerprint and observation report | `RhoObservationFingerprint.v`, `RhoObservationReportBoundary.v`, `RhoRuntimeBackendReportBridge.v`, `rholang-runtime::RhoObservationReport`, `mettail_runtime::RuntimeBackendReport::try_observations` | proved exact-key fingerprints are membership-exact, multiplicity-exact, and order-insensitive; planned runtime reports preserve the planned backend boundary, channel, read-order values, exact set-membership fingerprint, and exact counted fingerprint; conversion to the generic `RuntimeBackendReport` preserves Rho backend identity, normalized-AST artifact kind, channel, read-order values, observed count, and scalar plus structured observation payload tags without fabricating an Ascent-shaped result; the generic runtime envelope rejects observation-shaped reports unless the backend is `RhoMachine` and the artifact is a Rho runtime artifact |
 | ambiguity witnesses | `AmbiguityWitnessEnumeration.v` | proved enabled candidates are enumerated independently of schedule order |
 | oracle exactness | `OracleQuotientEquivalence.v` | proved weight-erased key equality is exact |
 | call-by-need observation, planned AST artifact, typed payloads, and budget | `RhoCallByNeedObservation.v`, `RhoCallByNeedBudget.v` | proved thunk forcing and memoization preserve weak source observation, accepted need artifacts are AST rather than source text and carry the call-by-need validation profile rather than the scalar-contract profile, accepted planned need execution wraps an accepted artifact and admits both force steps, cold/hot AST thunk plans observe the source value twice with the expected memo behavior, typed need reports preserve runtime payload tags separately from textual eval markers, and bounded force admission respects lookahead and heap budgets |
 | Δ1 candidate minima | `DeltaOneMinCostJoin.v` | proved selected preformed join candidates are present, non-refuted, and cost-minimal |
 | Δ1 min-cost matching | `DeltaOneMinCostMatching.v` | proved selected left-perfect bipartite join-frontier matchings are endpoint-valid, non-refuted, duplicate-free, left-covering, and globally cost-minimal |
 | guarded COMM | `GuardedCommSoundness.v` | proved false guards do not commit and attempts fabricate no facts |
-| predicated-type guard coverage | `RhoBackendFlipGate.v`, `mettail-rho-codegen::collect_guard_obligations`, `mettail-rho-codegen::RhoGuardCoverageEvidence` | proved and tested that Rho-default selection requires exact coverage of every guard obligation induced by `LanguageDef`: behavioral predicates, structural patterns, theory registrations, and Rho-native channel/join declarations; uncovered, extraneous, duplicate, blank-obligation, or incompatible guard dispositions block the default backend |
+| predicated-type guard coverage | `RhoBackendFlipGate.v`, `rholang-codegen::collect_guard_obligations`, `rholang-codegen::RhoGuardCoverageEvidence` | proved and tested that Rho-default selection requires exact coverage of every guard obligation induced by `LanguageDef`: behavioral predicates, structural patterns, theory registrations, and Rho-native channel/join declarations; uncovered, extraneous, duplicate, blank-obligation, or incompatible guard dispositions block the default backend |
 | ambiguity-set preservation | `AmbiguitySetPreservation.v` | proved schedule order preserves observed candidate sets |
 | cost-axis separation | `RhoCostAxisSeparation.v` | proved ordering costs cannot remove candidates; refutation is explicit |
-| escrow/refund settlement | `RhoEscrowSettlement.v`, `mettail-rho-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
-| per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `mettail-rho-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
+| escrow/refund settlement | `RhoEscrowSettlement.v`, `rholang-adapter::settlement` | proved reserve/commit/refund conservation, fail-closed blockers, bounded `u64` overflow blockers, and reserve/refund restoration |
+| per-purse determinism | `RhoPurseDeterminism.v`, `formal/tla/rho_settlement/`, `rholang-adapter::LocatedEscrowLedger` | proved duplicate purses reject, missing purses reject, local blockers preserve the ledger, located actions are deterministic, and distinct-purse final ledgers commute |
 | backend flip gate | `RhoBackendFlipGate.v` | proved Rho default requires checkable exact coverage of rejected rules, exact coverage of guard/predicated-type obligations, artifact validation, and deadlock gates |
-| planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `mettail-rho-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
-| runtime backend dispatch and wrappers | `RuntimeBackendDispatch.v`, `DovetailLanguageBackendWrapper.v`, `RhoLanguageBackendWrapper.v`, `DovetailRhoLanguageBackendWrapper.v`, `GeneratedLanguageInstallation.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_runtime::LanguageMetadata::definition_fingerprint`, `mettail_ast::identity::language_definition_fingerprint`, `mettail_dovetail_runtime::DovetailCompilerStage`, `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage`, `mettail_rho_runtime::DovetailCompilerStage`, `mettail_rho_runtime::RhoInvocationCompilerStage`, `mettail_rho_runtime::{install_rho_runtime_backend,install_dovetail_rho_runtime_backend}`, `mettail_rho_runtime::RhoRuntimeBackedLanguage`, `mettail_rho_runtime::DovetailRhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Dovetail defaults return Dovetail-report-shaped runtime output and are rejected by the legacy Ascent-shaped compatibility wrapper; the Dovetail wrapper selects `Dovetail` as the default, strips the legacy Ascent runtime from the production wrapped value, delegates only non-Dovetail and non-Ascent backend support to the inner generated language, requires the Dovetail compiler-stage fingerprint to match the wrapped generated language's macro-expanded `LanguageDef` fingerprint before capability exposure, then requires report availability plus a complete and structurally well-formed checked report before Dovetail report execution, rejects mismatched compiler stages, rejects unavailable reports, rejects `BoundedByCycleCut`, rejects malformed projected report tables, and rejects Ascent-shaped seeded facts on the Dovetail path; installed Rho defaults return observation-shaped reports backed by Rho runtime artifacts and are rejected by the legacy Ascent-shaped compatibility wrapper; checked `RuntimeBackendReport::try_dovetail` and `try_observations` constructors are the only public non-Ascent report constructors, and `RuntimeBackendReport` fields are private, so malformed report-shaped and observation-shaped outputs cannot enter through an unchecked runtime API or external struct literal; the runtime report bridge preserves observation value tags for native scalar payloads and structured list/map/bag payloads; the Rho wrapper selects `RhoMachine` as the default, strips the legacy Ascent runtime from the production wrapped value, delegates only non-Rho and non-Ascent backend support to the inner generated language, requires both the planned backend fingerprint and the Rho invocation compiler-stage fingerprint to match the wrapped generated language's macro-expanded `LanguageDef` fingerprint, requires a total typed invocation for Rho reports, rejects same-name fragment/full-definition mismatches, rejects mismatched invocation stages, and rejects Ascent-shaped seeded facts on the Rho path; the composed Dovetail/Rho wrapper selects `RhoMachine` as the default, exposes `Dovetail` only as the checked intermediate report, requires matching macro-expanded `LanguageDef` fingerprints across generated metadata, the planned Rho backend, the Dovetail compiler stage, and the invocation compiler stage before capability exposure, then requires Dovetail report availability, structural well-formedness, and `Complete` before Dovetail/Rho report execution and before Rho invocation construction, rejects fragment/full-definition mismatches, rejects bounded or malformed Dovetail reports before Rho execution, and rejects Ascent plus Ascent-shaped seeded facts. The canonical installer helpers derive the Dovetail and invocation compiler-stage identities from the accepted Rho plan, so generated installer code targets one plan-derived identity instead of hand-threaded fingerprint strings |
-| simulation report boundary | `SimulationReportBoundary.v`, `mettail-simulation::{runner,coverage,trace}` | proved and tested that complete Dovetail reports with at least one extracted root satisfy `NormalFormReachable` as terminal rewrite-result evidence, while rootless complete reports, `BoundedByCycleCut` reports, Rho observations, and unsupported report shapes do not; Dovetail reports remain `RuntimeReport` outcomes, Rho observations remain `RuntimeObservations`, and trace coverage records runtime terminal steps without fabricating rewrite-rule firings |
+| planned Rho execution boundary | `RhoPlannedExecutionBoundary.v`, `rholang-runtime::PlannedRhoBackend` | proved and implemented that generated backend execution consumes a flip-gated plan, not merely a raw shape-validated artifact |
+| runtime backend dispatch and wrappers | `RuntimeBackendDispatch.v`, `DovetailLanguageBackendWrapper.v`, `RhoLanguageBackendWrapper.v`, `DovetailRhoLanguageBackendWrapper.v`, `GeneratedLanguageInstallation.v`, `RhoRuntimeBackendReportBridge.v`, `mettail_runtime::RuntimeBackendReport`, `mettail_runtime::LanguageMetadata::definition_fingerprint`, `mettail_ast::identity::language_definition_fingerprint`, `mettail_dovetail_runtime::DovetailCompilerStage`, `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage`, `mettail_rholang_runtime::DovetailCompilerStage`, `mettail_rholang_runtime::RhoInvocationCompilerStage`, `mettail_rholang_runtime::{install_rho_runtime_backend,install_dovetail_rho_runtime_backend}`, `mettail_rholang_runtime::RhoRuntimeBackedLanguage`, `mettail_rholang_runtime::DovetailRhoRuntimeBackedLanguage` | proved default report execution succeeds only when the selected backend is installed; absent Dovetail/Rho defaults fail closed instead of falling back to Ascent; installed Dovetail defaults return Dovetail-report-shaped runtime output and are rejected by the legacy Ascent-shaped compatibility wrapper; the Dovetail wrapper selects `Dovetail` as the default, strips the legacy Ascent runtime from the production wrapped value, delegates only non-Dovetail and non-Ascent backend support to the inner generated language, requires the Dovetail compiler-stage fingerprint to match the wrapped generated language's macro-expanded `LanguageDef` fingerprint before capability exposure, then requires report availability plus a complete and structurally well-formed checked report before Dovetail report execution, rejects mismatched compiler stages, rejects unavailable reports, rejects `BoundedByCycleCut`, rejects malformed projected report tables, and rejects Ascent-shaped seeded facts on the Dovetail path; installed Rho defaults return observation-shaped reports backed by Rho runtime artifacts and are rejected by the legacy Ascent-shaped compatibility wrapper; checked `RuntimeBackendReport::try_dovetail` and `try_observations` constructors are the only public non-Ascent report constructors, and `RuntimeBackendReport` fields are private, so malformed report-shaped and observation-shaped outputs cannot enter through an unchecked runtime API or external struct literal; the runtime report bridge preserves observation value tags for native scalar payloads and structured list/map/bag payloads; the Rho wrapper selects `RhoMachine` as the default, strips the legacy Ascent runtime from the production wrapped value, delegates only non-Rho and non-Ascent backend support to the inner generated language, requires both the planned backend fingerprint and the Rho invocation compiler-stage fingerprint to match the wrapped generated language's macro-expanded `LanguageDef` fingerprint, requires a total typed invocation for Rho reports, rejects same-name fragment/full-definition mismatches, rejects mismatched invocation stages, and rejects Ascent-shaped seeded facts on the Rho path; the composed Dovetail/Rho wrapper selects `RhoMachine` as the default, exposes `Dovetail` only as the checked intermediate report, requires matching macro-expanded `LanguageDef` fingerprints across generated metadata, the planned Rho backend, the Dovetail compiler stage, and the invocation compiler stage before capability exposure, then requires Dovetail report availability, structural well-formedness, and `Complete` before Dovetail/Rho report execution and before Rho invocation construction, rejects fragment/full-definition mismatches, rejects bounded or malformed Dovetail reports before Rho execution, and rejects Ascent plus Ascent-shaped seeded facts. The canonical installer helpers derive the Dovetail and invocation compiler-stage identities from the accepted Rho plan, so generated installer code targets one plan-derived identity instead of hand-threaded fingerprint strings |
+| simulation report boundary | `SimulationReportBoundary.v`, `simulation::{runner,coverage,trace}` | proved and tested that complete Dovetail reports with at least one extracted root satisfy `NormalFormReachable` as terminal rewrite-result evidence, while rootless complete reports, `BoundedByCycleCut` reports, Rho observations, and unsupported report shapes do not; Dovetail reports remain `RuntimeReport` outcomes, Rho observations remain `RuntimeObservations`, and trace coverage records runtime terminal steps without fabricating rewrite-rule firings |
 | Dovetail report boundary and Rho handoff | `dovetail::report`, `RuntimeReportBridge.v`, `RhoReportHandoff.v` | proved checked extraction reports preserve exact keys, extractor root order, deduplicated term records, and terminal completeness; Rho handoff observes exactly complete-report roots and rejects `BoundedByCycleCut` without observations |
 | COMM schedule family and guarded joins | `RhoCommScheduleFamily.v`, `formal/process/rho_comm_slice.json`, `formal/mcrl2/rho_machine/`, `formal/maude/rho_machine/`, `formal/tla/rho_machine/` | proves every finite independent-redex Rho reserve/fire schedule erases to the same visible observations as the direct Dovetail fire schedule, full permutation schedules enable completion, missing-redex prefixes reject completion, and permutation schedules preserve the fired-redex set; the generated process-calculus suite independently checks no deadlock, all 24 visible fire/complete schedules, premature-completion unreachability, branching bisimilarity modulo hidden reserve actions, unique matching terminal normal forms, weak-fair scheduler completion, and guarded-join non-consumption: a failed guard releases data, a valid join can commit afterward, and the rejected bad datum remains observable |
-| runtime smoke | `mettail-rho-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
-| AST ambiguity witness smoke | `mettail-rho-runtime/tests/rho_ambiguity_ast.rs` | injects receive-less ambiguity witness facts as normalized AST, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet` |
-| differential (real-vs-real) | `mettail-rho-runtime/tests/run_calculator.rs` | runs the validated Rho-default backend plan on a live RhoRuntime and checks observed values against the calculator's defined scalar semantics (the legacy Rho-vs-Ascent oracle was retired with the Ascent backend in P6) |
+| runtime smoke | `rholang-runtime/tests/run_calculator.rs` | runs a validated Rho-default backend plan for lowered calculator ops on RhoRuntime using `RhoAstSend` call artifacts |
+| AST ambiguity witness smoke | `rholang-runtime/tests/rho_ambiguity_ast.rs` | injects receive-less ambiguity witness facts as normalized AST, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet` |
+| differential (real-vs-real) | `rholang-runtime/tests/run_calculator.rs` | runs the validated Rho-default backend plan on a live RhoRuntime and checks observed values against the calculator's defined scalar semantics (the legacy Rho-vs-Ascent oracle was retired with the Ascent backend in P6) |
 
 The Rho bridge now has mechanized model contracts for pure COMM, name
 grounding, exact observation, call-by-need forcing, `Δ1` cost-minimal candidate
@@ -72,7 +72,7 @@ rejected-rule delegation, normalized-`Par`
 well-formedness, source-text artifact exclusion, backend flip gating,
 fail-closed runtime dispatch, and report-aware simulation outcomes.
 The flip gate now treats predicated types as first-class coverage obligations:
-`mettail-rho-codegen::collect_guard_obligations` derives behavioral predicates,
+`rholang-codegen::collect_guard_obligations` derives behavioral predicates,
 structural predicates, theory registrations, and Rho-native channel/join
 requirements from `LanguageDef`, while
 `RhoGuardCoverageEvidence::CoveredGuardObligations` must give every obligation
@@ -94,10 +94,10 @@ a `RhoInvocationCompilerStage`, not a bare invocation closure, so the typed
 call builder must carry the same macro-expanded `LanguageDef` fingerprint as
 the generated language and the planned backend before `RhoMachine` can become
 the selected default. Dynamic contract calls and ambiguity witnesses are
-constructed with `mettail_rho_codegen::RhoAstSend`. Its
+constructed with `mettail_rholang_codegen::RhoAstSend`. Its
 `RhoAstLiteral` payloads lower scalar values, collections, unforgeable names,
 and rhocalc bags directly to normalized `Par`; the rhocalc bag ABI tag is owned
-by `mettail-rho-codegen` and re-exported by `mettail-rho-runtime` so send-side
+by `rholang-codegen` and re-exported by `rholang-runtime` so send-side
 encoding and runtime observation decoding cannot drift. The rhocalc process
 bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with `lower_rhocalc_proc`
 and `lower_rhocalc_name`, and lowers generated `RhoCalcTerm` values with
@@ -114,7 +114,7 @@ The typed report carries the planned execution boundary, the artifact kind, the
 observed channel, the read-order values, an order-insensitive set-membership
 fingerprint for set-semantics oracle comparison, and an order-insensitive
 counted fingerprint for bag-sensitive observations. With the optional
-`mettail-rho-runtime/runtime-report` feature, typed Rho observation payloads
+`rholang-runtime/runtime-report` feature, typed Rho observation payloads
 convert through `try_into_runtime_backend_report`, which fails closed for future
 unknown artifact kinds and then through `RuntimeBackendReport::try_observations`,
 which rejects observation-shaped output unless it names `RhoMachine` and a Rho
@@ -132,18 +132,18 @@ the planned thunk writes that payload directly into the memo and value channel,
 and `PlannedCallByNeedThunk::run_and_observe_need_report` decodes the value
 channel as typed `RuntimeObservationValue`s while decoding the evaluation
 channel only as textual trace markers.
-`mettail-rho-runtime/tests/run_calculator.rs` executes the full native
+`rholang-runtime/tests/run_calculator.rs` executes the full native
 calculator scalar family currently admitted by the lowerer on the real
 in-memory RhoRuntime: integer arithmetic, integer, boolean, and string
 comparisons, boolean `and`/`or`/`not`, and string concatenation.
-`mettail-rho-runtime/tests/rho_call_by_need.rs` separately checks the generic
+`rholang-runtime/tests/rho_call_by_need.rs` separately checks the generic
 call-by-need path: it validates each generated typed thunk artifact and forces
 representative `Int`, `Bool`, and `Str` payloads on RhoRuntime, asserting the
 memoized computed value (a force-miss computes and memoizes; a memo-hit observes
 the value without re-computing). The former scalar-matrix comparison against
 `CalculatorLanguage::run_ascent` normal forms was retired with the Ascent
 reference in P6.
-`mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the structured path by
+`rholang-runtime/tests/rho_rhocalc_ast.rs` exercises the structured path by
 lowering rhocalc list, map, and bag typed AST payloads directly to `rhoapi::Par`
 and observing recursive runtime values from RSpace.
 The string-valued check is deliberately end-to-end at the wrapper boundary:
@@ -155,7 +155,7 @@ terms, converted by the Rho wrapper's invocation mapper into normalized
 report. The second snippet is an important regression: the source token is `+`,
 but the typed rule is `Str × Str → Str`, so the generated AST body must be
 `EPlusPlus`, not integer `EPlus`.
-Generated languages do not need to depend on `mettail-rho-runtime` to become
+Generated languages do not need to depend on `rholang-runtime` to become
 Rho-default. `RhoRuntimeBackedLanguage<L, F>` lives in the Rho runtime crate and
 wraps an existing generated `Language`: `L` still owns parsing, environments,
 and type inference, while transition-only explicit Ascent
@@ -209,7 +209,7 @@ named reference helpers (`run_ascent_oracle_query`/`run_ascent_oracle_report`)
 exercise that retained hook.
 Generated languages likewise do not need a reverse dependency loop to expose
 Dovetail as a selected runtime backend. `DovetailRuntimeBackedLanguage<L, F>`
-lives in `mettail-dovetail-runtime`, wraps an existing generated `Language`,
+lives in `dovetail-runtime`, wraps an existing generated `Language`,
 and makes `RuntimeBackend::Dovetail` the concrete default for that wrapped
 value. Its `DovetailCompilerStage<F>` carries the macro-expanded
 `LanguageDef` fingerprint used to build the report producer; installation
@@ -226,7 +226,7 @@ which keeps Dovetail reports, Ascent graphs, and Rho observations separate at
 the runtime API boundary.
 
 The production replacement boundary composes those two staging wrappers:
-`DovetailRhoRuntimeBackedLanguage<L, D, F>` lives in `mettail-rho-runtime` and
+`DovetailRhoRuntimeBackedLanguage<L, D, F>` lives in `rholang-runtime` and
 represents `typed MeTTaIL term -> checked Dovetail report -> Rho AST invocation`.
 It advertises `RhoMachine` as the default runtime backend because the runtime
 observable result comes from RhoRuntime/RSpace. It also advertises `Dovetail`
@@ -238,7 +238,7 @@ reports fail before any Rho execution. The invocation mapper receives the
 checked `RuntimeDovetailRunReport` and constructs `rhoapi::Par` values directly.
 Rholang source text remains documentation/test-oracle annotation, not a
 generated execution artifact. In the Rust crate, hand-authored Rholang source
-helpers are compiled only with the `mettail-rho-runtime/source-oracle` feature;
+helpers are compiled only with the `rholang-runtime/source-oracle` feature;
 the default public API exposes validated AST/program execution helpers.
 Per-language production flips still require the runtime gates listed below.
 
@@ -358,40 +358,40 @@ successful bounded observation still matches `source_eval(t)`.
 
 Rust/runtime gate:
 
-- `mettail_rho_codegen::admit_call_by_need_force` is the executable admission
+- `mettail_rholang_codegen::admit_call_by_need_force` is the executable admission
   contract mirrored by `RhoCallByNeedBudget.v`.
-- `mettail_rho_codegen::CallByNeedBudget` carries the remaining lookahead and
+- `mettail_rholang_codegen::CallByNeedBudget` carries the remaining lookahead and
   heap-cell budgets.
-- `mettail_rho_codegen::CallByNeedBudgetBlocker::LookaheadExceeded` and
-  `mettail_rho_codegen::CallByNeedBudgetBlocker::HeapBudgetExceeded` report the
+- `mettail_rholang_codegen::CallByNeedBudgetBlocker::LookaheadExceeded` and
+  `mettail_rholang_codegen::CallByNeedBudgetBlocker::HeapBudgetExceeded` report the
   explicit boundedness reason.
-- `mettail_rho_codegen::CallByNeedThunkSpec` is the generated-language
+- `mettail_rholang_codegen::CallByNeedThunkSpec` is the generated-language
   parameter block for the thunk artifact. It carries the initial cold/hot state,
   typed source value as `RhoAstLiteral`, evaluation marker, public value
   channel, and evaluation-trace channel. It rejects an unencodable value,
   empty trace/channel fields, and equal public/evaluation channels so
   observations remain unambiguous while still allowing an empty string as a
   legitimate computed value.
-- `mettail_rho_codegen::build_call_by_need_thunk_ast` constructs the current
+- `mettail_rholang_codegen::build_call_by_need_thunk_ast` constructs the current
   memoized-thunk execution slice as normalized `rhoapi::Par`; its
   `text_annotation` is reader/debug metadata and is not parsed for execution.
-- `mettail_rho_codegen::build_call_by_need_thunk_ast_from_spec` constructs the
+- `mettail_rholang_codegen::build_call_by_need_thunk_ast_from_spec` constructs the
   same verified topology from generated-language parameters: one private thunk
   contract, one state cell, one memo cell, and two observer continuations. The
   parameterized value and channels are embedded directly in the AST.
-- `mettail_rho_codegen::build_call_by_need_thunk_program` wraps that AST in a
+- `mettail_rholang_codegen::build_call_by_need_thunk_program` wraps that AST in a
   `RhoProgram` carrying `RhoAstValidationProfile::CallByNeedThunk`, and
   `ValidatedRhoProgram::try_from` rejects the same thunk if it is mislabeled as
   a scalar-contract artifact.
-- `mettail_rho_codegen::plan_call_by_need_thunk` and
-  `mettail_rho_codegen::plan_call_by_need_thunk_with_spec` are model-planning
+- `mettail_rholang_codegen::plan_call_by_need_thunk` and
+  `mettail_rholang_codegen::plan_call_by_need_thunk_with_spec` are model-planning
   entry points: they admit the two-force sequence under the configured
   lookahead/heap budget and validate the call-by-need AST artifact before
   returning a `CallByNeedThunkPlan`.
-- `mettail_rho_runtime::PlannedCallByNeedThunk` consumes `CallByNeedThunkPlan`
+- `mettail_rholang_runtime::PlannedCallByNeedThunk` consumes `CallByNeedThunkPlan`
   for runtime execution, so M-RHO.2 tests do not inject a bare
   `ValidatedRhoProgram` as the generated need path.
-- `mettail_rho_runtime::RhoBackendInvocation::RunCallByNeedThunk` lets a
+- `mettail_rholang_runtime::RhoBackendInvocation::RunCallByNeedThunk` lets a
   generated-language invocation mapper return a planned CBN thunk through the
   same `RhoRuntimeBackedLanguage` and `RuntimeBackendReport` surface as the
   static RhoNet path. The report carries two spec-named observation channels.
@@ -481,23 +481,23 @@ Mechanized evidence:
 
 Rust adapter evidence:
 
-- `mettail_rho_codegen::RhoAstSend`
-- `mettail_rho_codegen::RhoAstLiteral`, including scalar, collection,
+- `mettail_rholang_codegen::RhoAstSend`
+- `mettail_rholang_codegen::RhoAstLiteral`, including scalar, collection,
   unforgeable-name, and tagged rhocalc-bag payloads
-- `mettail_rho_adapter::DeltaOneCandidate`
-- `mettail_rho_adapter::DeltaOneMatchEdge`
-- `mettail_rho_adapter::DeltaOneMatching`
-- `mettail_rho_adapter::AmbiguityCandidate`
-- `mettail_rho_adapter::AmbiguityWitnessSet`
-- `mettail_rho_adapter::AmbiguityWitnessConflict`
-- `mettail_rho_adapter::select_delta1_minima`
-- `mettail_rho_adapter::select_delta1_min_cost_left_perfect_matchings`
-- `mettail_rho_adapter::collect_enabled_ambiguity_witnesses`
-- `mettail_rho_adapter::ambiguity_observes_key`
-- `mettail_rho_adapter::{reserve_escrow, commit_escrow, refund_escrow}`
-- `mettail_rho_adapter::{LocatedEscrowLedger, SettlementAction}`
-- `mettail_rho_adapter::delta1_selects_index`
-- `mettail_rho_adapter::delta1_selects_left_perfect_matching_indices`
+- `mettail_rholang_adapter::DeltaOneCandidate`
+- `mettail_rholang_adapter::DeltaOneMatchEdge`
+- `mettail_rholang_adapter::DeltaOneMatching`
+- `mettail_rholang_adapter::AmbiguityCandidate`
+- `mettail_rholang_adapter::AmbiguityWitnessSet`
+- `mettail_rholang_adapter::AmbiguityWitnessConflict`
+- `mettail_rholang_adapter::select_delta1_minima`
+- `mettail_rholang_adapter::select_delta1_min_cost_left_perfect_matchings`
+- `mettail_rholang_adapter::collect_enabled_ambiguity_witnesses`
+- `mettail_rholang_adapter::ambiguity_observes_key`
+- `mettail_rholang_adapter::{reserve_escrow, commit_escrow, refund_escrow}`
+- `mettail_rholang_adapter::{LocatedEscrowLedger, SettlementAction}`
+- `mettail_rholang_adapter::delta1_selects_index`
+- `mettail_rholang_adapter::delta1_selects_left_perfect_matching_indices`
 - `delta1_selects_all_enabled_minimal_ties`
 - `delta1_refutation_precedes_ordering`
 - `delta1_returns_empty_when_no_candidate_is_enabled`
@@ -612,13 +612,13 @@ coverage wrapper at the rule-identity level: `AllRulesLowered` is valid only
 when the rejected set is empty; `CoveredRejectedRules` is valid only when typed
 dispositions name exactly the rejected rule set; and omitted, stale, duplicate,
 or blank-rule dispositions block the default-backend gate.
-`mettail_rho_codegen::classify_rejected_rules` is an advisory convenience layer
+`mettail_rholang_codegen::classify_rejected_rules` is an advisory convenience layer
 over the same boundary. It derives suggested disposition kinds from the parsed
 `LanguageDef`: HOL `fold`/`step` or Rust-code rules suggest native handlers,
 constructor labels referenced by equations/rewrites and structured syntax
 suggest Rho AST contracts, and unsupported scalar-operator shapes suggest
 external contracts. The classifier does not satisfy coverage by itself.
-`mettail_rho_codegen::audit_rho_default_backend` is the production planning
+`mettail_rholang_codegen::audit_rho_default_backend` is the production planning
 view over that same data. It lowers the structured `LanguageDef`, records
 rejected-rule classifications, derives guard obligations, validates the
 generated `rhoapi::Par` artifact, carries the deadlock report through the
@@ -648,39 +648,39 @@ fields.
 
 Rust flip-gate evidence:
 
-- `mettail_rho_codegen::plan_rho_default_backend`
-- `mettail_rho_codegen::RhoDefaultBackendPlan`
-- `mettail_rho_codegen::RhoDefaultBackendPlanError`
-- `mettail_rho_codegen::RhoDefaultBackendRequirements`
+- `mettail_rholang_codegen::plan_rho_default_backend`
+- `mettail_rholang_codegen::RhoDefaultBackendPlan`
+- `mettail_rholang_codegen::RhoDefaultBackendPlanError`
+- `mettail_rholang_codegen::RhoDefaultBackendRequirements`
 - `mettail_runtime::RuntimeBackendReport`
 - `mettail_runtime::RuntimeBackendArtifact`
 - `mettail_runtime::RuntimeChannelObservation`
-- `mettail_rho_runtime::PlannedRhoBackend`
-- `mettail_rho_runtime::RhoObservationReport`
-- `mettail_rho_runtime::IntoRuntimeObservationValue`
-- `mettail_rho_runtime::RuntimeReportConversionError`
-- `mettail_rho_runtime::RhoExecutionBoundary`
-- `mettail_rho_codegen::RhoProgram`
-- `mettail_rho_codegen::validate_rho_program`
-- `mettail_rho_codegen::RhoValidationError`
-- `mettail_rho_codegen::RhoCoverageEvidence`
-- `mettail_rho_codegen::audit_rho_default_backend`
-- `mettail_rho_codegen::RhoDefaultBackendAudit`
-- `mettail_rho_codegen::classify_rejected_rules`
-- `mettail_rho_codegen::RhoRejectedRuleClassification`
-- `mettail_rho_codegen::RhoRejectedRuleClassificationReason`
-- `mettail_rho_codegen::RhoRejectedRuleDisposition`
-- `mettail_rho_codegen::RhoRejectedRuleDispositionKind`
-- `mettail_rho_codegen::RhoRejectedRuleDispositionDiagnostic`
-- `mettail_rho_codegen::decide_rho_flip`
-- `mettail_rho_codegen::RhoFlipDecision::can_flip_to_rho`
-- `mettail_rho_codegen::RhoFlipBlocker`
-- `mettail_rho_codegen::RhoFlipBlocker::ArtifactValidation`
-- `mettail_rho_codegen::analyze_channel_deadlocks`
-- `mettail_rho_codegen::ChannelDeadlockReport`
-- `mettail_rho_codegen::ChannelDeadlockReport::no_new_deadlocks`
-- `mettail_rho_codegen::ChannelDeadlockDiagnostic::MissingProducer`
-- `mettail_rho_codegen::ChannelDeadlockDiagnostic::ClosedWaitCycle`
+- `mettail_rholang_runtime::PlannedRhoBackend`
+- `mettail_rholang_runtime::RhoObservationReport`
+- `mettail_rholang_runtime::IntoRuntimeObservationValue`
+- `mettail_rholang_runtime::RuntimeReportConversionError`
+- `mettail_rholang_runtime::RhoExecutionBoundary`
+- `mettail_rholang_codegen::RhoProgram`
+- `mettail_rholang_codegen::validate_rho_program`
+- `mettail_rholang_codegen::RhoValidationError`
+- `mettail_rholang_codegen::RhoCoverageEvidence`
+- `mettail_rholang_codegen::audit_rho_default_backend`
+- `mettail_rholang_codegen::RhoDefaultBackendAudit`
+- `mettail_rholang_codegen::classify_rejected_rules`
+- `mettail_rholang_codegen::RhoRejectedRuleClassification`
+- `mettail_rholang_codegen::RhoRejectedRuleClassificationReason`
+- `mettail_rholang_codegen::RhoRejectedRuleDisposition`
+- `mettail_rholang_codegen::RhoRejectedRuleDispositionKind`
+- `mettail_rholang_codegen::RhoRejectedRuleDispositionDiagnostic`
+- `mettail_rholang_codegen::decide_rho_flip`
+- `mettail_rholang_codegen::RhoFlipDecision::can_flip_to_rho`
+- `mettail_rholang_codegen::RhoFlipBlocker`
+- `mettail_rholang_codegen::RhoFlipBlocker::ArtifactValidation`
+- `mettail_rholang_codegen::analyze_channel_deadlocks`
+- `mettail_rholang_codegen::ChannelDeadlockReport`
+- `mettail_rholang_codegen::ChannelDeadlockReport::no_new_deadlocks`
+- `mettail_rholang_codegen::ChannelDeadlockDiagnostic::MissingProducer`
+- `mettail_rholang_codegen::ChannelDeadlockDiagnostic::ClosedWaitCycle`
 - `scalar_lowering_emits_clean_deadlock_report`
 - `missing_internal_producer_blocks_gate`
 - `closed_wait_cycle_blocks_gate`
@@ -714,13 +714,13 @@ from the live production tree rather than retained as dormant legacy code.
 The current production `Language` trait surface has already removed the old
 CEK decomposition hook. Generated `language!` implementations no longer emit
 `decompose_into_cek`, Rho/Dovetail runtime wrappers do not override such a hook,
-and `mettail-runtime` does not re-export CEK/CESK evaluator, store, or GC types
+and `runtime` does not re-export CEK/CESK evaluator, store, or GC types
 as a runtime-backend API.
 
 The remaining prattail/testkit CESK evaluator, store, garbage-collector, and
 green-thread scheduler modules are not part of the default runtime surface.
-They require the explicit `mettail-prattail/legacy-cesk-runtime` or
-`mettail-testkit/legacy-cesk-runtime` feature. Parser-side CEK/WPDA observer
+They require the explicit `prattail/legacy-cesk-runtime` or
+`testkit/legacy-cesk-runtime` feature. Parser-side CEK/WPDA observer
 support remains available by default because the WPDA parser is the active
 front end, not the legacy runtime backend. `RuntimeBackendDispatch.v` records
 this as a feature-surface invariant: the default runtime feature surface exposes
@@ -789,29 +789,29 @@ systemd-run --user --scope \
 Required tests:
 
 ```text
-cargo test -p mettail-rho-codegen
-cargo test -p mettail-rho-adapter
-cargo test -p mettail-rho-runtime
-cargo test -p mettail-languages --no-default-features --features rhocalc --test rhocalc_tests
+cargo test -p rholang-codegen
+cargo test -p rholang-adapter
+cargo test -p rholang-runtime
+cargo test -p languages --no-default-features --features rhocalc --test rhocalc_tests
 ```
 
 M-RHO.1 Rho machine COMM oracle:
 
 ```text
-cargo test -p mettail-rho-runtime --test rho_comm_oracle
+cargo test -p rholang-runtime --test rho_comm_oracle
 ```
 
 M-RHO.3 guarded-COMM oracle:
 
 ```text
-cargo test -p mettail-rho-runtime --test rho_guard_oracle
+cargo test -p rholang-runtime --test rho_guard_oracle
 ```
 
 The Rho-vs-Ascent differential oracle (and the `oracle-ascent` feature it depended
 on) was **retired with the legacy Ascent backend** in the P6 finalization — the
 Ascent reference no longer exists in the live tree, so there is no differential
 gate to run. A flipped language is now gated directly against the live backends:
-the `mettail-rho-{codegen,adapter,runtime}` and `mettail-dovetail-runtime` test
+the `mettail-rho-{codegen,adapter,runtime}` and `dovetail-runtime` test
 suites, the COMM/guard oracles above, and — for fold-bearing languages — the
 in-engine native-fold reduction tests (`languages/tests/rhocalc_dovetail_fold.rs`,
 see Dovetail [12 - Native-Fold Reduction](../dovetail/12-native-fold-reduction.md)).

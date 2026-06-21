@@ -304,7 +304,7 @@ The substages are designed to be **independently revertable**: each ships throug
 
 **Welch falsifier**: N/A (no functional change).
 
-**Gauntlet falsifier**: `cargo test --release -p mettail-prattail --lib` must stay at 4134/0; trampoline at 18/0/6.
+**Gauntlet falsifier**: `cargo test --release -p prattail --lib` must stay at 4134/0; trampoline at 18/0/6.
 
 **pgmcp lifecycle**:
 - `experiment_open(title="Exp 15 S0 — CPS continuation size projection", hypothesis="P50 continuation record ≤ 32 B AND P99 ≤ 64 B on left_assoc_chain_500", primary_metric="cont_record_size_p50_bytes", lower_is_better=true, acceptance_criterion={"type":"hard","threshold":32})`
@@ -690,10 +690,10 @@ Each session's plan-file ledger update obligation: append the substage's result 
 
 ```bash
 # Always run after each substage commit:
-cargo build --release -p mettail-prattail
-cargo build --release -p mettail-prattail --features walker-stats
-cargo test --release -p mettail-prattail --lib  # must be 4134/0
-cargo build --release -p mettail-languages --tests
+cargo build --release -p prattail
+cargo build --release -p prattail --features walker-stats
+cargo test --release -p prattail --lib  # must be 4134/0
+cargo build --release -p languages --tests
 ./target/release/deps/trampoline_tests-XXXX --skip chain_10000 --skip chain_5000 --skip chain_2000  # must be 18/0/6 (or 20/0/4 post-S7)
 
 # Welch panel (7 arms, N=15 each, 3-warmup):

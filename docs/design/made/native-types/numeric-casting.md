@@ -1,11 +1,11 @@
 # Numeric casting — design
 
-**Status:** Implemented in `mettail-runtime` + Calculator + RhoCalc (details below).  
+**Status:** Implemented in `runtime` + Calculator + RhoCalc (details below).  
 **Related:** [IEEE 754 / fixed-point exploration](../exploring/ieee754-fixed-point.md), [Signed BigRat](./signed-bigrat-design.md), [Float support in Ascent](./float-support-ascent.md), `language!` native types (`languages/src/*.rs`), shared cast dispatch (`runtime/src/numeric_cast_dispatch.rs`, `languages/numeric_dispatch.rs`)
 
 ### Implementation status (codebase)
 
-- **Runtime (`mettail-runtime`):** `numeric_cast` (`runtime/src/numeric_cast.rs`) — width validation (`int`/`uint`: `m = 2^n`, `n ≥ 3`; `float`: **32 and 64** only; **80 / 128 / 256** → `CastError::UnsupportedFloatWidth`), `fixed` place count with a documented cap, floor/modular/interval rules, and unit tests. Language-agnostic cast pipelines (**no `Proc`**) live in **`numeric_cast_dispatch`** (`runtime/src/numeric_cast_dispatch.rs`): they take `NumericInput` and width parameters only; language layers should delegate here rather than duplicating conversion logic.
+- **Runtime (`runtime`):** `numeric_cast` (`runtime/src/numeric_cast.rs`) — width validation (`int`/`uint`: `m = 2^n`, `n ≥ 3`; `float`: **32 and 64** only; **80 / 128 / 256** → `CastError::UnsupportedFloatWidth`), `fixed` place count with a documented cap, floor/modular/interval rules, and unit tests. Language-agnostic cast pipelines (**no `Proc`**) live in **`numeric_cast_dispatch`** (`runtime/src/numeric_cast_dispatch.rs`): they take `NumericInput` and width parameters only; language layers should delegate here rather than duplicating conversion logic.
 - **Languages crate glue:** Per-language **`Proc` → `NumericInput`** (list peeling, tag mapping) and thin wrappers around the runtime pipelines are in **`languages/numeric_dispatch.rs`** (next to `languages/src/`, not under it, so `src/` stays for `language!` definitions). Calculator and RhoCalc builtins import from `crate::numeric_dispatch`.
 - **Calculator:** Binary **`int`**, **`uint`**, **`float`**, **`fixed`** (second argument is width / place count), unary **`bigint`**, **`bigrat`**. There is **no** unary `int(proc)` or `float(proc)`; use **`int(p, m)`** / **`float(p, m)`** (and `Proc` projections **`bool`**, **`str`** where needed). Invalid casts reduce to per-category nullary errors (`cast_error_int`, …) where applicable.
 - **RhoCalc:** Same builtins at **`Proc`** level (`int(arg, w)`, … inside `{ … }` blocks). Failures map to **`Proc::Err`** (display **`error`**). Ascent fold rules for these casts allow a final **`Proc::Err`** (unlike most `Proc` folds that suppress `Err` until subterms are ready).

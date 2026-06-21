@@ -75,7 +75,7 @@ possible (the cheap leaf template), else purpose-built:
 
 `OrderedFieldAlgebra<P>` is generic over an `OrderedPoint` trait (`witness_in`),
 with prattail-native `num-bigint`/`num-rational` point types — prattail cannot
-depend on `mettail-runtime` (cycle), so the points are self-contained.
+depend on `runtime` (cycle), so the points are self-contained.
 
 ## 4. Combinators closing the family
 
@@ -145,7 +145,7 @@ T4Assert}` carry the per-guard classification; combination is `max_tier` (the
 weakest leg dominates), proven a join-semilattice homomorphism in
 `GuardTierCertificate.v`. The tier maps to the documented 7-value **quality**
 vocabulary (`docs/architecture/dovetail/04-rules-and-saturation.md`) via
-`mettail_rho_codegen::guard_quality` (T1/T2→`ExactDecidable`, T3→`BoundedDecidable`,
+`mettail_rholang_codegen::guard_quality` (T1/T2→`ExactDecidable`, T3→`BoundedDecidable`,
 reject-safe→`RejectSafeApprox`, T4→`TrustedNativeGuard`, proof→`MachineCheckedModel`,
 runtime→`RuntimeObservation`, undecided→`Unknown`). `Unknown` is fail-closed.
 

@@ -21,7 +21,7 @@ Last Updated: November 9, 2025 - **Phase 4 COMPLETE!** 🎉
 ## Phase 1: Runtime Foundation (Days 1-2)
 
 ### Day 1: HashBag Core ✅ COMPLETE
-- [x] Create `mettail-runtime/src/hashbag.rs`
+- [x] Create `runtime/src/hashbag.rs`
 - [x] Struct definition with `HashMap<T, usize>` + `total_count`
 - [x] Basic methods:
   - [x] `new()`
@@ -60,7 +60,7 @@ Last Updated: November 9, 2025 - **Phase 4 COMPLETE!** 🎉
 ## Phase 2: AST & Grammar (Days 3-4)
 
 ### Day 3: AST Extension ✅ COMPLETE
-- [x] Add to `mettail-macros/src/ast.rs`:
+- [x] Add to `macros/src/ast.rs`:
   ```rust
   pub enum CollectionType {
       HashBag, HashSet, Vec,
@@ -97,18 +97,18 @@ Last Updated: November 9, 2025 - **Phase 4 COMPLETE!** 🎉
 ## Phase 3: Code Generation (Days 5-7)
 
 ### Day 5: AST & Display Generation ✅ COMPLETE
-- [x] `mettail-macros/src/codegen.rs`:
+- [x] `macros/src/codegen.rs`:
   - [x] Detect `GrammarItem::Collection`
   - [x] Generate enum variant with collection field
   - [x] Example: `Proc::PPar(mettail_runtime::HashBag<Proc>)`
-- [x] `mettail-macros/src/display_gen.rs`:
+- [x] `macros/src/display_gen.rs`:
   - [x] Detect collection fields
   - [x] Generate display delegating to collection's Display impl
-- [x] `mettail-runtime/src/hashbag.rs`:
+- [x] `runtime/src/hashbag.rs`:
   - [x] Implement Display for HashBag (sorted, deterministic output)
 
 ### Day 6: Substitution Generation ✅ COMPLETE
-- [x] `mettail-macros/src/subst_gen.rs`:
+- [x] `macros/src/subst_gen.rs`:
   - [x] Detect collection fields in AST
   - [x] Generate recursive substitution:
     ```rust
@@ -138,7 +138,7 @@ Last Updated: November 9, 2025 - **Phase 4 COMPLETE!** 🎉
 ## Phase 4: Parser Integration (Days 8-9)
 
 ### Day 8: LALRPOP Generation
-- [ ] `mettail-macros/src/lalrpop_gen.rs`:
+- [ ] `macros/src/lalrpop_gen.rs`:
   - [ ] Detect `GrammarItem::Collection`
   - [ ] Generate separated list rule:
     ```lalrpop
@@ -171,7 +171,7 @@ Last Updated: November 9, 2025 - **Phase 4 COMPLETE!** 🎉
 - [ ] Test `HashBag<Proc>` in Ascent relations
 - [ ] Verify equality: `proc(PPar([a,b]))` == `proc(PPar([b,a]))`
 - [ ] Test `eqrel` with collections
-- [ ] `mettail-macros/src/ascent_gen.rs`:
+- [ ] `macros/src/ascent_gen.rs`:
   - [ ] Detect collection constructors
   - [ ] Skip AC equation generation
   - [ ] Generate identity equations if zero exists
@@ -339,7 +339,7 @@ cargo run --example rhocalc
 
 **2025-11-09 - Phase 2 & 3 Complete**
 - AST extension complete with `CollectionType` and `GrammarItem::Collection`
-- Fixed 11 non-exhaustive pattern matches across 8 files in mettail-macros
+- Fixed 11 non-exhaustive pattern matches across 8 files in macros
 - Collection parsing tests passing (5 tests)
 - Code generation complete:
   - AST enum variants with `HashBag<T>`, `HashSet<T>`, `Vec<T>` fields

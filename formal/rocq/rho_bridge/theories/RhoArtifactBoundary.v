@@ -3,10 +3,10 @@
  * never Rholang source text.
  *
  * Rust image:
- *   - `mettail-rho-codegen::RhoProgram` currently exposes only
+ *   - `rholang-codegen::RhoProgram` currently exposes only
  *     `RhoProgram::Ast(RhoAstProgram)`.
  *   - `ValidatedRhoProgram` validates that AST shape before
- *     `mettail-rho-runtime::PlannedRhoBackend` can execute it.
+ *     `rholang-runtime::PlannedRhoBackend` can execute it.
  *   - Rholang-looking text is an annotation for readers/logs/tests. It is not
  *     parsed to produce the generated backend's executable value.
  *

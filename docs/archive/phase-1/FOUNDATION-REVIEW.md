@@ -52,7 +52,7 @@ equations {
 // 4. The equation makes sense given the freshness constraint
 ```
 
-**Where:** `mettail-macros/src/validator.rs` or new `freshness.rs`
+**Where:** `macros/src/validator.rs` or new `freshness.rs`
 
 **Estimated:** 1-2 days
 
@@ -92,7 +92,7 @@ impl TypeChecker {
 // Need to track this for freshness checking
 ```
 
-**Where:** `mettail-macros/src/typechecker.rs` + `scope.rs`
+**Where:** `macros/src/typechecker.rs` + `scope.rs`
 
 **Estimated:** 2-3 days
 
@@ -100,13 +100,13 @@ impl TypeChecker {
 
 ### 3. Runtime AST Foundation (HIGH PRIORITY)
 
-**Problem:** `mettail-runtime` is completely empty
+**Problem:** `runtime` is completely empty
 
 **Impact:** Generated code has nowhere to go, can't instantiate terms
 
 **What's Missing:**
 ```rust
-// mettail-runtime/src/lib.rs
+// runtime/src/lib.rs
 
 /// Base trait for all generated AST nodes
 pub trait Term: Clone + Debug + PartialEq {
@@ -152,7 +152,7 @@ impl Term for Proc {
 }
 ```
 
-**Where:** `mettail-runtime/src/lib.rs`, `term.rs`, `parser.rs`
+**Where:** `runtime/src/lib.rs`, `term.rs`, `parser.rs`
 
 **Estimated:** 2-3 days
 
@@ -254,7 +254,7 @@ terms {
 }
 ```
 
-**Where:** `mettail-macros/src/validator.rs`
+**Where:** `macros/src/validator.rs`
 
 **Estimated:** 0.5-1 day
 
@@ -319,7 +319,7 @@ proptest! {
 
 **Structure:**
 ```
-mettail-macros/
+macros/
 ├── tests/
 │   ├── compile_fail/       # Tests that should fail compilation
 │   │   ├── unknown_category.rs
@@ -344,7 +344,7 @@ trybuild = "1.0"
 proptest = "1.0"
 ```
 
-**Where:** `mettail-macros/tests/`
+**Where:** `macros/tests/`
 
 **Estimated:** 2-3 days (ongoing)
 

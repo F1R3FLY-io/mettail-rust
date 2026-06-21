@@ -57,8 +57,8 @@ theory! {
 Create workspace structure:
 ```
 mettail-rust-exploration/
-├── mettail-macros/       # Procedural macro crate
-├── mettail-runtime/      # Runtime support library
+├── macros/       # Procedural macro crate
+├── runtime/      # Runtime support library
 ├── examples/             # Example usage
 └── docs/                 # Documentation
 ```
@@ -67,7 +67,7 @@ mettail-rust-exploration/
 
 ### Phase 2: Minimal Macro (4-6 hours)
 
-**File:** `mettail-macros/src/lib.rs`
+**File:** `macros/src/lib.rs`
 
 ```rust
 use proc_macro::TokenStream;
@@ -310,7 +310,7 @@ mettail-rust-exploration/
 ├── 00-PROJECT-UNDERSTANDING.md     (this file)
 ├── 01-MINIMAL-POC.md               (implementation plan)
 │
-├── mettail-macros/
+├── macros/
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs                   (proc macro entry point)
@@ -318,7 +318,7 @@ mettail-rust-exploration/
 │       ├── validator.rs             (compile-time checks)
 │       └── codegen.rs               (generate AST types)
 │
-├── mettail-runtime/
+├── runtime/
 │   ├── Cargo.toml
 │   └── src/
 │       └── lib.rs                   (runtime support, if needed)
@@ -336,7 +336,7 @@ mettail-rust-exploration/
 
 ```toml
 [workspace]
-members = ["mettail-macros", "mettail-runtime", "examples"]
+members = ["macros", "runtime", "examples"]
 resolver = "2"
 
 [workspace.dependencies]

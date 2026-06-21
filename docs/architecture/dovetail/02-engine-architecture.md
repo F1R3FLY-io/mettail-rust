@@ -76,7 +76,7 @@ The arrow is one-way. Dovetail never calls back into parser generation.
 ## Installation Status
 
 The crate is installed as a production runtime backend: it is consumed by the
-`mettail-dovetail-runtime` and `mettail-rho-runtime` wrappers, and the first
+`dovetail-runtime` and `rholang-runtime` wrappers, and the first
 languages have flipped onto it through the proven flip gate (`CalculatorLanguage`,
 `Ambient`). It is no longer an inert core. Language-level production flips remain
 *per-language* — each still requires its coverage, artifact-validation, and

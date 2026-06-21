@@ -150,10 +150,10 @@ The direct Dovetail runtime backend uses an adapter-owned projection:
 `DovetailRunReport<L,W> → RuntimeDovetailRunReport → RuntimeBackendOutput::Dovetail`
 
 `RuntimeDovetailRunReport` copies exact key bytes, root ordinals, term records,
-ordered derivation edges, and completeness into `mettail-runtime` types. It
+ordered derivation edges, and completeness into `runtime` types. It
 stores operator and weight displays only as reader-facing fields; semantic
 identity remains the exact key bytes. This projection lives in
-`mettail-dovetail-runtime`, not in `dovetail`, so the dependency direction
+`dovetail-runtime`, not in `dovetail`, so the dependency direction
 stays one-way. A selected `RuntimeBackend::Dovetail` therefore returns a
 Dovetail-shaped runtime backend report, not an `AscentResults` graph and not
 Rho observations.
@@ -271,7 +271,7 @@ No single report is allowed to smuggle that stronger claim on its own.
 | `SatReport` | The saturation terminal-status artifact: `Converged`, `NodeLimit`, or `IterationLimit`, plus saturation statistics. |
 | `Extraction<T>` | The checked extraction envelope: extracted value plus terminal completeness. |
 | `DovetailRunReport` | The runtime-facing artifact produced by `report_from_extraction`. |
-| `RuntimeDovetailRunReport` | The `mettail-runtime` projection of a Dovetail report, used when `RuntimeBackend::Dovetail` is selected directly. |
+| `RuntimeDovetailRunReport` | The `runtime` projection of a Dovetail report, used when `RuntimeBackend::Dovetail` is selected directly. |
 | root | A top-level derivation selected by the extractor for the requested e-class. |
 | term record | A unique derivation node, recorded once under exact `ContentKey` identity. |
 | derivation edge | A parent-to-child dependency edge inside a derivation tree. |
@@ -298,7 +298,7 @@ Dovetail documentation and code should use the noun precisely:
 | Dovetail report | the artifact was produced by Dovetail and carries Dovetail's checked semantics |
 | saturation report | the topic is specifically `SatReport` and saturation terminal status |
 | extraction envelope | the topic is specifically `Extraction<T>` and terminal completeness |
-| runtime backend report | the topic is the `mettail-runtime` envelope around a backend's output |
+| runtime backend report | the topic is the `runtime` envelope around a backend's output |
 | runtime observation | the value was produced after a backend artifact was executed or observed |
 | diagnostic | the value is human-facing explanatory text, not a semantic handoff artifact |
 
@@ -967,7 +967,7 @@ rhoapi::Par {
 ```
 
 For dynamic calls and witness facts, the implementation constructs that AST
-with `mettail_rho_codegen::RhoAstSend` and structured `RhoAstLiteral` payloads.
+with `mettail_rholang_codegen::RhoAstSend` and structured `RhoAstLiteral` payloads.
 The payload builder covers simple scalar data and recursive ground data such as
 lists, maps, unforgeable names, and tagged rhocalc bags. That keeps the report
 handoff AST-first even when examples use Rholang-looking text for readability.

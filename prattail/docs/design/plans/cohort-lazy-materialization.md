@@ -442,12 +442,12 @@ restores both verbatim. Per-member overhead grows from ~64 B to
 safely.
 
 **Mandatory L2c re-attempt protocol**:
-1. Confirm `cargo check -p mettail-prattail` passes.
+1. Confirm `cargo check -p prattail` passes.
 2. Confirm prattail-lib 4058/0 gauntlet passes (sanity).
 3. Apply L2c diff: `git apply /tmp/L2c-attempt-backup-2026-05-25.patch`.
 4. Run prattail-lib gauntlet.
 5. Run trampoline chain tests with RSS cap (`systemd-run --user
-   --scope -p MemoryMax=24G cargo test --release -p mettail-languages
+   --scope -p MemoryMax=24G cargo test --release -p languages
    --test trampoline_tests test_right_assoc_chain_50
    test_right_assoc_chain_100 test_right_assoc_chain_200
    test_right_assoc_chain_1000 -- --nocapture`).

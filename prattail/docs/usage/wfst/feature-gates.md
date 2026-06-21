@@ -104,28 +104,28 @@ serde_json = { version = "1",                       optional = true }
 
 ```toml
 [features]
-wfst-log = ["mettail-prattail/wfst-log"]
+wfst-log = ["prattail/wfst-log"]
 ```
 
 ### 2.3 `languages/Cargo.toml`
 
 ```toml
 [features]
-wfst-log = ["mettail-macros/wfst-log"]
+wfst-log = ["macros/wfst-log"]
 ```
 
 ### 2.4 `repl/Cargo.toml`
 
 ```toml
 [features]
-wfst-log = ["mettail-languages/wfst-log", "mettail-macros/wfst-log"]
+wfst-log = ["languages/wfst-log", "macros/wfst-log"]
 ```
 
 ### 2.5 `Cargo.toml` (workspace root)
 
 ```toml
 [features]
-wfst-log = ["mettail-repl/wfst-log"]
+wfst-log = ["repl/wfst-log"]
 ```
 
 ---
@@ -175,10 +175,10 @@ To run tests for a single crate:
 
 ```sh
 # prattail tests only, default tier
-cargo test -p mettail-prattail
+cargo test -p prattail
 
 # prattail tests only, log semiring tier
-cargo test -p mettail-prattail --features wfst-log
+cargo test -p prattail --features wfst-log
 ```
 
 ---
@@ -190,10 +190,10 @@ any feature flags since all WFST functionality is always compiled.
 
 ```sh
 # Run all benchmarks
-cargo bench -p mettail-prattail
+cargo bench -p prattail
 
 # Save output for later analysis
-cargo bench -p mettail-prattail \
+cargo bench -p prattail \
     | tee prattail/docs/benchmarks/bench-results.txt
 ```
 

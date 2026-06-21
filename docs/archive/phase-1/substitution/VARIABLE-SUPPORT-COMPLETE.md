@@ -6,7 +6,7 @@ We've successfully implemented variable support in MeTTaIL, making `Var` a built
 
 ## Changes Made
 
-### 1. Validator Updates (`mettail-macros/src/validator.rs`)
+### 1. Validator Updates (`macros/src/validator.rs`)
 
 **Key Change**: Modified category validation to distinguish between:
 - **Exported categories**: Result types that the theory exposes to the outside world
@@ -46,7 +46,7 @@ for item in &rule.items {
 }
 ```
 
-### 2. Code Generation Updates (`mettail-macros/src/codegen.rs`)
+### 2. Code Generation Updates (`macros/src/codegen.rs`)
 
 **Key Change**: Special handling for `Var` fields in generated enum variants.
 
@@ -70,7 +70,7 @@ Not `Box<Var>` like other non-terminals, since `Var` is a built-in type from `mo
 pub enum #cat_name { ... }
 ```
 
-### 3. Parser Generation Updates (`mettail-macros/src/parser_gen.rs`)
+### 3. Parser Generation Updates (`macros/src/parser_gen.rs`)
 
 **Key Changes**:
 1. Skip parser generation for rules that reference `Var` (placeholder for future implementation)
@@ -172,7 +172,7 @@ This is marked as TODO for Phase 2, when we integrate with LALRPOP or another pr
 
 All tests pass successfully:
 
-**Library tests** (`mettail-macros`):
+**Library tests** (`macros`):
 - 19 unit tests pass
 - 1 compile-fail integration test passes
 - 2 ignored tests (unused old tests)

@@ -127,7 +127,7 @@ while keeping the term as the static-analysis source of truth.
 
 Build: `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-sft` (the `sft`
 theory dir is in the zero-admission `DEFAULT_ROOTS`). Rust:
-`cargo test -p mettail-prattail --lib sft` / `sym_tree`.
+`cargo test -p prattail --lib sft` / `sym_tree`.
 
 ## 6. Why this matters
 

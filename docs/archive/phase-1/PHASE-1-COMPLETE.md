@@ -134,8 +134,8 @@ With a solid foundation, Phase 2 can focus on:
 ## Files Modified
 
 ### Core Implementation
-- `mettail-macros/src/codegen.rs` - Fixed field ordering
-- `mettail-macros/src/substitution.rs` - Cross-category substitution generation
+- `macros/src/codegen.rs` - Fixed field ordering
+- `macros/src/substitution.rs` - Cross-category substitution generation
 
 ### Tests & Documentation
 - `theories/rhocalc.rs` - Updated with working cross-category substitution test

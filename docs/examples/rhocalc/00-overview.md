@@ -88,7 +88,7 @@ Throughout these documents we trace several expressions:
 These are real RhoCalc programs that you can evaluate in the REPL:
 
 ```
-$ cargo run --bin mettail-repl
+$ cargo run --bin repl
 > lang rhocalc
 > exec 3 + 4
 ```

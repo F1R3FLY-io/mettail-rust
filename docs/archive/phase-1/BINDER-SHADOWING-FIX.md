@@ -100,8 +100,8 @@ This works because:
 ### 3. Changes Applied
 
 **Files modified:**
-- `mettail-macros/src/random_generation.rs`: All binder generation functions
-- `mettail-macros/src/termgen_gen.rs`: Context struct and all binder generation functions
+- `macros/src/random_generation.rs`: All binder generation functions
+- `macros/src/termgen_gen.rs`: Context struct and all binder generation functions
 - `examples/rhocalc.rs`: Updated demo to show unique binder names
 
 ## Verification

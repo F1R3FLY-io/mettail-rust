@@ -464,7 +464,7 @@ Roundtrip (`parse(display(t)) == t`) must hold after updating the display implem
 
 ### 9.3 Snapshot — `cargo expand`
 
-`cargo expand -p mettail-languages guarded_rho` must show the generated `parse_Proc` has a `Token::Pipe` arm in its infix match that calls an accumulator loop. Specifically, the generated body must contain **zero** recursive calls to any `parse_ppar` or `PPar` constructor from inside the LED — the only constructor invocation is the final `Proc::PPar(bag)`.
+`cargo expand -p languages guarded_rho` must show the generated `parse_Proc` has a `Token::Pipe` arm in its infix match that calls an accumulator loop. Specifically, the generated body must contain **zero** recursive calls to any `parse_ppar` or `PPar` constructor from inside the LED — the only constructor invocation is the final `Proc::PPar(bag)`.
 
 ### 9.4 Benchmarks — `prattail/benches/bench_specs/`
 

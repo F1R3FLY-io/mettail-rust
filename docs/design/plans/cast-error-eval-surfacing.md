@@ -98,12 +98,12 @@ This is NOT hacking-green: the cast fires, the VALUE is correct, only the lawful
 representation differs. Keep a comment citing the lossless tower + precedent.
 
 ## Build + gate plan
-1. Edit `macros/src/logic/mod.rs` (Fix 1a + 1b). Rebuild `mettail-languages` (proc-macro).
+1. Edit `macros/src/logic/mod.rs` (Fix 1a + 1b). Rebuild `languages` (proc-macro).
 2. Edit `languages/tests/rhocalc_tests.rs` (Fix 2, targets 4,5).
 3. Gates (each must hold):
-   - gauntlet `cargo test --release -p mettail-prattail --lib` = 4220/0 (codegen change
+   - gauntlet `cargo test --release -p prattail --lib` = 4220/0 (codegen change
      doesn't touch parser, but verify).
-   - op-suites `cargo nextest -p mettail-languages --test gen_calculator_op
+   - op-suites `cargo nextest -p languages --test gen_calculator_op
      --test gen_rhocalc_op --test gen_calculator_unit --test gen_rhocalc_unit`:
      gen_calculator_op ≥1331/0, gen_rhocalc_op 532/0, units 0-fail. PLUS the math-family
      op-suites (basemath/extmath/mixedmath/importedmath/ledtest) since they reuse calc cast
@@ -146,7 +146,7 @@ representation differs. Keep a comment citing the lossless tower + precedent.
 - **5 targets PASS**: `test_cast_int_invalid_width`,
   `rhocalc_cast_int_invalid_width_error`, `rhocalc_cast_int_nonfinite_float_is_error`,
   `rhocalc_cast_fixed_floor`, `rhocalc_cast_float_from_rational_string`.
-- gauntlet `mettail-prattail --lib` = **4220/0**.
+- gauntlet `prattail --lib` = **4220/0**.
 - gen_calculator_op **1331/0**, gen_rhocalc_op **532/0**, gen_calculator_unit
   169/0, gen_rhocalc_unit 86/0. Math family (basemath/extmath/mixedmath/
   importedmath/ledtest op) all 0-fail (calc casts reused via composition).

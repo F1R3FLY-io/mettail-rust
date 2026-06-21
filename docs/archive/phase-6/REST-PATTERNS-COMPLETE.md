@@ -86,7 +86,7 @@ Created comprehensive test suite (`examples/ambient_tests.rs`) with 17 tests:
 
 ## Examples Library
 
-Extended `mettail-repl/src/examples.rs` with 7 new ambient calculus examples demonstrating rest patterns:
+Extended `repl/src/examples.rs` with 7 new ambient calculus examples demonstrating rest patterns:
 
 - `AMB_REST_EMPTY`: Empty rest matching
 - `AMB_REST_NONEMPTY`: Non-empty context

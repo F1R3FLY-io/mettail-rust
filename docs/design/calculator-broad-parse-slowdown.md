@@ -567,7 +567,7 @@ explicitly out of scope, and it would alter the `_all` ambiguity surface (a beha
 
 | Metric | Target | How |
 |---|---|---|
-| `gen_calculator_prop::bigint_display_parse_roundtrip` | **passes, < 60 s** (so it never tail-times-out) | `cargo test -p mettail-languages --test gen_calculator_prop bigint_display_parse_roundtrip` |
+| `gen_calculator_prop::bigint_display_parse_roundtrip` | **passes, < 60 s** (so it never tail-times-out) | `cargo test -p languages --test gen_calculator_prop bigint_display_parse_roundtrip` |
 | `gen_calculator_prop::bigrat_display_parse_roundtrip` | **passes, < 60 s** | likewise |
 | `gen_calculator_prop::map_display_parse_roundtrip` | **passes, well under baseline (~25 s)** | likewise (the `lex_fork` fix also helps map's residual where map values are infix) |
 | `gen_calculator_prop::sim_calculator_proptest_campaign` | **passes, < 60 s** | likewise |
@@ -587,11 +587,11 @@ Run each suite with the fix default-ON and with `PRATTAIL_INFIX_LEXFORK_SEAL=0` 
 
 | Suite | What it guards | Command |
 |---|---|---|
-| `mettail-prattail` lib (incl. `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` `:1250`, `arc_merge_disambiguator_distinguishes_lex_fork_stamp` `:1231`, and the other `arc_merge_disambiguator_distinguishes_*`) | the merge gate is **untouched** (S1/§4.3) | `cargo nextest run -p mettail-prattail` |
-| `gen_calculator_*` (unit / analytical / rewrite / prop) + `calculator` + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + dangling-else / ternary / `-3!`-family | calculator parse/eval/roundtrip + the `-3!` lex-fork falsification (S1) | `cargo test -p mettail-languages --test gen_calculator_unit` (+ the rest) |
-| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` + `wpda_parity_rhocalc_collections` | rhocalc comm / cross-cat + the committed Change-B composition (S3) | `cargo test -p mettail-languages --test rhocalc_tests` (+ the rest) |
-| `gen_guardedrho_*` (incl. chained output `@a!(Nil)!(Nil)`, S2) | the `sppf_stack_id` chained-output distinction | `cargo test -p mettail-languages --test gen_guardedrho_unit` |
-| `lazy_lex_equivalence` (full corpus) — **must stay < 10 s** | the committed rhocalc Cluster-D fix (S3); lazy ≡ eager | `cargo test -p mettail-languages --test lazy_lex_equivalence` |
+| `prattail` lib (incl. `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` `:1250`, `arc_merge_disambiguator_distinguishes_lex_fork_stamp` `:1231`, and the other `arc_merge_disambiguator_distinguishes_*`) | the merge gate is **untouched** (S1/§4.3) | `cargo nextest run -p prattail` |
+| `gen_calculator_*` (unit / analytical / rewrite / prop) + `calculator` + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + dangling-else / ternary / `-3!`-family | calculator parse/eval/roundtrip + the `-3!` lex-fork falsification (S1) | `cargo test -p languages --test gen_calculator_unit` (+ the rest) |
+| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` + `wpda_parity_rhocalc_collections` | rhocalc comm / cross-cat + the committed Change-B composition (S3) | `cargo test -p languages --test rhocalc_tests` (+ the rest) |
+| `gen_guardedrho_*` (incl. chained output `@a!(Nil)!(Nil)`, S2) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` |
+| `lazy_lex_equivalence` (full corpus) — **must stay < 10 s** | the committed rhocalc Cluster-D fix (S3); lazy ≡ eager | `cargo test -p languages --test lazy_lex_equivalence` |
 | full gauntlet (calc-op, edge_case_tests, ledtest, ambient, recovery_accumulation, led_delegation_tests, `test_deep_parens_100000`, `test_deep_unary_neg_10000`) | no cross-language / committed-fix / deep-nesting regression (S4/S5) | the standard battery |
 
 ### 6.3 New tests to add
@@ -748,7 +748,7 @@ Run with the fix default-ON (`Clear`) and with `PRATTAIL_INFIX_LEXCLEAR=0` (OFF)
 
 | Suite | tests | ON vs OFF |
 |---|---:|---|
-| `mettail-prattail` lib (incl. both live-fork invariants `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs`, `arc_merge_disambiguator_distinguishes_lex_fork_stamp`) | 3795 | **BYTE-IDENTICAL**, all PASS |
+| `prattail` lib (incl. both live-fork invariants `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs`, `arc_merge_disambiguator_distinguishes_lex_fork_stamp`) | 3795 | **BYTE-IDENTICAL**, all PASS |
 | `gen_calculator_{unit,analytical,rewrite}` + `calculator` + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + `rhocalc_tests` + `gen_rhocalc_unit` + `wpda_parity_rhocalc_collections` + `lazy_lex_equivalence` + `led_delegation_tests` + `edge_case_tests` + `recovery_accumulation` + `roundtrip_tests` + `gen_guardedrho_unit` + `test_deep_parens_100000` | 831 | **BYTE-IDENTICAL**, all PASS |
 | full languages non-`*_prop` gauntlet (ALL languages: ambient, basemath, extmath, guardedrho, importedmath, rhocalc, mixedmath, all class2/class3 collection variants, calculator, led_test, composition, consolidation, `collection_ghost_regression`, …) | 2332 | **BYTE-IDENTICAL**, all PASS |
 

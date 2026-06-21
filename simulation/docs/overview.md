@@ -2,7 +2,7 @@
 
 ## What Is It?
 
-The MeTTaIL simulation framework (`mettail-simulation`) is a property-based testing and analysis infrastructure for languages defined in the MeTTaIL system. It provides automated term generation, rewrite-pipeline simulation, invariant checking, morphology tracking, temporal property verification, model-based testing, coverage-guided generation, and a suite of algebraic abstractions (semirings, automata) for formal analysis of language behavior.
+The MeTTaIL simulation framework (`simulation`) is a property-based testing and analysis infrastructure for languages defined in the MeTTaIL system. It provides automated term generation, rewrite-pipeline simulation, invariant checking, morphology tracking, temporal property verification, model-based testing, coverage-guided generation, and a suite of algebraic abstractions (semirings, automata) for formal analysis of language behavior.
 
 The framework answers a fundamental question: **does my language definition behave correctly across the space of all possible input terms?** Rather than checking a handful of hand-written test cases, the simulation framework generates thousands of random terms, runs each through the full parse → rewrite → normal-form pipeline, and checks a battery of invariants at every step.
 
@@ -18,7 +18,7 @@ MeTTaIL languages are defined declaratively: type categories, term constructors,
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────┐
-│                          mettail-prattail (upstream)                          │
+│                          prattail (upstream)                          │
 │  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐  │
 │  │  Semiring      │  │  SemiringRef │  │  PetriNet    │  │ BuchiAutomaton  │  │
 │  │  TropicalWeight│  │  (no Copy)   │  │  Marking     │  │ LTL parser      │  │
@@ -27,7 +27,7 @@ MeTTaIL languages are defined declaratively: type categories, term constructors,
             │                 │                 │                   │
             ▼                 ▼                 ▼                   ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
-│                        mettail-simulation (this crate)                        │
+│                        simulation (this crate)                        │
 │                                                                               │
 │  ┌─ semiring/ ────────────────────────────────┐                               │
 │  │  ExpectationWeight  (f64, f64)  Semiring   │                               │
@@ -106,7 +106,7 @@ MeTTaIL languages are defined declaratively: type categories, term constructors,
 
 ### 1. `cargo test` (Unit and Integration Tests)
 
-Every module contains `#[cfg(test)]` unit tests. These verify individual components in isolation using mock languages (e.g., `MockLanguage` in the invariant tests, `CalculatorStubMetadata` and `RhoCalcStubMetadata` in the model tests). Running `cargo test -p mettail-simulation` exercises the full test suite.
+Every module contains `#[cfg(test)]` unit tests. These verify individual components in isolation using mock languages (e.g., `MockLanguage` in the invariant tests, `CalculatorStubMetadata` and `RhoCalcStubMetadata` in the model tests). Running `cargo test -p simulation` exercises the full test suite.
 
 The generated test files under `languages/tests/gen_*.rs` use the tape-based proptest strategies (see [strategies.md](strategies.md)) to generate random terms for each defined language and run them through the simulation pipeline.
 

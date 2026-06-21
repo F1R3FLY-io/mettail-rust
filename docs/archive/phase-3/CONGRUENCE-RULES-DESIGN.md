@@ -88,7 +88,7 @@ if S1 => T1, S2 => T2 then ...
 
 ## Implementation Plan
 
-### Phase 1: Extend AST (`mettail-macros/src/ast.rs`)
+### Phase 1: Extend AST (`macros/src/ast.rs`)
 
 **Current structure:**
 ```rust
@@ -134,7 +134,7 @@ pub struct RewriteRule {
 
 ---
 
-### Phase 2: Parse Congruence Syntax (`mettail-macros/src/lib.rs` or parser module)
+### Phase 2: Parse Congruence Syntax (`macros/src/lib.rs` or parser module)
 
 **Current parsing:** (simplified)
 ```rust
@@ -190,7 +190,7 @@ if input.peek(Token![if]) {
 
 ---
 
-### Phase 3: Classify Rule Type (`mettail-macros/src/rewrite_gen.rs`)
+### Phase 3: Classify Rule Type (`macros/src/rewrite_gen.rs`)
 
 **Discriminate between regular and congruence rules:**
 

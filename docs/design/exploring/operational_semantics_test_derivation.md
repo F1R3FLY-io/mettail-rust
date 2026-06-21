@@ -302,7 +302,7 @@ Beyond concrete test cases, generate proptest properties:
 
 ## Verification
 
-1. `cargo test -p mettail-languages` — all existing 482 tests + new operational tests pass
+1. `cargo test -p languages` — all existing 482 tests + new operational tests pass
 2. Deliberately break a HOL `![...]` block → verify new test catches it
 3. Verify Calculator gets eval tests for every arithmetic op
 4. Verify RhoCalc gets cross-category cast tests

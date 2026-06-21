@@ -5,8 +5,8 @@ Design: `sigb-blocker3-span-anchored-reconstruction.md` (FIFTH redesign). Base =
 artifacts in `/var/tmp/suite-green/b3-span-m70-*.{stderr,log}`.
 
 ## Base reproduction (PASS)
-- gauntlet `cargo test --release -p mettail-prattail --lib` = **4220/0** (`b3-span-m70-base-gauntlet.log`).
-- calc `cargo test --release -p mettail-languages --test calculator` = **210/7** (`b3-span-m70-base-calc.log`):
+- gauntlet `cargo test --release -p prattail --lib` = **4220/0** (`b3-span-m70-base-gauntlet.log`).
+- calc `cargo test --release -p languages --test calculator` = **210/7** (`b3-span-m70-base-calc.log`):
   the 3 B3 targets (`test_nested_float_float_int`, `test_triple_nested_float`,
   `simulator_regression_bool_prefix_tokens`) + 4 pre-existing eval-ambiguity
   (`test_int_add_overflow_wraps_in_release`, `test_int_pow_31_wraps_in_release`,
@@ -174,7 +174,7 @@ calc with all 3 M7.3 tests = **214/6** (211 + 3 new B3 tests; 6 unchanged = 2 Fl
 
 ## M7.4 — full sweep. VERDICT: PASS (all gates green for the Bool subset).
 
-- gauntlet `cargo test --release -p mettail-prattail --lib` = **4220/0** (`b3-span-m74-gauntlet.log`).
+- gauntlet `cargo test --release -p prattail --lib` = **4220/0** (`b3-span-m74-gauntlet.log`).
 - C-bis cycle/newton/tarjan/star/scc/self_loop = **0 failures** (83 such tests pass, within the gauntlet).
 - op-suites: `gen_calculator_op` **1331/0** (≥1331 ✓); `gen_rhocalc_op` **532/0** (=532 ✓).
 - `edge_case_tests` **229/0** (the `-3!` regression ✓); `probe_neg_zero` **23/0** ✓.

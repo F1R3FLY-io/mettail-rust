@@ -2,7 +2,7 @@
  * RhoDefaultBackendAudit: diagnostic planning view before exact coverage.
  *
  * Rust image:
- *   - `mettail_rho_codegen::audit_rho_default_backend` lowers a structured
+ *   - `mettail_rholang_codegen::audit_rho_default_backend` lowers a structured
  *     `LanguageDef`, classifies rejected rules, collects guard obligations,
  *     validates the generated `rhoapi::Par`, and runs the same flip decision
  *     under the strict assumption that no external coverage has been supplied.

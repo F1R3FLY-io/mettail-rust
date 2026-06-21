@@ -1,6 +1,6 @@
 (*
  * RhocalcAstLowering: proof model for the AST-first rhocalc Proc/Name
- * lowerer in `mettail-rho-runtime::rhocalc_ast`.
+ * lowerer in `rholang-runtime::rhocalc_ast`.
  *
  * Rust image:
  *   - rhocalc source is parsed by MeTTaIL/WPDA.

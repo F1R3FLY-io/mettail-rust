@@ -17,7 +17,7 @@
 - Supports left-associativity by default
 - Automatic parentheses support for grouping
 
-**Code:** `mettail-macros/src/lalrpop_gen.rs`
+**Code:** `macros/src/lalrpop_gen.rs`
 - `is_infix_rule()` - Detects infix operators
 - `generate_tiered_production()` - Creates precedence tiers
 - `generate_infix_alternative()` - Left-associative patterns
@@ -59,16 +59,16 @@ This allows the generated parser to work in any context (tests, libraries, etc.)
 ## 📁 Files Created/Modified
 
 ### Created
-1. `mettail-runtime/tests/rhocalc_full_parsing_tests.rs` - Full test suite
+1. `runtime/tests/rhocalc_full_parsing_tests.rs` - Full test suite
 2. `docs/phase-2/PRECEDENCE-SUCCESS.md` - Detailed documentation
 3. `docs/phase-2/QUICK-START.md` - Quick reference guide
 
 ### Modified
-1. `mettail-macros/src/lalrpop_gen.rs` - Added precedence handling
-2. `mettail-macros/src/lib.rs` - Re-enabled grammar generation
+1. `macros/src/lalrpop_gen.rs` - Added precedence handling
+2. `macros/src/lib.rs` - Re-enabled grammar generation
 3. `theories/rhocalc.rs` - Fixed `NQuote` syntax
 4. `README.md` - Updated Phase 2 status
-5. `mettail-runtime/src/rhocalc.lalrpop` - Auto-generated (correct imports)
+5. `runtime/src/rhocalc.lalrpop` - Auto-generated (correct imports)
 
 ---
 

@@ -24,7 +24,7 @@ Both admit simple, canonical orderings, which can be lifted to sort entire terms
 
 ### What We Have
 
-From the code generation in `mettail-macros/src/codegen.rs`, MeTTaIL currently generates:
+From the code generation in `macros/src/codegen.rs`, MeTTaIL currently generates:
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Hash, mettail_runtime::BoundTerm)]
@@ -109,7 +109,7 @@ This is also automatic via Rust's derived `Ord`.
 
 ### Phase 1: Add Ord to Scope (Just Like Hash!)
 
-**File:** `mettail-runtime/src/lib.rs` (in `scope_wrapper` module)
+**File:** `runtime/src/lib.rs` (in `scope_wrapper` module)
 
 We already added `Hash` to `Scope`. Let's add `Ord` the same way:
 
@@ -170,10 +170,10 @@ pub enum Name {
 
 **Solution A (Simplest): Wrapper Type**
 
-Create a transparent wrapper in `mettail-runtime`:
+Create a transparent wrapper in `runtime`:
 
 ```rust
-// In mettail-runtime/src/lib.rs
+// In runtime/src/lib.rs
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct OrdVar(pub Var<String>);
@@ -220,7 +220,7 @@ if cat.to_string() == "Var" {
 
 ### Phase 3: Simply Derive Ord!
 
-**File:** `mettail-macros/src/codegen.rs`
+**File:** `macros/src/codegen.rs`
 
 Change the derive clause:
 
@@ -293,7 +293,7 @@ The proposed ordering is **NOT** alpha-equivalence respecting:
 
 ### Unit Tests
 
-**File:** `mettail-macros/tests/ord_generation.rs`
+**File:** `macros/tests/ord_generation.rs`
 
 Test cases:
 1. Simple terms without binders: `PZero < PDrop(a)`

@@ -121,7 +121,7 @@ addresses a fundamental multi-type variable ambiguity, not a LALRPOP limitation)
 
 ### Step 1: Update the Macro Crate
 
-The `mettail-macros` crate currently generates `.lalrpop` grammar files via
+The `macros` crate currently generates `.lalrpop` grammar files via
 `macros/src/gen/syntax/parser/lalrpop.rs`. Replace this code path with a call
 to PraTTaIL's `generate_parser()`.
 
@@ -174,7 +174,7 @@ fn convert_to_language_spec(lang: &LanguageDef) -> LanguageSpec {
 
 ```toml
 [dependencies]
-mettail-prattail = { path = "../prattail" }
+prattail = { path = "../prattail" }
 # ... keep proc-macro2, quote, syn ...
 ```
 
@@ -295,10 +295,10 @@ Run the test suite:
 
 ```bash
 # Unit tests for PraTTaIL itself
-cargo test -p mettail-prattail
+cargo test -p prattail
 
 # Integration tests for languages
-cargo test -p mettail-languages
+cargo test -p languages
 
 # Full workspace
 cargo test --workspace
@@ -316,7 +316,7 @@ To verify the migration achieved the expected code reduction:
 wc -l languages/src/generated/*.lalrpop
 
 # After: inspect PraTTaIL output (expand macros)
-cargo expand -p mettail-languages 2>/dev/null | wc -l
+cargo expand -p languages 2>/dev/null | wc -l
 ```
 
 Expected: ~10-14x reduction in generated parser code.

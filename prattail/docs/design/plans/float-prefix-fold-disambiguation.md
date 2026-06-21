@@ -138,7 +138,7 @@ Mechanism, building on existing machinery (no new disambiguation policy):
 
 ## §6 Gates (every milestone)
 
-- gauntlet `-p mettail-prattail --lib` → **4220/0**.
+- gauntlet `-p prattail --lib` → **4220/0**.
 - calc full suite → **216/4** at M*.1+ (214/6 at M*.0).
 - op-suites: `gen_calculator_op` **≥1331**, `gen_rhocalc_op` **532/0**.
 - disambiguation gate: `-3!` ladder + `wpda_parity_calculator`.

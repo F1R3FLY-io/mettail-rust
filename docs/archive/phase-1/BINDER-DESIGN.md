@@ -117,7 +117,7 @@ impl Proc {
 ### Phase 1: Add Moniker Dependency
 
 ```toml
-# mettail-runtime/Cargo.toml
+# runtime/Cargo.toml
 [dependencies]
 moniker = "0.10"
 ```
@@ -125,7 +125,7 @@ moniker = "0.10"
 ### Phase 2: Update AST for Binders
 
 ```rust
-// mettail-macros/src/ast.rs
+// macros/src/ast.rs
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GrammarItem {
@@ -268,7 +268,7 @@ impl Proc {
 
 ### Week 4, Day 1-2: Integration
 
-1. Add moniker dependency to `mettail-runtime`
+1. Add moniker dependency to `runtime`
 2. Update `GrammarItem` for `Binder` and `BoundVar`
 3. Update parser to recognize binder syntax
 4. Write tests for parsing

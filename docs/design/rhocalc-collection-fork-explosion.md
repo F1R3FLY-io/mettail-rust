@@ -472,7 +472,7 @@ gate regresses, without reverting the carrier plumbing.
 
 | Metric | Target | How |
 |---|---|---|
-| `lazy_lex_equivalence::rho_full_parse_lazy_eq_eager` | **< 10 s** (from ~250 s) | `cargo test -p mettail-languages --test lazy_lex_equivalence rho_full_parse_lazy_eq_eager` |
+| `lazy_lex_equivalence::rho_full_parse_lazy_eq_eager` | **< 10 s** (from ~250 s) | `cargo test -p languages --test lazy_lex_equivalence rho_full_parse_lazy_eq_eager` |
 | `lazy_lex_equivalence::report_nodes_materialized` | **< 10 s** | same test binary |
 | `{0\|1\|…\|19}` peak frontier | `O(N)` (≈ constant in element index; was `O(N⁴)`) | `walker-stats` probe (I0/I3 before/after) |
 | `{0\|…}` apply_action calls | `O(N)` (was `O(N⁶)`) | `walker-stats` |
@@ -481,11 +481,11 @@ gate regresses, without reverting the carrier plumbing.
 
 | Suite | What it guards | Command |
 |---|---|---|
-| `prattail` lib (≈ 3789 tests, incl. `tomita_frontier` unit tests) | the merge invariants, incl. `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` (`tomita_frontier.rs:1132`) and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (`:1113`) | `cargo test -p mettail-prattail` |
-| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc parse/eval correctness | `cargo test -p mettail-languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
-| `wpda_parity_rhocalc_collections` | `{error}`, `{error\|error}`, `{error\|error\|error}`, `{}` collection shapes (`tests/wpda_parity_rhocalc_collections.rs`) | `cargo test -p mettail-languages --test wpda_parity_rhocalc_collections` |
-| `gen_guardedrho_*` proc display, incl. chained output `@a!(Nil)!(Nil)` (S3) | the `sppf_stack_id` chained-output distinction | `cargo test -p mettail-languages --test gen_guardedrho_unit` (+ analytical/prop) |
-| `lazy_lex_equivalence` full corpus | lazy ≡ eager *and* parse-result equality on `{0\|1\|2}`, `{0..19}`, `new(x,y) in {…}` | `cargo test -p mettail-languages --test lazy_lex_equivalence` |
+| `prattail` lib (≈ 3789 tests, incl. `tomita_frontier` unit tests) | the merge invariants, incl. `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` (`tomita_frontier.rs:1132`) and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (`:1113`) | `cargo test -p prattail` |
+| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc parse/eval correctness | `cargo test -p languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
+| `wpda_parity_rhocalc_collections` | `{error}`, `{error\|error}`, `{error\|error\|error}`, `{}` collection shapes (`tests/wpda_parity_rhocalc_collections.rs`) | `cargo test -p languages --test wpda_parity_rhocalc_collections` |
+| `gen_guardedrho_*` proc display, incl. chained output `@a!(Nil)!(Nil)` (S3) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` (+ analytical/prop) |
+| `lazy_lex_equivalence` full corpus | lazy ≡ eager *and* parse-result equality on `{0\|1\|2}`, `{0..19}`, `new(x,y) in {…}` | `cargo test -p languages --test lazy_lex_equivalence` |
 | full gauntlet (calc-op, edge, ledtest, ambient) | no cross-language regression | the standard battery |
 
 ### 6.3 New tests to add
@@ -578,5 +578,5 @@ content-equality is an independently-sound merge condition and removes a real fa
 
 ### 8.4 Verification results (implemented, HEAD after this commit)
 - `lazy_lex_equivalence::rho_full_parse_lazy_eq_eager`: **4.2 s** (was ~250 s timeout); `report_nodes_materialized`: **4.4 s**. Both well under the 10 s target (~60× speedup). All 7 lazy≡eager equivalence checks pass.
-- `cargo nextest run -p mettail-prattail`: **3789/3789**, including the S4 guards `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (both pass unchanged — the fix changes the gate's *input*, not its comparison).
+- `cargo nextest run -p prattail`: **3789/3789**, including the S4 guards `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (both pass unchanged — the fix changes the gate's *input*, not its comparison).
 - 292-test soundness sweep (gen_guardedrho_unit incl. `@a!(Nil)!(Nil)` chained output, calculator incl. dangling-else/ternary, rhocalc_tests, wpda_parity_rhocalc_collections, edge_case_tests, recovery_accumulation, calculator_display_projection_tests, display_roundtrip_regression_tests, led_delegation_tests, and the prior cluster fixes): **292/292**, zero regressions.

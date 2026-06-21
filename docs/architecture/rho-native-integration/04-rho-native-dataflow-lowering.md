@@ -271,7 +271,7 @@ The executable rhocalc bridge is a transport-pure Rho-machine bridge:
 
 `rhocalc source → MeTTaIL/WPDA Proc AST → normalized rhoapi::Par → RhoRuntime::inj`
 
-The bridge is implemented by `mettail-rho-runtime::lower_rhocalc_proc`,
+The bridge is implemented by `rholang-runtime::lower_rhocalc_proc`,
 `lower_rhocalc_name`, and the generated-term boundary `lower_rhocalc_term`. It
 does not generate Rholang source text. Reader-facing documents may display an
 equivalent Rholang rendering, but the generated value is the Rholang AST form
@@ -396,7 +396,7 @@ new thunk, state, memo, ret1, ret2 in {
 ```
 
 The rendering is again documentation-only. The executable artifact is
-`models::rhoapi::Par`, produced by `mettail_rho_codegen::build_call_by_need_thunk_ast_from_spec`
+`models::rhoapi::Par`, produced by `mettail_rholang_codegen::build_call_by_need_thunk_ast_from_spec`
 and accepted for execution only after
 `plan_call_by_need_thunk_with_spec_and_evidence_audit` returns an audited
 `CallByNeedThunkPlan`. Non-audited need plans may support codegen/model tests,
@@ -508,18 +508,18 @@ not determine scalar eligibility: renamed native categories lower identically,
 and scalar-looking structural categories are rejected. The Rust lowerer exposes
 that same generated inventory as `RhoLowering::scalar_contract_abi`; generated
 invocation code consumes those ABI records rather than maintaining a parallel
-hard-coded operator list. `mettail_rho_codegen::plan_scalar_invocations` then
+hard-coded operator list. `mettail_rholang_codegen::plan_scalar_invocations` then
 cross-checks that ABI against the macro-expanded term constructors: it records
 the constructor label, operand field positions, parameter names, source
 categories, and native scalar families required by generated extractor code. At
 the generated-language boundary, the macro emits a `rho-codegen` helper that
 extracts ground scalar literals from typed AST constructors and returns
-`mettail_rho_codegen::RhoScalarContractInvocation`. This payload contains the
+`mettail_rholang_codegen::RhoScalarContractInvocation`. This payload contains the
 same ABI record, the literal arguments in constructor field order, and the
-output channel name; it deliberately lives in `mettail-rho-codegen`, so
+output channel name; it deliberately lives in `rholang-codegen`, so
 generated language crates do not depend on the Rho runtime crate. Runtime-facing
 adapters pass that payload to
-`mettail_rho_runtime::build_scalar_contract_invocation_from_contract`, which
+`mettail_rholang_runtime::build_scalar_contract_invocation_from_contract`, which
 checks the ABI against the extracted scalar literals and emits the normalized
 dynamic `rhoapi::Par` call directly.
 
@@ -586,7 +586,7 @@ quotient over public resting facts. The mechanized bridge proof
 artifact boundary, quote/drop preservation, one-input COMM correspondence,
 two-input atomic-join correspondence, de Bruijn binder ordering, and
 two-branch ambiguous-term preservation. The runtime test
-`mettail-rho-runtime/tests/rho_rhocalc_ast.rs` exercises the same path with
+`rholang-runtime/tests/rho_rhocalc_ast.rs` exercises the same path with
 WPDA parsing, direct `Par` lowering, exact-key ambiguous-branch preservation,
 exact duplicate deduplication, RhoRuntime injection, received-name channel
 reuse, and private-name non-leakage.
@@ -725,7 +725,7 @@ In the implementation, an enabled ambiguity witness is a receive-less AST send:
 `@"mtl:ambiguity"!("exact-key", "payload")`
 
 The expression above is reader notation. The generated value is
-`models::rhoapi::Par`, constructed by `mettail_rho_codegen::RhoAstSend`; it is
+`models::rhoapi::Par`, constructed by `mettail_rholang_codegen::RhoAstSend`; it is
 not Rholang source text. `RhoAstSend` accepts structured `RhoAstLiteral`
 payloads, so the same AST-first boundary carries scalar calls, ambiguity
 witness strings, collection payloads, unforgeable names, and rhocalc bags.

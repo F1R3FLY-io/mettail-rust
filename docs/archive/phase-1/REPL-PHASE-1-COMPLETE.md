@@ -12,7 +12,7 @@
 
 Successfully created the basic REPL infrastructure with:
 
-1. **`mettail-repl` crate** - New library and binary crate
+1. **`repl` crate** - New library and binary crate
 2. **Core abstractions** - Theory trait, Term trait, AscentResults
 3. **Theory registry** - Dynamic theory loading system
 4. **REPL state** - Session state with history and navigation
@@ -24,7 +24,7 @@ Successfully created the basic REPL infrastructure with:
 ## Project Structure
 
 ```
-mettail-repl/
+repl/
 ├── Cargo.toml          # Dependencies: rustyline, clap, colored, anyhow
 ├── src/
 │   ├── lib.rs          # Public API

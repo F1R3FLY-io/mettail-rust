@@ -28,7 +28,7 @@ Add the `green-threads` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mettail-prattail = { version = "0.1", features = ["green-threads"] }
+prattail = { version = "0.1", features = ["green-threads"] }
 ```
 
 This transitively enables:

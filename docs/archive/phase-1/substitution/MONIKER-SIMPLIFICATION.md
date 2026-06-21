@@ -4,7 +4,7 @@
 
 ### 1. ✅ **Scope Module** → REPLACE with Moniker's Scope
 
-**Current:** `/mettail-macros/src/scope.rs`
+**Current:** `/macros/src/scope.rs`
 ```rust
 pub struct Scope {
     bound_vars: HashSet<String>,
@@ -21,7 +21,7 @@ pub struct Scope {
 
 ### 2. ✅ **Substitution Module** → REPLACE with Moniker-based
 
-**Current:** `/mettail-macros/src/substitution.rs`
+**Current:** `/macros/src/substitution.rs`
 ```rust
 pub trait Substitutable {
     fn substitute(&self, var: &str, value: &Self) -> Self;
@@ -47,7 +47,7 @@ impl Proc {
 
 ### 3. ⚠️ **Variable Validation** → SIMPLIFY
 
-**Current:** `/mettail-macros/src/validator.rs`
+**Current:** `/macros/src/validator.rs`
 ```rust
 fn collect_vars(expr: &Expr, vars: &mut HashSet<String>) { ... }
 fn validate_equation_freshness(eq: &Equation) -> Result<...> { ... }
@@ -69,7 +69,7 @@ fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
 
 ### 4. ⚠️ **TypeChecker** → KEEP but enhance for Var<String>
 
-**Current:** `/mettail-macros/src/typechecker.rs`
+**Current:** `/macros/src/typechecker.rs`
 ```rust
 fn infer_type_with_context(...) -> Result<String, ValidationError>
 ```
@@ -93,7 +93,7 @@ Expr::Scope(scope) => {
 
 ### 5. ⚠️ **AST** → EXTEND (not eliminate)
 
-**Current:** `/mettail-macros/src/ast.rs`
+**Current:** `/macros/src/ast.rs`
 ```rust
 pub enum GrammarItem {
     Terminal(String),
@@ -119,7 +119,7 @@ pub struct GrammarRule {
 
 ### 6. ⚠️ **CodeGen** → ENHANCE for Scope generation
 
-**Current:** `/mettail-macros/src/codegen.rs`
+**Current:** `/macros/src/codegen.rs`
 ```rust
 fn generate_variant(rule: &GrammarRule) -> TokenStream { ... }
 ```
@@ -138,7 +138,7 @@ PDrop(Name)
 
 ### 7. ✅ **Parser Generation** → KEEP (orthogonal to moniker)
 
-**Current:** `/mettail-macros/src/parser_gen.rs`
+**Current:** `/macros/src/parser_gen.rs`
 
 **Status:** **KEEP** - Parser generates AST with `Scope::new()`:
 ```rust
@@ -155,17 +155,17 @@ Proc::PInput(Scope::new(Binder(x_var.clone()), body))
 ## Summary: What to Do
 
 ### DELETE
-- [ ] `mettail-macros/src/scope.rs` - Replaced by moniker
+- [ ] `macros/src/scope.rs` - Replaced by moniker
 
 ### SIMPLIFY
-- [ ] `mettail-macros/src/validator.rs` - Use `BoundTerm::free_vars()`
-- [ ] `mettail-macros/src/substitution.rs` - Already cleared, will regenerate
+- [ ] `macros/src/validator.rs` - Use `BoundTerm::free_vars()`
+- [ ] `macros/src/substitution.rs` - Already cleared, will regenerate
 
 ### KEEP & ENHANCE
-- [ ] `mettail-macros/src/ast.rs` - Add `Binder` grammar item
-- [ ] `mettail-macros/src/codegen.rs` - Generate `Scope<...>` types
-- [ ] `mettail-macros/src/typechecker.rs` - Handle `Var<String>` types
-- [ ] `mettail-macros/src/parser_gen.rs` - Generate parsers using `Scope::new()`
+- [ ] `macros/src/ast.rs` - Add `Binder` grammar item
+- [ ] `macros/src/codegen.rs` - Generate `Scope<...>` types
+- [ ] `macros/src/typechecker.rs` - Handle `Var<String>` types
+- [ ] `macros/src/parser_gen.rs` - Generate parsers using `Scope::new()`
 
 ### ADD
 - [ ] Variable category handling - `Var<String>` as a special category
@@ -177,7 +177,7 @@ Proc::PInput(Scope::new(Binder(x_var.clone()), body))
 ### 1. Delete scope.rs
 
 ```bash
-rm mettail-macros/src/scope.rs
+rm macros/src/scope.rs
 ```
 
 Remove from `lib.rs`:
@@ -206,7 +206,7 @@ fn collect_vars(expr: &Expr, vars: &mut HashSet<String>) {
 ### 3. Update AST
 
 ```rust
-// mettail-macros/src/ast.rs
+// macros/src/ast.rs
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GrammarItem {
@@ -228,7 +228,7 @@ pub struct GrammarRule {
 ### 4. Update CodeGen
 
 ```rust
-// mettail-macros/src/codegen.rs
+// macros/src/codegen.rs
 
 fn generate_variant(rule: &GrammarRule) -> TokenStream {
     let label = &rule.label;
@@ -255,7 +255,7 @@ fn generate_variant(rule: &GrammarRule) -> TokenStream {
 ### 5. Update Parser Gen
 
 ```rust
-// mettail-macros/src/parser_gen.rs
+// macros/src/parser_gen.rs
 
 fn generate_binder_parse(rule: &GrammarRule) -> TokenStream {
     let (binder_idx, body_indices) = &rule.bindings[0];
@@ -277,7 +277,7 @@ fn generate_binder_parse(rule: &GrammarRule) -> TokenStream {
 ### 6. Update TypeChecker
 
 ```rust
-// mettail-macros/src/typechecker.rs
+// macros/src/typechecker.rs
 
 fn infer_type(&self, expr: &Expr) -> Result<String, ValidationError> {
     match expr {

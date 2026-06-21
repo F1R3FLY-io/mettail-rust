@@ -156,7 +156,7 @@ Need name hints for pretty-printing (Phase 2.5).
 ## File Organization
 
 ```
-mettail-macros/src/
+macros/src/
 ├── lalrpop_gen.rs          # Grammar generation logic
 └── parser_gen.rs           # (Old approach - to be replaced)
 
@@ -166,7 +166,7 @@ target/generated/
     ├── rhocalc.lalrpop     # Generated grammar
     └── rhocalc_parser.rs   # LALRPOP output
 
-mettail-runtime/src/
+runtime/src/
 └── parsers/
     └── mod.rs              # Re-exports all generated parsers
 ```
@@ -180,7 +180,7 @@ mettail-runtime/src/
 - Verify LALRPOP syntax is valid
 - Check all rule types covered
 
-### Integration Tests (in mettail-runtime/tests/)
+### Integration Tests (in runtime/tests/)
 - Parse simple expressions
 - Parse complex nested terms
 - Round-trip testing (parse → print → parse)

@@ -25,12 +25,12 @@ manifests at higher thread counts and disappears at thread=1, 2, or 4).
 | Phase | Description | Status | New tests | Verification |
 |---|---|:---:|---:|---|
 | 0 | Audit ledger | ✓ | 0 | doc-only |
-| R | Extract `mettail-ast` companion crate | ✓ | (preserved 7,302 baseline) | `cargo test --workspace` |
+| R | Extract `ast` companion crate | ✓ | (preserved 7,302 baseline) | `cargo test --workspace` |
 | 1A | Extend `prattail::lexer` with predicate-sublanguage tokens | ✓ | (covered by 1C) | — |
 | 1B | `PredicateParser` language-generic Pratt parser | ✓ | included in 1C | — |
-| 1C | Predicate parser unit tests across 3 language contexts | ✓ | 26 | `cargo test -p mettail-runtime predicate_parser` |
-| 2A | Runtime `BehavioralPred` type | ✓ | 12 | `cargo test -p mettail-runtime behavioral_pred` |
-| 2C | `?guard:Guard` parser arm + variant shape change | ✓ | 6 | `cargo test -p mettail-ast parse_term_param` |
+| 1C | Predicate parser unit tests across 3 language contexts | ✓ | 26 | `cargo test -p runtime predicate_parser` |
+| 2A | Runtime `BehavioralPred` type | ✓ | 12 | `cargo test -p runtime behavioral_pred` |
+| 2C | `?guard:Guard` parser arm + variant shape change | ✓ | 6 | `cargo test -p ast parse_term_param` |
 | 2D | `enums.rs` generates `BehavioralPred` field for `GuardBody` | ✓ | (verified by gen_guardedrho) | `cargo expand` |
 | 2E | `display.rs` renders the predicate field | ✓ | (verified by gen_guardedrho) | `cargo expand` |
 | 2F | Add `SyntaxItemSpec::GuardExpression` + bridge emission | ✓ | (verified by gen_guardedrho) | — |
@@ -40,25 +40,25 @@ manifests at higher thread counts and disappears at thread=1, 2, or 4).
 | 3A-T1 | Add `has_guard_expression` + gate in `should_use_standalone_fn` | ✓ | — | — |
 | 3A-T2 | Add `SegmentCapture::Guard` arms to non-catchall match sites | ✓ | — | — |
 | 3A-T3 | Fix latent silent-drop bug in `write_inline_items` | ✓ | — | — |
-| 3A-T5 | Hand-written `GuardedRho` integration tests | ✓ | 11 | `cargo test -p mettail-languages --test guarded_rho_tests` |
+| 3A-T5 | Hand-written `GuardedRho` integration tests | ✓ | 11 | `cargo test -p languages --test guarded_rho_tests` |
 | 3A-T6 | Skip guarded constructors in `random.rs` term generator | ✓ | — | — |
 | 3B/3C | Fix Comm rule `unbind()` + two-pass `multi_substitute` | ✓ | — | `cargo expand` |
 | 3D | Wire runtime relation queries (replace stub-false) | ✓ | — | — |
 | 3E | Stratified negation: `!rel(args)` | ✓ | — | — |
-| 3F | Stratification validator + STRAT01 lint | ✓ | 9 | `cargo test -p mettail-macros stratification` |
+| 3F | Stratification validator + STRAT01 lint | ✓ | 9 | `cargo test -p macros stratification` |
 | 4 | Hook Ascent snapshot into `Language::run_ascent` | OBSOLETE | 0 | (snapshot was needless complexity under the passive-AST architecture; deleted) |
-| 5 | Implement `to_weighted_automaton()` (MSO→AWA) | ✓ | 16 | `cargo test -p mettail-prattail weighted_mso::compile` |
-| 6 | §14A LogicT theory integration | ✓ | 12 | `cargo test -p mettail-prattail tristate / evaluate_with_theory` |
-| 7 | Per-tier T2/T3/T4 codegen rewrite | ✓ | 6 | `cargo test -p mettail-runtime t4_assertions` |
-| 8 | M8 multi-channel guard compilation | ✓ | 7 | `cargo test -p mettail-macros logic::multi_channel_analysis` |
-| 9 | M11 backward constraint propagation | ✓ | 3 | `cargo test -p mettail-macros logic::multi_channel_analysis` |
-| 10 | `letprop` recursive predicates | ✓ | 11 | `cargo test -p mettail-prattail letprop` |
-| 11 | `#[tier(...)]` directive | ✓ | 7 | `cargo test -p mettail-ast tier_directive` |
-| 12 | Hindley-Milner type system scaffold | ✓ | 13 | `cargo test -p mettail-prattail hindley_milner` |
-| 13 | Lint test coverage | ✓ | 23 | `cargo test -p mettail-prattail predicated_types_lint_coverage` |
-| 14 | `GuardedRho` smoke-test language + 12 smoke tests | ✓ | 24 (auto) + 11 (hand-written) | `cargo test -p mettail-languages --test gen_guardedrho` |
-| 15 | `LanguageStateMachine::from_def` adapter | ✓ | 5 | `cargo test -p mettail-simulation phase15_from_def` |
-| 16 | End-to-end source-level demo + Gillespie SSA | ✓ | (manual) | `cargo run -p mettail-simulation --example demo_guarded_evaluation` |
+| 5 | Implement `to_weighted_automaton()` (MSO→AWA) | ✓ | 16 | `cargo test -p prattail weighted_mso::compile` |
+| 6 | §14A LogicT theory integration | ✓ | 12 | `cargo test -p prattail tristate / evaluate_with_theory` |
+| 7 | Per-tier T2/T3/T4 codegen rewrite | ✓ | 6 | `cargo test -p runtime t4_assertions` |
+| 8 | M8 multi-channel guard compilation | ✓ | 7 | `cargo test -p macros logic::multi_channel_analysis` |
+| 9 | M11 backward constraint propagation | ✓ | 3 | `cargo test -p macros logic::multi_channel_analysis` |
+| 10 | `letprop` recursive predicates | ✓ | 11 | `cargo test -p prattail letprop` |
+| 11 | `#[tier(...)]` directive | ✓ | 7 | `cargo test -p ast tier_directive` |
+| 12 | Hindley-Milner type system scaffold | ✓ | 13 | `cargo test -p prattail hindley_milner` |
+| 13 | Lint test coverage | ✓ | 23 | `cargo test -p prattail predicated_types_lint_coverage` |
+| 14 | `GuardedRho` smoke-test language + 12 smoke tests | ✓ | 24 (auto) + 11 (hand-written) | `cargo test -p languages --test gen_guardedrho` |
+| 15 | `LanguageStateMachine::from_def` adapter | ✓ | 5 | `cargo test -p simulation phase15_from_def` |
+| 16 | End-to-end source-level demo + Gillespie SSA | ✓ | (manual) | `cargo run -p simulation --example demo_guarded_evaluation` |
 | 17 | Doc fixes (§17 stale labels + §22 placeholder) | ✓ | 0 | `cargo doc` |
 | 18 | Final verification + status report | ✓ (this document) | — | `cargo test --workspace` |
 
@@ -183,17 +183,17 @@ recorded here for traceability:
 cargo test --workspace -- --test-threads=2
 
 # Phase-specific spot checks
-cargo test -p mettail-runtime predicate_parser behavioral_pred t4_assertions
-cargo test -p mettail-prattail weighted_mso::compile letprop hindley_milner \
+cargo test -p runtime predicate_parser behavioral_pred t4_assertions
+cargo test -p prattail weighted_mso::compile letprop hindley_milner \
     tristate evaluate_with_theory predicated_types_lint_coverage
-cargo test -p mettail-macros stratification logic::multi_channel_analysis
-cargo test -p mettail-ast tier_directive parse_term_param
-cargo test -p mettail-languages --test guarded_rho_tests
-cargo test -p mettail-languages --test gen_guardedrho
-cargo test -p mettail-simulation phase15_from_def
+cargo test -p macros stratification logic::multi_channel_analysis
+cargo test -p ast tier_directive parse_term_param
+cargo test -p languages --test guarded_rho_tests
+cargo test -p languages --test gen_guardedrho
+cargo test -p simulation phase15_from_def
 
 # End-to-end demo
-cargo run -p mettail-simulation --example demo_guarded_evaluation
+cargo run -p simulation --example demo_guarded_evaluation
 ```
 
 All commands run cleanly with zero failures.

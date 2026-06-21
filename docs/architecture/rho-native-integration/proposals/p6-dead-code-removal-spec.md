@@ -1,4 +1,4 @@
-# P6 Dead-Code Removal Spec — `mettail-macros` (logic/ Ascent-source pipeline)
+# P6 Dead-Code Removal Spec — `macros` (logic/ Ascent-source pipeline)
 
 **Status: EXECUTED** — the `logic/` Ascent-source pipeline and its dead transitive closure were removed in P6 Stage 1 (`9d889894`). Retained as the removal record.
 
@@ -6,7 +6,7 @@ Computed by a code-grounded Plan agent (2026-06-16) after the Ascent **engine
 generation** was excised from `macros/src/gen/runtime/language.rs`,
 `compose_gen.rs`, and `test_gen/`. With `generate_ascent_source` no longer
 called, its entire transitive closure (229 inventory items + dead impl/`#[cfg(test)]`
-blocks) is unreachable. Goal: `cargo check -p mettail-macros --all-targets` → 0/0.
+blocks) is unreachable. Goal: `cargo check -p macros --all-targets` → 0/0.
 
 Inventory: `/tmp/p6-dead-inventory.txt` (229 rows). First check: `/tmp/p6-macros-check-1.txt`.
 

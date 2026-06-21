@@ -554,7 +554,7 @@ real but is only *prune-able under the single-result demand*, which is Direction
 
 | Metric | Target | How |
 |---|---|---|
-| `gen_calculator_prop::map_display_parse_roundtrip` | **passes < 180 s** (ideally well under) | `cargo test -p mettail-languages --test gen_calculator_prop map_display_parse_roundtrip` |
+| `gen_calculator_prop::map_display_parse_roundtrip` | **passes < 180 s** (ideally well under) | `cargo test -p languages --test gen_calculator_prop map_display_parse_roundtrip` |
 | VAR `put`-nest depth 4 peak frontier | `≈ config-class count` (≈746 at depth 3; was 14 215 at depth 4) | `walker-stats` probe (re-add §3 probe before/after) |
 | VAR depth-6 wall-time | `≤ baseline` (≤ ~6.3 s debug; was ~20.2 s) | the §3.1 timing probe |
 | curve | no worse than baseline's (sub-`dᵏ`) | depths 1..6, before/after |
@@ -565,12 +565,12 @@ Iterate with the *small-depth probe* (depths 3–5), **never** the 180 s proptes
 
 | Suite | What it guards | Command |
 |---|---|---|
-| `prattail` lib (**3 789** tests, incl. the merge invariants `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` `:1150`, `arc_merge_disambiguator_distinguishes_*` `:1087`–`:1131`) | the merge gate is **untouched** (S5) | `cargo nextest run -p mettail-prattail` |
-| `gen_calculator_*` (unit / analytical / rewrite / prop) + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + dangling-else / ternary | calculator parse/eval/roundtrip correctness | `cargo test -p mettail-languages --test gen_calculator_unit` (+ the rest) |
-| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc comm / cross-cat (S2) | `cargo test -p mettail-languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
-| `wpda_parity_rhocalc_collections` | `{}`, `{error}`, `{error\|error}`, `{error\|error\|error}` collection shapes | `cargo test -p mettail-languages --test wpda_parity_rhocalc_collections` |
-| `gen_guardedrho_*` (unit / analytical / prop), incl. chained output `@a!(Nil)!(Nil)` (S1) | the `sppf_stack_id` chained-output distinction | `cargo test -p mettail-languages --test gen_guardedrho_unit` |
-| `lazy_lex_equivalence` (full corpus, incl. `rho_full_parse_lazy_eq_eager`, `report_nodes_materialized`) | the committed rhocalc Cluster-D fix (S3); lazy ≡ eager | `cargo test -p mettail-languages --test lazy_lex_equivalence` — **must stay < 10 s** |
+| `prattail` lib (**3 789** tests, incl. the merge invariants `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` `:1150`, `arc_merge_disambiguator_distinguishes_*` `:1087`–`:1131`) | the merge gate is **untouched** (S5) | `cargo nextest run -p prattail` |
+| `gen_calculator_*` (unit / analytical / rewrite / prop) + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + dangling-else / ternary | calculator parse/eval/roundtrip correctness | `cargo test -p languages --test gen_calculator_unit` (+ the rest) |
+| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc comm / cross-cat (S2) | `cargo test -p languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
+| `wpda_parity_rhocalc_collections` | `{}`, `{error}`, `{error\|error}`, `{error\|error\|error}` collection shapes | `cargo test -p languages --test wpda_parity_rhocalc_collections` |
+| `gen_guardedrho_*` (unit / analytical / prop), incl. chained output `@a!(Nil)!(Nil)` (S1) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` |
+| `lazy_lex_equivalence` (full corpus, incl. `rho_full_parse_lazy_eq_eager`, `report_nodes_materialized`) | the committed rhocalc Cluster-D fix (S3); lazy ≡ eager | `cargo test -p languages --test lazy_lex_equivalence` — **must stay < 10 s** |
 | full gauntlet (calc-op, edge_case_tests, ledtest, ambient, recovery_accumulation, led_delegation_tests) | no cross-language / committed-fix regression | the standard battery |
 
 ### 6.3 New tests to add
@@ -787,8 +787,8 @@ pass/fail counts, zero failures) on every required suite:
 
 | Suite | ON | OFF | Result |
 |---|---|---|---|
-| `mettail-prattail` (lib, incl. the §6.2 merge-invariant tests + the 6 new subsumption tests) | 3795 passed / 0 failed | 3795 passed / 0 failed | **identical** |
-| `mettail-languages` differential set (`gen_calculator_{unit,analytical,rewrite}`, `rhocalc_tests`, `gen_rhocalc_{unit,analytical,rewrite}`, `wpda_parity_rhocalc_collections`, `lazy_lex_equivalence`, `calculator`, `calculator_display_projection_tests`, `display_roundtrip_regression_tests`, `led_delegation_tests`, `edge_case_tests`, `recovery_accumulation`, `roundtrip_tests`, `gen_guardedrho_unit`, `test_deep_parens_100000`, `test_deep_unary_neg_10000`) | 1010 passed / 0 failed | 1010 passed / 0 failed | **identical** |
+| `prattail` (lib, incl. the §6.2 merge-invariant tests + the 6 new subsumption tests) | 3795 passed / 0 failed | 3795 passed / 0 failed | **identical** |
+| `languages` differential set (`gen_calculator_{unit,analytical,rewrite}`, `rhocalc_tests`, `gen_rhocalc_{unit,analytical,rewrite}`, `wpda_parity_rhocalc_collections`, `lazy_lex_equivalence`, `calculator`, `calculator_display_projection_tests`, `display_roundtrip_regression_tests`, `led_delegation_tests`, `edge_case_tests`, `recovery_accumulation`, `roundtrip_tests`, `gen_guardedrho_unit`, `test_deep_parens_100000`, `test_deep_unary_neg_10000`) | 1010 passed / 0 failed | 1010 passed / 0 failed | **identical** |
 
 No ON/OFF divergence on any non-map test ⇒ no soundness regression (the mandate: any such divergence would be
 a soundness bug). The multi-result `_all` path is byte-identical ON vs OFF (gate disjointness, S7 — confirmed
@@ -797,6 +797,6 @@ above).
 
 **Other gates.** `proc_display_parse_roundtrip` / `name_display_parse_roundtrip` (+ the strong-roundtrip
 variants) green on two independent random runs (§6 step 4). The 6 new prattail unit tests + the new `_all`
-multiplicity guard all pass with subsumption default-ON. `cargo build -p mettail-languages` is clean (the only
+multiplicity guard all pass with subsumption default-ON. `cargo build -p languages` is clean (the only
 warnings are pre-existing grammar lints + machine-generated `dovetail_report.rs` parenthesis warnings,
 unrelated to this change).

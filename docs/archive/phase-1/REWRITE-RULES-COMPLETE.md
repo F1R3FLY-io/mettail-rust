@@ -193,11 +193,11 @@ The syntax is ready, validation works, substitution is generated. What remains i
 
 ## Files Modified
 
-- `mettail-macros/src/ast.rs` - Added `RewriteRule`, parsing
-- `mettail-macros/src/validator.rs` - Added rewrite validation
-- `mettail-macros/src/typechecker.rs` - Added rewrite type-checking
-- `mettail-macros/src/substitution.rs` - Fixed double-boxing bug
-- `mettail-macros/src/codegen.rs` - Fixed binder variant for extra fields
+- `macros/src/ast.rs` - Added `RewriteRule`, parsing
+- `macros/src/validator.rs` - Added rewrite validation
+- `macros/src/typechecker.rs` - Added rewrite type-checking
+- `macros/src/substitution.rs` - Fixed double-boxing bug
+- `macros/src/codegen.rs` - Fixed binder variant for extra fields
 - `examples/test_rewrites.rs` - Simple rewrite example
 - `examples/test_rho_rewrites.rs` - Rho Calculus with freshness
 - `docs/PHASE-1-PLAN.md` - Updated progress

@@ -122,7 +122,7 @@ The root sub-defect is narrow: the inner Float fold resolves as a same-cat Float
 ---
 
 ## §6 Gates (every milestone)
-- gauntlet `-p mettail-prattail --lib` → **4221/0**.
+- gauntlet `-p prattail --lib` → **4221/0**.
 - calc full → **215/1** at M*.1+ (213/3 at M*.0).
 - op-suites: `gen_calculator_op` **≥1331**, `gen_rhocalc_op` **532/0**.
 - disambiguation: `-3!` ladder + `wpda_parity_calculator`.

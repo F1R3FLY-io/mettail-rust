@@ -16,7 +16,7 @@
 > retired the oracle-ascent surface and reconciled docs; the `oracle-ascent` feature is
 > gone. ⇒ **the one actionable TR fix is now UNBLOCKED** (§4/§6). (2) The native-fold
 > path was generalized into a **language-agnostic numeric-cast adapter** in
-> `mettail-runtime` (`e61f9e81`→`ac538866`, derived from rule *shape*); DV-0′ measures
+> `runtime` (`e61f9e81`→`ac538866`, derived from rule *shape*); DV-0′ measures
 > it as the Calculator native-fold path — the STOP is unaffected (still funded +
 > idempotent). (3) **Name-collision note:** the walker's `RC-A`/`RC-B` commits
 > (`971efeaf`…`316c34e1`: cross-cat cast-comparison pop-site scheduling, `+BalancedCohortGate.v`
@@ -114,7 +114,7 @@ since 2026-06-12 reshape the remaining work:
 2. **The parse→eval seam no longer targets Ascent.** The runtime backend is now
    `typed AST → DovetailRunReport → {direct Dovetail | RhoNet → rhoapi::Par →
    RhoRuntime → RSpace}` (`docs/architecture/runtime-backend-spine.md`). Ascent is
-   demoted to an oracle-only feature (`mettail-languages/oracle-ascent`); CESK is
+   demoted to an oracle-only feature (`languages/oracle-ascent`); CESK is
    being retired (P6). All four target languages were flipped (P5b, 2026-06-16).
 
 The consequence is stated, then measured, in the ladder's closing line:
@@ -366,7 +366,7 @@ the rejecting authority is now the Rho lowering coverage check, not an Ascent gu
 ### 3.2 Feasibility — FEASIBLE, but NARROW `[VERIFIED]`
 
 Coverage **is** statically + monotonically knowable: `lower_language_def`
-(`mettail-rho-codegen/src/lower.rs:572-611`) partitions every rule of `def.terms`
+(`rholang-codegen/src/lower.rs:572-611`) partitions every rule of `def.terms`
 into `lowered`/`rejected` from `&LanguageDef` alone — no term, no e-graph. The
 decision is per-rule, keyed on `(syntax-pattern-shape, operand native kinds, result
 native kind, operator)` via `rho_binop`/`rho_unop` (`lower.rs:353-392`,

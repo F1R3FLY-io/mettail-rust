@@ -144,10 +144,10 @@ To make these tests pass would require:
 
 ## Related Code
 
-- `mettail-macros/src/codegen.rs:322` - `generate_normalize_functions()`
-- `mettail-macros/src/ascent_gen.rs:1400` - Equation RHS normalization
-- `mettail-macros/src/rewrite_gen.rs:136` - Rewrite RHS normalization
-- `mettail-macros/src/ascent_gen.rs:849,1167,1907,2037` - Congruence result normalization
+- `macros/src/codegen.rs:322` - `generate_normalize_functions()`
+- `macros/src/ascent_gen.rs:1400` - Equation RHS normalization
+- `macros/src/rewrite_gen.rs:136` - Rewrite RHS normalization
+- `macros/src/ascent_gen.rs:849,1167,1907,2037` - Congruence result normalization
 
 ## Conclusion
 

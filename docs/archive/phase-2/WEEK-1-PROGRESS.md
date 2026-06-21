@@ -10,16 +10,16 @@
 - ✅ Added `lalrpop = "0.20"` to workspace dependencies
 - ✅ Added `lalrpop-util = "0.20"` for parser utilities
 - ✅ Added `regex = "1.0"` for lexer patterns
-- ✅ Configured `mettail-runtime` with LALRPOP build dependencies
+- ✅ Configured `runtime` with LALRPOP build dependencies
 
 ### 2. Build Infrastructure
-- ✅ Created `build.rs` for `mettail-runtime`
+- ✅ Created `build.rs` for `runtime`
 - ✅ Configured LALRPOP to process `.lalrpop` files automatically
 - ✅ Set up integration test framework
 - ✅ Fixed IDE/linter compatibility (no build-time errors during development)
 
 ### 3. Grammar Generation Module
-- ✅ Created `mettail-macros/src/lalrpop_gen.rs`
+- ✅ Created `macros/src/lalrpop_gen.rs`
 - ✅ Implemented `generate_lalrpop_grammar()` - converts `TheoryDef` to LALRPOP syntax
 - ✅ Implemented category production generation
 - ✅ Implemented rule alternative generation

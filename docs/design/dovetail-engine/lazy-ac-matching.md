@@ -268,7 +268,7 @@ distinct `comp` lists AND distinct canonical keys downstream.
 
 ## Verification gates
 
-- `cargo build -p dovetail -p mettail-languages --features ambient`.
+- `cargo build -p dovetail -p languages --features ambient`.
 - `cargo test -p dovetail` (incl. new tests) green.
 - `theories/Lowering/CollectionAcLowering.vo` compiles; `rocq-dovetail` +
   `rocq-critical-zero-admission` green (the authoritative no-admit gate).

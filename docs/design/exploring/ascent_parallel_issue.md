@@ -231,8 +231,8 @@ let mut prog = ascent_run! {
 - `/ascent-byods-rels-0.8.0/src/eqrel_binary.rs` - Macro that switches types
 - `/ascent-byods-rels-0.8.0/src/ceqrel_ind.rs` - Parallel eqrel implementation
 - `/ascent-byods-rels-0.8.0/src/eqrel_ind.rs` - Serial eqrel implementation
-- `mettail-macros/src/ascent_gen.rs` - Our equation generation
-- `mettail-macros/src/rewrite_gen.rs` - Our rewrite generation
+- `macros/src/ascent_gen.rs` - Our equation generation
+- `macros/src/rewrite_gen.rs` - Our rewrite generation
 
 ---
 

@@ -890,7 +890,7 @@ of this writing, no language in the workspace meets both conditions.
 The `guards { }` block's effect is not confined to the macro and the
 pipeline. The runtime crate's `LanguageMetadata` trait carries the
 guard configuration all the way to the stochastic simulator in
-`mettail-simulation`, so runtime analysis tools can introspect
+`simulation`, so runtime analysis tools can introspect
 declared theories, channels, and predicates without re-parsing
 anything.
 

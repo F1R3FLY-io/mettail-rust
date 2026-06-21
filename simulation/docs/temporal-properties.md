@@ -156,7 +156,7 @@ impl AtomicProposition for HasZeroProcess {
 
 ### Step 1: Parse the LTL Formula
 
-The formula string (e.g., `"F(normal_form)"`) is parsed by `ltl::parse_ltl()` from the `mettail-prattail` crate into an `LtlFormula` AST. Parse errors are reported as `LtlCheckResult::ParseError`.
+The formula string (e.g., `"F(normal_form)"`) is parsed by `ltl::parse_ltl()` from the `prattail` crate into an `LtlFormula` AST. Parse errors are reported as `LtlCheckResult::ParseError`.
 
 ### Step 2: Evaluate Propositions at Each Step
 
@@ -198,7 +198,7 @@ All states are accepting because the system automaton should accept all traces (
 
 ### Step 4: Negate and Compile to Buchi
 
-The LTL formula φ is negated to ¬φ, and the negation is compiled to a Buchi automaton A_¬φ. This is done by the `mettail-prattail` crate's `ltl::check_ltl_property()` function, which implements the tableau-based LTL-to-Buchi translation.
+The LTL formula φ is negated to ¬φ, and the negation is compiled to a Buchi automaton A_¬φ. This is done by the `prattail` crate's `ltl::check_ltl_property()` function, which implements the tableau-based LTL-to-Buchi translation.
 
 ### Step 5: Intersection and Emptiness Check
 

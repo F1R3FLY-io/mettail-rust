@@ -14,7 +14,7 @@ PraTTaIL is part of the MeTTaIL workspace. Ensure you have:
 - The `mettail-rust` workspace checked out
 - Dependencies resolved (`cargo build` from workspace root)
 
-PraTTaIL itself is a library crate (`mettail-prattail`) used by the `mettail-macros`
+PraTTaIL itself is a library crate (`prattail`) used by the `macros`
 proc-macro crate. You do not invoke PraTTaIL directly -- instead, you write a
 `language! { ... }` definition and the macro invokes PraTTaIL at compile time.
 

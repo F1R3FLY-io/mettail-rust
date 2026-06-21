@@ -100,6 +100,6 @@ reduction (InRule/OutRule/OpenRule — which rearrange the soup, not binders) st
 - `macros/src/logic/equations.rs:271-283` — eqrel skips binders + collections.
 - `dovetail/src/egraph.rs` — no analysis framework; `add`/`rebuild`/`canonical_class_key` binder-blind.
 - `dovetail/src/rules.rs:148-153` — `RewriteRule` (3 fields, struct-literal-constructed ~30×).
-- `mettail-dovetail-runtime/src/lib.rs` — `complete_native_dovetail_report_for_language` (the native
+- `dovetail-runtime/src/lib.rs` — `complete_native_dovetail_report_for_language` (the native
   handler seam; `try_direct_eval` None for Ambient; `normalize_term` structural-only, no equations).
 - `languages/src/rhocalc.rs:862` — `Extrude` (the over-generation target; must stay host-routed).

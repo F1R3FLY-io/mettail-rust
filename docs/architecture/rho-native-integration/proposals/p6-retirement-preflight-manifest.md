@@ -16,7 +16,7 @@ These are already *fenced behind features and fail-closed by default* (proven by
 | `oracle-ascent` feature + deps (`ascent`, `ascent-byods-rels`, `hashbrown`, `rustc-hash`) | `languages/Cargo.toml:46-51`; `ascent-parallel` `:54` (already broken upstream) | the Ascent reference/oracle build surface |
 | generated Ascent code | `macros/src/gen/**` (`ascent_source!`, `eqrel`, generated `run_ascent*` impls, dual-indexed BYODS relation provider) — part of the **72** `ascent_source!`/`eqrel`/`run_ascent`/CESK matches in `macros/src`+`prattail/src`+`testkit/src` | generated only under `oracle-ascent` |
 | `legacy-cesk-runtime` feature + CESK modules | `prattail/Cargo.toml:48`; the `cek_eval`/`cesk_store`/`gc`/`abstract_cesk`/`green_thread`/`scheduler`/`global_pool`/`pool_fsm`/`worker_pool`/`coordinator` cluster; gated targets `prattail/Cargo.toml:158,163` | the CESK runtime backend being replaced by the Rho machine |
-| `testkit` CESK/green-thread analytical modules | `testkit/Cargo.toml:11` re-export + gated modules | behind `mettail-testkit/legacy-cesk-runtime` |
+| `testkit` CESK/green-thread analytical modules | `testkit/Cargo.toml:11` re-export + gated modules | behind `testkit/legacy-cesk-runtime` |
 
 ## What P6 RETAINS (not the legacy runtime)
 
@@ -71,7 +71,7 @@ default is Dovetail/Rho, proven by `RuntimeBackendDispatch.v`.)
 - `languages/Cargo.toml:46-51` `oracle-ascent` feature + the `ascent`/`ascent-byods-rels`/`hashbrown`/`rustc-hash` optional deps + `ascent-parallel` (`:54`, already broken upstream); the `oracle-ascent`-`required-features` test targets (`:138,143,238`); the 31 `oracle-ascent` cfg-gates in `languages/src` + the Ascent oracle test files.
 - `macros/src/logic/**` — the Ascent RUNTIME generator only (`generate_ascent`/`format_ascent`/the `ascent::ascent!` Datalog emitter) + the `ascent_output` runtime wiring in `macros/src/lib.rs`; the generated `run_ascent*`/`eqrel` surfaces under the 15 macros cfg-gates. **Do NOT remove `macros/src/logic/antipattern.rs`'s `parse_ascent_program_tokens` use** (it is logic-block *parsing*, the active path — see next item).
 - **`ascent_syntax_export/` crate — RETAIN. VERIFIED (2026-06-16) it is NOT oracle-only:** it is used *unconditionally* by the active macro/parser path — `ast/src/language.rs` (`parse_ascent_program_tokens` parses the `logic { relation … }` block of every `language!` definition), `macros/src/logic/antipattern.rs`, and `query/src/parse/ascent_parse.rs`. Deleting it would break the macro for ALL languages (it parses the predicate/relation declarations, e.g. GuardedRho's `halts`/`safe`). Keep the crate and its `ast`/`macros`/`query` Cargo.toml deps. P6 removes the Ascent *runtime* (the generated Datalog backend), not the Ascent-*syntax* parser.
-- `mettail-rho-runtime/Cargo.toml:27-32` `oracle-ascent` feature + the `rho_vs_ascent.rs` and `rho_language_backend_report.rs` test targets (`:79,84`).
+- `rholang-runtime/Cargo.toml:27-32` `oracle-ascent` feature + the `rho_vs_ascent.rs` and `rho_language_backend_report.rs` test targets (`:79,84`).
 - `runtime` / generated `Language::run_ascent` trait surface (already fail-closed by default).
 - After removal Calculator's flip is still proven by the end-to-end RhoRuntime tests + `OracleQuotientEquivalence.v` + the COMM/guard oracles; only the *live* Ascent differential is gone.
 

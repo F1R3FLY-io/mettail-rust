@@ -210,11 +210,11 @@ By R0.7, every `prefix.rs` arm is FIRST-token-keyed via the Rust match guard. Tw
 
 ## §6 Gates (all pass before commit)
 
-- **calc 215/1:** `cargo test -p mettail-languages --test calculator` → the 2 Float targets flip to PASS; zero regressions (215 pass + the 1 intentional-ambiguous). Explicitly re-assert: Bool win (`:2188`), the 3 M3.1 sentinels, `test_nested_float_int_arithmetic`, and ALL 5 A2-regressed cross-cat tests GREEN.
+- **calc 215/1:** `cargo test -p languages --test calculator` → the 2 Float targets flip to PASS; zero regressions (215 pass + the 1 intentional-ambiguous). Explicitly re-assert: Bool win (`:2188`), the 3 M3.1 sentinels, `test_nested_float_int_arithmetic`, and ALL 5 A2-regressed cross-cat tests GREEN.
 - **GENERALITY assertion (the mandate's gate):** the M0 trie-classification + emission-diff dump is re-run on the FINAL build and asserted: (a) for EVERY group of EVERY one of the 14 languages, the trie is `Plain`/flat-Fork EXCEPT calculator's 4; (b) the generated `wpda.rs` for a `B6_LEFTFACTOR_DISABLE=1` build differs from the enabled build ONLY in the 4 calculator group arms (byte-diff confined). This is the machine-checked "trie correct across every test language + byte-identical for non-prefix-sharing groups" assertion.
 - **Welch (dominant tripwire):** chain Welch A/B `B6_LEFTFACTOR_DISABLE` ON vs OFF over the cast-free chain corpus, N≥51 (the established panel: left_50/100/200, right_50/100/200/1000/2000). Live-cursor distributions statistically indistinguishable (expected trivially — no walker change, and chains have NO shared-prefix cast group so their emission is byte-identical). ANY arm loss (treat slower, p<0.05) ⇒ the trie perturbed a chain group's emission ⇒ STOP + re-scope.
 - **Cross-cat sweep:** `cross_cat_dispatch_chaining`, `cross_cat_with_floats`, `cross_cat_with_parens`, `cross_cat_with_strings`, the `comparison_le/ge/ne/lt` + `in_expression` families GREEN.
-- **Sweep:** op-suites ≥1331/532 (`gen_calculator_op`/`gen_rhocalc_op`), `pass2c_token_soundness_probe`, `-3!` (`edge_case_tests` 229 + `probe_neg_zero` 23, ambiguity preserved), `wpda_parity_calculator` 16 + `_cross_cat` 2, C-bis 70, `mettail-prattail --lib` gauntlet 4220/0. One 32G build per arm.
+- **Sweep:** op-suites ≥1331/532 (`gen_calculator_op`/`gen_rhocalc_op`), `pass2c_token_soundness_probe`, `-3!` (`edge_case_tests` 229 + `probe_neg_zero` 23, ambiguity preserved), `wpda_parity_calculator` 16 + `_cross_cat` 2, C-bis 70, `prattail --lib` gauntlet 4220/0. One 32G build per arm.
 
 ## §7 Risks
 

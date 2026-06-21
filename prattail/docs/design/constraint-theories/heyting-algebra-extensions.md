@@ -39,7 +39,7 @@ Rocq proof. The earlier "unimplemented research direction" framing is superseded
 | Bisimulation via partition refinement (§10.7) | `bisimulation::Lts::{bisimulation,is_bisimulation}` | (verifier-certified at compile time; runtime via Ascent `eqrel`) |
 | EBA closure (product/sum/collection/tree/theory-combination) | `product_nary`/`collection_algebra`/`sym_tree` + `RejectSafeProduct` | `{Product,Sum,Collection,Tree}AlgebraClosure.v`, `TheoryCombination.v` |
 | SFT/STFT composition + output-term algebra | `sft::OutputTerm` (precise `then`) | `OutputTermAlgebra.v`, `Stft{Composition,Functionality}.v` |
-| Guard quality (7-value docs §04 vocabulary) | `mettail_rho_codegen::guard_quality::RhoGuardQuality` | (gate composition) `RhoGuardedCommSoundness.v` |
+| Guard quality (7-value docs §04 vocabulary) | `mettail_rholang_codegen::guard_quality::RhoGuardQuality` | (gate composition) `RhoGuardedCommSoundness.v` |
 
 The reconciliation the Dovetail session required is discharged structurally: a
 behavioral / mixed algebra implements **`RejectSafeAlgebra` only** (never classical

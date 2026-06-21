@@ -224,7 +224,7 @@ rhocalc>
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     mettail-repl                        │
+│                     repl                        │
 │                                                         │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
 │  │   CLI/TUI    │  │  Ascent      │  │   Theory     │ │
@@ -397,7 +397,7 @@ Start with **CLI mode** for simplicity, add TUI later.
 **Goal**: Basic REPL with theory loading and term parsing
 
 **Tasks**:
-1. Create `mettail-repl` crate
+1. Create `repl` crate
 2. Set up CLI with `rustyline`
 3. Implement theory registry in `mettail-examples`
 4. Add `Theory` trait with basic methods

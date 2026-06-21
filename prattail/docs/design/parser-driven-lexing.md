@@ -1159,7 +1159,7 @@ The runtime infrastructure for parser-driven lexing is **feature-gated** behind
 
 ```toml
 [features]
-context-sensitive-lex = ["mettail-macros/context-sensitive-lex"]
+context-sensitive-lex = ["macros/context-sensitive-lex"]
 ```
 
 When the `context-sensitive-lex` feature is enabled, the generated code includes:

@@ -51,7 +51,7 @@ Without rest patterns, we can't write rules that match "a bag containing at leas
 
 ### Step 1: AST Extension
 
-**File**: `mettail-macros/src/ast.rs`
+**File**: `macros/src/ast.rs`
 
 ```rust
 #[derive(Clone, Debug)]
@@ -73,7 +73,7 @@ pub enum Expr {
 
 ### Step 2: Parser Extension
 
-**File**: `mettail-macros/src/ast.rs` (in `parse_expr`)
+**File**: `macros/src/ast.rs` (in `parse_expr`)
 
 ```rust
 fn parse_expr(input: ParseStream) -> SynResult<Expr> {
@@ -120,7 +120,7 @@ fn parse_expr(input: ParseStream) -> SynResult<Expr> {
 
 ### Step 3: Validation
 
-**File**: `mettail-macros/src/validator.rs`
+**File**: `macros/src/validator.rs`
 
 ```rust
 fn validate_collection_pattern(
@@ -163,7 +163,7 @@ fn validate_collection_pattern(
 
 ### Step 4: Ascent Code Generation
 
-**File**: `mettail-macros/src/ascent_gen.rs` (in `generate_rewrite_clause`)
+**File**: `macros/src/ascent_gen.rs` (in `generate_rewrite_clause`)
 
 For a rule like `({P, ...rest}) => P`:
 
@@ -255,7 +255,7 @@ fn generate_collection_pattern_matching(
 
 ### Step 5: RHS Construction
 
-**File**: `mettail-macros/src/ascent_gen.rs` (in `generate_equation_rhs`)
+**File**: `macros/src/ascent_gen.rs` (in `generate_equation_rhs`)
 
 For RHS like `({P, ...rest})`:
 

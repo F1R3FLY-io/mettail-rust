@@ -88,13 +88,13 @@ impl TypeChecker {
 ---
 
 #### 3. **Runtime AST Types** (HIGH PRIORITY)
-**Current:** `mettail-runtime` is empty
+**Current:** `runtime` is empty
 **Problem:** Generated code has nowhere to go
 **Impact:** Can't actually instantiate or manipulate terms
 
 **What's needed:**
 ```rust
-// mettail-runtime/src/lib.rs
+// runtime/src/lib.rs
 pub trait Term: Clone + Debug {
     fn category(&self) -> &str;
 }
@@ -187,7 +187,7 @@ terms {
 
 **Structure:**
 ```
-mettail-macros/tests/
+macros/tests/
 ├── compile_fail/          # Tests that should fail
 │   ├── unknown_category.rs
 │   ├── type_mismatch.rs
@@ -307,17 +307,17 @@ mettail-macros/tests/
 ### Immediate (This Week)
 
 1. **Freshness Validation**
-   - File: `mettail-macros/src/validator.rs`
+   - File: `macros/src/validator.rs`
    - Add: `validate_freshness_conditions()`
    - Test: `NewReplCalc` example
 
 2. **Scoping Infrastructure**
-   - File: `mettail-macros/src/typechecker.rs`
+   - File: `macros/src/typechecker.rs`
    - Add: `Scope` struct and `check_with_scope()`
    - Test: Bound vs free variables
 
 3. **Runtime Foundation**
-   - File: `mettail-runtime/src/lib.rs`
+   - File: `runtime/src/lib.rs`
    - Add: `Term`, `Equation`, `Parser` traits
    - Test: Simple monoid runtime
 
@@ -329,7 +329,7 @@ mettail-macros/tests/
    - Test: Error message quality
 
 5. **Category Validation**
-   - File: `mettail-macros/src/validator.rs`
+   - File: `macros/src/validator.rs`
    - Add: Complete category checking
    - Test: Invalid category references
 

@@ -265,7 +265,7 @@ Three corrections, all in the measurement layer (walker_stats.rs + the memo at 6
 
 ## Part J — Verification sequence
 
-**J.0 — Build gates**: `cargo build -p mettail-prattail` (default) + `--features walker-stats` (the load-bearing build, round-2 B-1); `cargo build -p mettail-languages --features walker-stats --examples`.
+**J.0 — Build gates**: `cargo build -p prattail` (default) + `--features walker-stats` (the load-bearing build, round-2 B-1); `cargo build -p languages --features walker-stats --examples`.
 
 **J.1 — Shadow gates (mode=shadow, walker-stats, full battery + corpus):**
 - `ep_p1_shadow_share_divergent_total` all-0 **HARD** (the integrity gate; any non-zero = the member shapes don't carry enough predecessor info, or the broadcast would corrupt — stop and fix). This is the empirical T2/T3 check.
@@ -273,7 +273,7 @@ Three corrections, all in the measurement layer (walker_stats.rs + the memo at 6
 - OFF vs SHADOW byte-identical battery (shadow-inertness).
 
 **J.2 — Battery OFF + ON byte-identical** (the no-loss gate, I1): mode UNSET (Off) and `=on`:
-- `gen_ledtest_op` 220/0 SENTINEL; `gen_calculator_op` 1330/0; `gen_rhocalc_op` 530/1 (pre-existing castbigrat); `edge_case_tests` 229/0 — specifically `comparison_after_cast_results` + `operator_chains_after_casts` byte-identical OFF/ON; `rhocalc_tests` 126/0 BOTH STATES (the `{c!(p)}` reentry family — the most sensitive CrossCatLhs consumer, exercising the member-tail revive + reentry-axis); ambient 52/0+13/0+17/0; `mettail-prattail --lib` 3980/0 BOTH cfgs; `-3!` canary (`postfix_binds_tighter_than_unary`); `rocq-prattail-wpda` green.
+- `gen_ledtest_op` 220/0 SENTINEL; `gen_calculator_op` 1330/0; `gen_rhocalc_op` 530/1 (pre-existing castbigrat); `edge_case_tests` 229/0 — specifically `comparison_after_cast_results` + `operator_chains_after_casts` byte-identical OFF/ON; `rhocalc_tests` 126/0 BOTH STATES (the `{c!(p)}` reentry family — the most sensitive CrossCatLhs consumer, exercising the member-tail revive + reentry-axis); ambient 52/0+13/0+17/0; `prattail --lib` 3980/0 BOTH cfgs; `-3!` canary (`postfix_binds_tighter_than_unary`); `rocq-prattail-wpda` green.
 - **The orphan probe** (Part F): the constructed `{c!(`-truncation input — OFF==ON longest-prefix + orphan-count parity.
 - **The worker-merge probe** (Part G): the 2-host same-`(pos,source)` input — OFF==ON, no lost worker.
 

@@ -101,7 +101,7 @@ When `RuntimeBackend::Dovetail` is selected directly, the chain stops earlier:
 
 `language! specification → generated semantic inventory → DovetailRunReport → RuntimeBackendOutput::Dovetail`
 
-That direct report-shaped output is installed by `mettail-dovetail-runtime`.
+That direct report-shaped output is installed by `dovetail-runtime`.
 It is useful for production rewrite execution, differential checks, REPL
 inspection, and simulation traces. The Rho-native chain starts from the same
 checked report but lowers it further to `rhoapi::Par` and observes RSpace after

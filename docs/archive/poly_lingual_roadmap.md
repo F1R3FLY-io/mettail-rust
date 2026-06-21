@@ -737,7 +737,7 @@ Normal form: *@(0)
 ## 🚀 Immediate Next Steps (Q4 2025)
 
 ### Week 1-2: Collection Types Foundation
-- [ ] Implement `HashBag<T>` in `mettail-runtime`
+- [ ] Implement `HashBag<T>` in `runtime`
 - [ ] Add `Clone + Eq + Hash + Ord + BoundTerm` implementations
 - [ ] Write comprehensive test suite
 - [ ] Benchmark against current binary `PPar`

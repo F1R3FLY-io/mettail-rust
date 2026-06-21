@@ -197,9 +197,9 @@ So `subst` in rewrites is syntax-level, while `.substitute()` is the runtime ope
 
 ## Files Modified
 
-- `mettail-macros/src/ast.rs` - Added `Expr::Subst`, parsing
-- `mettail-macros/src/validator.rs` - Added validation for subst
-- `mettail-macros/src/typechecker.rs` - Added type-checking for subst
+- `macros/src/ast.rs` - Added `Expr::Subst`, parsing
+- `macros/src/validator.rs` - Added validation for subst
+- `macros/src/typechecker.rs` - Added type-checking for subst
 - `examples/test_rho_rewrites.rs` - Updated with substitution example
 - `docs/PHASE-1-PLAN.md` - Updated (coming next)
 

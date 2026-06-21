@@ -309,7 +309,7 @@ Check `Cargo.lock` for duplicate versions.
 **Diagnostic:** Use `cargo expand` to see the generated code:
 
 ```bash
-cargo expand -p mettail-languages 2>/dev/null > expanded.rs
+cargo expand -p languages 2>/dev/null > expanded.rs
 ```
 
 Check the expanded code for syntax errors or type mismatches.

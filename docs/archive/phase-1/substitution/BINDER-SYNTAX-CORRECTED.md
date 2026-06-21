@@ -292,7 +292,7 @@ PInput . Proc ::= "for" "(" <Name> ")" "{" Proc "}" ;
 ### 1. Update AST
 
 ```rust
-// mettail-macros/src/ast.rs
+// macros/src/ast.rs
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GrammarItem {

@@ -2,7 +2,7 @@
 
 **Staged, verifiable execution contract** — M/D/I/L discipline (the P-series cadence). Branch `feature/wfst-architecture` @ `d8a09323`. Work item `m-rho-1-rhocalc-native-fast-path` (#281, parent #278, in_progress, prio 7). Opens the Dovetail/Rho flip epic now that the P-series ladder is closed.
 
-> **Status: v4 — implemented evidence attached.** Round 1: 2 independent critics, both NOT-CONVERGED on v1 (9 BLOCKERs + 7 MAJORs) → the v2 §0-REVISION decisions D1–D8. Round 2: host critic NOT-CONVERGED on v2 (1 BLOCKER + 3 MAJORs — all resolved below, §0-REVISION v3); the FV critic was lost to a usage limit and its load-bearing checks were performed inline by the caller (renderer/binder feasibility, Ascent API, corpus completeness, Rocq pattern — all verified, with corpus EXPANSION). Findings + resolution maps: `02-red-team-ledger.md`. The implemented proof/runtime evidence is recorded in `formal/rocq/rho_bridge/`, `mettail-rho-runtime/tests/rho_comm_oracle.rs`, and `docs/architecture/rho-native-integration/07-verification-and-rollout.md`.
+> **Status: v4 — implemented evidence attached.** Round 1: 2 independent critics, both NOT-CONVERGED on v1 (9 BLOCKERs + 7 MAJORs) → the v2 §0-REVISION decisions D1–D8. Round 2: host critic NOT-CONVERGED on v2 (1 BLOCKER + 3 MAJORs — all resolved below, §0-REVISION v3); the FV critic was lost to a usage limit and its load-bearing checks were performed inline by the caller (renderer/binder feasibility, Ascent API, corpus completeness, Rocq pattern — all verified, with corpus EXPANSION). Findings + resolution maps: `02-red-team-ledger.md`. The implemented proof/runtime evidence is recorded in `formal/rocq/rho_bridge/`, `rholang-runtime/tests/rho_comm_oracle.rs`, and `docs/architecture/rho-native-integration/07-verification-and-rollout.md`.
 
 ---
 
@@ -105,7 +105,7 @@ fn classify_rho_rule(rule: RhoRuleRef) -> RhoClass
 // RhoClass = { Comm, Structural, HolNative, Equation, Injection, Rejected }
 ```
 
-extending `mettail-rho-codegen/src/lower.rs` (today: `lower_language_def` iterates `def.terms` only and returns `RhoLowering { program: RhoProgram, … }` with a `rejected` partition). The existing `RhoLoweringTotalOrRejects.v` is a *boolean filter* partition (`supported : Rule -> bool`); the 5-way tagged classification is a **new** `classify : Rule -> Class` model over the disjoint union — a restatement, not a verbatim extension (mechanical, but stated honestly). The `LogicBlock` (raw Ascent clauses) classifies `HolNative` wholesale, recorded in the totality claim.
+extending `rholang-codegen/src/lower.rs` (today: `lower_language_def` iterates `def.terms` only and returns `RhoLowering { program: RhoProgram, … }` with a `rejected` partition). The existing `RhoLoweringTotalOrRejects.v` is a *boolean filter* partition (`supported : Rule -> bool`); the 5-way tagged classification is a **new** `classify : Rule -> Class` model over the disjoint union — a restatement, not a verbatim extension (mechanical, but stated honestly). The `LogicBlock` (raw Ascent clauses) classifies `HolNative` wholesale, recorded in the totality claim.
 
 ### 1a. Terms (`terms { … }`) — the ρ-process constructors
 
@@ -177,8 +177,8 @@ inj Ok/Err + soft-checkpoint hot-store dump ──> canonical fingerprint (D3/D5
 ```
 
 **AST generator residence:** for .1 the rhocalc-Term→Rholang AST generator is
-**harness-level** when it depends on `mettail-languages`' generated `Proc`/`Name`
-types. The spec-level `mettail-rho-codegen` owns the `LanguageDef → RhoProgram`
+**harness-level** when it depends on `languages`' generated `Proc`/`Name`
+types. The spec-level `rholang-codegen` owns the `LanguageDef → RhoProgram`
 surface for generated backends and emits normalized `Par` directly. The
 spec-driven, per-language term generator is the M-RHO.4 `generate_rho_vm` codegen
 concern. `classify_rho_rule` (§1.0) DOES land in `lower.rs` now (it is
@@ -240,9 +240,9 @@ The smallest end-to-end green, walked concretely:
 
 **M/D/I/L for M-RHO.1.0:**
 - **M (model, lands first, zero-admission):** the §1.0 `classify` model over the Rule disjoint union (restated `RhoLoweringTotalOrRejects.v` extension or sibling); `CommReductionCorrespondence.v` thms 1–6 + statement-only fences (§4). Axiom-free; NO `Conjecture` vernacular (D8).
-- **D (diagnostic):** the `rho_comm_oracle` harness in `mettail-rho-runtime/tests/` reporting per-member `{ascent_nf_fingerprints, rho_fingerprint, member_of?, errors}` before any gate is asserted.
-- **I (implement):** ≡_N canonicalizer + σ-grounding + renderer (harness-level); `classify_rho_rule` in `lower.rs`; soft-checkpoint fingerprint reader in `mettail-rho-runtime` (`run.rs` extension beside `get_data`); the oracle gate.
-- **L (ledger):** per-member verdicts + the D6 exclusions + any parser-side STOP, program-ledger style; boyscout: fix `mettail-rho-runtime/src/lib.rs`'s stale Status section while in there.
+- **D (diagnostic):** the `rho_comm_oracle` harness in `rholang-runtime/tests/` reporting per-member `{ascent_nf_fingerprints, rho_fingerprint, member_of?, errors}` before any gate is asserted.
+- **I (implement):** ≡_N canonicalizer + σ-grounding + renderer (harness-level); `classify_rho_rule` in `lower.rs`; soft-checkpoint fingerprint reader in `rholang-runtime` (`run.rs` extension beside `get_data`); the oracle gate.
+- **L (ledger):** per-member verdicts + the D6 exclusions + any parser-side STOP, program-ledger style; boyscout: fix `rholang-runtime/src/lib.rs`'s stale Status section while in there.
 
 ---
 
@@ -288,10 +288,10 @@ This realizes ambiguity-set-preservation ("miss nothing" surviving the flip to R
 ## 6. THE VERIFICATION LADDER (per-stage gates; battery untouched)
 
 1. **Axiom-free Rocq.** `CommReductionCorrespondence.v` + the §1.0 classify model compile with zero `Admitted`/`Axiom`/`Assumption`/`Conjecture`; `Print Assumptions` clean; existing five theories stay green. Build via the rho_bridge `CoqMakefile` target (`make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rho-bridge`).
-2. **Differential oracle (.1.0).** `mettail-rho-runtime/tests/rho_comm_oracle.rs`: the §3 corpus (members 1–7, 9–16) green under the D3 membership gate, with member #8 (same-channel join) covered by an explicit parser-boundary regression asserting the `ReceiveOnSameChannelsError` class. Existing `rho_vs_ascent` + `run_calculator` stay green (no regression to M-RHO.0), and their generated invocation sends use `mettail_rho_codegen::RhoAstSend` normalized AST rather than hand-written source text or test-local raw `Par` assembly.
+2. **Differential oracle (.1.0).** `rholang-runtime/tests/rho_comm_oracle.rs`: the §3 corpus (members 1–7, 9–16) green under the D3 membership gate, with member #8 (same-channel join) covered by an explicit parser-boundary regression asserting the `ReceiveOnSameChannelsError` class. Existing `rho_vs_ascent` + `run_calculator` stay green (no regression to M-RHO.0), and their generated invocation sends use `mettail_rholang_codegen::RhoAstSend` normalized AST rather than hand-written source text or test-local raw `Par` assembly.
 3. **Non-confluent set-parity (.1.1).** The §5 enumeration harness is green on the order-sensitive one-bind input: `rho_comm_oracle.rs` installs the receive, evaluates sends one at a time in both arrival orders on the same in-memory RhoRuntime, and observes both `{fired=a, resting=b}` and `{fired=b, resting=a}` fingerprints.
-4. **AST ambiguity witness gate.** `mettail-rho-runtime/tests/rho_ambiguity_ast.rs` injects receive-less ambiguity witnesses as normalized AST sends, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet`; schedule order preserves the observed set, exact duplicates are idempotent, and conflicting payloads for the same exact key reject.
-5. **f1r3node-rust conformance gate.** `mettail_rust_is_not_a_cargo_dependency` (`accounting/resource_logic.rs:292-293`) STAYS PASSING; `BridgeInertness.v` one-way. The bridge-local B1-a conformance kit is the accepted gate for this repository: `MettaOslfLawsConformance.v` proves the modeled laws, and `mettail-rho-adapter` re-hosts the same four generic laws against `OslfResourceLogic<MettaGslt>` without changing the host deploy-admission path.
+4. **AST ambiguity witness gate.** `rholang-runtime/tests/rho_ambiguity_ast.rs` injects receive-less ambiguity witnesses as normalized AST sends, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet`; schedule order preserves the observed set, exact duplicates are idempotent, and conflicting payloads for the same exact key reject.
+5. **f1r3node-rust conformance gate.** `mettail_rust_is_not_a_cargo_dependency` (`accounting/resource_logic.rs:292-293`) STAYS PASSING; `BridgeInertness.v` one-way. The bridge-local B1-a conformance kit is the accepted gate for this repository: `MettaOslfLawsConformance.v` proves the modeled laws, and `rholang-adapter` re-hosts the same four generic laws against `OslfResourceLogic<MettaGslt>` without changing the host deploy-admission path.
 6. **Welch.** Expect NEUTRAL (the COMM path is host-owned; MeTTaIL emits normalized `rhoapi::Par`, with source text retained only as reader/debug annotation). Panel only if a mettail-side runtime path materially changes; record per the P-series cadence.
 7. **Battery sentinel.** `prattail` lib, `gen_calculator_op` 1330/0, `edge_case` 229/0, `gen_rhocalc_op` 530/1 (pre-existing), dovetail 51/0, `ledtest` 220/0, **`rhocalc_tests` 126/0**. **M-RHO.1 changes NO parser codegen and NO `languages/tests` parser tests** (the §5 order-sensitive input lives in the oracle harness).
 

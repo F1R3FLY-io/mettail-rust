@@ -83,7 +83,7 @@ chains → `im::OrdSet::clone()` of empty = O(1) Arc-bump → zero chain RSS (We
 ## 5. GATES (experiment #9 acceptance)
 5 Sig-B green (`parse_int_cross_cat_comparison_le`, `simulator_regression_{original_6,cross_cat_dispatch_chaining,cross_cat_with_floats,bool_prefix_tokens}`)
 + `simulator_regression_cross_cat_with_parens` green; 16 M4-fixed + 4 realize-fixed + `_ge`/`_ne`/`_in_expression` stay;
-gauntlet `cargo test --release -p mettail-prattail --lib`=4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail
+gauntlet `cargo test --release -p prattail --lib`=4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail
 (Blocker 1 must NOT weaken genuine-cycle detection); op-suites gen_calculator_op≥1331/gen_rhocalc_op 532; soundness probe
 + `-3!` + `wpda_parity_calculator`; **MANDATORY interleaved Welch chain panel N≥51 + chain_1000/2000 RSS +5% max**
 (Option A predicts NEUTRAL — load-bearing guard); ambiguity-preservation (genuinely-ambiguous cross-cat still `Ambiguous`).

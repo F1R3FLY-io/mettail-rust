@@ -25,7 +25,7 @@ rectangle "Dovetail rewrite semantics\n`dovetail` + `rigail`" as D #DCFCE7 {
   component "Checked extraction\nand run report · `extract`" as Report #BBF7D0
 }
 
-rectangle "Rho compile-time bridge\n`mettail-rho-codegen`" as B #FEF3C7 {
+rectangle "Rho compile-time bridge\n`rholang-codegen`" as B #FEF3C7 {
   component "RhoNet IR" as RhoNet #FDE68A
   component "Guard + native\nhandler classifier" as Guards #FDE68A
   component "rhoapi::Par\nAST builder" as AstBuilder #FDE68A
@@ -34,10 +34,10 @@ rectangle "Rho compile-time bridge\n`mettail-rho-codegen`" as B #FEF3C7 {
 }
 
 rectangle "Rho runtime binding\n(MeTTaIL side)" as R #FBCFE8 {
-  component "RhoBackend seam +\ninstallers · `mettail-rho-runtime`" as Seam #FBCFE8
-  component "Differential oracle\nvs Ascent · `mettail-rho-runtime`" as Oracle #FBCFE8
-  component "Direct Dovetail path\n`mettail-dovetail-runtime`" as DirectPath #FBCFE8
-  component "OSLF cost / funding\n`mettail-rho-adapter`" as Cost #FBCFE8
+  component "RhoBackend seam +\ninstallers · `rholang-runtime`" as Seam #FBCFE8
+  component "Differential oracle\nvs Ascent · `rholang-runtime`" as Oracle #FBCFE8
+  component "Direct Dovetail path\n`dovetail-runtime`" as DirectPath #FBCFE8
+  component "OSLF cost / funding\n`rholang-adapter`" as Cost #FBCFE8
 }
 
 rectangle "F1r3node / Rholang\nruntime substrate (external)" as F #FCE7F3 {
@@ -86,8 +86,8 @@ legend right
 |= Area |= Owning crate(s) |
 |<#DBEAFE> MeTTaIL | parser, typed terms, metadata |
 |<#DCFCE7> Dovetail | `dovetail` + `rigail` |
-|<#FEF3C7> Rho compile-time | `mettail-rho-codegen` |
-|<#FBCFE8> Rho runtime binding | `mettail-rho-runtime`, `-dovetail-runtime`, `-adapter` |
+|<#FEF3C7> Rho compile-time | `rholang-codegen` |
+|<#FBCFE8> Rho runtime binding | `rholang-runtime`, `-dovetail-runtime`, `-adapter` |
 |<#FCE7F3> F1r3node | RhoRuntime, RSpace, scheduler (external) |
 |<#EDE9FE> Evidence | proofs + oracle reports |
 endlegend

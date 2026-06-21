@@ -84,7 +84,7 @@ no re-drive). **(b)/(c) NOT needed.** G2a (regs=0) → existing R2-codegen. Spur
   entry; map empty off chain hot path — the byte-identical shipped R4 chain-suppression predicate `:13197`).
 
 ## 4. Standing GATE (every milestone)
-gauntlet `cargo test --release -p mettail-prattail --lib`=**4220/0**; op-suites `gen_calculator_op≥1331/0`,
+gauntlet `cargo test --release -p prattail --lib`=**4220/0**; op-suites `gen_calculator_op≥1331/0`,
 `gen_rhocalc_op 532/0`; `-3!` + `wpda_parity_*` /0; soundness probe `pass2c_token_soundness_probe`; over-gen canaries
 `simulator_regression_{nested_casts,bool_prefix_tokens}` + `probe!` set (`bool(0)`,`int(int(3))`,…) GREEN; **16-FIXED
 stay fixed**; **9-REGRESSION return green**; **MANDATORY interleaved Welch chain panel `{left,right}_assoc_chain_{50,100,200}`

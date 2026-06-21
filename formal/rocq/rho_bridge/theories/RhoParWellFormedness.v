@@ -5,7 +5,7 @@
  * The generated backend no longer uses Rholang source text as the execution
  * boundary. It constructs `models::rhoapi::Par` directly and injects that value
  * into `RhoRuntime::inj`. This file models the scalar-contract shape emitted by
- * `mettail-rho-codegen::lower_language_def`:
+ * `rholang-codegen::lower_language_def`:
  *
  *   contract @"Label"(@a1, ..., @an, ret) = { ret!(expr(a1, ..., an)) }
  *

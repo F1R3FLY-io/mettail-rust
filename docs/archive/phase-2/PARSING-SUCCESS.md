@@ -7,7 +7,7 @@ We've successfully implemented **LALRPOP-based parsing** for MeTTaIL theories, w
 ## What Works ✅
 
 ### 1. LALRPOP Grammar Generation
-- **Module:** `mettail-macros/src/lalrpop_gen.rs`
+- **Module:** `macros/src/lalrpop_gen.rs`
 - **Functionality:** Converts `theory!` definitions into LALRPOP grammar files
 - **Features:**
   - Terminal and non-terminal handling
@@ -28,14 +28,14 @@ We've successfully implemented **LALRPOP-based parsing** for MeTTaIL theories, w
   ```
 
 ### 3. Build Integration
-- **File:** `mettail-runtime/build.rs`
+- **File:** `runtime/build.rs`
 - **Process:** `lalrpop::process_root().unwrap();`
 - **Result:** Automatically compiles `.lalrpop` files into Rust parsers
 
 ### 4. Rho Calculus Parsing Tests ✅
 All 6 tests passing!
 
-**Test File:** `mettail-runtime/tests/rhocalc_parsing_tests.rs`
+**Test File:** `runtime/tests/rhocalc_parsing_tests.rs`
 
 | Test | Input | Result |
 |------|-------|--------|
@@ -56,7 +56,7 @@ theory! { ... }
 1. Generate Rust AST enums (codegen.rs)
 2. Generate LALRPOP grammar (lalrpop_gen.rs) [DONE]
     ↓
-.lalrpop file → mettail-runtime/src/
+.lalrpop file → runtime/src/
     ↓
 [build.rs during cargo build]
     ↓
@@ -72,19 +72,19 @@ Parse actual syntax strings! ✅
 ## Key Files
 
 ### Grammar Generation
-- `mettail-macros/src/lalrpop_gen.rs` - Grammar generation logic
-- `mettail-macros/src/grammar_writer.rs` - File writing utilities
-- `mettail-macros/src/lib.rs` - Integration (currently disabled due to precedence issues)
+- `macros/src/lalrpop_gen.rs` - Grammar generation logic
+- `macros/src/grammar_writer.rs` - File writing utilities
+- `macros/src/lib.rs` - Integration (currently disabled due to precedence issues)
 
 ### Runtime Parsing
-- `mettail-runtime/build.rs` - LALRPOP build script
-- `mettail-runtime/src/rhocalc_simple.lalrpop` - Simplified Rho grammar
-- `mettail-runtime/src/simple_calc.lalrpop` - Arithmetic example
-- `mettail-runtime/tests/rhocalc_parsing_tests.rs` - Parsing tests
+- `runtime/build.rs` - LALRPOP build script
+- `runtime/src/rhocalc_simple.lalrpop` - Simplified Rho grammar
+- `runtime/src/simple_calc.lalrpop` - Arithmetic example
+- `runtime/tests/rhocalc_parsing_tests.rs` - Parsing tests
 
 ### Generated Parsers
-- `target/debug/build/mettail-runtime-*/out/rhocalc_simple.rs`
-- `target/debug/build/mettail-runtime-*/out/simple_calc.rs`
+- `target/debug/build/runtime-*/out/rhocalc_simple.rs`
+- `target/debug/build/runtime-*/out/simple_calc.rs`
 
 ## Example: Parsing Rho Calculus
 
@@ -178,14 +178,14 @@ cargo test --test rhocalc_parsing_tests -- --nocapture
 
 ### Run Grammar Generation Tests
 ```bash
-cargo test --package mettail-macros --lib lalrpop_gen -- --nocapture
+cargo test --package macros --lib lalrpop_gen -- --nocapture
 ```
 
 ### Generate Grammar Files
 ```bash
 # See generated grammars
-ls -la mettail-macros/target/test_grammars/
-cat mettail-macros/target/test_grammars/lambda.lalrpop
+ls -la macros/target/test_grammars/
+cat macros/target/test_grammars/lambda.lalrpop
 ```
 
 ## Success Metrics

@@ -2,7 +2,7 @@
 
 **Status**: Implemented and compiling
 **Time**: ~1 hour
-**Files Modified**: `mettail-macros/src/rewrite_gen.rs`
+**Files Modified**: `macros/src/rewrite_gen.rs`
 
 ## What Was Built
 

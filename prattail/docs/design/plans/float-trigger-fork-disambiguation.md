@@ -50,9 +50,9 @@
 - **M9.2.4 — generality.** Confirm `uint`/`fixed` nested-fold analogues parse; int-nested still passes (now via the robust path, not solely redundancy).
 
 ## §6 Gates (all pass before commit)
-- **calc 215/1:** `cargo test -p mettail-languages --test calculator` → the 2 targets flip to PASS, zero regressions (215 pass + the 1 intentional-ambiguous).
+- **calc 215/1:** `cargo test -p languages --test calculator` → the 2 targets flip to PASS, zero regressions (215 pass + the 1 intentional-ambiguous).
 - **Welch (dominant):** chain Welch A/B `B5_FORK_EVIDENCE_DISABLE` ON vs OFF over the cast-free chain corpus, N≥51 → live-cursor distributions statistically indistinguishable. Any drift ⇒ predicate leaking onto a chain Fork ⇒ STOP + re-scope.
-- **Sweep:** op-suites ≥1331/532, soundness, `-3!`, parity, `mettail-prattail --lib` gauntlet 4220/0; one 32G-capped build.
+- **Sweep:** op-suites ≥1331/532, soundness, `-3!`, parity, `prattail --lib` gauntlet 4220/0; one 32G-capped build.
 
 ## §7 Risks
 - **R1 (dominant) — coequal leak onto a chain Fork** → structural predicate excludes operator/projection/lex-alt/opt-group by shape; Welch gate is the tripwire; A/B lever isolates.

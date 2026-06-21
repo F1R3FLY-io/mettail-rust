@@ -41,11 +41,11 @@ same source name → NO float) is the required catch; Rocq T1' makes it machine-
   → `Some(Box::new(Term(progressed)))` or `None` (fail-closed preserved).
 - Gate helpers (macro): `has_binder_equations(def)` = any equation pattern carries a Lambda/binder
   constructor; `has_no_host_disposition(def)` = no `RhoNativeJoin` obligation (Ambient: none; rhocalc Extrude:
-  yes ⇒ NOT emitted). Use/expose `mettail-rho-codegen::backend` (`collect_guard_obligations` /
+  yes ⇒ NOT emitted). Use/expose `rholang-codegen::backend` (`collect_guard_obligations` /
   `rho_native_join_present`). Keep `premise_supported(Freshness)=>false` UNCHANGED.
 - Alt-preserving wrapper `binder_congruence_nf_term(inner)`: map over `Ambiguous(alts)` (mirror
   `normalize_term`), `Proc(p)` → float, `Name` → None; `Some` iff observable progress (`!term_eq`).
-- Seam: `complete_native_dovetail_report_for_language` (`mettail-dovetail-runtime/src/lib.rs:139-210`) calls
+- Seam: `complete_native_dovetail_report_for_language` (`dovetail-runtime/src/lib.rs:139-210`) calls
   `try_direct_eval` first → `Some(nf)` → `rewrite_seeds()` (FIX-A exact keys) → report `Complete` (honest for
   Inc 1). The flip test `ambient_dovetail_flip.rs` (`{open(n,0)|n[0]}`, no `new`) KEEPS PASSING (handler
   returns None) — flipped only in Inc 3.
@@ -71,6 +71,6 @@ moniker-faithful `open`/`close` (close incr scope-offset under EBind, mirroring 
 
 ## Critical files
 - macros/src/gen/runtime/binder_congruence.rs (NEW generator) + language.rs:3651 (try_direct_eval gate)
-- mettail-rho-codegen/src/backend.rs (expose rho_native_join_present / collect_guard_obligations pub)
+- rholang-codegen/src/backend.rs (expose rho_native_join_present / collect_guard_obligations pub)
 - dovetail/formal/rocq/theories/Lowering/AmbientBinderHandler.v (NEW) ; languages/tests/ambient_binder_handler.rs (NEW)
-- READ: runtime/src/binding.rs (Scope::new/unbind/unsafe_pattern), target/generated/ambient/{freshness.rs,ast_enums.rs}, mettail-dovetail-runtime/src/lib.rs:139-210
+- READ: runtime/src/binding.rs (Scope::new/unbind/unsafe_pattern), target/generated/ambient/{freshness.rs,ast_enums.rs}, dovetail-runtime/src/lib.rs:139-210

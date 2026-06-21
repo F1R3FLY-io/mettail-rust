@@ -44,7 +44,7 @@ and the float→AC composition** are fully implemented (`macros/src/gen/runtime/
 2. **`Pattern`/`RewriteRule` shapes are WRONG** in `01`/`04`: the real `Pattern` has a third variant
    `AcApp { op, fixed, rest }`; the real `RewriteRule` is `{ lhs, rhs, label }` — there is NO
    `guard`/`evidence` field, and the "guarded instantiation" pseudocode describes machinery that does
-   not exist in `dovetail/src/rules.rs` (guards live UPSTREAM in `mettail-rho-codegen`).
+   not exist in `dovetail/src/rules.rs` (guards live UPSTREAM in `rholang-codegen`).
 3. **"M-E.0 inert / no caller"** framing is stale — the engine is installed as a runtime backend and
    P5b is actively flipping languages.
 

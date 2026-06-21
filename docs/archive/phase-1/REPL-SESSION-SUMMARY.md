@@ -14,10 +14,10 @@ Implemented a **fully functional Term Explorer REPL** for interactive rewrite sy
 
 ## 📋 Implementation Details
 
-### New Crate: `mettail-repl`
+### New Crate: `repl`
 
 ```
-mettail-repl/
+repl/
 ├── src/
 │   ├── theory.rs         # Theory trait & results types
 │   ├── registry.rs       # Dynamic theory loading

@@ -72,7 +72,7 @@ LEFT-assoc binary (AddInt) continues through the EXISTING singleton fast-path (g
 ## 5. Substages — hypothesis → changes → gates → falsifier
 
 **Global gate set G (EVERY substage; ALL pass or `git revert`; MUST include the chain tests in `languages/tests/trampoline_tests.rs`):**
-- **G1**: `cargo test --release -p mettail-prattail --lib` = 4217/0.
+- **G1**: `cargo test --release -p prattail --lib` = 4217/0.
 - **G2 (EVAL)**: all 8 `gen_*_op` suites zero failures.
 - **G3 (RSS)**: newest `trampoline_tests-*`, `taskset -c 2 RUST_MIN_STACK=2000000000 /usr/bin/time -v`. left_10000 <= 112 MB (no-regression); right_10000 + ternary_10000 is_ok + < 500 MB (target ~160/~280).
 - **G4 (EVAL values, NEW)**: trampoline `#[test]`s via `CalculatorLanguage::parse_term`+`run_ascent`+`normal_forms` (V8): `^` `2^2^3`==256 (NOT 64), `3^2^1^1`==9, `2^1^1^1^2`==4; ternary `0?1:0?1:0?1:0?1:0`==0, `1?7:0?9:3`==7, `0?7:1?9:3`==9; AddInt `1+1+1+1+1+1+1+1`==8; non-triggering oracle `2^3`==8, `1?7:3`==7, `1+1`==2.

@@ -49,7 +49,7 @@ Together: M4 (16 fixed) + realize-fix (4 of the 9 regressions) + this cycle-defe
 ## GATE (experiment #9 acceptance)
 - 5 Sig-B green: `parse_int_cross_cat_comparison_le`, `simulator_regression_{original_6,cross_cat_dispatch_chaining,cross_cat_with_floats,bool_prefix_tokens}`.
 - 16 M4-fixed stay fixed; 4 realize-fixed stay fixed; `parse_int_cross_cat_comparison_{ge,ne}` + `_in_expression` stay green.
-- gauntlet `cargo test --release -p mettail-prattail --lib`=4220/0; op-suites gen_calculator_op≥1331/gen_rhocalc_op 532.
+- gauntlet `cargo test --release -p prattail --lib`=4220/0; op-suites gen_calculator_op≥1331/gen_rhocalc_op 532.
 - C-bis cycle/newton/tarjan/star/scc/self_loop tests 0-fail; soundness probe + `-3!` + `wpda_parity_*` green.
 - **MANDATORY interleaved Welch chain panel** `{left,right}_assoc_chain_{50,100,200}`+right_1000, N≥51 (per #9
   protocol), no arm LOSS p<0.05; chain_1000/2000 RSS +5% max. (The cycle-defense touches the visited_dispatch

@@ -17,7 +17,7 @@ reference state for every later gate (Invariant 4: each gate is *delta vs this b
 
 | Suite | Pass | Fail | Notes |
 |-------|-----:|-----:|-------|
-| `mettail-prattail --lib` | **4350** | **0** | 0 ignored; the parser/runtime unit gauntlet |
+| `prattail --lib` | **4350** | **0** | 0 ignored; the parser/runtime unit gauntlet |
 | `gen_calculator_op` + `gen_rhocalc_op` + `edge_case_tests` (nextest) | **1873** | **217** | 2090 run, 0 skipped; `chained_add` + `grouped_mul` excluded (live hangs) |
 
 Combined op-suite exit: nextest `100` (test failures present, as expected for a
@@ -76,11 +76,11 @@ Dovetail engine (eval-side). They are the work, not noise.
 
 ```
 systemd-run --user --scope -p MemoryMax=32G -p MemorySwapMax=0 -p TasksMax=8192 -p IOWeight=30 \
-  cargo nextest run -p mettail-languages \
+  cargo nextest run -p languages \
     --test gen_calculator_op --test gen_rhocalc_op --test edge_case_tests \
     -E '!test(=chained_add) & !test(=grouped_mul)' --no-fail-fast
 ```
-- **prattail lib:** `cargo test -p mettail-prattail --lib` → 4350/0.
+- **prattail lib:** `cargo test -p prattail --lib` → 4350/0.
 - **Rocq egraph (incl. codex's `EGraphBudgetDedup.v`):** `make -C formal check-capped
   FORMAL_CAPPED_TARGET=rocq-egraph` → success, zero admissions (verified from scratch).
 

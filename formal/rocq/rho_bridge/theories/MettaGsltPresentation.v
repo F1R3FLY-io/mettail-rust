@@ -1,6 +1,6 @@
 (*
  * MettaGsltPresentation: the MeTTaIL GSLT presentation (`MettaGslt` / `MettaSig`,
- * mettail-rho-adapter) re-presents f1r3node-rust's deploy-signature lane algebra
+ * rholang-adapter) re-presents f1r3node-rust's deploy-signature lane algebra
  * FAITHFULLY — its `split_join_decompositions` (delegated to the host `Sig`'s)
  * enumerates EXACTLY the split/join (⊗) decompositions of the signature: every
  * decomposition it emits is a real `And`-node decomposition (SOUND), and every
@@ -12,7 +12,7 @@
  * ⊗) nodes (f1r3node-rust rholang/.../accounting/mod.rs:1260; the
  * `ResourceSignature::split_join_decompositions` impl, resource_logic.rs:89-99,
  * recurses on `Sig::And`). `MettaSig` wraps `Sig` and delegates `key` and
- * `split_join_decompositions` to it (mettail-rho-adapter `gslt.rs`), so the host's
+ * `split_join_decompositions` to it (rholang-adapter `gslt.rs`), so the host's
  * decomposition algebra IS MeTTaIL's — this file proves that algebra
  * sound+complete (and structurally terminating, as a Coq `Fixpoint`).
  *

@@ -213,17 +213,17 @@ Now works for:
 
 ## Files Modified
 
-1. **`mettail-macros/src/ascent_gen.rs`**:
+1. **`macros/src/ascent_gen.rs`**:
    - `generate_binding_deconstruction`: Category rules use direct access
    - `generate_binding_proj_population`: Direct congruence projections use direct access
    - `generate_binding_congruence_clause`: Reconstruction uses `from_parts_unsafe`
    - `generate_regular_congruence_clause`: Collection congruence reconstruction uses `from_parts_unsafe`
 
-2. **`mettail-macros/src/congruence_analysis.rs`**:
+2. **`macros/src/congruence_analysis.rs`**:
    - Base rewrite projections: Use direct access for binding fields
    - Regular congruence projections: Use direct access for binding elements
 
-3. **`mettail-runtime/src/lib.rs`**:
+3. **`runtime/src/lib.rs`**:
    - Added `unsafe_pattern()` and `unsafe_body()` accessor methods
    - Added `from_parts_unsafe()` constructor for reconstructing scopes without rebinding
 

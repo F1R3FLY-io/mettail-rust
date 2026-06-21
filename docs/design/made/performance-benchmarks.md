@@ -361,11 +361,11 @@ Based on benchmarks, the optimization priority should be:
 
 ```bash
 # Full benchmark suite (takes ~10 minutes)
-cargo bench -p mettail-languages
+cargo bench -p languages
 
 # Specific benchmark group
-cargo bench -p mettail-languages "size/comm_pairs"
-cargo bench -p mettail-languages "replication"
+cargo bench -p languages "size/comm_pairs"
+cargo bench -p languages "replication"
 
 # View HTML reports
 open target/criterion/report/index.html
@@ -377,7 +377,7 @@ Use Criterion's built-in comparison:
 
 ```bash
 # After changes, run benchmarks again
-cargo bench -p mettail-languages
+cargo bench -p languages
 
 # Criterion automatically compares to previous baseline
 # Results show: "Performance has regressed/improved by X%"

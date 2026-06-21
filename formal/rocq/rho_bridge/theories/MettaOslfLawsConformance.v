@@ -1,6 +1,6 @@
 (*
  * MettaOslfLawsConformance: MeTTaIL's OSLF resource logic (`MettaResourceLogic`,
- * mettail-rho-adapter) satisfies the four OSLF linear-resource-logic conformance
+ * rholang-adapter) satisfies the four OSLF linear-resource-logic conformance
  * laws — the SECOND instance of the funding-soundness capstone (after
  * f1r3node-rust's `DefaultResourceLogic` / `RhoGslt`), the way `CAUntypedLambda.v`
  * is a second instance of `GSLTOSLFCapstone.v`.
@@ -11,7 +11,7 @@
  * (f1r3node-rust rholang/.../accounting/delta_sigma.rs:479). This file models that
  * exact decision procedure and proves the four laws the host's `#[cfg(test)]`
  * conformance harness checks (resource_logic.rs:137-200), which the mettail-side
- * re-hosted kit (mettail-rho-adapter `conformance.rs`, decision B1-a) runs against
+ * re-hosted kit (rholang-adapter `conformance.rs`, decision B1-a) runs against
  * `MettaResourceLogic`:
  *   - law_sound            : funded iff Σ ≥ Δ + margin           (decidable funds)
  *   - law_reject_underfunded : positive demand vs zero supply rejected

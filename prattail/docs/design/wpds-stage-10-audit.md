@@ -89,8 +89,8 @@ $EDITOR prattail/src/cek.rs   # delete: CekState, CekEvent, CekTransition,
 $EDITOR macros/src/gen/runtime/language.rs   # delete the traced emission block
 
 # 3. Drop the *_traced functions from the generated parser
-cargo clean -p mettail-languages
-cargo build -p mettail-languages              # regenerates parser.rs without traced
+cargo clean -p languages
+cargo build -p languages              # regenerates parser.rs without traced
 
 # 4. Delete the dead documentation references
 rm prattail/docs/usage/reactive-cek-guide.md

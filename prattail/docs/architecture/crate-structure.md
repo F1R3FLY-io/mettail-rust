@@ -1,6 +1,6 @@
 # PraTTaIL Crate Structure
 
-**Module dependency graph and responsibilities for the `mettail-prattail` crate.**
+**Module dependency graph and responsibilities for the `prattail` crate.**
 
 ---
 
@@ -8,7 +8,7 @@
 
 PraTTaIL (Pratt + Recursive Descent + Automata-Informed Lexing) is a parser generator
 library that takes a `LanguageSpec` and produces a `proc_macro2::TokenStream` containing
-a complete lexer and parser for that language. It is invoked by the `mettail-macros`
+a complete lexer and parser for that language. It is invoked by the `macros`
 proc-macro crate during compilation of `language! { ... }` definitions.
 
 The crate consists of 8 modules plus a test suite, organized into three subsystems:
@@ -472,7 +472,7 @@ Additional unit tests are embedded in source modules:
 - `automata/subset.rs`: 2 tests
 - `automata/codegen.rs`: 1 test
 
-**Total**: 86 tests within the `mettail-prattail` crate (69 in test modules + 17 in source modules).
+**Total**: 86 tests within the `prattail` crate (69 in test modules + 17 in source modules).
 
 ---
 

@@ -20,7 +20,7 @@ exactly once, then (presumably) cycles indefinitely.
 Method: temporary `eprintln!` at `step_fanout` entry in
 `prattail/src/wpda_walker.rs:6085` printing cursor count + per-cursor
 ConfigKey breakdown. Run on the shortest failing test
-(`mettail-languages::rhocalc_tests native_ops::boolean::and_tt`
+(`languages::rhocalc_tests native_ops::boolean::and_tt`
 parsing `{true and true}`, 14 bytes).
 
 Captured to `/tmp/cursor-trace2.log` — 1662 lines covering ~140
@@ -260,10 +260,10 @@ nested-Fork branches).
 
 ### Verification
 
-- `cargo test --lib -p mettail-prattail`: **4047/4047 ✓**
-- `cargo test --test gen_calculator_op -p mettail-languages`:
+- `cargo test --lib -p prattail`: **4047/4047 ✓**
+- `cargo test --test gen_calculator_op -p languages`:
   **1321 passed / 10 pre-existing R1 failures** (no regression).
-- `cargo test --test gen_rhocalc_op -p mettail-languages`:
+- `cargo test --test gen_rhocalc_op -p languages`:
   **532/532 ✓**.
 - Individual rhocalc `native_ops::boolean::and_tt` test was traced
   empirically to confirm the fixed-point detector now fires twice

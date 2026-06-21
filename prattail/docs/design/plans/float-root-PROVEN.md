@@ -21,7 +21,7 @@ All five branches are emitted at the **identical lex weight `lex_w(0.0, 5, rule_
 | `float(uint(5,32),64)` | OK | OK (5.0) |
 | `float(10,64)` | OK | OK (10.0) |
 
-Gauntlet `mettail-prattail --lib` 4220/0; one 32G-capped build. Removing the starving unary branches flips float FAIL→PASS while every control holds ⇒ ROOT CONFIRMED. (With the flip, the regenerated `target/generated/calculator/wpda.rs:1117-1136` arm collapses from a `Fork` to a single `ConsumeAndPush` straight into `FloatBin`'s `BinderRule` worker, and the nested parse succeeds.)
+Gauntlet `prattail --lib` 4220/0; one 32G-capped build. Removing the starving unary branches flips float FAIL→PASS while every control holds ⇒ ROOT CONFIRMED. (With the flip, the regenerated `target/generated/calculator/wpda.rs:1117-1136` arm collapses from a `Fork` to a single `ConsumeAndPush` straight into `FloatBin`'s `BinderRule` worker, and the nested parse succeeds.)
 
 ## Why `int(int)` passes at baseline
 Int carries cross-cat projection redundancy (`FloatToInt` etc. + bare-Integer projections) giving `IntBin` an alternate, non-Fork-starved path that Float lacks — consistent with every prior finding (the "Int redundancy" thread that ran through M9).

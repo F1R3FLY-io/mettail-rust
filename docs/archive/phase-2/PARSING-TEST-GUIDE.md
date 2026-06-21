@@ -49,7 +49,7 @@ The linter will show errors until we build:
 ## Next Command
 
 ```bash
-cargo test --package mettail-runtime parsing_tests -- --nocapture
+cargo test --package runtime parsing_tests -- --nocapture
 ```
 
 This will:

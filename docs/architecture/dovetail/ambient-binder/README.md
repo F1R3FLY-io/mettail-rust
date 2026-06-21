@@ -101,7 +101,7 @@ re-wrap, repeat until `term_eq` fixpoint OR a bound (`max_float_rounds`/`max_ite
 - **FIX-D (ambiguity fanning).** Re-wrap fans the AC roots into all valid prefixed NFs; dedup by the
   now-canonical `exact_key` (FIX-A) is identity-dedup, never a weight-prune (weights all "0").
 - **FIX-E (completeness channel).** Thread a real `RuntimeDovetailCompleteness` through the native seam
-  (`mettail-dovetail-runtime/src/lib.rs:204` currently hardcodes `Complete`); via the `try_direct_eval`
+  (`dovetail-runtime/src/lib.rs:204` currently hardcodes `Complete`); via the `try_direct_eval`
   return, NOT `RewriteSeed`.
 
 ## 5. Disposition gate

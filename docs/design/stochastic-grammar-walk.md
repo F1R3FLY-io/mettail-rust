@@ -235,9 +235,9 @@ language's effective lexer pattern.
   (1000 cases × 10000 steps). The 5 ledtest failures (`to_num(a and
   a)`) are pre-existing cross-category-cast parse errors unrelated
   to generator-vs-grammar alignment.
-- `cargo test -p mettail-macros`: 215 + 23 new `automaton_walk::*`
+- `cargo test -p macros`: 215 + 23 new `automaton_walk::*`
   tests = 238 pass.
-- `cargo test -p mettail-languages`: 1813 tests pass, including the
+- `cargo test -p languages`: 1813 tests pass, including the
   strengthened roundtrip assertions.
 - The bisimilarity check provably does semantic work:
   `classify_language_equivalent_integer_variants` shows

@@ -3,11 +3,11 @@
  * the Rho runtime boundary as AST sends, never as source text.
  *
  * Rust image:
- *   - `mettail-rho-codegen::RhoAstSend` constructs normalized `rhoapi::Par`
+ *   - `rholang-codegen::RhoAstSend` constructs normalized `rhoapi::Par`
  *     sends for scalar-contract calls, structured runtime payloads, and
  *     ambiguity witness facts.
  *   - `RhoAstSend::text_annotation` is a reader/debug annotation only.
- *   - `mettail-rho-runtime` injects the `Par` value and can observe grouped
+ *   - `rholang-runtime` injects the `Par` value and can observe grouped
  *     witness tuples from receive-less channels.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.

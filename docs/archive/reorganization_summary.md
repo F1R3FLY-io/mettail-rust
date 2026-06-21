@@ -11,8 +11,8 @@
 
 ```
 mettail-rust/
-├── mettail-macros/              # Long names
-├── mettail-runtime/             # Long names
+├── macros/              # Long names
+├── runtime/             # Long names
 ├── examples/                    # Confusing name (was library!)
 │   ├── rhocalc.rs              # Binary with inline theory
 │   ├── ambient.rs              # Binary with inline theory
@@ -20,7 +20,7 @@ mettail-rust/
 │       ├── pretty.rs           # Duplicate with REPL
 │       ├── rhocalc.lalrpop     # Mixed with code
 │       └── ambient.lalrpop     # Mixed with code
-└── mettail-repl/               # Long name
+└── repl/               # Long name
     └── src/
         ├── rhocalc_theory.rs   # Duplicate theory definition
         ├── ambcalc_theory.rs   # Duplicate theory definition
@@ -89,10 +89,10 @@ mettail-rust/
 ## 📋 Complete Change Log
 
 ### Phase 1: Directory Reorganization
-- Renamed `mettail-macros/` → `macros/`
-- Renamed `mettail-runtime/` → `runtime/`
+- Renamed `macros/` → `macros/`
+- Renamed `runtime/` → `runtime/`
 - Renamed `examples/` → `theories/`
-- Renamed `mettail-repl/` → `repl/`
+- Renamed `repl/` → `repl/`
 - Moved LALRPOP files to `theories/src/generated/`
 - Updated all Cargo.toml files
 

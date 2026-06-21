@@ -32,7 +32,7 @@ run_ascent and the moniker reference DISAGREE on `new^z.in(z,new^x.0)` (document
 ## B. Moniker NativeHandler for the six binder congruences
 Plugs in as a generated `try_direct_eval` override for Ambient (BEFORE the unsupported list in
 `target/generated/ambient/dovetail_report.rs:25-40`; seam `complete_native_dovetail_report_for_language`
-`mettail-dovetail-runtime/src/lib.rs:132-210`). New generator `macros/src/gen/runtime/binder_congruence.rs`
+`dovetail-runtime/src/lib.rs:132-210`). New generator `macros/src/gen/runtime/binder_congruence.rs`
 → `binder_congruence_normal_form`. Alt-preserving (maps over `Ambiguous` like `normalize_term`
 `language_trait_impl.rs:109-124`). Returns `Some` iff observable progress, else `None` (fail-closed kept).
 Core primitive `float_one`: `unbind` (freshen + open) → structural move on the OPEN term → `Scope::new`

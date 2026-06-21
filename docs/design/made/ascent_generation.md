@@ -465,7 +465,7 @@ The design is significantly simpler than originally planned because:
 **Goal:** Set up generation framework and basic structure.
 
 **Tasks:**
-- [ ] Create `mettail-macros/src/ascent_gen.rs`
+- [ ] Create `macros/src/ascent_gen.rs`
 - [ ] Define `generate_ascent_source(theory: &TheoryDef) -> TokenStream`
 - [ ] Integrate into `lib.rs` (call from `theory!` macro)
 - [ ] Generate relation declarations:
@@ -771,7 +771,7 @@ eq_proc(p0, p1) <--
 
 ## Code Organization
 
-### New File: `mettail-macros/src/ascent_gen.rs`
+### New File: `macros/src/ascent_gen.rs`
 
 ```rust
 use crate::ast::{TheoryDef, GrammarRule, Equation, RewriteRule, Expr};

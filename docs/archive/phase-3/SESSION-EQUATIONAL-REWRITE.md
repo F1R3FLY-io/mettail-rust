@@ -185,7 +185,7 @@ eq_proc(Proc::PPar(p1, q1), Proc::PPar(p2, q2)) <--
 ## 🎯 Next Steps
 
 ### Immediate (Performance)
-1. **Implement `HashBag<T>` in `mettail-runtime`**
+1. **Implement `HashBag<T>` in `runtime`**
    - Multiset with `HashMap<T, usize>` backing
    - `Clone + Eq + Hash + Ord + BoundTerm`
 2. **Extend grammar syntax for collections**

@@ -134,7 +134,7 @@ This works seamlessly with the variable cache (`get_or_create_var`) implemented 
 
 ## Files Modified
 
-- `mettail-macros/src/rewrite_gen.rs`: Added equality checking throughout pattern generation
+- `macros/src/rewrite_gen.rs`: Added equality checking throughout pattern generation
 - `examples/rhocalc.rs`: Updated test case to demonstrate functionality
 
 All tests passing! ✅

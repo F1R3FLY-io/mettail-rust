@@ -281,10 +281,10 @@ quadratic (which all three prior fan-out documents missed); it is fixed soundly 
 
 | suite | result |
 |---|---|
-| `cargo nextest run -p mettail-prattail` | **3795 / 3795** passed (target ≥ 3795). |
-| `cargo nextest run -p mettail-simulation` | **141 / 141** passed. |
+| `cargo nextest run -p prattail` | **3795 / 3795** passed (target ≥ 3795). |
+| `cargo nextest run -p simulation` | **141 / 141** passed. |
 | `cargo nextest run -p dovetail` | **92 / 92** passed. (NB: the package is `dovetail`, not `mettail-dovetail`.) |
-| `cargo nextest run -p mettail-languages -E 'binary(rhocalc_tests) \| binary(rhocalc_dovetail_fold) \| binary(simulation_integration) \| binary(gen_calculator_unit) \| binary(gen_rhocalc_unit) \| binary(lazy_lex_equivalence) \| binary(calculator)'` | **400 / 400** passed (1 skipped). |
+| `cargo nextest run -p languages -E 'binary(rhocalc_tests) \| binary(rhocalc_dovetail_fold) \| binary(simulation_integration) \| binary(gen_calculator_unit) \| binary(gen_rhocalc_unit) \| binary(lazy_lex_equivalence) \| binary(calculator)'` | **400 / 400** passed (1 skipped). |
 | `lazy_lex_equivalence` slowest test | 1.47 s (binary ≪ 10 s; `lazy ≡ eager` holds). |
 | `gen_calculator_prop` (full binary) | **98 / 98** passed — incl. `map_display_parse_roundtrip` 28.6 s, `bigrat_display_parse_roundtrip` 21.5 s, `bigrat_strong_roundtrip` 0.6 s, `test_deep_parens_100000` 2.2 s (deep-nesting / map / bigrat fixes hold). |
 | ON/OFF byte-identical differential (`PRATTAIL_PREFIX_CAST_STAGE_MEMO`) | 52 inputs, **0 mismatches**. |

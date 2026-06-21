@@ -178,7 +178,7 @@ a quick patch.
 ## Confirmed failure (reproduced, `feature/wfst-architecture`)
 
 ```
-cargo test -p mettail-languages --test edge_case_tests comparison_after_cast_results::int_cast_eq
+cargo test -p languages --test edge_case_tests comparison_after_cast_results::int_cast_eq
   → parse("int(3.14) == 3") failed: 1:11: unexpected Fixed("==") after parsing
      (the WPDS parser finished but input remains)
 ```
@@ -396,7 +396,7 @@ a singleton ConsumeAndPush while the literal's is a Fork — candidate-count / s
 at the InfixLoop) is the remaining un-isolated question.
 
 **DECISIVE NEXT EXPERIMENT (fresh context):** (a) re-confirm whether H3 actually
-rebuilt (touch macros, verify cargo recompiles `mettail-macros` + regenerates) — the
+rebuilt (touch macros, verify cargo recompiles `macros` + regenerates) — the
 H3 falsification may have been a stale-build artifact; with DRILL3 in place, re-apply
 H3 and check if `DRILL3 source=2 bp=5` then appears. (b) site-tag EVERY `ConsumeAndPush`
 emission in engine_impl.rs (singleton :1248, IterativeChainAbsorb fallthrough,

@@ -45,4 +45,4 @@ stale traceability comment to update.
 PackingFactored relocation + the `sppf.rs` `pub use` re-export (Step 2.4) — if the re-export is omitted, `wpda_walker.rs:5632` (the production extraction path the op-suite guards) fails to resolve. Do the relocation + re-export as a paired change; let GATE 2's workspace build arbitrate.
 
 ## Rollback (uncommitted)
-`git checkout -- .` ; `git clean -fd rigail/` ; `git checkout $ANCHOR -- prattail/src/automata/semiring.rs prattail/src/automata/lex_weight.rs` ; confirm `cargo test -p mettail-prattail --lib` recovers.
+`git checkout -- .` ; `git clean -fd rigail/` ; `git checkout $ANCHOR -- prattail/src/automata/semiring.rs prattail/src/automata/lex_weight.rs` ; confirm `cargo test -p prattail --lib` recovers.

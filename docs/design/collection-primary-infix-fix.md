@@ -159,9 +159,9 @@ change and were not introduced by it:
 ## Build order
 
 1. Baseline capture at `ad08a9a8`.
-2. Edit 1 (`wpda_runtime.rs`); `cargo build -p mettail-prattail` (compiler flags every missed struct
+2. Edit 1 (`wpda_runtime.rs`); `cargo build -p prattail` (compiler flags every missed struct
    literal — the safety net).
-3. Edits 2–5 (codegen); `cargo build -p mettail-languages` (proc-macro re-expands).
+3. Edits 2–5 (codegen); `cargo build -p languages` (proc-macro re-expands).
 4. Edit 6 (comments).
 5. Add tests + `CollectionPrimaryInfix.v` + `_CoqProject`.
 6. Run regression + FV; diff vs baseline; confirm 6 `Print Assumptions` closed.

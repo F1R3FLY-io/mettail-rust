@@ -90,7 +90,7 @@ substrate-isolated, capped Rocq target).
 
 - **B1 (resolved for .0):** the host conformance laws are test-private and the
   gate seam is `RhoGslt`-fixed. **B1-a (chosen and shipped for .0):** re-host the
-  4 generic laws as a `pub fn` kit in `mettail-rho-adapter` and run them against
+  4 generic laws as a `pub fn` kit in `rholang-adapter` and run them against
   `OslfResourceLogic<MettaGslt>`; this is the MeTTaIL bridge contract. **B1-b
   (host genericization option):** upstreaming a `pub` conformance kit plus a
   `G`-generic gate seam in f1r3node-rust would be host-maintenance work, not an
@@ -110,11 +110,11 @@ substrate-isolated, capped Rocq target).
 | Substage | Goal | Key files | Rocq obligation | Gate |
 |----------|------|-----------|-----------------|------|
 | **.0.0** ✅ | Inert gated crates + one-way-dep proof + guard verified | `mettail-rho-{codegen,runtime,adapter}/{Cargo.toml,src/lib.rs}`, workspace `Cargo.toml`, `formal/rocq/rho_bridge/*`, `formal/Makefile` | `BridgeInertness.v` (one-way acyclic dep graph) | default build f1r3node-free; guard green; `rocq-rho-bridge` green |
-| .0.1 | `MettaGslt` presentation + adapter trait surface (engine-gated, pure) | `mettail-rho-adapter/src/{gslt,logic}.rs` | `MettaGsltPresentation.v` (canonicalize total; `split_join` sound) | `cargo check --features engine` |
-| .0.2 | Delegate `demand`/`is_funded` to `delta_sigma`; 4-law conformance | `mettail-rho-adapter/src/{logic,conformance}.rs` | `MettaOslfLawsConformance.v` (2nd instance of capstone; reuse `LinearLogicResources.v`) | 4 laws green for `MettaResourceLogic` |
-| .0.3 | `generate_rho_vm`: calculator `LanguageDef` → normalized Rholang AST (`Par`) | `macros/.../rho_vm.rs`, `mettail-rho-codegen/src/lib.rs` | `RhoLoweringTotalOrRejects.v` (total-or-explicit-reject; miss nothing) | generated `Par` has the expected contract/ABI shape |
-| .0.4 | Differential oracle vs Ascent on `gen_calculator_op` | `languages/tests/rho_oracle_calculator.rs`, `mettail-rho-runtime/src/oracle.rs` | `OracleQuotientEquivalence.v` (weight-erase ∘ eqrel-quotient is an exact equiv) | set-equality rho ≡ Ascent |
-| .0.5 (opt) | Run lowered calculator on a real `RhoRuntime` | `mettail-rho-runtime/src/run.rs`, `tests/run_calculator.rs` | `RhoRunPreservesFunding.v` (run-demand = charged-demand) | `evaluate` Ok + Welch |
+| .0.1 | `MettaGslt` presentation + adapter trait surface (engine-gated, pure) | `rholang-adapter/src/{gslt,logic}.rs` | `MettaGsltPresentation.v` (canonicalize total; `split_join` sound) | `cargo check --features engine` |
+| .0.2 | Delegate `demand`/`is_funded` to `delta_sigma`; 4-law conformance | `rholang-adapter/src/{logic,conformance}.rs` | `MettaOslfLawsConformance.v` (2nd instance of capstone; reuse `LinearLogicResources.v`) | 4 laws green for `MettaResourceLogic` |
+| .0.3 | `generate_rho_vm`: calculator `LanguageDef` → normalized Rholang AST (`Par`) | `macros/.../rho_vm.rs`, `rholang-codegen/src/lib.rs` | `RhoLoweringTotalOrRejects.v` (total-or-explicit-reject; miss nothing) | generated `Par` has the expected contract/ABI shape |
+| .0.4 | Differential oracle vs Ascent on `gen_calculator_op` | `languages/tests/rho_oracle_calculator.rs`, `rholang-runtime/src/oracle.rs` | `OracleQuotientEquivalence.v` (weight-erase ∘ eqrel-quotient is an exact equiv) | set-equality rho ≡ Ascent |
+| .0.5 (opt) | Run lowered calculator on a real `RhoRuntime` | `rholang-runtime/src/run.rs`, `tests/run_calculator.rs` | `RhoRunPreservesFunding.v` (run-demand = charged-demand) | `evaluate` Ok + Welch |
 
 Dependency: `.0.0 → .0.1 → {.0.2, .0.3} → .0.4 → .0.5(opt)`. Risk ascends with
 number; `.0.5` isolates all Tokio/RSpace and is gated behind an explicit go/no-go.
@@ -152,10 +152,10 @@ LLVM does. Clean fix (in the workspace, persistent):
    `codegen-backend = "llvm"` — forces ONLY gxhash onto LLVM (so the aes cfg is
    honored + the aes intrinsics codegen), keeping the rest of the workspace on the
    fast cranelift dev loop.
-Verified: `cargo check`/`cargo test -p mettail-rho-adapter` green config-only (no env
+Verified: `cargo check`/`cargo test -p rholang-adapter` green config-only (no env
 override); the cross-repo build compiles + runs under mettail's toolchain.
 
-Note: targeted per-package test runs (e.g. `cargo test -p mettail-prattail`, the
+Note: targeted per-package test runs (e.g. `cargo test -p prattail`, the
 formal Makefile gates) do NOT pull f1r3node (the bridge crates are not their deps);
 only building the bridge crates (or `--workspace`) does.
 
@@ -174,7 +174,7 @@ only building the bridge crates (or `--workspace`) does.
   `MettaGsltPresentation.v` (lane-decomposition sound+complete) +
   `MettaOslfLawsConformance.v` (the 4 laws over the modelled `is_funded`), both
   `Print Assumptions`-clean; `rocq-rho-bridge` green.
-- **M-RHO.0.3 — SHIPPED** (`9478e791`): `mettail-rho-codegen::lower_language_def`
+- **M-RHO.0.3 — SHIPPED** (`9478e791`): `rholang-codegen::lower_language_def`
   (operand-type-gated; supported scalar ops → normalized Rholang AST contracts;
   all else recorded rejected) + AST-shape tests for contract count, operand-first
   return-channel-last ABI, and de Bruijn binding order;

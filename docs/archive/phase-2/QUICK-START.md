@@ -10,28 +10,28 @@
 cargo test --test rhocalc_parsing_tests -- --nocapture
 
 # Grammar generation tests
-cargo test --package mettail-macros --lib lalrpop_gen -- --nocapture
+cargo test --package macros --lib lalrpop_gen -- --nocapture
 
-# All mettail-runtime tests
-cargo test --package mettail-runtime
+# All runtime tests
+cargo test --package runtime
 ```
 
 ## Key Files to Edit
 
 ### For Precedence Fixes
-- `mettail-macros/src/lalrpop_gen.rs` - Grammar generation
+- `macros/src/lalrpop_gen.rs` - Grammar generation
   - Need to detect infix operators
   - Generate tiered rules (Expr → Factor → Term)
   - Handle associativity
 
 ### For Pretty-Printing
-- `mettail-macros/src/codegen.rs` - Add `Display` impl generation
+- `macros/src/codegen.rs` - Add `Display` impl generation
   - Walk through AST constructors
   - Generate match arms for each variant
   - Handle binders specially
 
 ### For Testing
-- `mettail-runtime/tests/rhocalc_parsing_tests.rs` - Add more tests
+- `runtime/tests/rhocalc_parsing_tests.rs` - Add more tests
 - `theories/rhocalc.rs` - Full theory definition (currently has precedence issues)
 
 ## Example: Adding Precedence
@@ -87,33 +87,33 @@ impl std::fmt::Display for Proc {
 ### LALRPOP Errors
 ```bash
 # See full error output
-cargo build --package mettail-runtime 2>&1 | less
+cargo build --package runtime 2>&1 | less
 
 # Check generated parsers
-ls target/debug/build/mettail-runtime-*/out/
+ls target/debug/build/runtime-*/out/
 
 # View generated parser
-cat target/debug/build/mettail-runtime-*/out/rhocalc_simple.rs | less
+cat target/debug/build/runtime-*/out/rhocalc_simple.rs | less
 ```
 
 ### Grammar Files
 ```bash
 # See test grammars
-ls mettail-macros/target/test_grammars/
+ls macros/target/test_grammars/
 
 # View generated grammar
-cat mettail-macros/target/test_grammars/lambda.lalrpop
+cat macros/target/test_grammars/lambda.lalrpop
 ```
 
 ### Force Rebuild
 ```bash
 # Clean and rebuild
-cargo clean -p mettail-runtime
-cargo build --package mettail-runtime
+cargo clean -p runtime
+cargo build --package runtime
 
 # Or touch build script
-touch mettail-runtime/build.rs
-cargo build --package mettail-runtime
+touch runtime/build.rs
+cargo build --package runtime
 ```
 
 ## TODOs
@@ -128,5 +128,5 @@ cargo build --package mettail-runtime
 
 - **LALRPOP Book:** https://lalrpop.github.io/lalrpop/
 - **Precedence:** https://lalrpop.github.io/lalrpop/tutorial/005_building_ASTs.html
-- **Binders:** See `mettail-macros/src/lalrpop_gen.rs:generate_binder_alternative()`
+- **Binders:** See `macros/src/lalrpop_gen.rs:generate_binder_alternative()`
 

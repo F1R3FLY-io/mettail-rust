@@ -946,7 +946,7 @@ the data flow with one box per representation:
 
 The `guards { }` block metadata does not stop at the macro — it flows
 through the runtime crate's `LanguageMetadata` trait into the
-`mettail-simulation` crate's `LanguageStateMachine`. This lets the
+`simulation` crate's `LanguageStateMachine`. This lets the
 stochastic simulator, the model-based test runner, and the Petri-net
 analysis tooling introspect declared theories, channel categories,
 join patterns, built-in predicates, and connectives without

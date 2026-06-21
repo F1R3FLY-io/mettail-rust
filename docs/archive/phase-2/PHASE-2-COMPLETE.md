@@ -14,7 +14,7 @@ Phase 2 goal was to generate working parsers from theory definitions with full r
 
 ### 1. LALRPOP Integration
 - ✅ LALRPOP dependency added to workspace
-- ✅ Build system configured for both `mettail-runtime` and `examples` crates
+- ✅ Build system configured for both `runtime` and `examples` crates
 - ✅ Grammar files auto-generated at compile time
 - ✅ Clean module system with `lalrpop_util::lalrpop_mod!`
 
@@ -154,21 +154,21 @@ Verify generated Display implementations:
 - ✅ `examples/build.rs` - LALRPOP build script
 - ✅ `examples/src/rhocalc.lalrpop` - Generated grammar (gitignored)
 - ✅ `examples/src/rho_gen.rs` - Generated AST (gitignored)
-- ✅ `mettail-macros/src/lalrpop_gen.rs` - Grammar generation logic
-- ✅ `mettail-macros/src/grammar_writer.rs` - File writing logic
-- ✅ `mettail-macros/src/display_gen.rs` - Display generation logic
+- ✅ `macros/src/lalrpop_gen.rs` - Grammar generation logic
+- ✅ `macros/src/grammar_writer.rs` - File writing logic
+- ✅ `macros/src/display_gen.rs` - Display generation logic
 
 ### Modified Files
 - ✅ `examples/Cargo.toml` - Added LALRPOP deps
-- ✅ `mettail-macros/src/codegen.rs` - Removed old parser, added lalrpop_mod
-- ✅ `mettail-macros/src/lib.rs` - Integrated grammar generation
+- ✅ `macros/src/codegen.rs` - Removed old parser, added lalrpop_mod
+- ✅ `macros/src/lib.rs` - Integrated grammar generation
 - ✅ `examples/rhocalc.rs` - Moved from `theories/`, added round-trip test
 - ✅ `docs/ROADMAP.md` - Marked Phase 2 complete
 
 ### Deleted Files
 - ✅ `theories/` directory (moved to `examples/`)
-- ✅ `mettail-runtime/tests/roundtrip_tests.rs` (redundant manual test)
-- ✅ `mettail-runtime/tests/verify_display_generation.rs` (placeholder)
+- ✅ `runtime/tests/roundtrip_tests.rs` (redundant manual test)
+- ✅ `runtime/tests/verify_display_generation.rs` (placeholder)
 - ✅ Old parser generation code
 
 ---

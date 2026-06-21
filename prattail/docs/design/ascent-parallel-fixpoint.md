@@ -95,14 +95,14 @@ ascent::ascent_par! {
 }
 ```
 
-The `#[cfg(feature = "ascent-parallel")]` attribute is evaluated in the **expansion-site crate** (e.g., `mettail-languages`), not in the proc-macro crate (`mettail-macros`). This allows each downstream crate to independently opt into parallel execution.
+The `#[cfg(feature = "ascent-parallel")]` attribute is evaluated in the **expansion-site crate** (e.g., `languages`), not in the proc-macro crate (`macros`). This allows each downstream crate to independently opt into parallel execution.
 
 ### Architecture
 
 ```text
 language! {                                 Cargo.toml:
     name = "RhoCalc";                       [features]
-    Proc { ... }                            ascent-parallel = ["mettail-prattail/ascent-parallel"]
+    Proc { ... }                            ascent-parallel = ["prattail/ascent-parallel"]
     Name { ... }
 }
     │
@@ -141,7 +141,7 @@ language! {                                 Cargo.toml:
 | `macros/src/logic/mod.rs` | F1: Eqrel clone-dereference in equation propagation rules (lines ~1642-1648) |
 | `macros/src/gen/runtime/language.rs` | F2: `generate_ascent_struct()` with `#[cfg]`-gated `ascent!`/`ascent_par!` pair |
 | `prattail/Cargo.toml` | Feature declaration: `ascent-parallel = []` |
-| `languages/Cargo.toml` | Feature forwarding: `ascent-parallel = ["mettail-prattail/ascent-parallel"]` |
+| `languages/Cargo.toml` | Feature forwarding: `ascent-parallel = ["prattail/ascent-parallel"]` |
 
 ## 5. Feature Gate
 
@@ -159,7 +159,7 @@ In `languages/Cargo.toml`:
 ```toml
 ## Ascent parallel fixpoint: switches ascent! → ascent_par! for parallel
 ## rewriting in generated language structs. Requires F1 eqrel dereference fix.
-ascent-parallel = ["mettail-prattail/ascent-parallel"]
+ascent-parallel = ["prattail/ascent-parallel"]
 ```
 
 ### Usage
@@ -175,7 +175,7 @@ Or in a dependent crate's `Cargo.toml`:
 
 ```toml
 [dependencies]
-mettail-languages = { path = "../languages", features = ["ascent-parallel"] }
+languages = { path = "../languages", features = ["ascent-parallel"] }
 ```
 
 ### Invariant

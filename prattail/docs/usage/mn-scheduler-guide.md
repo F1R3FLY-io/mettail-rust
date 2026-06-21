@@ -7,7 +7,7 @@ transitively enables `cek-runtime`:
 
 ```toml
 [dependencies]
-mettail-prattail = { version = "...", features = ["green-threads"] }
+prattail = { version = "...", features = ["green-threads"] }
 ```
 
 This pulls in the following dependencies:

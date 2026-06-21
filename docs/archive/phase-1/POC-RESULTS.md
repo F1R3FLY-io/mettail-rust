@@ -12,13 +12,13 @@ A minimal proof-of-concept demonstrating that MeTTaIL can be implemented as Rust
 
 ### Components Created
 
-1. **mettail-macros/** - Procedural macro crate
+1. **macros/** - Procedural macro crate
    - `ast.rs` - Parses `theory! {}` syntax (142 lines)
    - `validator.rs` - Compile-time validation (105 lines)
    - `codegen.rs` - Generates AST enums (120 lines)
    - `lib.rs` - Macro entry point (52 lines)
 
-2. **mettail-runtime/** - Runtime support library
+2. **runtime/** - Runtime support library
    - `lib.rs` - Placeholder for future features (9 lines)
 
 3. **examples/** - Working demonstrations
@@ -37,7 +37,7 @@ A minimal proof-of-concept demonstrating that MeTTaIL can be implemented as Rust
 #### 1. Macro Compiles ✓
 ```bash
 $ cargo build --all
-   Compiling mettail-macros v0.1.0
+   Compiling macros v0.1.0
    Compiling mettail-examples v0.1.0
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.50s
 ```

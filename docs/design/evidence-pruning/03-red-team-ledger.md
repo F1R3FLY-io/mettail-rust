@@ -262,7 +262,7 @@
 - **RESOLVED (same session, inside the ROOT-A commit 9fdaed68):** projection arm added (record +
   size_of::<usize>, reserved slot 17 of the independent projection index space);
   `ConsumeAtAndReplace => 19` own bucket; histogram grown [u64;19]→[u64;20]; label appended;
-  verified `cargo build/test -p mettail-prattail --features walker-stats` green 3980/0.
+  verified `cargo build/test -p prattail --features walker-stats` green 3980/0.
 - **Plan change:** I6 battery gains a `cargo build --features walker-stats` gate (the load-bearing
   build for the program, previously untested by the battery).
 

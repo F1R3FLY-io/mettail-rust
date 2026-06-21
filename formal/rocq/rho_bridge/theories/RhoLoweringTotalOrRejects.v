@@ -1,6 +1,6 @@
 (*
  * RhoLoweringTotalOrRejects: the M-RHO.0.3 spec→Rholang AST lowering
- * (`mettail-rho-codegen` `lower_language_def`) MISSES NOTHING at the codegen
+ * (`rholang-codegen` `lower_language_def`) MISSES NOTHING at the codegen
  * layer — every rule of a `LanguageDef` is accounted for: each is EITHER lowered
  * to a normalized Rho contract artifact OR explicitly recorded as rejected (out
  * of the supported scalar-operator subset). No rule is ever silently dropped, and none is

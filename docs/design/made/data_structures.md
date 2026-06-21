@@ -261,10 +261,10 @@ while !input.peek(Token![;]) {
 | `set<T>` | `HashSet<T>` | Efficient membership testing |
 | `map<K,V>` | `HashMap<K, Box<V>>` | Standard key-value mapping |
 
-**Dependency:** Need to add `hashbag` crate to `mettail-runtime`
+**Dependency:** Need to add `hashbag` crate to `runtime`
 
 ```toml
-# mettail-runtime/Cargo.toml
+# runtime/Cargo.toml
 [dependencies]
 hashbag = "0.1"  # Or implement our own
 ```
@@ -772,7 +772,7 @@ fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
 **Goal:** Get basic multiset support working without breaking existing functionality.
 
 **Tasks:**
-1. ✅ **Add `hashbag` dependency** to `mettail-runtime`
+1. ✅ **Add `hashbag` dependency** to `runtime`
 2. ✅ **Extend `GrammarItem`** enum with `DataStructure` variant
 3. ✅ **Parse `multiset<T>` syntax** in grammar rules
 4. ✅ **Generate multiset AST types** in `codegen.rs`

@@ -8,7 +8,7 @@ folds (Calculator arithmetic `AddInt(1,2)→3`, etc.) stopped evaluating after A
 
 Dovetail completes all the rewrites it can — native-output folds (arithmetic), non-native-output
 casts (already working for rhocalc), structural rewrites. The Rho machine (f1r3node `RhoRuntime`/
-`DebruijnInterpreter` + RSpace, via `mettail-rho-runtime`) is dispatched **only when Rho-process
+`DebruijnInterpreter` + RSpace, via `rholang-runtime`) is dispatched **only when Rho-process
 semantics are needed** (COMM/channels). Per-language `selected_default_runtime_backend` is the
 dispatch seam: rewrite-only languages (Calculator) advertise Dovetail; Rho languages advertise the
 Rho machine. This change makes Dovetail actually complete the Calculator rewrites it claims.
@@ -71,7 +71,7 @@ sound). Build: `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-dovetail`.
 rhocalc_dovetail_fold (MUST stay 6/6), rhocalc_dovetail_{op_enum,host_routed}, ambient_dovetail_flip,
 ambient_binder_handler, simulation_integration + probe_neg_zero (target → green), gen_calculator_{unit,
 rewrite,analytical,prop} + calculator, gen_{basemath,extmath,mixedmath,importedmath,ledtest}_* (§1d guard),
-mettail-macros, dovetail crate, mettail-prattail --lib, mettail-simulation, formal rocq-dovetail.
+macros, dovetail crate, prattail --lib, simulation, formal rocq-dovetail.
 (`dovetail-codegen` now in default; pass `--features rhocalc` for rhocalc-cfg'd tests.)
 
 ## §5 — Risks
@@ -85,6 +85,6 @@ children (converges Complete); overflow without safeify (CRITICAL — §1b manda
 
 ## §6 — Execution order
 
-1. §1a+§1c+§1b (one coherent typed_report.rs edit). 2. `cargo build -p mettail-languages` (fix &Int-vs-i32).
+1. §1a+§1c+§1b (one coherent typed_report.rs edit). 2. `cargo build -p languages` (fix &Int-vs-i32).
 3. Codegen probe: Calculator `1+2` → `NumLit(3)` BEFORE the runner edit. 4. §2 runner. 5. §4-D target tests.
 6. §1d decision + §4-F. 7. Full §4. 8. §3 FV + rocq-dovetail.

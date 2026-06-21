@@ -134,7 +134,7 @@ Map is not a simple `*sep(delim)` collection. Each "element" is a pair `key : va
 
 ### 6.1 Rust type
 
-Category **Map** uses the wrapper **`HashMapLit<Proc, Proc>`** from `mettail-runtime` (`runtime/src/hashmap_lit.rs`), not a raw `std::collections::HashMap` in the enum payload, so `Eq`/`Hash`/`Ord` match Ascent’s needs.
+Category **Map** uses the wrapper **`HashMapLit<Proc, Proc>`** from `runtime` (`runtime/src/hashmap_lit.rs`), not a raw `std::collections::HashMap` in the enum payload, so `Eq`/`Hash`/`Ord` match Ascent’s needs.
 
 ### 6.2 Enum variant
 

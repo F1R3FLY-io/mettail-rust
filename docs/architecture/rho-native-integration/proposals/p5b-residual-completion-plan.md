@@ -25,7 +25,7 @@ targets).
   a sound generated-AST guarded-receive lowering is impossible.** The resolution is a
   derivation, not a preference:
   - `rhoapi::ReceiveBind` has EXACTLY `{patterns, source, remainder, free_count}` — no guard
-    field (proven by the struct literal at `mettail-rho-runtime/src/rhocalc_ast.rs:413-418`,
+    field (proven by the struct literal at `rholang-runtime/src/rhocalc_ast.rs:413-418`,
     which specifies all fields with no `..default`). RSpace matching is purely structural.
   - GuardedRho's `?guard` is a `BehavioralPred::RelationQuery` over the **external relations**
     `halts`/`safe`, "populated by user code" (`languages/src/guarded_rho.rs:33-34,92-95`).

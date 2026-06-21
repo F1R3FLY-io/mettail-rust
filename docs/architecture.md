@@ -47,7 +47,7 @@ must not be conflated.
          ┌─────────▼──────────┐
          │   Procedural       │
          │   Macro Layer      │
-         │   (mettail-macros) │
+         │   (macros) │
          └─────────┬──────────┘
                    │
     ┌──────────────┼──────────────┐

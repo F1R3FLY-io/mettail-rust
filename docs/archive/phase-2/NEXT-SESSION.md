@@ -10,14 +10,14 @@
 ## 📂 Key Files
 
 ### Core Implementation
-- `mettail-macros/src/lalrpop_gen.rs` - Grammar generation logic
-- `mettail-runtime/build.rs` - LALRPOP build integration
-- `mettail-runtime/src/lib.rs` - Runtime exports
+- `macros/src/lalrpop_gen.rs` - Grammar generation logic
+- `runtime/build.rs` - LALRPOP build integration
+- `runtime/src/lib.rs` - Runtime exports
 
 ### Tests
-- `mettail-macros/src/lalrpop_gen.rs` - Unit tests (5 tests)
+- `macros/src/lalrpop_gen.rs` - Unit tests (5 tests)
 - `theories/grammar_test.rs` - Integration tests (3 theories)
-- `mettail-runtime/tests/lalrpop_integration.rs` - Integration test
+- `runtime/tests/lalrpop_integration.rs` - Integration test
 
 ### Documentation
 - `docs/phase-2/SESSION-SUMMARY.md` - Full session summary
@@ -31,10 +31,10 @@
 
 ```bash
 # Run all grammar generation tests
-cargo test --package mettail-macros --lib lalrpop_gen
+cargo test --package macros --lib lalrpop_gen
 
 # See test output
-cargo test --package mettail-macros --lib lalrpop_gen -- --nocapture
+cargo test --package macros --lib lalrpop_gen -- --nocapture
 
 # Run example theories
 cargo run --bin grammar_test
@@ -51,7 +51,7 @@ cargo test
 ## 🎯 Next Priorities (In Order)
 
 ### 1. Binder Syntax (HIGH PRIORITY)
-**File:** `mettail-macros/src/lalrpop_gen.rs`
+**File:** `macros/src/lalrpop_gen.rs`
 **Function:** `generate_rule_alternative()` and `generate_sequence_alternative()`
 **Task:** Generate `Scope::new(Binder(...), body)` for binder rules
 
@@ -71,7 +71,7 @@ cargo test
 ```
 
 ### 2. Precedence Detection (MEDIUM PRIORITY)
-**File:** `mettail-macros/src/lalrpop_gen.rs`
+**File:** `macros/src/lalrpop_gen.rs`
 **Task:** Detect infix operators, generate tiered grammar
 
 **Example:**
@@ -129,7 +129,7 @@ Proc2: Proc = {  // Tier 2: High precedence (atoms)
 ### Decision 1: Where to Write Grammar Files?
 **Options:**
 - `target/generated/theories/*.lalrpop`
-- `mettail-runtime/src/parsers/*.lalrpop`
+- `runtime/src/parsers/*.lalrpop`
 - User's build directory
 
 **Considerations:**
@@ -269,7 +269,7 @@ Before starting next session:
 
 **Command to start:**
 ```bash
-cargo test --package mettail-macros --lib lalrpop_gen -- --nocapture
+cargo test --package macros --lib lalrpop_gen -- --nocapture
 ```
 
 Good luck! 🎉

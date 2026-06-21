@@ -14,7 +14,7 @@ ideas from the π-calculus and Rho calculus literature
 [RHO-2005](references.md#rho-2005),
 [LYBECH-2022](references.md#lybech-2022)), plus repository-local Rocq proof
 artifacts ([DOVETAIL-FORMAL](references.md#dovetail-formal),
-[METTAIL-RUNTIME-FORMAL](references.md#mettail-runtime-formal),
+[METTAIL-RUNTIME-FORMAL](references.md#runtime-formal),
 [RHO-BRIDGE-FORMAL](references.md#rho-bridge-formal)).
 
 All symbols used here are defined in
@@ -230,7 +230,7 @@ other. Suppression occurs only when a key is already present, in which case the
 service must verify observational equality or report a contract violation.
 
 Mechanized support:
-[METTAIL-RUNTIME-FORMAL](references.md#mettail-runtime-formal) includes
+[METTAIL-RUNTIME-FORMAL](references.md#runtime-formal) includes
 `ExactReachabilityDedup.v`, whose `legacy_seed_expands_all_exact_keys`,
 `exact_successor_preserved`, and `legacy_collision_keeps_both` theorems prove
 that older id-only seed ids expand to all exact-key representatives and exact-key
@@ -261,7 +261,7 @@ position rejects the candidate before commit. In both cases the effect is
 
 Mechanized support:
 `GuardedCommSoundness.v` proves the modeled no-commit property. Runtime support
-is exercised by `mettail-rho-runtime/tests/rho_guard_oracle.rs`, which checks
+is exercised by `rholang-runtime/tests/rho_guard_oracle.rs`, which checks
 that failed single-bind and cross-bind guards leave data available and allow a
 valid candidate to commit later.
 

@@ -433,7 +433,7 @@ Day 5: Polish & Documentation
 
 ```
 mettail-rust-exploration/
-├── mettail-macros/
+├── macros/
 │   └── src/
 │       ├── lib.rs                (entry point)
 │       ├── ast.rs                (theory AST - EXPAND)
@@ -443,7 +443,7 @@ mettail-rust-exploration/
 │       ├── parser_gen.rs         (NEW: parser generation)
 │       └── composition.rs        (NEW: theory composition)
 │
-├── mettail-runtime/
+├── runtime/
 │   └── src/
 │       ├── lib.rs                (runtime support)
 │       ├── parser_combinators.rs (NEW: parsing utilities)
@@ -462,7 +462,7 @@ mettail-rust-exploration/
 
 ### Task 1: Enhance AST for Equations (Day 1)
 
-**File:** `mettail-macros/src/ast.rs`
+**File:** `macros/src/ast.rs`
 
 **Add:**
 ```rust
@@ -494,7 +494,7 @@ pub struct TheoryDef {
 
 ### Task 2: Type Checker (Day 2)
 
-**File:** `mettail-macros/src/typechecker.rs` (NEW)
+**File:** `macros/src/typechecker.rs` (NEW)
 
 **Implement:**
 ```rust
@@ -511,7 +511,7 @@ impl TypeContext {
 
 ### Task 3: Parser Combinator Generation (Days 3-4)
 
-**File:** `mettail-macros/src/parser_gen.rs` (NEW)
+**File:** `macros/src/parser_gen.rs` (NEW)
 
 **Generate:**
 ```rust
@@ -526,7 +526,7 @@ pub fn generate_parser(theory: &TheoryDef) -> TokenStream {
 ## Dependencies to Add
 
 ```toml
-# mettail-runtime/Cargo.toml
+# runtime/Cargo.toml
 [dependencies]
 nom = "7.1"  # For parser combinators
 ```

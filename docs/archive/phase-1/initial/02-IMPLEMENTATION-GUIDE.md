@@ -20,14 +20,14 @@ cargo --version
 cd /Users/cbwells/Documents/GitHub/rholang/f1r3node/mettail-rust-exploration
 
 # Create workspace structure
-mkdir -p mettail-macros/src
-mkdir -p mettail-runtime/src
+mkdir -p macros/src
+mkdir -p runtime/src
 mkdir -p examples
 
 # Create workspace Cargo.toml
 cat > Cargo.toml << 'EOF'
 [workspace]
-members = ["mettail-macros", "mettail-runtime", "examples"]
+members = ["macros", "runtime", "examples"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -37,10 +37,10 @@ syn = { version = "2.0", features = ["full", "extra-traits"] }
 proc-macro-error = "1.0"
 EOF
 
-# Create mettail-macros/Cargo.toml
-cat > mettail-macros/Cargo.toml << 'EOF'
+# Create macros/Cargo.toml
+cat > macros/Cargo.toml << 'EOF'
 [package]
-name = "mettail-macros"
+name = "macros"
 version = "0.1.0"
 edition = "2021"
 
@@ -54,10 +54,10 @@ syn = { workspace = true }
 proc-macro-error = { workspace = true }
 EOF
 
-# Create mettail-runtime/Cargo.toml
-cat > mettail-runtime/Cargo.toml << 'EOF'
+# Create runtime/Cargo.toml
+cat > runtime/Cargo.toml << 'EOF'
 [package]
-name = "mettail-runtime"
+name = "runtime"
 version = "0.1.0"
 edition = "2021"
 
@@ -76,8 +76,8 @@ name = "simple_monoid"
 path = "simple_monoid.rs"
 
 [dependencies]
-mettail-macros = { path = "../mettail-macros" }
-mettail-runtime = { path = "../mettail-runtime" }
+macros = { path = "../macros" }
+runtime = { path = "../runtime" }
 EOF
 ```
 
@@ -92,7 +92,7 @@ Should compile successfully (with empty crates).
 
 ## Step 2: Define AST for Macro Input (30 minutes)
 
-**File:** `mettail-macros/src/ast.rs`
+**File:** `macros/src/ast.rs`
 
 ```rust
 use syn::{Ident, Token, parse::{Parse, ParseStream}, Result as SynResult};
@@ -233,7 +233,7 @@ fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
 
 ## Step 3: Validation Logic (30 minutes)
 
-**File:** `mettail-macros/src/validator.rs`
+**File:** `macros/src/validator.rs`
 
 ```rust
 use crate::ast::{TheoryDef, GrammarItem};
@@ -327,7 +327,7 @@ mod tests {
 
 ## Step 4: Code Generation (45 minutes)
 
-**File:** `mettail-macros/src/codegen.rs`
+**File:** `macros/src/codegen.rs`
 
 ```rust
 use crate::ast::{TheoryDef, GrammarItem, GrammarRule};
@@ -446,7 +446,7 @@ mod tests {
 
 ## Step 5: Macro Entry Point (20 minutes)
 
-**File:** `mettail-macros/src/lib.rs`
+**File:** `macros/src/lib.rs`
 
 ```rust
 mod ast;
@@ -483,7 +483,7 @@ pub fn theory(input: TokenStream) -> TokenStream {
 
 ## Step 6: Runtime Library (5 minutes)
 
-**File:** `mettail-runtime/src/lib.rs`
+**File:** `runtime/src/lib.rs`
 
 ```rust
 // Placeholder for future runtime support
@@ -570,7 +570,7 @@ fn main() {
 
 Add tests to each module:
 
-**File:** `mettail-macros/tests/integration.rs`
+**File:** `macros/tests/integration.rs`
 
 ```rust
 use mettail_macros::theory;
@@ -748,7 +748,7 @@ Plus: Plus(Zero, Zero)
 
 ### Issue 1: `proc-macro` crate errors
 
-**Solution:** Make sure `mettail-macros/Cargo.toml` has:
+**Solution:** Make sure `macros/Cargo.toml` has:
 ```toml
 [lib]
 proc-macro = true

@@ -24,7 +24,7 @@ against THIS commit (the unsourced pre-ROOT-A "342,699" figure is retired; see r
 | `gen_ambient_analytical` | 52/0 (1 ignored) | |
 | `gen_ambient_rewrite` | 13/0 | |
 | `gen_ambient_prop` | 17/0 | |
-| `mettail-prattail --lib` | 3980/0 | includes egraph:: |
+| `prattail --lib` | 3980/0 | includes egraph:: |
 | `--features walker-stats` build | green | I6 gate (round-2 B-1) |
 | `rocq-prattail-wpda` | green | zero-Admitted corpus |
 
@@ -114,7 +114,7 @@ inherits exactly the Pass-0 arm coverage ("no drift" by construction). The only 
 delta is the model's (a)-form — the bypassed secondary interpretation — which
 `crosscat_lhs_d2_only_hits` measures exactly.
 
-**Measurement protocol:** `cargo build -p mettail-languages --features walker-stats --examples`,
+**Measurement protocol:** `cargo build -p languages --features walker-stats --examples`,
 then per probe input `PRATTAIL_WALKER_STATS=1 ./target/debug/examples/cast_probe <idx>` and grep
 the LAST `ep_p1_crosscat_lhs` block (gate counters are process-cumulative; the last report
 carries the totals). Corpus: the 9 bench inputs + `edge_case_tests::{comparison_after_cast_results,
@@ -267,7 +267,7 @@ ess_report_no_prune). Implementation shipped:
 
 - **P6a DV-0: GATE PASSES** — untouched-e-node share 93.1–95.8% (≥50% ✓); saturation
   82.2–84.1% of eval wall (≥20% ✓). Deep-dived ground truth: dovetail has NO live eval
-  caller yet (M-E.0 inert; mettail-rho-runtime runs RhoRuntime directly — dovetail is not
+  caller yet (M-E.0 inert; rholang-runtime runs RhoRuntime directly — dovetail is not
   even a Cargo dep there), so the corpus is the largest existing saturate→extract workload;
   the mechanism is robust (saturation materializes hundreds of equivalent e-nodes; exact
   1-best extraction touches ~14–18). **Disposition: DV-1 (demand-gated saturation,
@@ -661,8 +661,8 @@ inertness is structural: zero code change to the walker/codegen).
 
 **Battery PASS/FAIL byte-identical both demote states** (order-only): SENTINEL `gen_ledtest_op` 220/0,
 `gen_calculator_op` 1330/0, `gen_rhocalc_op` 530/1 (pre-existing `castbigrat`), `edge_case_tests`
-229/0, `rhocalc_tests` 126/0, `gen_ambient_{analytical,rewrite,prop}` 52/0+13/0+17/0, `mettail-prattail
---lib` 3989/0 (default OFF, default ON, AND `--features walker-stats` OFF — all three), `mettail-macros`
+229/0, `rhocalc_tests` 126/0, `gen_ambient_{analytical,rewrite,prop}` 52/0+13/0+17/0, `prattail
+--lib` 3989/0 (default OFF, default ON, AND `--features walker-stats` OFF — all three), `macros`
 367/0. `ForwardOrderOnly.v` recompiles clean; the 4 P4 theorems all `Closed under the global context`.
 
 **TRIPWIRE clean:** `demoted_member_unstepped_at_exit == 0` across 14 walker reports on the

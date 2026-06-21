@@ -31,11 +31,11 @@ These benchmarks were originally run during Phase 2 when both backends coexisted
 
 ```bash
 # Phase 2 commands (historical — LALRPOP has been removed since Phase 3):
-# LALRPOP baseline:  cargo bench -p mettail-languages --bench parse_bench
-# PraTTaIL:          cargo bench -p mettail-languages --bench parse_bench --features prattail
+# LALRPOP baseline:  cargo bench -p languages --bench parse_bench
+# PraTTaIL:          cargo bench -p languages --bench parse_bench --features prattail
 
 # Current (Phase 3+, PraTTaIL only):
-taskset -c 0 cargo bench -p mettail-languages --bench parse_bench
+taskset -c 0 cargo bench -p languages --bench parse_bench
 ```
 
 ## Results

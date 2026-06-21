@@ -139,8 +139,8 @@ Stack-safety regression: `test_deep_parens_*` (lines 96-126).
 
 Gauntlets:
 - `cargo test -p prattail` → preserve 4124/0
-- `cargo test -p mettail-languages --test trampoline_tests` → 15/0/2 (or 15/0/0 if chain_10000 closes)
-- `cargo test -p mettail-languages --test wpda_parity_calculator` → 16/0
+- `cargo test -p languages --test trampoline_tests` → 15/0/2 (or 15/0/0 if chain_10000 closes)
+- `cargo test -p languages --test wpda_parity_calculator` → 16/0
 
 ---
 

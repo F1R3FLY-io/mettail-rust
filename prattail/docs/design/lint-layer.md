@@ -370,7 +370,7 @@ warning[W01] (Calculator): 3 rules are unreachable (dead code)
 Set `PRATTAIL_LINT_VERBOSE=1` to disable grouping and emit individual diagnostics (the pre-grouping behavior). Useful for CI pipelines that filter on specific rule names or categories:
 
 ```bash
-PRATTAIL_LINT_VERBOSE=1 cargo build -p mettail-languages
+PRATTAIL_LINT_VERBOSE=1 cargo build -p languages
 ```
 
 ### Implementation

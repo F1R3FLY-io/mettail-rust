@@ -43,7 +43,7 @@ The defect is **realize-time cursor mis-attribution**:
 - Parse-time machinery (splice gate `:13155`, Class-3 `SpliceIntoCollection`, kv_phase `:11853`) untouched.
 
 ## Verify
-gauntlet `cargo test --release -p mettail-prattail --lib` (4206/0; update SPPF-shape unit tests to new node shape);
+gauntlet `cargo test --release -p prattail --lib` (4206/0; update SPPF-shape unit tests to new node shape);
 op-suites (gen_calculator_op ≥1321, gen_rhocalc_op 532/0); 20 targets (comm::*, new_and_extrusion::*,
 parsing::multi_input/receive/new_single, rhocalc_cast_under_send_reduces_via_comm; test_map_get/keys/values/merge +
 map-NF); class2/3 + wpda_parity collection smokes; Welch panel (release, quiet, N≥15).

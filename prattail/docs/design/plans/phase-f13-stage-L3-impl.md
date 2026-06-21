@@ -65,8 +65,8 @@ Field declaration: **line 520**.
 
 ### Test gate
 ```bash
-cargo +nightly build -p mettail-prattail 2>&1 | tail -20
-systemd-run --user --scope -p MemoryMax=24G cargo test --release -p mettail-prattail --lib 2>&1 | tail -10
+cargo +nightly build -p prattail 2>&1 | tail -20
+systemd-run --user --scope -p MemoryMax=24G cargo test --release -p prattail --lib 2>&1 | tail -10
 ```
 SHIP if 4058/0; REVERT (single commit) otherwise.
 

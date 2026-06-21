@@ -163,7 +163,7 @@ Both lanes are runtime-backend paths. Neither replaces the parser.
 | `language!` and macro expansion | categories, constructors, syntax, equations, rewrites, guards, handlers, generated inventory | runtime scheduling, Dovetail exact-key proofs, Rho execution |
 | WPDA parser/recognizer | source text to typed AST terms | runtime backend selection |
 | Dovetail | exact keys, equality saturation, rule saturation, extraction, weights, boundedness, reports | parser generation, hard-coded category lists, RhoRuntime execution |
-| direct Dovetail adapter | projection of complete checked reports into `mettail-runtime` report-shaped output | Rho lowering or RSpace observation |
+| direct Dovetail adapter | projection of complete checked reports into `runtime` report-shaped output | Rho lowering or RSpace observation |
 | Rho backend | RhoNet planning, normalized `rhoapi::Par` AST generation, explicit rejection of uncovered rules | Rholang text reparsing, custom Rho machine implementation |
 | F1r3node/RhoRuntime/RSpace | Rholang AST execution, COMM, joins, scheduling, replay, checkpoints, cost/funding | MeTTaIL language definition or Dovetail proof construction |
 | Ascent path | reference/oracle evidence during rollout | production rewrite execution after Dovetail/Rho gates pass |

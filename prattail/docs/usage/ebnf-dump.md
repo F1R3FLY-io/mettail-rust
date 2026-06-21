@@ -20,13 +20,13 @@ Set the `PRATTAIL_DUMP_EBNF` environment variable before building or testing:
 
 ```bash
 # Write to target/prattail/<Name>.ebnf (default location)
-PRATTAIL_DUMP_EBNF=1 cargo test -p mettail-languages
+PRATTAIL_DUMP_EBNF=1 cargo test -p languages
 
 # Write to a custom directory
-PRATTAIL_DUMP_EBNF=docs/grammars cargo test -p mettail-languages
+PRATTAIL_DUMP_EBNF=docs/grammars cargo test -p languages
 
 # Works with any cargo command that triggers macro expansion
-PRATTAIL_DUMP_EBNF=1 cargo build -p mettail-languages
+PRATTAIL_DUMP_EBNF=1 cargo build -p languages
 ```
 
 The dump runs during proc-macro expansion (at compile time), so it produces output

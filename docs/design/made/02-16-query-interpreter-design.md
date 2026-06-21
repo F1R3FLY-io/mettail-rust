@@ -163,16 +163,16 @@ Parsing and syntax should be **canonical Ascent** where possible, using **ascent
 
 ## Crate structure and integration
 
-### New crate: `mettail-query`
+### New crate: `query`
 
-Introduce a dedicated crate for the query pipeline. The existing `engine/` PoC is **not** in the workspace today; rather than restructure engine in place, add a **new** crate `mettail-query` that either (a) is written from scratch following the design, or (b) is a copy of engine with holdea removed and String-based types, then refined. Recommendation: **new crate** so the PoC remains as reference; once stable, engine can be removed or folded in.
+Introduce a dedicated crate for the query pipeline. The existing `engine/` PoC is **not** in the workspace today; rather than restructure engine in place, add a **new** crate `query` that either (a) is written from scratch following the design, or (b) is a copy of engine with holdea removed and String-based types, then refined. Recommendation: **new crate** so the PoC remains as reference; once stable, engine can be removed or folded in.
 
-**Workspace**: Add `mettail-query` to root `Cargo.toml` `members` and `[workspace.dependencies]` (if needed for versioning).
+**Workspace**: Add `query` to root `Cargo.toml` `members` and `[workspace.dependencies]` (if needed for versioning).
 
 **Layout**:
 
 ```
-mettail-query/
+query/
 ├── Cargo.toml
 ├── src/
 │   ├── lib.rs              # Public API: run_query_report, run_ascent_oracle_query, ParseError, etc.
@@ -192,11 +192,11 @@ mettail-query/
 │   └── data_source.rs     # RuntimeReportDataSource and AscentOracleDataSource, implement DataSource
 ```
 
-**Dependencies** (`mettail-query/Cargo.toml`):
+**Dependencies** (`query/Cargo.toml`):
 
 - `ascent_syntax_export` (parse Ascent rule)
 - `ascent` (only if operations use `ascent_run!` for join/difference; otherwise pure Rust)
-- `mettail-runtime` (for `RuntimeBackendReport`, `AscentResults`, and
+- `runtime` (for `RuntimeBackendReport`, `AscentResults`, and
   `RelationData`; used by `RuntimeReportDataSource` and
   `AscentOracleDataSource` to derive schema)
 
@@ -213,11 +213,11 @@ mettail-query/
 
 ### Integration with the REPL
 
-- **repl/Cargo.toml**: Add `mettail-query = { path = "../mettail-query" }` (or workspace dep). REPL already has `mettail-runtime` and optionally bundled `mettail-languages`; it gets `RuntimeBackendReport` from state and env from state.
+- **repl/Cargo.toml**: Add `query = { path = "../query" }` (or workspace dep). REPL already has `runtime` and optionally bundled `languages`; it gets `RuntimeBackendReport` from state and env from state.
 
 - **Query command**: When the user enters a line that is parsed as the query command (e.g. `query(result) <-- path(term, result), !rw_proc(result, _)`):
   1. **Require language and prior execution**: If no language loaded or no `backend_report()` in state, error: “Load a language and run exec/step first.”
-  2. **Build env for substitution**: Get `environment()` from state; ensure `current_term` is substituted as a single literal argument. The REPL’s env is language-specific (`dyn Any`); the query layer only needs the **substituted string**, so the REPL calls `pre_substitute_env(query_str, language, env)` **before** calling into mettail-query.
+  2. **Build env for substitution**: Get `environment()` from state; ensure `current_term` is substituted as a single literal argument. The REPL’s env is language-specific (`dyn Any`); the query layer only needs the **substituted string**, so the REPL calls `pre_substitute_env(query_str, language, env)` **before** calling into query.
   3. **Call**: `mettail_query::run_query_report(substituted_rule_str, state.backend_report().unwrap())`.
   4. **Schema**: `run_query_report` derives schema from the report shape. Ascent-shaped reports expose custom relations, Dovetail reports expose report relations, and Rho observation reports expose observation relations.
   5. **Output**: Print each tuple (e.g. one line per row, or formatted table).
@@ -230,9 +230,9 @@ mettail-query/
 
 | Component    | Responsibility |
 |-------------|----------------|
-| **mettail-query** | Parse (with schema), plan, execute; `DataSource` over `RuntimeBackendReport`; return `Vec<Vec<String>>`. |
+| **query** | Parse (with schema), plan, execute; `DataSource` over `RuntimeBackendReport`; return `Vec<Vec<String>>`. |
 | **repl**          | Parse “query” command; build env (REPL env + `current_term`); substitute query string; call `run_query_report`; print results. |
-| **mettail-runtime** | `AscentResults`, `RelationData`; no change except Phase 2 (extend extraction). |
+| **runtime** | `AscentResults`, `RelationData`; no change except Phase 2 (extend extraction). |
 | **macros**        | Implement unified relation extraction: full list (generated + logic-block), single loop into `custom_relations`. |
 
 ---
@@ -255,7 +255,7 @@ mettail-query/
    v1 supports `if` with comparisons. The executor’s filter step needs to compare row values (strings). For string comparison, lexicographic order is fine for `>=`, `<=`, etc.; for equality we already use string eq. Predicate registry can be empty if we only support comparison filters and implement them inside the executor. No dependency on a separate “holdea” predicate system.
 
 6. **Operations without ascent_run!**  
-   The current engine’s join/difference use `ascent_run!` and `Value`. If we switch to `Vec<String>`, we can either (a) rewrite those operations to use `ascent_run!` with `Vec<String>` (ascent supports any cloneable type), or (b) implement join/difference in pure Rust (nested loops or sort-merge). (a) keeps one source of truth; (b) avoids ascent dependency in mettail-query. Design choice: prefer (b) for simplicity and to keep mettail-query’s dependency surface small, unless profiling shows need for ascent-backed join.
+   The current engine’s join/difference use `ascent_run!` and `Value`. If we switch to `Vec<String>`, we can either (a) rewrite those operations to use `ascent_run!` with `Vec<String>` (ascent supports any cloneable type), or (b) implement join/difference in pure Rust (nested loops or sort-merge). (a) keeps one source of truth; (b) avoids ascent dependency in query. Design choice: prefer (b) for simplicity and to keep query’s dependency surface small, unless profiling shows need for ascent-backed join.
 
 7. **Error reporting**  
    Parse errors (unknown relation, unsafe query, non-stratified) should point at the user’s rule string. ascent_syntax_export returns `syn::Error` with span info; we may lose span when we build the program string. Consider keeping a single-rule parse path that preserves offsets, or report “relation X not in schema” / “variable Y unbound” without line numbers for v1.
@@ -282,7 +282,7 @@ mettail-query/
 | **Environment** | Same as term execution: pre_substitute_env(query_str, language, env) before parsing; env includes REPL bindings + `current_term` = current stepped term display. |
 | **Return** | Vec of head tuples: `Vec<Vec<String>>`. |
 | **Engine** | Remove holdea and FactId; rows and results use `String` only; add deps; keep planner/executor/operations logic. |
-| **Crate** | New crate `mettail-query`: ast, parse (pre_parse + ascent_parse), schema, planner, executor, operations, data_source. Deps: ascent_syntax_export, mettail-runtime; optional ascent if operations use it. |
-| **Integration** | Add `mettail-query` to workspace; repl depends on it. Query command: substitute env + current_term in REPL, call `run_query_report(substituted, runtime_report)`; schema from report shape. |
+| **Crate** | New crate `query`: ast, parse (pre_parse + ascent_parse), schema, planner, executor, operations, data_source. Deps: ascent_syntax_export, runtime; optional ascent if operations use it. |
+| **Integration** | Add `query` to workspace; repl depends on it. Query command: substitute env + current_term in REPL, call `run_query_report(substituted, runtime_report)`; schema from report shape. |
 
 Remaining considerations are listed in **Considerations remaining** (pre-parser, unified extraction, wildcards, constants, if-clauses, operations impl, errors, REPL command shape, current_term guard, testing).

@@ -2,7 +2,7 @@
  * RhoRejectedCoverage: exact coverage for Rho lowering rejections.
  *
  * Rust image:
- *   - `mettail_rho_codegen::RhoCoverageEvidence::AllRulesLowered` is valid
+ *   - `mettail_rholang_codegen::RhoCoverageEvidence::AllRulesLowered` is valid
  *     only when `RhoLowering::rejected` is empty.
  *   - `CoveredRejectedRules(dispositions)` is valid only when its disposition
  *     rule ids name exactly the rejected rules: no rejected rule is omitted

@@ -39,9 +39,9 @@ rectangle "Evidence" as Evidence #EDE9FE {
 }
 
 rectangle "Consumers" as Consumers #FCE7F3 {
-  component "Direct Dovetail path\n`mettail-dovetail-runtime`" as Direct #FBCFE8
-  component "Differential oracle\n`mettail-rho-runtime`" as Oracle #FBCFE8
-  component "Rho backend\n`mettail-rho-codegen`" as Rho #FBCFE8
+  component "Direct Dovetail path\n`dovetail-runtime`" as Direct #FBCFE8
+  component "Differential oracle\n`rholang-runtime`" as Oracle #FBCFE8
+  component "Rho backend\n`rholang-codegen`" as Rho #FBCFE8
   component "Local tooling" as Tooling #FBCFE8
 }
 
@@ -71,6 +71,6 @@ legend right
 |<#DCFCE7> Dovetail core | exact keys, e-graph, saturation, extraction |
 |<#FEF3C7> Algebra | `rigail` — semiring, SCC, best-order support |
 |<#EDE9FE> Evidence | formal models and tests |
-|<#FCE7F3> Consumers | `mettail-dovetail-runtime`, oracle, Rho backend, tooling |
+|<#FCE7F3> Consumers | `dovetail-runtime`, oracle, Rho backend, tooling |
 endlegend
 @enduml

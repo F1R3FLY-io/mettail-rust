@@ -10,7 +10,7 @@ MeTTaIL's `language!` macro defines formal languages declaratively — types, te
 
 **Key Decisions**:
 - **Cargo-native only**: All tests are `#[test]` / `proptest!` functions discoverable by `cargo test` and `cargo nextest run`. No standalone binary.
-- **Library crate**: `mettail-testkit` is a reusable library providing property assertion functions, strategy helpers, and analytical integrations. Any crate using `language!` can depend on it.
+- **Library crate**: `testkit` is a reusable library providing property assertion functions, strategy helpers, and analytical integrations. Any crate using `language!` can depend on it.
 - **Generated test files**: The `language!` macro writes `languages/tests/generated/{name}_tests.rs` as a side effect (same pattern as `*-datalog.rs` and `*-blocks.ts`). These are checked into version control.
 - **TRS strictness**: Confluence and termination check failures default to hard errors. Configurable per-language via `options { }` to `error` (default), `warn`, or `disable`.
 - **Parallelism + isolation**: `cargo nextest` provides per-test process isolation. Each test clears thread-local state (`clear_var_cache()`) and has no shared mutable state.
@@ -27,7 +27,7 @@ Two layers:
 │  #[test], proptest!, #[ignore] for dead rules       │
 │  Discovered by cargo test / cargo nextest run       │
 ├─────────────────────────────────────────────────────┤
-│  mettail-testkit crate (testkit/)                   │
+│  testkit crate (testkit/)                   │
 │  Library: property assertions, strategy helpers,    │
 │  analytical integrations (confluence, termination)  │
 ├─────────────────────────────────────────────────────┤
@@ -39,7 +39,7 @@ Two layers:
 
 ---
 
-## 1. New Crate: `mettail-testkit`
+## 1. New Crate: `testkit`
 
 **Path**: `testkit/`
 
@@ -1025,25 +1025,25 @@ The `language!` macro writes test files at `languages/tests/generated/{name}_tes
 
 ```bash
 # Run all generated tests for all languages
-cargo test -p mettail-languages
+cargo test -p languages
 
 # Run only Calculator tests
-cargo test -p mettail-languages calculator
+cargo test -p languages calculator
 
 # Run only roundtrip property tests
-cargo test -p mettail-languages prop_roundtrip
+cargo test -p languages prop_roundtrip
 
 # Run with nextest for per-test process isolation
-cargo nextest run -p mettail-languages
+cargo nextest run -p languages
 
 # Run specific test
-cargo nextest run -p mettail-languages -E 'test(prop_int_roundtrip)'
+cargo nextest run -p languages -E 'test(prop_int_roundtrip)'
 
 # Include dead-rule tests (normally ignored)
-cargo test -p mettail-languages -- --ignored
+cargo test -p languages -- --ignored
 
 # Run with TRS analysis
-cargo test -p mettail-languages --features trs-analysis
+cargo test -p languages --features trs-analysis
 ```
 
 ### 6.3 Nextest Compatibility
@@ -1072,7 +1072,7 @@ fn unit_deadrule_roundtrip() { ... }
 
 | File | Purpose |
 |---|---|
-| `testkit/Cargo.toml` | Crate manifest (deps: proptest, mettail-runtime, mettail-prattail) |
+| `testkit/Cargo.toml` | Crate manifest (deps: proptest, runtime, prattail) |
 | `testkit/src/lib.rs` | Re-exports |
 | `testkit/src/properties/mod.rs` | Property module |
 | `testkit/src/properties/structural.rs` | Roundtrip, display idempotence assertions |
@@ -1127,7 +1127,7 @@ fn unit_deadrule_roundtrip() { ... }
 | `macros/src/gen/mod.rs` | Add `pub mod test_gen;` |
 | `macros/src/lib.rs` | Call `write_test_file()` in `language()` alongside `write_ascent_source()` |
 | `macros/src/ast/language.rs` | Add optional `tests: Option<TestBlock>` to `LanguageDef`, parse `tests { }` |
-| `languages/Cargo.toml` | Add `mettail-testkit` as dev-dependency |
+| `languages/Cargo.toml` | Add `testkit` as dev-dependency |
 
 ### Existing Files to Reuse (Not Modify)
 
@@ -1149,16 +1149,16 @@ fn unit_deadrule_roundtrip() { ... }
 ## 8. Dependency Graph
 
 ```
-mettail-testkit (library)
- ├── mettail-runtime (Language, Term, AscentResults, LanguageMetadata)
- ├── mettail-prattail [optional: confluence, termination, abstract_cesk, cegar]
+testkit (library)
+ ├── runtime (Language, Term, AscentResults, LanguageMetadata)
+ ├── prattail [optional: confluence, termination, abstract_cesk, cegar]
  └── proptest
 
-mettail-languages (dev-dependencies for tests)
- ├── mettail-testkit
+languages (dev-dependencies for tests)
+ ├── testkit
  └── proptest
 
-mettail-macros (proc macro, no new deps — generates code referencing testkit)
+macros (proc macro, no new deps — generates code referencing testkit)
 ```
 
 ### Feature Gating (`testkit/Cargo.toml`)
@@ -1167,21 +1167,21 @@ mettail-macros (proc macro, no new deps — generates code referencing testkit)
 [features]
 default = []
 # Tier 1: Confluence, termination, e-graph, morphism
-trs-analysis = ["mettail-prattail/confluence", "mettail-prattail/termination", "mettail-prattail/egraph"]
+trs-analysis = ["prattail/confluence", "prattail/termination", "prattail/egraph"]
 # Tier 2: Abstract CESK, CEGAR, green threads
-cek-runtime = ["mettail-prattail/cek-runtime", "mettail-prattail/green-threads"]
+cek-runtime = ["prattail/cek-runtime", "prattail/green-threads"]
 # Tier 3: Tree automata, VPA, parity tree, nominal
-structure-analysis = ["mettail-prattail/tree-automaton", "mettail-prattail/vpa", "mettail-prattail/nominal"]
+structure-analysis = ["prattail/tree-automaton", "prattail/vpa", "prattail/nominal"]
 # Tier 4: Petri nets, multi-tape, two-way transducers
-process-analysis = ["mettail-prattail/petri", "mettail-prattail/multi-tape", "mettail-prattail/process-algebra"]
+process-analysis = ["prattail/petri", "prattail/multi-tape", "prattail/process-algebra"]
 # Tier 5: SFA, SFT, Presburger, register automata, KAT
-symbolic-analysis = ["mettail-prattail/symbolic-automata", "mettail-prattail/predicate-dispatch", "mettail-prattail/kat"]
+symbolic-analysis = ["prattail/symbolic-automata", "prattail/predicate-dispatch", "prattail/kat"]
 # Tier 6: CRA, probabilistic, provenance, WMSO, ARA
-quantitative-analysis = ["mettail-prattail/cra", "mettail-prattail/probabilistic", "mettail-prattail/provenance"]
+quantitative-analysis = ["prattail/cra", "prattail/probabilistic", "prattail/provenance"]
 # Tier 7: LTL, Büchi, alternating automata
-temporal-analysis = ["mettail-prattail/ltl", "mettail-prattail/buchi", "mettail-prattail/alternating"]
+temporal-analysis = ["prattail/ltl", "prattail/buchi", "prattail/alternating"]
 # Tier 8: Algebraic paths, relational, EWPDS, lattice
-algebraic-analysis = ["mettail-prattail/analysis"]
+algebraic-analysis = ["prattail/analysis"]
 # Future: predicated types
 predicated-types = []
 # Everything
@@ -1199,7 +1199,7 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 - Wire into `macros/src/lib.rs` alongside `write_ascent_source()`
 - Implement basic structural assertions (`assert_roundtrip`, `assert_display_idempotence`)
 - Implement strategy helpers (`arb_var_name`, `arb_i32_interesting`, etc.)
-- **Verify**: `cargo build -p mettail-languages` compiles with empty generated test files
+- **Verify**: `cargo build -p languages` compiles with empty generated test files
 
 ### Phase 2: Proptest Strategy Generation + Cargo Test Files
 - Implement `macros/src/gen/test_gen/strategies.rs` — auto-generate `arb_strategy()` per category
@@ -1207,57 +1207,57 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 - Handle native type leaves: `i32`, `f64`, `bool`, `String`
 - Implement generated test file writing (following `write_ascent_source()` pattern)
 - Generate structural property tests (`proptest!` blocks) in test files
-- **Verify**: `cargo test -p mettail-languages` runs roundtrip + display idempotence for all categories; `cargo nextest run` works
+- **Verify**: `cargo test -p languages` runs roundtrip + display idempotence for all categories; `cargo nextest run` works
 
 ### Phase 3: Unit Tests + Semantic Properties
 - Implement unit test generation (one `#[test]` per constructor)
 - Implement semantic assertions (eval determinism, normalization idempotence, subst, ground eval)
 - Generate semantic property tests in test files
-- **Verify**: `cargo test -p mettail-languages` runs unit + structural + semantic tests
+- **Verify**: `cargo test -p languages` runs unit + structural + semantic tests
 
 ### Phase 4: Equation + Rewrite Tests
 - Implement equation test generation (symmetry via Ascent)
 - Implement rewrite test generation (fires + result matches)
 - Implement algebraic assertions
-- **Verify**: `cargo test -p mettail-languages` includes equation + rewrite tests
+- **Verify**: `cargo test -p languages` includes equation + rewrite tests
 
 ### Phase 5: `tests { }` Block
 - Add `TestBlock` to `LanguageDef`, parse `tests { }` in `language.rs`
 - Implement user test codegen
 - Add example `tests { }` blocks to Calculator and RhoCalc
-- **Verify**: `cargo test -p mettail-languages user_` runs user-specified tests
+- **Verify**: `cargo test -p languages user_` runs user-specified tests
 
 ### Phase 6: Tier 0 — Always-Active Analytics
 - Implement WPDS dead-rule `#[ignore]` annotations from `PipelineAnalysis`
 - Implement forward-backward coverage guidance (hot path tests)
 - Implement cost-benefit test prioritization (ambiguity target tests)
-- **Verify**: `cargo test -p mettail-languages` shows dead rules as ignored, hot-path tests present
+- **Verify**: `cargo test -p languages` shows dead rules as ignored, hot-path tests present
 
 ### Phase 7: Tier 1 — TRS Analysis
 - Implement confluence checking integration (`confluence.rs`)
 - Implement termination checking integration (`termination.rs`)
 - Implement e-graph joinability tests (`egraph.rs`)
 - Implement theory morphism verification for composed languages (`morphism.rs`)
-- **Verify**: `cargo test -p mettail-languages --features trs-analysis`
+- **Verify**: `cargo test -p languages --features trs-analysis`
 
 ### Phase 8: Tier 2 — CEK Runtime Analysis
 - Implement abstract CESK state coverage (`abstract_cesk.rs`)
 - Implement CEGAR counterexample generation (`cegar.rs`)
 - Implement green thread interleaving tests (`green_thread.rs`)
-- **Verify**: `cargo test -p mettail-languages --features cek-runtime`
+- **Verify**: `cargo test -p languages --features cek-runtime`
 
 ### Phase 9: Tier 3 — Structure Analysis
 - Implement tree automaton coverage (WTA acceptance, hot-path)
 - Implement VPA nesting verification (balance, negative tests)
 - Implement nominal automata freshness tests
 - Implement parity tree automata (mu-calculus model checking)
-- **Verify**: `cargo test -p mettail-languages --features structure-analysis`
+- **Verify**: `cargo test -p languages --features structure-analysis`
 
 ### Phase 10: Tier 4 — Process/Concurrency Analysis
 - Implement Petri net reachability (deadlock detection)
 - Implement multi-tape synchronization tests
 - Implement two-way transducer join pattern analysis
-- **Verify**: `cargo test -p mettail-languages --features process-analysis`
+- **Verify**: `cargo test -p languages --features process-analysis`
 
 ### Phase 11: Tier 5 — Symbolic Analysis
 - Implement SFA guard analysis (satisfiability, overlap, minterm coverage)
@@ -1265,7 +1265,7 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 - Implement Presburger arithmetic (numeric guard tests)
 - Implement register automata (data-equality tests)
 - Implement KAT Hoare triple verification
-- **Verify**: `cargo test -p mettail-languages --features symbolic-analysis`
+- **Verify**: `cargo test -p languages --features symbolic-analysis`
 
 ### Phase 12: Tiers 6-8 — Quantitative, Temporal, Algebraic
 - Implement CRA resource bound tests
@@ -1274,7 +1274,7 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 - Implement LTL/Büchi temporal property tests
 - Implement algebraic path analysis
 - Implement lattice theory invariant tests
-- **Verify**: `cargo test -p mettail-languages --features full-analysis`
+- **Verify**: `cargo test -p languages --features full-analysis`
 
 ### Phase 13: Application-Level Testing
 - Implement `ProgramTestSuite` builder in `testkit/src/program.rs`
@@ -1283,7 +1283,7 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 - Auto-generate structural/semantic/rewrite tests from program source
 - Integrate with Petri net (deadlock), LTL/Büchi (temporal), CESK (reachability)
 - Add example `program {}` blocks to RhoCalc and Calculator `tests {}`
-- **Verify**: `cargo test -p mettail-languages program_` runs application-level tests
+- **Verify**: `cargo test -p languages program_` runs application-level tests
 
 ### Phase 14: New Automata
 - Implement mutation testing automaton (mutation score metric)
@@ -1307,23 +1307,23 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 Each phase has a concrete verification step (see above).
 
 ### End-to-End
-1. `cargo build -p mettail-languages` — compiles cleanly
-2. `cargo test -p mettail-languages` — all generated `#[test]` functions pass (Tier 0 + always-on)
-3. `cargo nextest run -p mettail-languages` — all tests pass with per-test process isolation
-4. `cargo test -p mettail-languages calculator` — filters to Calculator tests only
-5. `cargo test -p mettail-languages prop_roundtrip` — runs only roundtrip property tests
-6. `cargo test -p mettail-languages -- --ignored` — runs dead-rule tests
-7. `cargo test -p mettail-languages --features trs-analysis` — Tier 1: confluence + termination + e-graph
-8. `cargo test -p mettail-languages --features cek-runtime` — Tier 2: CESK + CEGAR + green threads
-9. `cargo test -p mettail-languages --features structure-analysis` — Tier 3: WTA + VPA + nominal + parity
-10. `cargo test -p mettail-languages --features process-analysis` — Tier 4: Petri + multi-tape
-11. `cargo test -p mettail-languages --features symbolic-analysis` — Tier 5: SFA + Presburger + KAT
-12. `cargo test -p mettail-languages --features full-analysis` — all tiers
+1. `cargo build -p languages` — compiles cleanly
+2. `cargo test -p languages` — all generated `#[test]` functions pass (Tier 0 + always-on)
+3. `cargo nextest run -p languages` — all tests pass with per-test process isolation
+4. `cargo test -p languages calculator` — filters to Calculator tests only
+5. `cargo test -p languages prop_roundtrip` — runs only roundtrip property tests
+6. `cargo test -p languages -- --ignored` — runs dead-rule tests
+7. `cargo test -p languages --features trs-analysis` — Tier 1: confluence + termination + e-graph
+8. `cargo test -p languages --features cek-runtime` — Tier 2: CESK + CEGAR + green threads
+9. `cargo test -p languages --features structure-analysis` — Tier 3: WTA + VPA + nominal + parity
+10. `cargo test -p languages --features process-analysis` — Tier 4: Petri + multi-tape
+11. `cargo test -p languages --features symbolic-analysis` — Tier 5: SFA + Presburger + KAT
+12. `cargo test -p languages --features full-analysis` — all tiers
 13. Compare auto-generated roundtrip coverage against hand-written `roundtrip_tests.rs` — auto should cover all categories, not just `Int`
 14. Verify adding a new `language!` automatically gets a full test suite with zero manual writing
-15. `cargo test -p mettail-testkit` — testkit's own unit tests pass
-16. `cargo nextest run -p mettail-languages --retries 0` — no flaky tests (deterministic seeds)
-17. `cargo test -p mettail-languages program_` — application-level program tests pass
+15. `cargo test -p testkit` — testkit's own unit tests pass
+16. `cargo nextest run -p languages --retries 0` — no flaky tests (deterministic seeds)
+17. `cargo test -p languages program_` — application-level program tests pass
 18. Verify `ProgramTestSuite` API works from standalone test files (not just `tests { }` block)
 19. Verify mutation testing score ≥ 80% for Calculator language
 20. Verify grammar coverage ≥ 95% rule exercise rate for all languages

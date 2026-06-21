@@ -4,7 +4,7 @@
 
 A **semiring** is an algebraic structure (S, ⊕, ⊗, 0̄, 1̄) consisting of a carrier set S, two binary operations (addition ⊕ and multiplication ⊗), and two distinguished elements (additive identity 0̄ and multiplicative identity 1̄). Semirings provide a unifying algebraic framework for weighted automata, enabling a single algorithmic pipeline to solve diverse problems (shortest paths, counting, probability, resource tracking) by simply varying the semiring.
 
-The simulation crate defines four new semiring types that extend the base semirings in `mettail-prattail`:
+The simulation crate defines four new semiring types that extend the base semirings in `prattail`:
 
 | Semiring            | Carrier              | ⊕                        | ⊗                  | 0̄       | 1̄      |
 |---------------------|----------------------|--------------------------|--------------------|---------|--------|
@@ -60,7 +60,7 @@ By replacing the tropical semiring with the expectation semiring, the same algor
 
 ## The Semiring Trait
 
-The `Semiring` trait in `mettail-prattail` requires `Copy`:
+The `Semiring` trait in `prattail` requires `Copy`:
 
 ```rust
 pub trait Semiring: Clone + Copy + Debug + PartialEq + Send + Sync + 'static {
@@ -104,7 +104,7 @@ Rather than forcing all semirings into one trait (either penalizing Copy types w
 
 ## Trait Hierarchy Extensions
 
-The `mettail-prattail` crate defines additional marker traits:
+The `prattail` crate defines additional marker traits:
 
 | Trait                | Meaning                                | Examples                        |
 |----------------------|----------------------------------------|---------------------------------|

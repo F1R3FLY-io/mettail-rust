@@ -37,7 +37,7 @@ Three profiling tools were used to diagnose the bottleneck:
 2. **`cargo-llvm-lines`**: Counts LLVM IR lines and monomorphized function copies per
    generic instantiation.
    ```bash
-   cargo llvm-lines -p mettail-languages
+   cargo llvm-lines -p languages
    ```
 
 3. **Ascent source inspection**: Examining the generated Datalog code to count
@@ -45,7 +45,7 @@ Three profiling tools were used to diagnose the bottleneck:
 
 ### Primary Root Cause: Ascent Macro Monomorphization Explosion
 
-The `mettail-languages` crate was the compilation bottleneck, with `typeck` consuming
+The `languages` crate was the compilation bottleneck, with `typeck` consuming
 **504.93 seconds (77.7% of total compilation time)**. The cause: each syntactic
 category in each language invoked `ascent_run!` independently, creating an anonymous
 struct that was fully monomorphized in isolation.
@@ -66,7 +66,7 @@ vectors) separately, even though many shared the same concrete types.
 
 #### LLVM IR Output
 
-`cargo-llvm-lines` for `mettail-languages` showed:
+`cargo-llvm-lines` for `languages` showed:
 
 - **Total: 4,605,902 lines of LLVM IR, 92,991 monomorphized function copies**
 
@@ -105,7 +105,7 @@ With 4.6M lines of IR to process, the LLVM backend consumed significant time:
 `compute_debuginfo_type_name` consumed 872ms processing 529,431 items. Full debug info
 amplifies the LLVM codegen work.
 
-### Complete Self-Profile Breakdown (`mettail-languages`)
+### Complete Self-Profile Breakdown (`languages`)
 
 | Phase | Self-Time | % of Total | Item Count |
 |-------|-----------|------------|------------|
@@ -118,14 +118,14 @@ amplifies the LLVM codegen work.
 | `expand_proc_macro` | 6.34s | 1.0% | 47 |
 | All other phases | ~33s | 5.1% | -- |
 
-Self-profile data sizes confirm `mettail-languages` as the bottleneck:
+Self-profile data sizes confirm `languages` as the bottleneck:
 
 | Crate | Profile Data Size |
 |-------|------------------|
-| mettail-languages | 296 MB |
-| mettail-macros | 34 MB |
-| mettail-prattail | 24 MB |
-| mettail-runtime | 12 MB |
+| languages | 296 MB |
+| macros | 34 MB |
+| prattail | 24 MB |
+| runtime | 12 MB |
 
 ---
 

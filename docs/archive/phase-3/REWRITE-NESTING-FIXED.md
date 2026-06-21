@@ -47,7 +47,7 @@ The rewrite pattern matcher now supports **arbitrary nesting depth** for pattern
 
 ### File Modified
 
-**`mettail-macros/src/rewrite_gen.rs`** (lines 246-576)
+**`macros/src/rewrite_gen.rs`** (lines 246-576)
 - Added `NestedPatternInfo` struct to track recursive structure
 - Implemented `extract_variables_recursive()` for depth-first variable extraction
 - Implemented `wrap_nested_patterns_recursive()` and `wrap_single_pattern()` for code generation

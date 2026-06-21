@@ -70,7 +70,7 @@ There is **no** `guard` field and **no** `evidence` field on a Dovetail rule.
 That is deliberate, and it is the single most important thing to understand
 about where guards live: a rule that reaches Dovetail's saturation loop is
 **unconditional**. Guard discharge happens entirely *upstream* (in
-`mettail-rho-codegen`), before any `RewriteRule` is constructed — see
+`rholang-codegen`), before any `RewriteRule` is constructed — see
 [Guards Are Discharged Upstream](#guards-are-discharged-upstream) below and the
 [Predicate Evidence Boundary](#predicate-evidence-boundary) above. The well-formedness
 contract Dovetail *does* enforce on the data is the variable-scope condition

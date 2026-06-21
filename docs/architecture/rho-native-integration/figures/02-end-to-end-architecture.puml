@@ -15,15 +15,15 @@ participant "User" as User #E0F2FE
 participant "MeTTaIL\nParser" as Parser #DBEAFE
 participant "MeTTaIL\nTyped AST" as AST #BFDBFE
 participant "Dovetail\nRewrite Model" as Dovetail #DCFCE7
-participant "Direct Dovetail adapter\n`mettail-dovetail-runtime`" as DirectDovetail #DCFCE7
-participant "RhoNet lowerer\n`mettail-rho-codegen`" as Lowerer #FEF3C7
+participant "Direct Dovetail adapter\n`dovetail-runtime`" as DirectDovetail #DCFCE7
+participant "RhoNet lowerer\n`rholang-codegen`" as Lowerer #FEF3C7
 participant "Rholang AST\nrhoapi::Par" as Rholang #FDE68A
 participant "Artifact\nBoundary" as Artifact #CCFBF1
-participant "RhoBackend binding\n`mettail-rho-runtime`" as Binding #FBCFE8
+participant "RhoBackend binding\n`rholang-runtime`" as Binding #FBCFE8
 participant "F1r3node\nRhoRuntime" as Runtime #FCE7F3
 participant "RSpace" as RSpace #FBCFE8
 participant "RuntimeBackendReport" as RuntimeReport #EDE9FE
-participant "Differential oracle\n`mettail-rho-runtime`" as Oracle #EDE9FE
+participant "Differential oracle\n`rholang-runtime`" as Oracle #EDE9FE
 
 User -> Parser : source snippet or bootstrapped Rholang form
 Parser -> AST : parsed typed term graph
@@ -61,10 +61,10 @@ legend right
 |= Area |= Actor / owning crate |
 |<#E0F2FE> User | source snippet owner |
 |<#DBEAFE> MeTTaIL | parser, recognizer, typed AST |
-|<#DCFCE7> Dovetail | `dovetail` reports + `mettail-dovetail-runtime` direct path |
-|<#FEF3C7> Rho lowering | RhoNet + guard classification · `mettail-rho-codegen` |
+|<#DCFCE7> Dovetail | `dovetail` reports + `dovetail-runtime` direct path |
+|<#FEF3C7> Rho lowering | RhoNet + guard classification · `rholang-codegen` |
 |<#CCFBF1> Artifact | AST today, bytecode-ready boundary |
-|<#FBCFE8> Rho binding | installers + oracle · `mettail-rho-runtime` |
+|<#FBCFE8> Rho binding | installers + oracle · `rholang-runtime` |
 |<#FCE7F3> F1r3node | RhoRuntime, RSpace, COMM scheduling (external) |
 |<#EDE9FE> Observation | report + oracle projection |
 endlegend

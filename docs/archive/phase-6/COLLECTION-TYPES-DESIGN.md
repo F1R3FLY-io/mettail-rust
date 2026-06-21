@@ -182,7 +182,7 @@ rewrites {
 
 ### AST Extensions
 
-#### New AST Types (`mettail-macros/src/ast.rs`)
+#### New AST Types (`macros/src/ast.rs`)
 
 ```rust
 /// Collection type specifier in grammar
@@ -262,7 +262,7 @@ impl GrammarItem {
 }
 ```
 
-### Runtime Types (`mettail-runtime/src/lib.rs`)
+### Runtime Types (`runtime/src/lib.rs`)
 
 #### HashBag Implementation
 
@@ -471,7 +471,7 @@ impl<T: Clone + Hash + Eq> FromIterator<T> for HashBag<T> {
 
 ### Phase 1: Runtime Foundation (Days 1-2)
 
-**Goal**: Implement collection types in `mettail-runtime`
+**Goal**: Implement collection types in `runtime`
 
 #### Tasks
 
@@ -762,7 +762,7 @@ For rewrite rules to work with collections, we need to support **partial matchin
 
 ### Unit Tests
 
-#### Runtime Tests (`mettail-runtime/src/lib.rs`)
+#### Runtime Tests (`runtime/src/lib.rs`)
 ```rust
 #[cfg(test)]
 mod tests {
@@ -809,7 +809,7 @@ mod tests {
 
 ### Integration Tests
 
-#### Collection Parsing (`mettail-macros/tests/collection_tests.rs`)
+#### Collection Parsing (`macros/tests/collection_tests.rs`)
 ```rust
 #[test]
 fn parse_hashbag_constructor() {

@@ -13,7 +13,7 @@
 
 ### Root Cause (Confirmed)
 
-**File**: `mettail-macros/src/ascent_gen.rs`, lines 1477-1512
+**File**: `macros/src/ascent_gen.rs`, lines 1477-1512
 
 ```rust
 for (elem_idx, elem) in elements.iter().enumerate() {
@@ -146,7 +146,7 @@ if let Some(rest_var) = rest {
 
 #### Task 1.1: Make `generate_ascent_pattern` Public (Day 1, 2 hours)
 
-**File**: `mettail-macros/src/rewrite_gen.rs`
+**File**: `macros/src/rewrite_gen.rs`
 **Line**: 183
 
 **Current**:
@@ -158,7 +158,7 @@ pub fn generate_ascent_pattern(...)  // Already public!
 
 #### Task 1.2: Create Equation Pattern Adapter (Day 1-2, 1 day)
 
-**File**: `mettail-macros/src/ascent_gen.rs`
+**File**: `macros/src/ascent_gen.rs`
 **Location**: New function before `generate_equation_clause`
 
 **Implementation**:
@@ -219,7 +219,7 @@ fn to_snake_case(s: &str) -> String {
 
 #### Task 1.3: Replace Equation Pattern Generation (Day 2-3, 1 day)
 
-**File**: `mettail-macros/src/ascent_gen.rs`
+**File**: `macros/src/ascent_gen.rs`
 **Location**: `generate_equation_clause` function, line ~1175
 
 **Current**:
@@ -259,7 +259,7 @@ Some(quote! {
 
 #### Task 2.1: Verify RHS Works with New Bindings
 
-**File**: `mettail-macros/src/ascent_gen.rs`
+**File**: `macros/src/ascent_gen.rs`
 **Location**: `generate_equation_rhs` and `generate_collection_equation_rhs`
 
 **Check**:
@@ -286,7 +286,7 @@ Some(quote! {
 
 #### Task 3.1: Verify Freshness Generation
 
-**File**: `mettail-macros/src/ascent_gen.rs`
+**File**: `macros/src/ascent_gen.rs`
 **Location**: `generate_equation_freshness`, line ~1207
 
 **Check**:
@@ -519,8 +519,8 @@ cargo test --bin equation_tests
 ## Implementation Notes
 
 ### Key Files
-- `mettail-macros/src/rewrite_gen.rs` - Source of truth for pattern matching (already public!)
-- `mettail-macros/src/ascent_gen.rs` - Add adapter, update equation generation
+- `macros/src/rewrite_gen.rs` - Source of truth for pattern matching (already public!)
+- `macros/src/ascent_gen.rs` - Add adapter, update equation generation
 
 ### Testing Strategy
 - Unit tests for adapter

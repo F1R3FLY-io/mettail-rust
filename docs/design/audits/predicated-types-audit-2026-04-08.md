@@ -114,10 +114,10 @@ working code). The orchestration layer that connects user-source
     trait, `UnificationTheory`, and `TypeSystemAlgebra<S>` exist, but
     no `HindleyMilnerTypeSystem` struct.
 
-15. **`mettail-macros` is `proc-macro = true`.** Demos cannot
+15. **`macros` is `proc-macro = true`.** Demos cannot
     `parse2::<LanguageDef>(quote!{ … })` because non-proc-macro
     consumers cannot import types from a proc-macro crate. An
-    architectural refactor (extract `mettail-ast` companion crate)
+    architectural refactor (extract `ast` companion crate)
     is required for any non-proc-macro consumer of `LanguageDef`.
 
 ## What IS solid (and will be reused)

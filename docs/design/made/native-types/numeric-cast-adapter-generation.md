@@ -36,7 +36,7 @@ keyed on three traits, and have the macro generate only the mechanical, spec-der
 
 Three traits in `mettail_runtime`. Impls are generated **into each language crate's
 module** — sound under the orphan rule because the `Self` type (`Proc`/`Int`/`&Int`) is
-local to `mettail-languages`; the trait is foreign. (`&Int` is allowed because `&T` is
+local to `languages`; the trait is foreign. (`&Int` is allowed because `&T` is
 `#[fundamental]` and `T` is local — already proven by the compiling `impl CastWidth for
 &RhoInt`.)
 
@@ -218,9 +218,9 @@ No `.v` change; zero-admission preserved (re-verified in Phase 5).
 
 - **P0** Add `runtime/src/numeric_cast_adapter.rs` (traits + 13 generics, exact pipeline
   names), re-export from `runtime/src/lib.rs`; `FakeProc` unit tests. Old file untouched.
-  *Verify:* `cargo test -p mettail-runtime`.
+  *Verify:* `cargo test -p runtime`.
 - **P1** Extend `body_returns_option` (`typed_report.rs`) with the 7-native allow-list (final
-  segment); macro unit assertion. *Verify:* `cargo test -p mettail-macros`.
+  segment); macro unit assertion. *Verify:* `cargo test -p macros`.
 - **P2** Add `macros/src/gen/runtime/numeric_cast_adapter.rs`
   (`generate_numeric_cast_adapter`), wire into the language aggregator
   (`macros/src/gen/runtime/language.rs`), gate per §5. Old file still present (no collision
@@ -230,6 +230,6 @@ No `.v` change; zero-admission preserved (re-verified in Phase 5).
   `languages/numeric_dispatch.rs` + its `mod` block (`lib.rs`); relocate `CastWidth`.
   *Verify:* all 5 feature combos build with `RUSTFLAGS="-D warnings"`.
 - **P4** Behavior tests + the third-language fixture. *Verify:* `cargo test -p
-  mettail-languages [--features dovetail-codegen]`.
+  languages [--features dovetail-codegen]`.
 - **P5** Formal zero-admission re-check + whole-workspace gate; confirm `git grep
   numeric_dispatch` empty, no new `allow(dead_code)`, root `Cargo.toml` untouched.

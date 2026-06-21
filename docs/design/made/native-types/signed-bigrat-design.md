@@ -58,7 +58,7 @@ The following constraints go beyond “plain `Ratio<BigInt>` in ℚ” and shoul
 
 ### Bitwise operators (`&`, `|`, `^`, …) — reference semantics (language-defined)
 
-- **Framework position**: **bitwise operators are not fixed globally** by MeTTaIL / `mettail-runtime`. Each **language** chooses whether to define `&`, `|`, `^`, etc. on `BigRat`, and with what **domains** and **rules** (terms, rewrites, native eval).
+- **Framework position**: **bitwise operators are not fixed globally** by MeTTaIL / `runtime`. Each **language** chooses whether to define `&`, `|`, `^`, etc. on `BigRat`, and with what **domains** and **rules** (terms, rewrites, native eval).
 - **Stakeholder reference** (a language *may* adopt this): restrict bitwise interpretation to **positive rationals in (0, 1)** and define operations via **binary expansions** past the radix point.
 - **Example** (stakeholder illustration): `fraction(1, 3) & fraction(3, 4) == fraction(1, 4)`, motivated by **1/3 = 0.010101…₂** and **3/4 = 0.11000…₂**, yielding **1/4 = 0.01₂** under chosen bit-indexing rules.
 - **If a language adopts the (0, 1) story**: values **outside** that domain are **undefined** for those ops unless the language extends the spec.
@@ -224,7 +224,7 @@ The stakeholder section gives **optional reference** semantics (e.g. **(0, 1)** 
 
 ## Phased rollout (status)
 
-1. **Done — backend:** `num-rational` + **`CanonicalBigRat`** in `mettail-runtime`; reduction via `Ratio::new` at construction.
+1. **Done — backend:** `num-rational` + **`CanonicalBigRat`** in `runtime`; reduction via `Ratio::new` at construction.
 2. **Done — literals:** **`RationalLit`** / **`parse_rational_lit`** in PraTTaIL; per-language **`BigRat`** literal blocks; **`TokenKind::RationalLit`** in the lexer.
 3. **Done — constructors:** **Calculator** `fraction` on **BigInt**; **RhoCalc** **`FractionProc`** on **Proc** with **`fold`** (not `step`) so non-native **Proc** gets **`fold_proc`** rules.
 4. **Done — core ℚ on languages:** Calculator and RhoCalc define rational **`+ - * /`**, comparisons, and casts as needed; tests in `languages/tests/`.
@@ -241,19 +241,19 @@ The stakeholder section gives **optional reference** semantics (e.g. **(0, 1)** 
 | 1   | Rename **IntLit** when phase-2 sugar exists?                | **No.** Introduce a separate **RationalLit** (or equivalent) for composite rational tokens; keep **IntLit** for integers.                                                                                                                   |
 | 2   | Composite `<digits>r/<digits>r`: radix / `_` on both sides? | **Per language:** rules are defined in each language’s **literals** section (full parity with `n` where desired, or decimal-only, etc.).                                                                                                    |
 | 3   | Unary minus on rational literal (`-3r/4r`)?                | **Not** part of the literal token; use unary `-` on the expression (or `-fraction(3, 4)` where the language provides it).                                                                                                                                             |
-| 4   | **BigRational** / **CanonicalBigRat** placement?            | **`CanonicalBigRat`** in **mettail-runtime** next to **`CanonicalBigInt`** (**implemented**).                                                                                                                                                             |
+| 4   | **BigRational** / **CanonicalBigRat** placement?            | **`CanonicalBigRat`** in **runtime** next to **`CanonicalBigInt`** (**implemented**).                                                                                                                                                             |
 | 7   | `%` always zero on `BigRat`?                                | **Language-defined**; the framework does not impose `%` semantics globally.                                                                                                                                                                 |
 | 8   | Constructor name; nested `fraction(fraction(a,b), c)`?      | Constructor is declared in each language’s **`terms`** (and categories in **`types`**). **Nested** `fraction` where an argument is **BigRat** / wrong type is **ill-typed** in Calculator / RhoCalc (bigint / `CastBigInt` arguments only). |
 
 
 ### `CanonicalBigRat` — recommendation (Q4)
 
-**Prefer a `CanonicalBigRat` newtype in `mettail-runtime`**, alongside `CanonicalBigInt`, when `BoundTerm` / generated code needs a **Copy** handle to a non-**Copy** rational (`Ratio<BigInt>`).
+**Prefer a `CanonicalBigRat` newtype in `runtime`**, alongside `CanonicalBigInt`, when `BoundTerm` / generated code needs a **Copy** handle to a non-**Copy** rational (`Ratio<BigInt>`).
 
 **Rationale:**
 
 - Matches the **existing integration pattern** for bigints (leaked or interned immutable value + `NonNull` or similar + documented `Send`/`Sync`).
-- Keeps `num-rational` + `num-bigint` in one place for downstream crates (`mettail-languages`, generated eval).
+- Keeps `num-rational` + `num-bigint` in one place for downstream crates (`languages`, generated eval).
 - A **trait-only** abstraction adds little until a **second** rational backend (e.g. `rug`) is required; introduce a trait **then** behind a thin adapter.
 
 ### Q5. Two’s complement (technical note)

@@ -86,7 +86,7 @@ fn generate_equation_pattern_via_rewrite_logic(
 
 ## What Changes
 
-**mettail-macros/src/ascent_gen.rs**:
+**macros/src/ascent_gen.rs**:
 1. Add `use crate::rewrite_gen::generate_ascent_pattern;`
 2. Add adapter function (~50 lines)
 3. Replace `generate_equation_pattern` call with adapter

@@ -3,7 +3,7 @@
  * observations without routing through AscentResults.
  *
  * Rust image:
- *   - `mettail_rho_runtime::RhoObservationReport<T>` carries the planned
+ *   - `mettail_rholang_runtime::RhoObservationReport<T>` carries the planned
  *     execution boundary, artifact kind, channel, and observed values.
  *   - `membership_fingerprint()` is the order-insensitive set view used by
  *     set-semantics oracle checks.

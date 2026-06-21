@@ -66,7 +66,7 @@ Problems:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              mettail-macros/ (Rust)                      │
+│              macros/ (Rust)                      │
 │                                                          │
 │  theory! {                                               │
 │      name: Rholang,                                      │

@@ -17,7 +17,7 @@ We implemented **Option 4** from the analysis: a cached variable constructor tha
 
 ### Implementation
 
-Added to `mettail-runtime/src/lib.rs`:
+Added to `runtime/src/lib.rs`:
 
 ```rust
 /// Get or create a free variable with the given name.

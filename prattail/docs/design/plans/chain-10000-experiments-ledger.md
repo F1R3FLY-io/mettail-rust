@@ -803,9 +803,9 @@ None of these is in scope for the current session given the Welch p<0.05 gate ha
 - `languages/tests/trampoline_tests.rs` — added `test_left_assoc_chain_50/100/200` (non-ignored, for Welch panel).
 
 **Verification**:
-- `cargo build --release -p mettail-prattail` ✓ clean.
-- `cargo build --release -p mettail-prattail --features walker-stats` ✓ clean.
-- `cargo test --release -p mettail-prattail --lib` → **4134/0** preserved.
+- `cargo build --release -p prattail` ✓ clean.
+- `cargo build --release -p prattail --features walker-stats` ✓ clean.
+- `cargo test --release -p prattail --lib` → **4134/0** preserved.
 - `./target/release/deps/trampoline_tests-...` (no walker-stats) → **15/0/6 ignored** preserved.
 - Smoke test: `test_right_assoc_chain_50` with `PRATTAIL_WALKER_STATS=1` emits ratios as expected (no panic, deterministic output).
 
@@ -923,7 +923,7 @@ Cross-check on RIGHT-assoc:
 **Final tip**: `6fcf67c`.
 
 **Verification**:
-- `cargo test --release -p mettail-prattail --lib` → **4206/0** at every commit (was 4134 baseline + 72 new unit tests).
+- `cargo test --release -p prattail --lib` → **4206/0** at every commit (was 4134 baseline + 72 new unit tests).
 - trampoline gauntlet (--skip chain_10000 --skip chain_5000 --skip chain_2000) → **18/0/2 ignored** in 127s wall.
 - chain_500 LEFT-assoc completes with `time -v` measurement:
 

@@ -151,10 +151,10 @@ In BOTH options the choice is by EVIDENCE (the `)` token + the realized arg cate
 
 ## §6 Gates (all pass before commit)
 
-- **calc 215/1:** `cargo test -p mettail-languages --test calculator` → the 2 Float targets flip to PASS; zero regressions (215 pass + the 1 intentional-ambiguous). Explicitly re-assert: Bool win (`:2188`), the 3 M3.1 sentinels, `test_nested_float_int_arithmetic`, and **all 5 A2-regressed cross-cat tests** (`parse_int_cross_cat_comparison_le`, `simulator_regression_original_6`, `sigb_b3_span_anchored_termination_bool`, `test_nested_int_int`, `test_nested_int_float`) GREEN.
+- **calc 215/1:** `cargo test -p languages --test calculator` → the 2 Float targets flip to PASS; zero regressions (215 pass + the 1 intentional-ambiguous). Explicitly re-assert: Bool win (`:2188`), the 3 M3.1 sentinels, `test_nested_float_int_arithmetic`, and **all 5 A2-regressed cross-cat tests** (`parse_int_cross_cat_comparison_le`, `simulator_regression_original_6`, `sigb_b3_span_anchored_termination_bool`, `test_nested_int_int`, `test_nested_int_float`) GREEN.
 - **Welch (dominant tripwire):** chain Welch A/B `B6_LEFTFACTOR_DISABLE` ON vs OFF over the cast-free chain corpus, N≥51 → live-cursor distributions statistically indistinguishable. (Expected trivially PASS — no walker change — but it is the leakage tripwire for the predicate.) Any drift ⇒ predicate marked a chain group ⇒ STOP + re-scope.
 - **Cross-cat sweep:** the full cross-cat suite (`cross_cat_dispatch_chaining`, `cross_cat_with_floats`, `cross_cat_with_parens`, `cross_cat_with_strings`, the comparison_le/ge families) GREEN.
-- **Sweep:** op-suites ≥1331/532, soundness, `-3!`, parity, `mettail-prattail --lib` gauntlet 4220/0. One 32G-capped build per arm.
+- **Sweep:** op-suites ≥1331/532, soundness, `-3!`, parity, `prattail --lib` gauntlet 4220/0. One 32G-capped build per arm.
 
 ## §7 Risks
 

@@ -1626,10 +1626,10 @@ code.
 
 **Code deliverables:**
 
-- New crate `mettail-rho-codegen/`. Emits CESK-to-ρ encoding as
+- New crate `rholang-codegen/`. Emits CESK-to-ρ encoding as
   Rholang protobuf `Par` (not text). Depends on `models::rhoapi`
   and `rholang` from f1r3node.
-- New crate `mettail-rho-runtime/`:
+- New crate `rholang-runtime/`:
   - `RhoEvaluator` wraps `DebruijnInterpreter` and exposes the
     `Language`/`Term` interface.
   - `prattail/src/heap_budget.rs` — `HeapBudgetStrategy`,
@@ -1685,11 +1685,11 @@ normal-form set.
 
 No new servers. Hooks only.
 
-- `mettail-rho-runtime` exposes `checkpoint()`, `restore(handle)`,
+- `rholang-runtime` exposes `checkpoint()`, `restore(handle)`,
   `watch(expr)`, `pause()`, `resume()`.
 - `CekControl::Pause` in `prattail/src/cek.rs`. Scheduler grows
   `PauseResume` event in `prattail/src/scheduler.rs`.
-- Source-map generation in `mettail-rho-codegen`.
+- Source-map generation in `rholang-codegen`.
 - `ChannelId` tagged-enum split in `prattail/src/channel.rs`.
 - `repl/` crate minimal rewire: `Theory::run_ascent()` →
   `Theory::rho_evaluate()`. No new REPL commands.
@@ -1746,7 +1746,7 @@ End-to-end, in order:
 2. **Rholang parity against goldens (Phase 3 exit).** Same
    `simulate_*` binaries on the Rholang backend reproduce the same
    normal-form set. Test:
-   `cargo test -p mettail-languages --test rho_parity_goldens`.
+   `cargo test -p languages --test rho_parity_goldens`.
 3. **Non-confluent parity (Phase 3 exit).** For `guardedrho` and any
    non-confluent language, compare outcome *sets*, not single
    outcomes.
@@ -1760,7 +1760,7 @@ End-to-end, in order:
    `CekControl::Pause` halts + `PauseResume` wakes, source-map entry
    count = emitted `Par` node count, `watch(expr)` does not mutate
    RSpace.
-7. **Existing REPL still works.** `cargo test -p mettail-repl` green
+7. **Existing REPL still works.** `cargo test -p repl` green
    (rustyline CLI, no new commands).
 8. **Rocq proofs compile.** `systemd-run … make -j1` in
    `formal/rocq/rho_target/` returns 0; zero `Admitted`, zero
@@ -1827,7 +1827,7 @@ roles only; full behavioural detail is cross-referenced.
 | `AbstractPar` (abstract interp.)        | mettail-rust (runtime)    | `prattail/src/abstract_cesk.rs`                                                                     | 0CFA / k-CFA abstract-interpretation domain over `Par`                                   |
 | WPDS / LTL / Lint / Recovery            | mettail-rust (runtime)    | `prattail/src/{verify,ltl,lint,recovery}.rs`                                                        | Static analyses and diagnostics over emitted `Par`                                       |
 | Simulation runner                       | mettail-rust (runtime)    | `simulation/src/runner.rs`                                                                          | Drives one `RhoEvaluator` per fuzz seed; collects invariants and traces                  |
-| `RhoEvaluator`                          | mettail-rust (runtime)    | `mettail-rho-runtime` crate                                                                         | Session wrapper; owns `CekObserver` (`Box<dyn …>`), `HeapBudgetStrategy`, routes to `DI` |
+| `RhoEvaluator`                          | mettail-rust (runtime)    | `rholang-runtime` crate                                                                         | Session wrapper; owns `CekObserver` (`Box<dyn …>`), `HeapBudgetStrategy`, routes to `DI` |
 | `DebruijnInterpreter` (`DI`)            | f1r3node (external)       | `f1r3node/rholang/src/rust/interpreter/reduce.rs`                                                   | Reduction engine; entry point `inj(par, rand)` (line 264)                                |
 | RSpace                                  | f1r3node (external)       | `f1r3node/rholang/src/rust/interpreter/` + `rspace_plus_plus`                                       | Persistent, PathMap-backed tuplespace realising the CESK store σ                         |
 | Lookahead `x!(P)[n]`                    | f1r3node (external)       | Rholang VM — [Lookahead FIP 2026-01-08](https://github.com/F1R3FLY-io/FIPS/blob/main/approved/2026-01-08-Lookahead/2026-01-08-Lookahead.md) | Speculative-evaluation primitive; collects success/failure `PathMap` leaves              |
@@ -2046,7 +2046,7 @@ operational rule COMM, structural congruence `≡`, name equivalence
 ## Appendix C — Codegen Pseudocode
 
 The following pseudocode sketches the translation function
-implemented in `mettail-rho-codegen/src/lib.rs`. It is intentionally
+implemented in `rholang-codegen/src/lib.rs`. It is intentionally
 idealised; the production code threads source-map metadata, handles
 shadowing carefully, and respects Rholang's De Bruijn representation
 for bound names.

@@ -49,12 +49,12 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | Surface | Current evidence | Production completion condition |
 |---|---|---|
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
-| `mettail-dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, native-handler report helper for generated direct evaluation/normalization, generated `dovetail-codegen` report producer hook, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, accepting native-handler output without exact semantic keys, accepting unsupported generated lowering families as complete, or accepting incomplete cycle-bounded reports as exhaustive |
-| `mettail-rho-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
-| `mettail-rho-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
-| `mettail-rho-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
+| `dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, native-handler report helper for generated direct evaluation/normalization, generated `dovetail-codegen` report producer hook, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, accepting native-handler output without exact semantic keys, accepting unsupported generated lowering families as complete, or accepting incomplete cycle-bounded reports as exhaustive |
+| `rholang-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
+| `rholang-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
+| `rholang-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
-| CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `mettail-runtime` CEK/CESK re-exports have been removed from the production runtime API; prattail/testkit CESK evaluator, store, GC, and green-thread scheduler modules require explicit `legacy-cesk-runtime` opt-in features | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook, and default prattail/testkit APIs expose no legacy CESK runtime surface |
+| CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `runtime` CEK/CESK re-exports have been removed from the production runtime API; prattail/testkit CESK evaluator, store, GC, and green-thread scheduler modules require explicit `legacy-cesk-runtime` opt-in features | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook, and default prattail/testkit APIs expose no legacy CESK runtime surface |
 | WPDA parser | active parser/recognizer | retained; runtime-backend work must not weaken parser guarantees |
 
 ## Generated Dovetail Report Compiler Boundary
@@ -66,7 +66,7 @@ inventory directly:
 
 `language! specification → LanguageDef → generated typed AST + generated Dovetail report compiler`
 
-The generated helper is feature-gated by `mettail-languages/dovetail-codegen`.
+The generated helper is feature-gated by `languages/dovetail-codegen`.
 For each generated language it emits a method equivalent to:
 
 ```text
@@ -125,7 +125,7 @@ Generated runtime artifacts are `models::rhoapi::Par` values from the
 F1r3node `models` crate. Rholang-looking text in documents and tests is a
 reader annotation unless the test explicitly names a hand-authored source
 oracle. Those source-oracle helpers are isolated behind the
-`mettail-rho-runtime/source-oracle` feature; generated runtime paths compile
+`rholang-runtime/source-oracle` feature; generated runtime paths compile
 and execute validated AST artifacts without exposing source-text execution as
 the default crate surface.
 
@@ -149,12 +149,12 @@ representation nominal by using a private unforgeable tag rather than a user
 string.
 
 Dynamic calls and witness facts use the same AST discipline. The generated
-builder `mettail_rho_codegen::RhoAstSend` takes `RhoAstLiteral` payloads and
+builder `mettail_rholang_codegen::RhoAstSend` takes `RhoAstLiteral` payloads and
 constructs `Par` directly; it does not emit text for the Rholang parser to
 recover. `RhoAstLiteral` covers scalar payloads, byte/URI/numeric payloads,
 unforgeable names, closed list/tuple/set/map payloads, and rhocalc bags. The
-bag tag constant `RHOCALC_BAG_ABI_TAG` is defined in `mettail-rho-codegen` and
-re-exported by `mettail-rho-runtime`, so the producer and observer share one
+bag tag constant `RHOCALC_BAG_ABI_TAG` is defined in `rholang-codegen` and
+re-exported by `rholang-runtime`, so the producer and observer share one
 nominal ABI.
 
 Generic call-by-need artifacts use the same AST discipline. The generated
@@ -248,7 +248,7 @@ return channel at position `2`, unary contracts receive one operand plus a
 return channel at position `1`, and no ABI entry exists for rejected rules. The
 Rust lowering exposes that data as `RhoLowering::scalar_contract_abi` in exact
 `RhoLowering::lowered` order, making it the source of truth for generated
-invocation dispatch. `mettail_rho_codegen::plan_scalar_invocations` consumes
+invocation dispatch. `mettail_rholang_codegen::plan_scalar_invocations` consumes
 that inventory with the same `LanguageDef` and derives the constructor-level
 dispatch plan used by generated extractor code: every plan entry preserves the
 rule label, operand field order, parameter names, source categories, native
@@ -256,11 +256,11 @@ scalar families, result category, and ABI result family. It fails closed if a
 stale or mismatched ABI is paired with the wrong generated definition. The
 macro-generated `rho-codegen` helper is compiled by default for generated
 language crates. It turns a typed generated AST constructor into
-`mettail_rho_codegen::RhoScalarContractInvocation`, a runtime-independent
+`mettail_rholang_codegen::RhoScalarContractInvocation`, a runtime-independent
 payload containing the ABI, constructor-field-order scalar literals, and output
 channel. This keeps generated language crates independent from
-`mettail-rho-runtime`; only runtime-facing adapters call
-`mettail_rho_runtime::build_scalar_contract_invocation_from_contract`. That
+`rholang-runtime`; only runtime-facing adapters call
+`mettail_rholang_runtime::build_scalar_contract_invocation_from_contract`. That
 adapter is the checked dynamic call boundary for this inventory: it validates
 operand arity and scalar payload families against `RhoScalarContractAbi`, emits
 a normalized `rhoapi::Par` contract call, and selects integer, boolean, or
@@ -274,9 +274,9 @@ than source text. The proof
 invocation plan derived from a successful scalar ABI preserves the typed operand
 order and result family. The
 executable regressions
-`mettail-rho-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
-`mettail-rho-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and
-`mettail-rho-codegen::string_plus_lowers_to_rholang_concat_not_integer_plus`
+`rholang-codegen::scalar_lowering_uses_native_type_inventory_not_category_names`,
+`rholang-codegen::scalar_named_structural_categories_do_not_lower_as_native_scalars`, and
+`rholang-codegen::string_plus_lowers_to_rholang_concat_not_integer_plus`
 then inspect the generated AST and ABI inventory, require Calculator `AddStr`
 to use `ExprInstance::EPlusPlusBody` with `Str × Str → Str` ABI, and require
 renamed native categories to keep the same native scalar ABI. Runtime wrapper
@@ -286,7 +286,7 @@ tests route the parsed term through
 `RuntimeObservationValue::Text("rhonet")`, completing the end-to-end chain from
 source snippet through WPDA parsing, typed invocation mapping, validated
 `rhoapi::Par`, RhoRuntime execution, and generic runtime report.
-The call-by-need wrapper test (`mettail-rho-runtime/tests/rho_call_by_need.rs`)
+The call-by-need wrapper test (`rholang-runtime/tests/rho_call_by_need.rs`)
 validates each generated typed thunk artifact and runs representative `Int`,
 `Bool`, and `Str` payloads on RhoRuntime, asserting the thunked path reports
 typed values rather than stringifying all computed results (a force-miss
@@ -296,7 +296,7 @@ the Ascent reference in P6.
 
 Rejected-rule coverage should start from generated inventory, not hand-written
 category lists. The build-time installer should first call
-`mettail_rho_codegen::audit_rho_default_backend(def)`. The audit lowers the
+`mettail_rholang_codegen::audit_rho_default_backend(def)`. The audit lowers the
 structured `LanguageDef`, returns the exact `RhoLowering::lowered` and
 `RhoLowering::rejected` sets, derives advisory rejected-rule classifications,
 collects guard obligations, records artifact-validation errors, and runs the
@@ -304,7 +304,7 @@ normal flip decision under the deliberately strict assumption that no external
 coverage has been supplied yet. This answers “what is missing?” without
 answering “is it accepted?”.
 
-`mettail_rho_codegen::classify_rejected_rules(def, lowering)` remains the
+`mettail_rholang_codegen::classify_rejected_rules(def, lowering)` remains the
 lower-level advisory classifier used by the audit. It derives a classification
 for every label in `RhoLowering::rejected` from the parsed `LanguageDef`:
 native evaluation metadata suggests a native handler, equation/rewrite
@@ -444,12 +444,12 @@ Steps:
 Generated language crates remain substrate-neutral. They expose `Language`,
 metadata, parsing, environments, type inference, direct evaluation helpers,
 AST-first Rho invocation descriptions, and the explicit transition oracle.
-`mettail-languages` enables `rho-codegen` by default so those invocation
+`languages` enables `rho-codegen` by default so those invocation
 descriptions are present on the normal generated-language surface. The default
-still stops at `mettail-rho-codegen` payloads; it does not link generated
-language crates to `mettail-rho-runtime` and does not execute a Rho VM inside a
+still stops at `rholang-codegen` payloads; it does not link generated
+language crates to `rholang-runtime` and does not execute a Rho VM inside a
 generated crate. The Rho runtime crate enables its `runtime-report` surface by
-default, so a normal `mettail-rho-runtime` dependency exposes the direct
+default, so a normal `rholang-runtime` dependency exposes the direct
 `RhoRuntimeBackedLanguage<L, F>` wrapper for Rho-only plans and the composed
 production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
 has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. That
@@ -544,7 +544,7 @@ Dovetail-core rules, native handler, Rho-native join, EBA/SFT predicate
 solver, or explicit external contract.
 
 The wrapper is intentionally outside the generated language crate. This avoids
-a Cargo cycle with `mettail-rho-runtime` while still allowing a verified
+a Cargo cycle with `rholang-runtime` while still allowing a verified
 language instance to become Dovetail-checked and Rho-executed by construction.
 The wrapper does not parse generated Rholang text; invocation mappers construct
 `rhoapi::Par` values directly from the typed term and checked Dovetail report,
@@ -584,9 +584,9 @@ to satisfy the trait.
 The same production-surface rule applies to the legacy CESK runtime cluster.
 The parser-facing CEK/WPDA modules remain available because they support the
 active parser/recognizer path, but prattail evaluator/store/GC and green-thread
-scheduler modules require `mettail-prattail/legacy-cesk-runtime`; the matching
+scheduler modules require `prattail/legacy-cesk-runtime`; the matching
 testkit CESK and green-thread analytical modules require
-`mettail-testkit/legacy-cesk-runtime`. The default crates therefore preserve
+`testkit/legacy-cesk-runtime`. The default crates therefore preserve
 the parser while withholding the obsolete runtime backend from normal
 production APIs.
 Graph-shaped test utilities follow the same runtime-view rule. When a property
@@ -605,8 +605,8 @@ the same checkable gates as production: exact coverage, artifact validation, and
 deadlock diagnostics. `PlannedRhoBackend::from_plan` consumes that plan directly
 and does not accept raw source text as the generated-backend boundary.
 Generated installers should then call
-`mettail_rho_runtime::install_dovetail_rho_runtime_backend` for the production
-replacement path, or `mettail_rho_runtime::install_rho_runtime_backend` for
+`mettail_rholang_runtime::install_dovetail_rho_runtime_backend` for the production
+replacement path, or `mettail_rholang_runtime::install_rho_runtime_backend` for
 Rho-only integration tests and dynamic-call fixtures. Those helpers derive the
 Dovetail and Rho invocation compiler-stage identities from the accepted
 `RhoDefaultBackendPlan`, so the wrapped generated language is checked against
@@ -639,7 +639,7 @@ runtime capability list supports exactly the backends reported by the wrapper
 and that inherited Ascent capability is not exposed after wrapping.
 
 For the RhoCalc process path, the reusable mappers include
-`mettail_rho_runtime::rhocalc_observe_values_invocation` for closed Rho ground
+`mettail_rholang_runtime::rhocalc_observe_values_invocation` for closed Rho ground
 values plus the narrower scalar helpers
 `rhocalc_observe_strings_invocation` and `rhocalc_observe_ints_invocation`.
 The convenience wrappers are `rho_runtime_backed_rhocalc_values`,
@@ -781,15 +781,15 @@ Ascent-oracle tests may still provide legacy reference evidence, while
 Dovetail-default languages expose checked report evidence and Rho-default
 languages are simulated by their actual runtime observations.
 
-`mettail-simulation` remains substrate-neutral: its focused unit tests use a
+`simulation` remains substrate-neutral: its focused unit tests use a
 small mock language that returns a Rho-shaped observation report. Generated
-language integration tests and examples live under `mettail-languages`, which
+language integration tests and examples live under `languages`, which
 already owns the generated-language dependency graph. That separation keeps the
 simulation crate testable under the RSS cap without compiling every generated
 language, while still preserving generated-language integration coverage in the
 crate that owns those generated artifacts. Focused generated-language
 simulation checks should use the owning language feature, for example
-`cargo test -p mettail-languages --no-default-features --features calculator --test simulation_integration`,
+`cargo test -p languages --no-default-features --features calculator --test simulation_integration`,
 when the test only exercises Calculator.
 
 ## Generated Operational Test Boundary

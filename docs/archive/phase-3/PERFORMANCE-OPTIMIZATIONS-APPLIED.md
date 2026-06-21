@@ -10,7 +10,7 @@
 ### Key Optimizations Implemented
 
 #### 1. Removed Exponential Term Explosion (CRITICAL)
-**File**: `mettail-macros/src/ascent_gen.rs`
+**File**: `macros/src/ascent_gen.rs`
 
 **Problem**: The combination of:
 - Reflexivity: `eq_cat(t,t) <-- cat(t)` (O(n) facts)
@@ -111,7 +111,7 @@ If you need to explore ALL terms up to equational equivalence:
 
 ## Files Modified
 
-1. **mettail-macros/src/ascent_gen.rs**
+1. **macros/src/ascent_gen.rs**
    - `generate_category_rules()`: Removed equality-based exploration
    - `generate_equation_rules()`: Removed explicit reflexivity/symmetry/transitivity
 

@@ -23,7 +23,7 @@
 
 - **G1 (load-bearing):** Close the chain_10000 24 GB ceiling architecturally by collapsing per-cursor branching at its source. Target: chain_500 LEFT-assoc walker peak ≤ 1.0 GB (≥ 4.8× reduction vs current 4.87 GB), with `edge_stack_arena` ≤ 30 MB (vs 3.44 GB) and `visited_dispatch` ≤ 80 MB (vs 1.14 GB). Note: the original plan's ≤ 600 MB (8×) target is now relaxed because Option A's per-arc heavy-field storage costs ~80 B additional per arc.
 - **G2:** Reduce `cohort_cursors_emitted` from 28.9 M to ≤ 10 M on left_assoc_500 (≥ 2.9× reduction; matches the empirical 3.0× merge factor from Substage 0 measurement at commit `9662b81`).
-- **G3:** Preserve every passing test at tip `cd48071`: `cargo test --release -p mettail-prattail --lib` = **4198/0**, `trampoline_tests` skip-chain = **18/0/6**, PLUS chain_500 LEFT-assoc previously-passing test continues to pass.
+- **G3:** Preserve every passing test at tip `cd48071`: `cargo test --release -p prattail --lib` = **4198/0**, `trampoline_tests` skip-chain = **18/0/6**, PLUS chain_500 LEFT-assoc previously-passing test continues to pass.
 - **G4:** Preserve full ambiguity: SPPF dedup at `(nt, lo, hi)` Symbol and `(rule_idx, children)` Packing must continue to expose **every** derivation a per-cursor baseline would have exposed. The `-3!` multi-packing test family must survive every substage.
 - **G5:** All N+R derived-test panels (LEFT-assoc 50/100/200; RIGHT-assoc 50/100/200/1000) pass Welch's two-sample t-test at p<0.05 with treatment_mean ≤ baseline_mean + 1 SE on every substage commit.
 - **G6:** Generalize over the mettail-rust feature set (binders, mixfix, cross-cat, recovery, optional groups, collections, predicates, lex-Fork, cohort sharing). No grammar-specific overfitting.
@@ -679,7 +679,7 @@ At every session boundary, run:
 
 ```bash
 # 1. Gauntlet
-cargo test --release -p mettail-prattail --lib 2>&1 | tail -20
+cargo test --release -p prattail --lib 2>&1 | tail -20
 
 # 2. Trampoline (fast)
 ./target/release/deps/trampoline_tests-* \

@@ -58,7 +58,7 @@ cursors flow through `merge_equivalent_cursors` (`:9190`) + SPPF dedup → obser
 - pgmcp: `experiment_open`/`record_measurement`/`decide` continuing the exp #8 lineage.
 
 ## Verification (per-milestone + end-to-end)
-gauntlet `cargo test --release -p mettail-prattail --lib` 4220/0; op-suites gen_calculator_op ≥1331/0,
+gauntlet `cargo test --release -p prattail --lib` 4220/0; op-suites gen_calculator_op ≥1331/0,
 gen_rhocalc_op 532/0; the ~30 cross-cat targets; disambiguation gate; Welch+memory (M1/M2/M4).
 
 ## Effort: ~3-5 sessions. Resume via the ledger "⚑" section after each milestone.

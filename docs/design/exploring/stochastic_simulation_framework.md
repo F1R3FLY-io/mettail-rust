@@ -10,7 +10,7 @@ The tape-based proptest strategies (`arb_int`, `arb_proc`, etc.) are powerful bu
 ## Phase 1: Public Strategy Exposure
 
 ### Approach
-Generate strategies into the `language!` macro expansion itself as a `pub mod strategies { }` sub-module. `proptest` becomes an optional dependency of `mettail-languages` behind a `strategies` feature.
+Generate strategies into the `language!` macro expansion itself as a `pub mod strategies { }` sub-module. `proptest` becomes an optional dependency of `languages` behind a `strategies` feature.
 
 ### Changes
 
@@ -48,7 +48,7 @@ proptest! {
 
 ## Phase 2: Simulation Crate
 
-### New crate: `mettail-simulation`
+### New crate: `simulation`
 
 ```
 simulation/
@@ -302,8 +302,8 @@ LTL `F(normal_form)` is available for more complex temporal assertions (e.g., "e
 
 ## Verification
 
-- `cargo test -p mettail-languages --features strategies` — public strategies compile and work
-- `cargo test -p mettail-simulation` — simulation framework tests pass
+- `cargo test -p languages --features strategies` — public strategies compile and work
+- `cargo test -p simulation` — simulation framework tests pass
 - External crate can `use mettail_languages::calculator::strategies::arb_int`
 - Simulation applies to ALL `language!` specs (operates via the `Language` trait, not language-specific code)
 - Simulation detects injected bugs for every language (mutate HOL code → simulation finds violation → proptest shrinks)

@@ -105,7 +105,7 @@ current-tree M1 reference binary. Worktree removed; main tree verified unmodifie
 - **R3 → already shipped; only re-confirm** (+ the nonfinite eval facet).
 
 ## 5. Milestones
-**Standing GATE (every milestone):** gauntlet `cargo test --release -p mettail-prattail --lib`=**4220/0**; op-suites
+**Standing GATE (every milestone):** gauntlet `cargo test --release -p prattail --lib`=**4220/0**; op-suites
 `gen_calculator_op≥1331/0`,`gen_rhocalc_op 532/0`; disambiguation `-3!` + `wpda_parity_calculator` /0; soundness
 probe `calculator.rs::pass2c_token_soundness_probe`; regression canaries `test_unambiguous_int_literal`,
 `test_nfa_spillover_float_int_var`,`unit_calculator_bool_inttobool`,`simulator_regression_nested_casts` (F2 falsifier),

@@ -107,4 +107,4 @@ direction remains:
 
 `dovetail → no runtime substrate`
 
-`mettail-rho-codegen → dovetail semantics + f1r3node AST/runtime APIs`
+`rholang-codegen → dovetail semantics + f1r3node AST/runtime APIs`

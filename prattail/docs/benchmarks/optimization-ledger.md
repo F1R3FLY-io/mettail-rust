@@ -436,9 +436,9 @@ time shrank, making their (less optimized) contribution more prominent.
 
 | Suite | Tests | Result |
 |-------|-------|--------|
-| mettail-prattail | 34 | PASS |
-| mettail-macros | 26 + 3 doc-tests (ignored) | PASS |
-| mettail-languages (calculator) | 10 + 9 doc-tests (ignored) | PASS |
+| prattail | 34 | PASS |
+| macros | 26 + 3 doc-tests (ignored) | PASS |
+| languages (calculator) | 10 + 9 doc-tests (ignored) | PASS |
 | **Total** | **70** | **ALL PASS** |
 
 ---
@@ -698,9 +698,9 @@ construction.
 
 | Suite | Tests | Result |
 |-------|-------|--------|
-| mettail-prattail | 34 | PASS |
-| mettail-macros | 26 + 3 doc-tests (ignored) | PASS |
-| mettail-languages (calculator) | 10 + 9 doc-tests (ignored) | PASS |
+| prattail | 34 | PASS |
+| macros | 26 + 3 doc-tests (ignored) | PASS |
+| languages (calculator) | 10 + 9 doc-tests (ignored) | PASS |
 | **Total** | **70** | **ALL PASS** |
 
 ---
@@ -823,9 +823,9 @@ But the string is now built ~90% faster, and the single-parse approach avoids re
 
 | Suite | Tests | Result |
 |-------|-------|--------|
-| mettail-prattail | 44 | PASS |
-| mettail-macros | 26 + 3 doc-tests (ignored) | PASS |
-| mettail-languages (calculator) | 24 + 9 doc-tests | PASS |
+| prattail | 44 | PASS |
+| macros | 26 + 3 doc-tests (ignored) | PASS |
+| languages (calculator) | 24 + 9 doc-tests | PASS |
 | **Total** | **94+** | **ALL PASS** |
 
 ---
@@ -948,9 +948,9 @@ was correctly rejected based on data.
 
 | Suite | Tests | Result |
 |-------|-------|--------|
-| mettail-prattail | 44 | PASS |
-| mettail-macros | 26 + 3 doc-tests (ignored) | PASS |
-| mettail-languages (calculator) | 24 + 9 doc-tests (ignored) | PASS |
+| prattail | 44 | PASS |
+| macros | 26 + 3 doc-tests (ignored) | PASS |
+| languages (calculator) | 24 + 9 doc-tests (ignored) | PASS |
 | **Total** | **94+** | **ALL PASS** |
 
 ---
@@ -1245,11 +1245,11 @@ focuses on comprehensive testing, quality tooling, and developer experience.
 
 | Suite | Before Sprint 6 | After Sprint 6 | New Tests |
 |-------|-----------------|----------------|-----------|
-| mettail-prattail | 44 | 86 | +42 |
-| mettail-macros | 26 | 26 | 0 |
-| mettail-languages (calculator) | 24 | 24 | 0 |
-| mettail-languages (ambient) | 29 | 29 | 0 |
-| mettail-languages (rhocalc) | 6 | 6 | 0 |
+| prattail | 44 | 86 | +42 |
+| macros | 26 | 26 | 0 |
+| languages (calculator) | 24 | 24 | 0 |
+| languages (ambient) | 29 | 29 | 0 |
+| languages (rhocalc) | 6 | 6 | 0 |
 | Doc-tests | 11 | 11 | 0 |
 | **Total** | **~140** | **~182** | **+42** |
 

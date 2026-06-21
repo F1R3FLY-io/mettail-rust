@@ -100,7 +100,7 @@ at `prattail/src/wpda_walker.rs:3106`. Driver loop is `step_fanout` at
 
 **`walker-stats` is OFF by default** (`prattail/Cargo.toml:40`:
 `walker-stats = []`). To enable: rebuild with
-`--features mettail-prattail/walker-stats` + run with
+`--features prattail/walker-stats` + run with
 `PRATTAIL_WALKER_STATS=1`.
 
 ### 2.3 Cursor sources
@@ -226,8 +226,8 @@ number has never been measured.**
 
 **Capture command:**
 ```bash
-PRATTAIL_WALKER_STATS=1 cargo test --release --features mettail-prattail/walker-stats \
-  -p mettail-languages --test trampoline_tests test_left_assoc_chain_200 -- --nocapture
+PRATTAIL_WALKER_STATS=1 cargo test --release --features prattail/walker-stats \
+  -p languages --test trampoline_tests test_left_assoc_chain_200 -- --nocapture
 ```
 (chain_200 first as proxy; chain_10000 OOMs at baseline.)
 

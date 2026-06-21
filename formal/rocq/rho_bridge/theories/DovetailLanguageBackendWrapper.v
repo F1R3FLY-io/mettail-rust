@@ -1,7 +1,7 @@
 (*
  * DovetailLanguageBackendWrapper: a generated MeTTaIL language can be wrapped
  * with a language-matched Dovetail report producer without changing the generated
- * crate or coupling `dovetail` to `mettail-runtime`.
+ * crate or coupling `dovetail` to `runtime`.
  *
  * Rust image:
  *   - `mettail_dovetail_runtime::DovetailRuntimeBackedLanguage<L, F>`

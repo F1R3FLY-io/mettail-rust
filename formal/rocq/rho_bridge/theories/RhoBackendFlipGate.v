@@ -7,7 +7,7 @@
  * commentary and CI, not in runtime gate data.
  *
  * The second section (`RhoGuardQualityGate`) models the predicate-substrate
- * QUALITY axis wired into the gate by `mettail-rho-codegen/src/backend.rs`:
+ * QUALITY axis wired into the gate by `rholang-codegen/src/backend.rs`:
  * each covered guard obligation carries a `RhoGuardQuality`, and an `Unknown`
  * quality (the only one that `refuses_production_default`) contributes a
  * fail-closed `RhoFlipBlocker::GuardQuality`.  It COMPOSES with the M7 mixed-
@@ -411,7 +411,7 @@ End RhoBackendFlipGate.
 (* ──────────────────────────────────────────────────────────────────────────
  * RhoGuardQualityGate: the predicate-substrate QUALITY axis of the flip gate.
  *
- * Rust mirror: `mettail-rho-codegen/src/{guard_quality,flip,backend}.rs`.
+ * Rust mirror: `rholang-codegen/src/{guard_quality,flip,backend}.rs`.
  *   - `RhoGuardQuality` (the documented 7-value vocabulary);
  *   - `RhoGuardQuality::refuses_production_default` = `Unknown`-only;
  *   - `RhoFlipBlocker::GuardQuality { obligation, quality }`, one per covered

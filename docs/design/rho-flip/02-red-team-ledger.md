@@ -24,7 +24,7 @@ Per `feedback_red_team_design_until_convergence`: after the contract was drafted
 | M: channel/data double-representation — ContentKey-as-payload kills Exec (no decoder) and breaks data-as-channel rendezvous; `quoted_channel` wraps a GString, not a body | H-M7 | `rspace.rs:338-339,373`; `run.rs:24-31` | **D5**: ≡_N canonicalizer pre-render; ContentKey demoted to comparison SPEC; §4 thm 4 restated as `name_canonicalization_sound_complete` |
 | M: classifier type-incoherent (`&GrammarRule` can't see `RewriteRule`/`Equation`); partition model is a restatement, not an extension | F-M5 | `ast/src/language.rs:62-66,167,773`; `lower.rs:124` | §1.0: `RhoRuleRef` disjoint-union input; restatement stated honestly |
 | M: auto-generated `Var`/`Lam`/`Apply` constructors unbucketed; `Var` load-bearing in every corpus member | F-M6 | `macros/src/gen/types/enums.rs:112-167`; `rhocalc.rs:1023,1028` | §1a′: term-level disposition table (free Var→σ, bound Var→host, Lam/Apply→Rejected) |
-| M: ContentKey keying has no impl path (zero `SemanticHash` impls outside dovetail; codegen-freeze conflict; missing ≡_N canonicalizer; `lower.rs` is string-emitting and rholang-free) | F-M7 | grep; `mettail-rho-codegen/Cargo.toml`; `lower.rs:29-33` | **D1+D5**; renderer placed harness-level (§2 residence), `classify` stays spec-level |
+| M: ContentKey keying has no impl path (zero `SemanticHash` impls outside dovetail; codegen-freeze conflict; missing ≡_N canonicalizer; `lower.rs` is string-emitting and rholang-free) | F-M7 | grep; `rholang-codegen/Cargo.toml`; `lower.rs:29-33` | **D1+D5**; renderer placed harness-level (§2 residence), `classify` stays spec-level |
 | M: cross-repo Rocq import not wired; "≈95% reuse" misleads | F-M8 | `rho_bridge/_CoqProject`; `MettaOslfLawsConformance.v:24` | **D8**: reuse-by-faithful-re-statement stated; §4 rewritten |
 | M: flagship "non-confluent" witness is confluent-up-to-multiset (HashBag body) — exercise vacuous | F-M9 | `rhocalc_tests.rs:171-173`; `rhocalc.rs:72` | §5: order-sensitive join `{(c?x,c?y).{*(x)} \| c!(a) \| c!(b)}` (outcome set `{a,b}`) as the .1.1 gate input, harness-level |
 | m: `Send`/`Receive` field omissions (`locally_free`, `connective_used`, host-extension `condition`) | H-m8, H-m11 | `rhoapi.rs:167-179,225-247` | §2 informational block (normalizer-owned under D1; `condition=None` noted) |
@@ -32,7 +32,7 @@ Per `feedback_red_team_design_until_convergence`: after the contract was drafted
 | m: B1-b gate seam lives in casper (`acceptance.rs:483-492`), not the accounting module — blast radius understated | H-m10 | `casper/src/rust/util/rholang/acceptance.rs:483-492` | §6 item 4 + R8 name casper; USER-OK gate text updated |
 | m: `NegInt` is Int→Int; `CountBag`→Int; congruence count is 82 not ~70; law-kit lines `:120-209` | F-m1,2,3 | `rhocalc.rs:127,659`; `:881-983`; `conformance.rs:7` | §1b/§1d corrected |
 | m: dovetail has no `key` feature (dep would be whole-crate) | F-m4 | `dovetail/Cargo.toml` | Moot under D5 (no dovetail dep needed); R3 rewritten |
-| m: `mettail-rho-runtime/src/lib.rs` Status section stale | F-m5 | `lib.rs:13-16` vs Cargo.toml | Boyscout fix scheduled in .1.0-L |
+| m: `rholang-runtime/src/lib.rs` Status section stale | F-m5 | `lib.rs:13-16` vs Cargo.toml | Boyscout fix scheduled in .1.0-L |
 | m: §3's "`normal_forms()` → `["p"]`" was a membership assertion misread as a set claim | F-m6 | `rhocalc_tests.rs:44-64` | §3 rewritten on reachable-from-seeds + membership |
 
 ### Verified-pass items (claims that survived round 1 — do not re-investigate)
@@ -128,7 +128,7 @@ exposed the normalizer-invariant and cost-budget risks.
 
 Resolution evidence:
 
-- `mettail-rho-codegen::lower_language_def` now returns `RhoProgram::Ast` with a
+- `rholang-codegen::lower_language_def` now returns `RhoProgram::Ast` with a
   normalized `models::rhoapi::Par` execution artifact and a Rholang-text reader
   annotation.
 - Generated backend dispatch consumes opaque `ValidatedRhoProgram`, not raw

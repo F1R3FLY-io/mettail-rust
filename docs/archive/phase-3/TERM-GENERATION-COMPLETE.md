@@ -22,7 +22,7 @@ Successfully implemented systematic term generation for MeTTaIL theories. The fe
 
 ### Core Generation Logic
 
-**File:** `mettail-macros/src/generation.rs` (571 lines)
+**File:** `macros/src/generation.rs` (571 lines)
 
 **Key Functions:**
 - `generate_term_generation()` - Main entry point
@@ -45,8 +45,8 @@ let scope = mettail_runtime::Scope::new(binder, Box::new(body.clone()));
 ### Integration
 
 **Files Modified:**
-- `mettail-macros/src/lib.rs` - Added `mod generation`
-- `mettail-macros/src/codegen.rs` - Integrated `generation::generate_term_generation()`
+- `macros/src/lib.rs` - Added `mod generation`
+- `macros/src/codegen.rs` - Integrated `generation::generate_term_generation()`
 
 **Generated Code Structure:**
 ```rust

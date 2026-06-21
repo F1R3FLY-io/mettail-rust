@@ -1,6 +1,6 @@
 # Signed BigInt Library Selection
 
-**Status:** Implemented — `num-bigint` with a **`Copy`-compatible** runtime wrapper `CanonicalBigInt` in `mettail-runtime` (`runtime/src/canonical_bigint.rs`); integer literals flow through `prattail::parse_int_lit` (`prattail/src/int_lit.rs`) and per-language `literals` blocks (e.g. `…n` for `BigInt` in Calculator / RhoCalc).
+**Status:** Implemented — `num-bigint` with a **`Copy`-compatible** runtime wrapper `CanonicalBigInt` in `runtime` (`runtime/src/canonical_bigint.rs`); integer literals flow through `prattail::parse_int_lit` (`prattail/src/int_lit.rs`) and per-language `literals` blocks (e.g. `…n` for `BigInt` in Calculator / RhoCalc).
 
 ## Context
 
@@ -142,7 +142,7 @@ This should be done only after workload-driven profiling demonstrates clear need
 With backend choice fixed to `num-bigint`, the tree includes:
 
 - `prattail`: `IntLit::BigInt` and `parse_int_lit` / suffix handling for large integers.
-- `mettail-runtime`: `CanonicalBigInt` for `BoundTerm` / Ascent-friendly literals.
+- `runtime`: `CanonicalBigInt` for `BoundTerm` / Ascent-friendly literals.
 - Languages: e.g. `![mettail_runtime::CanonicalBigInt] as BigInt` and a `BigInt` literal pattern ending in `n` in `languages/src/calculator.rs`, `languages/src/rhocalc.rs`.
 - Tests: language and prattail tests for parsing and evaluation of large literals.
 

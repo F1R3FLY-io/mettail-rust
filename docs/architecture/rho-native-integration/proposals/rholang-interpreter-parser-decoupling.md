@@ -28,16 +28,16 @@ in-flight cost-accounting code compiling — see [`Cargo.toml`](../../../../Carg
 | The execution core is parser-free at the module level | `reduce.rs`, `rho_runtime.rs`, `matcher/`, `accounting/`, `external_services.rs` contain **no** `use …compiler` |
 | Cross-references **into** `compiler::` from outside it are only three sites | `interpreter.rs` (`use compiler::Compiler`, the from-source `evaluate`), `pretty_printer.rs` (`compiler::normalize…`), `test_utils/*` (test helpers) |
 | The runtime can init **without** the compiler | `create_rho_runtime(init_registry: bool)`: with `init_registry: false` no registry bootstrap runs ("for some test cases you don't need the registry") |
-| MeTTaIL's bridge is a pure inject-`Par` consumer | `mettail-rho-runtime/src/run.rs`: "MeTTaIL only emits the `Par` program and reads the resting data"; it uses `create_rho_runtime` + reduce/inject, never `evaluate(source)` |
+| MeTTaIL's bridge is a pure inject-`Par` consumer | `rholang-runtime/src/run.rs`: "MeTTaIL only emits the `Par` program and reads the resting data"; it uses `create_rho_runtime` + reduce/inject, never `evaluate(source)` |
 
 What the bridge actually imports from `rholang` (all interpreter, no compiler):
 
 ```
-mettail-rho-runtime → rholang::rust::interpreter::{
+rholang-runtime → rholang::rust::interpreter::{
     rho_runtime::{create_rho_runtime, RhoRuntime},
     matcher::r#match::Matcher, external_services::ExternalServices,
     accounting::costs::Cost }
-mettail-rho-adapter → rholang::rust::interpreter::accounting::{
+rholang-adapter → rholang::rust::interpreter::accounting::{
     delta_sigma::{DemandEntry, SigKey}, resource_logic::{GsltPresentation, OslfResourceLogic}, Sig }
 ```
 
@@ -90,7 +90,7 @@ parser (see open items).
 ### 4. MeTTaIL side (after the above lands)
 
 ```toml
-# mettail-rho-runtime/Cargo.toml, mettail-rho-adapter/Cargo.toml
+# rholang-runtime/Cargo.toml, rholang-adapter/Cargo.toml
 rholang = { workspace = true, default-features = false }   # interpreter only → no rholang_parser
 ```
 

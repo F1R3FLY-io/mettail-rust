@@ -176,7 +176,7 @@ grep -c "\.subst_by_name_" target/generated/calculator/env_subst.rs
 # Should be 0 in match arms (only allowed in the top-level wrapper).
 
 # Run the regression test that currently overflows:
-cargo test -p mettail-languages --test calculator -- test_bool_from_list_elem
+cargo test -p languages --test calculator -- test_bool_from_list_elem
 # Must PASS without RUST_MIN_STACK.
 
 # Run full workspace to confirm no regressions:
@@ -230,9 +230,9 @@ enum NormTask<'a> {
 
 **Verification:**
 ```
-cargo test -p mettail-languages
+cargo test -p languages
 # All tests pass, specifically:
-cargo test -p mettail-languages --test calculator -- test_bool_from_list_elem
+cargo test -p languages --test calculator -- test_bool_from_list_elem
 # and rhocalc/ambient/lambda HOL-heavy tests (see .rs files in languages/tests/).
 ```
 
@@ -268,8 +268,8 @@ Outstanding untracked files per `git status`:
 After all tests green on default stack:
 ```
 cargo test --workspace  # must pass
-cargo run -p mettail-repl -- calculator-casting.txt
-cargo run -p mettail-repl -- rhocalc-casting.txt
+cargo run -p repl -- calculator-casting.txt
+cargo run -p repl -- rhocalc-casting.txt
 # Plus any feature-branch-added examples.
 
 # Stage + commit
@@ -405,11 +405,11 @@ pub fn generate_substitution(language: &LanguageDef) -> TokenStream {
 To measure post-completion:
 ```
 # Native 2MB stack — must pass without RUST_MIN_STACK override:
-cargo test -p mettail-languages --test calculator
-cargo test -p mettail-languages --test rhocalc
-cargo test -p mettail-languages --test ambient
-cargo test -p mettail-languages --test lambda
-cargo test -p mettail-languages --test guarded_rho
+cargo test -p languages --test calculator
+cargo test -p languages --test rhocalc
+cargo test -p languages --test ambient
+cargo test -p languages --test lambda
+cargo test -p languages --test guarded_rho
 
 # Full workspace:
 cargo test --workspace

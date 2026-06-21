@@ -85,13 +85,13 @@ impl RcExpr {
 ### Phase 1: Add Moniker ✅ DONE
 
 ```toml
-# mettail-runtime/Cargo.toml
+# runtime/Cargo.toml
 [dependencies]
 moniker = { path = "../../moniker/moniker" }
 ```
 
 ```rust
-// mettail-runtime/src/lib.rs
+// runtime/src/lib.rs
 pub use moniker::{
     Var, FreeVar, Binder, Scope, BoundTerm, BoundPattern,
 };
@@ -100,7 +100,7 @@ pub use moniker::{
 ### Phase 2: Update AST for Binder Syntax
 
 ```rust
-// mettail-macros/src/ast.rs
+// macros/src/ast.rs
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GrammarItem {
@@ -122,7 +122,7 @@ pub enum GrammarItem {
 
 ### Phase 3: Parse Binder Syntax
 
-Update `mettail-macros/src/ast.rs` parser to recognize:
+Update `macros/src/ast.rs` parser to recognize:
 
 ```rust
 // Input:  (Bind x Name)
