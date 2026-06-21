@@ -31,3 +31,6 @@ theories/CrossCatLhsParking.v
 theories/DeterministicPosMirror.v
 theories/BalancedCohortGate.v
 theories/CollectionPrimaryInfix.v
+theories/SingleResultDominanceSubsumption.v
+theories/CollectionLexForkClearSoundness.v
+theories/RecoveryAcceptCoverage.v
