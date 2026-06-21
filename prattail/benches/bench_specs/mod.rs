@@ -967,6 +967,9 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
             TokenKind::DoubleDollar => "DoubleDollar".to_string(),
             TokenKind::Custom(name) => name.clone(),
             TokenKind::LexError(kind) => format!("LexError{:?}", kind),
+            // TokenKind is #[non_exhaustive] (campaign Phase 4): future variants
+            // get a Debug-derived name so this external-crate match stays sound.
+            other => format!("{:?}", other),
         })
         .collect();
 
