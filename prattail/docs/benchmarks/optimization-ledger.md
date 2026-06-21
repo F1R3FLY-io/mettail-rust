@@ -1410,3 +1410,69 @@ so each clone deep-copies a `String` → heap alloc → feeds the malloc/free ch
 `Arc<KatExpr>`-style fix (intern the `String` payloads as `Arc<str>`, or avoid the clones in
 `lex_alt_rules_for_prefix`) would attack the clone cost AND a chunk of the allocation — a real,
 data-supported optimization, in contrast to parallelizing a 3.67%-of-runtime function.
+
+---
+
+## Experiment 8: Runtime-parse allocation — three washes, one marginal win (2026-06-21, task #11)
+
+Following Experiment 7's redirect, the runtime-parse (cast fan-out) allocation cost was attacked
+with FOUR hypotheses. The first three **washed** in A/B — a textbook demonstration that profile
+self-time % is necessary but not sufficient; only a wall-clock A/B settles it.
+
+### Refuted hypotheses (all behaviour-preserving, all reverted)
+
+1. **`peek_kind` returns `&TokenKind` (borrow, not clone).** Hypothesis: the per-peek
+   `TokenKind` clone (8.25% self-time) is hot. **WASH** — re-profile showed `TokenKind::clone`
+   *unchanged*: the borrow merely relocated clones from peek sites to the (rarer) push sites.
+2. **`TokenKind` `String`→`Arc<str>` + `OnceLock`-cached `token_to_kind`.** Hypothesis: deep
+   `String` clone + per-call `"+".to_string()` construction. Large change (~400 sites + lexer
+   codegen + every generated parser). **WASH** — A/B 5.795 s → 5.822 s (no win). `TokenKind::clone`
+   stayed 9.10%: for *short* terminals (`"+"`, `"("`) the `Arc` atomic-refcount bump ≈ the small
+   `String` alloc it replaced; and the malloc was **not** from `token_to_kind` (the cache hit, but
+   malloc is the GLR cursor machinery, not construction). Reverted in full.
+3. **(implicit) `String::clone` 3.11%** — declined: traced to token text, same short-string
+   atomic-wash surface as #2.
+
+### What the profile actually says (the load-bearing finding)
+
+Runtime-parse self-time is **diffuse allocation** with NO single site > ~3.7%: `malloc` 6.30% +
+`cfree` 6.02% + dealloc ~2% ≈ **14% raw alloc**, spread across `step_fanout` (3.66%),
+`String::clone` (3.11%), the `LazyContinuationWork` heap, `apply_action_to_cursor`,
+`materialize_branch_cursor_from_arc`, `FrontierArc::from_cursor`, `BranchCursor` clone+drop, and the
+`TomitaKey` merge map. A Plan-agent audit confirmed prior campaigns already converted **every** heavy
+`BranchCursor` field to `Arc`/`im::OrdSet`/interned-`u32`; `missing_preallocation` returned **zero**
+hits (the per-step maps are already `with_capacity` + reused via `.clear()`). The allocation is
+**intrinsic to the GLR fan-out** — only a full per-parse cursor bump-arena would move it materially,
+and that is a large change requiring formal re-verification (`ForwardOrderOnly.v` T1–T6,
+`PrattailWpda.tla`) — a product decision, not a perf tweak. Logged, not taken.
+
+### ACCEPTED: empty-mark `Arc` sentinel (the one tractable lever)
+
+`FrontierArc::from_cursor` did `Arc::new(cursor.binder_scope_marks.clone())` +
+`Arc::new(cursor.optional_scope_marks.clone())` **per arc per step** — a guaranteed malloc for the
+`Arc` control block *even when the marks are empty*, and binderless regimes (calculator casts/chains)
+have **always-empty** marks. Fix (`tomita_frontier.rs`, ~20 LOC): share one process-wide empty `Arc`
+sentinel (`OnceLock`) for the empty case, so it's a refcount bump — a malloc/free pair **removed**,
+not relocated.
+
+**Soundness review point:** this makes `register_arc_with_aggregation`'s `Arc::ptr_eq` on the marks
+*true* for empty-mark arcs. Sound because that predicate is conjoined with `merge_disambiguator()`
+equality (sppf/edge-stack ids, cohort, lex provenance) — so only **observationally-identical** cursor
+states can newly-share (correct Tomita merging, never a merge of distinct derivations). Validated by
+the full suite: prattail 3725/0 + languages 2648/0, zero parse diffs.
+
+**A/B (hyperfine, ITERS=300, taskset -c 4 + perf governor, release/LLVM, vs `ba001bed`):** after is
+**1.01–1.02× faster in BOTH orderings** (original 5.821 vs 5.909 s; swapped 5.807 vs 5.871 s) — the
+consistent direction across swapped order rules out drift. **~1–1.5% win**, marginal (1–2σ) but real
+and reproducible. The malloc *share* didn't fall (the saved empty-`Arc` pairs relieve allocator
+pressure diffusely rather than concentrating in `malloc%`); the wall-clock cross-ordering
+reproducibility is the stronger signal. **ACCEPT** — small, but the first non-wash, behaviour-
+preserving, a clean removal, and on-brand (persistent-structure sharing).
+
+### Methodological takeaway
+
+Four hypotheses, one ~1% win: the runtime parser was already heavily alloc-optimized by prior
+campaigns, and its residual cost is intrinsic GLR fan-out allocation. The episode reaffirms the
+hard rule — **a profile %, even a 14% band, does not imply a tractable win; the wall-clock A/B
+(with a drift-controlled swapped re-run) is the only arbiter**, and "no tractable win without a
+research-scale redesign" is a first-class, honest outcome.

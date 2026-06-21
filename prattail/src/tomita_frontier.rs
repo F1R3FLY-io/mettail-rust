@@ -363,8 +363,29 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             visited_recovery: cursor.visited_recovery.clone(),
             // Sig-B GLL-descriptor (#9): O(1) shared clone from the cursor.
             visited_proj_descriptors: cursor.visited_proj_descriptors.clone(),
-            binder_scope_marks: Arc::new(cursor.binder_scope_marks.clone()),
-            optional_scope_marks: Arc::new(cursor.optional_scope_marks.clone()),
+            // Alloc opt (2026-06-21): `Arc::new(empty Vec)` is a guaranteed malloc
+            // per arc per step even when the marks are empty — and binderless regimes
+            // (calculator casts/chains) ALWAYS have empty marks. Share one process-wide
+            // empty `Arc` so the empty case is a refcount bump (no malloc/free pair).
+            // Soundness: this makes `register_arc_with_aggregation`'s `Arc::ptr_eq`
+            // true for empty-mark arcs, but that predicate is conjoined with
+            // `merge_disambiguator()` equality + heavy-field ptr_eq, so only
+            // observationally-identical cursor states (same sppf/edge-stack ids, …)
+            // can newly-share — correct Tomita merging, not a new merge of distinct
+            // derivations. Validated by the full parse-suite differential.
+            binder_scope_marks: if cursor.binder_scope_marks.is_empty() {
+                static EMPTY: std::sync::OnceLock<Arc<Vec<(u16, Vec<String>)>>> =
+                    std::sync::OnceLock::new();
+                EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+            } else {
+                Arc::new(cursor.binder_scope_marks.clone())
+            },
+            optional_scope_marks: if cursor.optional_scope_marks.is_empty() {
+                static EMPTY: std::sync::OnceLock<Arc<Vec<usize>>> = std::sync::OnceLock::new();
+                EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+            } else {
+                Arc::new(cursor.optional_scope_marks.clone())
+            },
             sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
             // EP-P2 (Stage B) D-4: capture the cursor's shadow-refuted bit
