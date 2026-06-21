@@ -34,6 +34,14 @@
 
 use std::collections::HashMap;
 
+// Perf (2026-06-20): the WPDA GSS node/edge maps are looked up on every cursor
+// step (get_or_create_node + edge lookup), with small integer / derived-Hash
+// keys. The default `std::collections::HashMap` SipHasher is ~5-10× slower than
+// `rustc_hash::FxHashMap` for such keys and showed up as `Sip13Rounds` in the
+// parse profile of cross-cat-cast inputs. `FxHashMap` is a drop-in (same map
+// semantics; only the hash function differs — GSS correctness is unaffected).
+use rustc_hash::FxHashMap;
+
 use crate::automata::semiring::SemiringRef;
 use crate::wpda_runtime::StackSymbolV2;
 
@@ -628,9 +636,9 @@ pub struct WpdaGssEdge<W: SemiringRef> {
 #[derive(Debug, Clone)]
 pub struct WpdaGss<W: SemiringRef> {
     nodes: Vec<WpdaGssNode>,
-    edges: HashMap<GssNodeId, Vec<WpdaGssEdge<W>>>,
+    edges: FxHashMap<GssNodeId, Vec<WpdaGssEdge<W>>>,
     frontier: Vec<GssNodeId>,
-    node_index: HashMap<WpdaGssNode, GssNodeId>,
+    node_index: FxHashMap<WpdaGssNode, GssNodeId>,
 }
 
 impl<W: SemiringRef> WpdaGss<W> {
@@ -638,9 +646,9 @@ impl<W: SemiringRef> WpdaGss<W> {
     pub fn new() -> Self {
         WpdaGss {
             nodes: Vec::new(),
-            edges: HashMap::new(),
+            edges: FxHashMap::default(),
             frontier: Vec::new(),
-            node_index: HashMap::new(),
+            node_index: FxHashMap::default(),
         }
     }
 

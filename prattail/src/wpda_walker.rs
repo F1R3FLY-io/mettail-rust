@@ -333,6 +333,18 @@ impl InfixLexclearMode {
     }
 }
 
+/// Read the `prefix_cast_stage_watermark` memoization kill switch ONCE per
+/// walker construction (P-series convention). `0` / `off` (any case) disables
+/// the memoization (reverting to the unmemoized re-stage-everything loop for an
+/// ON/OFF differential); unset and any other value enable it (the default). See
+/// the `prefix_cast_stage_memo_enabled` field doc.
+fn prefix_cast_stage_memo_enabled_from_env() -> bool {
+    !matches!(
+        std::env::var("PRATTAIL_PREFIX_CAST_STAGE_MEMO").ok().as_deref(),
+        Some("0") | Some("off") | Some("OFF") | Some("Off")
+    )
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -1734,6 +1746,23 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// stack-free clear (`rhocalc-collection-fork-explosion.md` §8.1). For the
     /// production `Clear` default this field is never read.
     infix_lexclear_watermark: usize,
+    /// Perf (quadratic-staging fix, 2026-06-20): kill switch for the per-body
+    /// `prefix_cast_stage_watermark` memoization in
+    /// [`Self::try_stage_parked_prefix_cast_waiters`]. Read once from
+    /// `PRATTAIL_PREFIX_CAST_STAGE_MEMO` at construction (P-series convention: a
+    /// per-walker field so one process can run an ON/OFF differential). `true`
+    /// (default; unset / any value other than `0`/`off`) memoizes which parked
+    /// waiters a re-published body was already staged against, skipping the
+    /// already-considered prefix — this is a PURE memoization that produces a
+    /// byte-identical job set (the produced jobs are a deterministic function of
+    /// the waiter, the body symbol, and the body weight, all stable across
+    /// re-publications; the weight is part of the watermark key, so an
+    /// accumulating body weight re-stages with the new weight). `false`
+    /// (`PRATTAIL_PREFIX_CAST_STAGE_MEMO=0` / `off`) reverts to the unmemoized
+    /// re-stage-everything loop so a regression can be isolated and the ON/OFF
+    /// byte-identical parse differential checked. See the
+    /// `prefix_cast_stage_watermark` field doc for the soundness argument.
+    prefix_cast_stage_memo_enabled: bool,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -1892,6 +1921,39 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// removed mid-parse); cleared with `parked_prefix_cast_waiters`.
     parked_prefix_cast_waiters_by_cat:
         rustc_hash::FxHashMap<u16, std::collections::BTreeMap<usize, Vec<usize>>>,
+    /// Perf (quadratic-staging fix, 2026-06-20): per-fired-body-symbol staging
+    /// watermark. Maps a published body `SppfId` to the
+    /// `parked_prefix_cast_waiters.len()` recorded the last time that body was
+    /// staged. `try_stage_parked_prefix_cast_waiters` is invoked once per SPPF
+    /// publication, but a body symbol is RE-published many times across cohort
+    /// revives / sibling lineages (measured: 240 distinct bodies, 125,457 repeat
+    /// invocations on the adversarial cross-cat-cast input). Because
+    /// `parked_prefix_cast_waiters` is APPEND-ONLY for the lifetime of a parse
+    /// (only ever `push`ed, or fully `clear`ed at the parse boundary — see the
+    /// two `reset` sites), every waiter below the recorded watermark was already
+    /// considered for this exact body on a prior call: it either already produced
+    /// its (deduped) job or structurally cannot match this body (same `body_cat`
+    /// / `body_lo`, so the per-category position filter verdict is invariant).
+    /// Re-staging it is therefore pure wasted work — a `BranchCursor` clone, a
+    /// 19-field `PrefixCastWrapJobKey` build+hash, and a dedup-set probe that
+    /// discards 99.9% as duplicates. The watermark skips the already-considered
+    /// prefix `[0, watermark)` and, when no waiter was parked since (the common
+    /// case), short-circuits the whole call in O(1). SOUND: never removes a
+    /// candidate the drain would accept. Cleared with `parked_prefix_cast_waiters`.
+    ///
+    /// The recorded value is `(waiter_count_at_last_stage, body_weight_at_last_stage)`.
+    /// The body weight is part of the key because a Symbol's `weight_sum`
+    /// ACCUMULATES as more packings link to it (see `Sppf::symbol_weight_sum` /
+    /// `symbol_weight_sum_accumulates_over_linked_packings`), and the staged job
+    /// multiplies it into the outer-frame weight. When `times` projects the body
+    /// tiebreak (the outer frame carries the multiplicative identity), a changed
+    /// body weight yields a job with a DIFFERENT `PrefixCastWrapJobKey`, i.e. a
+    /// genuinely new job. To stay byte-identical to the unmemoized loop, a weight
+    /// change resets the effective watermark to 0 for that body (re-stages every
+    /// matching waiter with the new weight); only a stable weight skips the
+    /// already-considered prefix. In practice body weights are stable across the
+    /// vast majority of re-publications, so the short-circuit still fires.
+    prefix_cast_stage_watermark: rustc_hash::FxHashMap<crate::sppf::SppfId, (usize, W)>,
     /// Idempotence index for `pending_prefix_cast_wrap_jobs`.
     ///
     /// Prefix-cast reconciliation is an additive join between a parked
@@ -4852,6 +4914,7 @@ where
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
+            prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
             infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
@@ -4873,6 +4936,7 @@ where
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
             parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
+            prefix_cast_stage_watermark: rustc_hash::FxHashMap::default(),
             pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
             parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
             transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
@@ -4969,6 +5033,7 @@ where
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
+            prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
             infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
@@ -4990,6 +5055,7 @@ where
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
             parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
+            prefix_cast_stage_watermark: rustc_hash::FxHashMap::default(),
             pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
             parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
             transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
@@ -5085,6 +5151,7 @@ where
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
+            prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
             infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
@@ -5106,6 +5173,7 @@ where
             pending_prefix_cast_wrap_jobs: Vec::new(),
             parked_prefix_cast_waiters: Vec::new(),
             parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
+            prefix_cast_stage_watermark: rustc_hash::FxHashMap::default(),
             pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
             parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
             transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
@@ -5197,6 +5265,7 @@ where
         self.pending_prefix_cast_wrap_jobs.clear();
         self.parked_prefix_cast_waiters.clear();
         self.parked_prefix_cast_waiters_by_cat.clear();
+        self.prefix_cast_stage_watermark.clear();
         self.pending_prefix_cast_wrap_job_keys.clear();
         self.parked_prefix_cast_waiter_keys.clear();
         self.transparent_source_reentry_keys.clear();
@@ -5316,6 +5385,7 @@ where
         self.pending_prefix_cast_wrap_jobs.clear();
         self.parked_prefix_cast_waiters.clear();
         self.parked_prefix_cast_waiters_by_cat.clear();
+        self.prefix_cast_stage_watermark.clear();
         self.pending_prefix_cast_wrap_job_keys.clear();
         self.parked_prefix_cast_waiter_keys.clear();
         self.transparent_source_reentry_keys.clear();
@@ -22982,6 +23052,37 @@ where
         let Some(body_lo_key) = tokens.position_order_key(body_lo) else {
             return;
         };
+        // Perf (quadratic-staging fix, 2026-06-20): a published body symbol is
+        // re-handed to this routine many times (cohort revives / sibling
+        // lineages). `parked_prefix_cast_waiters` is append-only within a parse,
+        // so every waiter parked BEFORE this body's prior staging pass was
+        // already considered for it; only waiters at index `≥ effective_watermark`
+        // (parked since) can yield a new job. When nothing was parked since AND
+        // the body weight is unchanged, the whole call is a no-op. A changed body
+        // weight resets the effective watermark to 0 (re-stage all matching
+        // waiters with the new weight), keeping the result byte-identical to the
+        // unmemoized loop. See the `prefix_cast_stage_watermark` field doc.
+        let current_waiter_count = self.parked_prefix_cast_waiters.len();
+        let body_weight = self.sppf.symbol_weight_sum(body_symbol_id);
+        // `effective_watermark` is the index below which every matching waiter was
+        // already staged for this (body, weight) on a prior call. With the memo
+        // disabled (kill switch) it is always 0 — the unmemoized loop re-stages
+        // every matching waiter on every publication.
+        let effective_watermark = if self.prefix_cast_stage_memo_enabled {
+            match self.prefix_cast_stage_watermark.get(&body_symbol_id) {
+                Some((prev_count, prev_weight)) if *prev_weight == body_weight => {
+                    if current_waiter_count <= *prev_count {
+                        return;
+                    }
+                    *prev_count
+                },
+                // First sight of this body, or its weight accumulated since:
+                // consider every currently-parked waiter (effective watermark 0).
+                _ => 0,
+            }
+        } else {
+            0
+        };
         let candidate_indices: Vec<usize> = match self
             .parked_prefix_cast_waiters_by_cat
             .get(&body_cat)
@@ -22989,13 +23090,32 @@ where
             Some(by_pos) => by_pos
                 .range(..=body_lo_key)
                 .flat_map(|(_, idxs)| idxs.iter().copied())
+                // Only waiters not already considered for this (body, weight); the
+                // rest were already staged (and deduped) on a prior call. (When the
+                // memo is disabled `effective_watermark == 0`, so all match.)
+                .filter(|&idx| idx >= effective_watermark)
                 .collect(),
-            None => return,
+            None => {
+                // No waiters of this category at all; still advance the watermark
+                // so a later re-publication short-circuits without re-deriving
+                // category/position from the token source.
+                if self.prefix_cast_stage_memo_enabled {
+                    self.prefix_cast_stage_watermark
+                        .insert(body_symbol_id, (current_waiter_count, body_weight.clone()));
+                }
+                return;
+            },
         };
+        // Record that this body (at this weight) has now been staged against every
+        // currently parked waiter, regardless of how many survived the position
+        // filter.
+        if self.prefix_cast_stage_memo_enabled {
+            self.prefix_cast_stage_watermark
+                .insert(body_symbol_id, (current_waiter_count, body_weight.clone()));
+        }
         if candidate_indices.is_empty() {
             return;
         }
-        let body_weight = self.sppf.symbol_weight_sum(body_symbol_id);
         let mut staged = Vec::new();
         for idx in candidate_indices {
             let waiter = &self.parked_prefix_cast_waiters[idx];
