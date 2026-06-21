@@ -1258,3 +1258,98 @@ focuses on comprehensive testing, quality tooling, and developer experience.
 **ACCEPT** — Sprint 6 adds 42 new tests covering error handling, property-based round-trips,
 grammar warnings, and regression detection. The codebase is now clippy-clean and has CI
 benchmark regression gates. All 182 tests pass.
+
+---
+
+## Experiment 6: `Arc<KatExpr>` Structural Sharing (2026-06-21, production-readiness campaign Phase 6)
+
+### Protocol
+
+`taskset -c 4` (core isolation), `scaling_governor = performance`, `[profile.bench]`
+(LLVM, `opt-level = 3`, `inherits = release`), criterion 200 samples/case, A/B against
+the immediately-preceding saved baseline (same machine/core/governor). `perf record -e
+task-clock -F 1999 --call-graph dwarf` on the `generator/end_to_end/complex` case via
+criterion `--profile-time 12`.
+
+### Profiling Evidence (the data overrode the prediction)
+
+The campaign plan *predicted* the clone hotspots would be `decision_tree.rs` (162 clones)
+and `lint.rs` String diagnostic clones. **Profiling refuted that prediction.** Those clones
+are compile-time-once construction code that the perf profile does not surface. The actual
+`generator/end_to_end/complex` self-time hot path (pre-change, 13,819 samples):
+
+| Function | Self % |
+|··········|········|
+| `sip::Hasher::write` | 6.27% |
+| `cfree` (libc) | 5.10% |
+| **`KatExpr::clone` (deep recursive)** | **4.80%** |
+| `malloc` (libc) | 4.59% |
+| `kat::simplify` | 3.89% |
+| `kat::derivative` | 3.58% |
+| `proc_macro2::parse::token_stream` | 3.13% |
+| `drop_glue::<KatExpr>` | 2.66% + 0.88% |
+| `String::clone` | 1.68% |
+| `KatExpr::hash` | 1.35% |
+
+`kat::` (Kleene Algebra with Tests — used for lexer regex/automata equivalence via Pous-2015
+symbolic bisimulation) dominates: clone + drop + simplify + derivative + hash ≈ **18%**, with
+another ≈ **20%** in `malloc`/`free` churned by those clones. The root cause: `KatExpr` stored
+its children as `Box<KatExpr>`, so every `.clone()` (the bisimulation worklist/visited sets and
+the `simplify`/`derivative` tree rebuilds clone constantly) deep-copies the **entire** subtree,
+and each deep copy re-allocates every node.
+
+### Hypothesis
+
+Replacing `Box<KatExpr>` with `Arc<KatExpr>` (persistent structural sharing) makes `.clone()`
+an O(1) atomic refcount bump instead of an O(subtree) deep copy, and eliminates the per-node
+re-allocation on every clone (shared subtrees are not re-allocated). `Arc` (not `Rc`) is required
+because `KatExpr` must remain `Send + Sync` for `pipeline::analysis::run_math_analyses_parallel`;
+`Arc` also matches the project's "persistent data structures + atomics for thread-safety" standard.
+
+### Implementation
+
+`prattail/src/kat.rs`: the three `KatExpr` enum fields (`Seq`, `Alt`, `Star`) and their
+constructors + the `simplify`/`derivative` tree-builders changed `Box` → `Arc` (`BooleanTest`'s
+own boxes are untouched). The public `KatExpr::{seq,alt,star,…}` constructor signatures are
+**unchanged** (they take owned `KatExpr`), so no caller outside `kat.rs` changed — Rust deref
+coercion (`&Arc<KatExpr>` → `&KatExpr`) handled every recursion call-site with zero edits.
+Behaviour-preserving: `KatExpr` still derives `Clone/PartialEq/Eq/Hash` (an `Arc<T>` delegates
+all four to `T`, so value semantics — and thus the bisimulation/hashing results — are identical).
+
+### Result
+
+A/B (criterion, post-Arc vs pre-Arc baseline, 200 samples each):
+
+| Case | Pre (µs/ms) | Post | Change | p | Verdict |
+|······|·············|······|········|···|·········|
+| **end_to_end/complex** | 6.45 ms | **4.78 ms** | **−25.9%** `[−26.2, −25.6]` | <0.001 | **major win** |
+| end_to_end/small | 2.390 ms | 2.372 ms | −0.75% | <0.001 | slight win |
+| end_to_end/minimal | 587 µs | 585 µs | −0.32% | 0.06 | no change |
+| end_to_end/medium | 936 µs | 941 µs | +0.47% | <0.05 | tiny tax |
+| scaling/5,10,50 | — | — | +0.5%…+1.3% | <0.05 | tiny tax |
+
+Confirming re-profile (post-Arc, complex): **`KatExpr::clone` disappeared** from the profile
+(4.80% → below the 0.8% floor — the deep clone is now an inlined refcount op), `malloc` 4.59% →
+3.69%, `free` 5.10% → 3.63%. The deep-clone elimination is the mechanism behind the −25.9%
+wall-clock. (`Arc::drop_slow` now shows 6.38% — the refcounted dealloc of shared subtrees — but
+net allocation work is far lower, as the wall-clock proves.) The new frontier is `KatExpr`
+*hashing* (`sip::write` + `KatExpr::hash` ≈ 11%); reducing it would need hash-consing (intern
+`KatExpr` → integer id, hash the id) — a larger future change, logged but not taken here.
+
+### Verdict
+
+**ACCEPT.** −25.9% (p < 0.001) on the heaviest grammar — the realistic compile-time cost, since
+real languages (e.g. Rholang) are complex grammars — for a < 1.5% atomic-refcount tax on trivial
+grammars that already generate in < 1 ms. Also reduces peak memory (shared subtrees are stored
+once) and preserves `Send + Sync`. Correctness: all 3,725 prattail tests pass, including
+`kat::tests::{equivalence_with_tests, equivalence_reflexive_and_trivial, hoare_*}`. The Rocq
+proof `KatSoundness.v` is a representation-independent proof of the KAT *algebra* (it does not
+compile the Rust type), so the `Box`→`Arc` change cannot affect it.
+
+### Methodological note
+
+This experiment is the textbook case for the "benchmark/profile **before** optimizing" rule: the
+plan's a-priori clone-hotspot prediction (`decision_tree`/`lint`) was wrong, and only the perf
+profile found the real one (`kat`). Separately, the campaign's Phase-3 god-file splits are pure
+code-movement (identical compiled functions relocated behind `pub use` façades), hence
+perf-neutral by construction — no A/B is owed for them, and none is recorded.

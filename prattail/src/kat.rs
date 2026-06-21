@@ -43,6 +43,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
+use std::sync::Arc;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Core types
@@ -139,11 +140,11 @@ pub enum KatExpr {
     /// An atomic action (e.g., "shift", "reduce", "emit_token").
     Action(String),
     /// Sequential composition: `p ; q` (do `p` then `q`).
-    Seq(Box<KatExpr>, Box<KatExpr>),
+    Seq(Arc<KatExpr>, Arc<KatExpr>),
     /// Alternation/choice: `p + q` (do `p` or `q`).
-    Alt(Box<KatExpr>, Box<KatExpr>),
+    Alt(Arc<KatExpr>, Arc<KatExpr>),
     /// Kleene star: `p*` (do `p` zero or more times).
-    Star(Box<KatExpr>),
+    Star(Arc<KatExpr>),
 }
 
 impl KatExpr {
@@ -159,17 +160,17 @@ impl KatExpr {
 
     /// Sequential composition.
     pub fn seq(a: KatExpr, b: KatExpr) -> Self {
-        KatExpr::Seq(Box::new(a), Box::new(b))
+        KatExpr::Seq(Arc::new(a), Arc::new(b))
     }
 
     /// Alternation/choice.
     pub fn alt(a: KatExpr, b: KatExpr) -> Self {
-        KatExpr::Alt(Box::new(a), Box::new(b))
+        KatExpr::Alt(Arc::new(a), Arc::new(b))
     }
 
     /// Kleene star.
     pub fn star(a: KatExpr) -> Self {
-        KatExpr::Star(Box::new(a))
+        KatExpr::Star(Arc::new(a))
     }
 
     /// Hoare assertion: `{b} p {c}` expressed as `b·p·~c = 0`.
@@ -477,10 +478,10 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
         KatExpr::Seq(p, q) => {
             // D_a(p;q) = D_a(p);q + (if nullable(p) then D_a(q) else 0)
             let dp = derivative(p, action, valuation);
-            let left = KatExpr::Seq(Box::new(dp), q.clone());
+            let left = KatExpr::Seq(Arc::new(dp), q.clone());
             if nullable(p, valuation) {
                 let dq = derivative(q, action, valuation);
-                KatExpr::Alt(Box::new(left), Box::new(dq))
+                KatExpr::Alt(Arc::new(left), Arc::new(dq))
             } else {
                 left
             }
@@ -488,12 +489,12 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
         KatExpr::Alt(p, q) => {
             let dp = derivative(p, action, valuation);
             let dq = derivative(q, action, valuation);
-            KatExpr::Alt(Box::new(dp), Box::new(dq))
+            KatExpr::Alt(Arc::new(dp), Arc::new(dq))
         },
         KatExpr::Star(p) => {
             // D_a(p*) = D_a(p) ; p*
             let dp = derivative(p, action, valuation);
-            KatExpr::Seq(Box::new(dp), Box::new(KatExpr::Star(p.clone())))
+            KatExpr::Seq(Arc::new(dp), Arc::new(KatExpr::Star(p.clone())))
         },
     }
 }
@@ -523,7 +524,7 @@ fn simplify(expr: &KatExpr) -> KatExpr {
                 (KatExpr::Zero, _) | (_, KatExpr::Zero) => KatExpr::Zero,
                 (KatExpr::One, _) => sb,
                 (_, KatExpr::One) => sa,
-                _ => KatExpr::Seq(Box::new(sa), Box::new(sb)),
+                _ => KatExpr::Seq(Arc::new(sa), Arc::new(sb)),
             }
         },
         KatExpr::Alt(a, b) => {
@@ -533,7 +534,7 @@ fn simplify(expr: &KatExpr) -> KatExpr {
                 (KatExpr::Zero, _) => sb,
                 (_, KatExpr::Zero) => sa,
                 _ if sa == sb => sa,
-                _ => KatExpr::Alt(Box::new(sa), Box::new(sb)),
+                _ => KatExpr::Alt(Arc::new(sa), Arc::new(sb)),
             }
         },
         KatExpr::Star(inner) => {
@@ -541,7 +542,7 @@ fn simplify(expr: &KatExpr) -> KatExpr {
             match &si {
                 KatExpr::Zero | KatExpr::One => KatExpr::One,
                 KatExpr::Star(_) => si,
-                _ => KatExpr::Star(Box::new(si)),
+                _ => KatExpr::Star(Arc::new(si)),
             }
         },
     }
