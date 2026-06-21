@@ -1,0 +1,1278 @@
+use super::*;
+
+pub(crate) fn collect_refinement_downcast_rule_labels(spec: &LanguageSpec) -> HashSet<String> {
+    let refinement_base_by_name: HashMap<&str, &str> = spec
+        .refinement_types
+        .iter()
+        .map(|r| (r.name.as_str(), r.base_category.as_str()))
+        .collect();
+
+    spec.rules
+        .iter()
+        .filter_map(|rule| {
+            let base_category = refinement_base_by_name.get(rule.category.as_str())?;
+            if !rule.is_cast
+                || rule.cast_source_category.as_deref() != Some(*base_category)
+                || rule.syntax.len() != 1
+            {
+                return None;
+            }
+
+            match &rule.syntax[0] {
+                SyntaxItemSpec::NonTerminal { category, .. }
+                    if category.as_str() == *base_category =>
+                {
+                    Some(rule.label.clone())
+                },
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DB03: Parallel analysis phase execution
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Result of compile-time refinement type analysis.
+#[derive(Debug, Clone, Default)]
+pub struct RefinementAnalysisResult {
+    /// Refinement types whose predicate is unsatisfiable (RT01).
+    pub unsatisfiable: Vec<(String, String)>, // (type_name, reason)
+    /// Refinement types whose predicate is tautological (RT02).
+    pub tautological: Vec<(String, String)>, // (type_name, reason)
+    /// Pairs of refinement types with empty intersection (RT03).
+    pub empty_intersections: Vec<(String, String, String)>, // (type_a, type_b, reason)
+    /// Subtype relationships detected between refinement types (RT04).
+    pub subtype_pairs: Vec<(String, String)>, // (sub, super)
+    /// Decidability tier for each refinement type's predicate (RT05).
+    pub decidability_tiers: Vec<(String, String)>, // (type_name, tier_description)
+    /// Refinement types that shadow a base type name (RT06).
+    pub name_shadows: Vec<(String, String)>, // (refinement_name, base_type_name)
+    /// SFA dispatch analysis: disjointness, subsumption, overlap (RT10).
+    pub dispatch_analysis: Option<crate::type_system::RefinementDispatchAnalysis>,
+}
+
+/// Collected results from the mathematical analysis phase.
+///
+/// All fields correspond to the individual analysis results that the lint
+/// layer and downstream pipeline stages consume. Feature-gated analyses
+/// are behind `#[cfg]` attributes matching the analysis module gates.
+///
+/// This struct allows returning all results from both the parallel and
+/// sequential execution paths without needing uninitialized variable
+/// assignments inside closures.
+pub(crate) struct MathAnalysisResults {
+    /// Number of analysis phases that were executed (for I19 diagnostic).
+    pub phase_count: u32,
+
+    // ── Always-on analyses ──
+    pub safety_result:
+        Option<crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
+    pub cegar_result: Option<crate::cegar::CegarLog>,
+    pub algebraic_result: Option<crate::algebraic::AlgebraicSummary>,
+
+    // ── Feature-gated analyses ──
+    pub confluence_result: Option<crate::confluence::ConfluenceAnalysis>,
+    pub termination_result: Option<crate::termination::TerminationResult>,
+    pub vpa_result: Option<crate::vpa::VpaAnalysis>,
+    pub wta_result: Option<crate::tree_automaton::WtaAnalysis>,
+    pub ewpds_result: Option<crate::ewpds::EwpdsAnalysis>,
+    pub ara_result: Option<crate::ara::AraAnalysis>,
+    pub petri_result: Option<crate::petri::PetriAnalysis>,
+    pub nominal_result: Option<crate::nominal::NominalAnalysis>,
+    pub alternating_result: Option<crate::alternating::AlternatingAnalysis>,
+    pub ltl_results: Option<Vec<crate::ltl::LtlCheckResult>>,
+    pub provenance_result: Option<crate::provenance::ProvenanceAnalysis>,
+    pub cra_result: Option<crate::cra::CraAnalysis>,
+    pub morphism_result: Option<crate::morphism::MorphismCheck>,
+    pub kat_result: Option<crate::kat::KatCheck>,
+    // ── Advanced automata analyses ──
+    pub symbolic_result: Option<crate::symbolic::SymbolicAnalysis>,
+    pub buchi_result: Option<crate::buchi::BuchiAnalysis>,
+    pub mso_result: Option<crate::weighted_mso::MsoAnalysis>,
+    pub probabilistic_result: Option<crate::probabilistic::ProbabilisticAnalysis>,
+    pub register_result: Option<crate::register_automata::RegisterAnalysis>,
+    pub parity_tree_result: Option<crate::parity_tree::ParityTreeAnalysis>,
+    pub multi_tape_result: Option<crate::multi_tape::MultiTapeAnalysis>,
+    pub multiset_result: Option<crate::multiset_automata::MultisetAnalysisResult>,
+    pub two_way_result: Option<crate::two_way_transducer::TwoWayAnalysis>,
+    pub sft_result: Option<crate::sft::SftAnalysis>,
+
+    // ── E-graph equality saturation ──
+    pub egraph_result: Option<crate::egraph::EGraphAnalysis>,
+
+    // ── Constraint theory analyses ──
+    pub presburger_result: Option<crate::presburger::PresburgerAnalysis>,
+    pub unification_result: Option<crate::unification::UnificationAnalysis>,
+    pub lattice_result: Option<crate::lattice_theory::LatticeAnalysis>,
+
+    // ── Refinement type analysis ──
+    pub refinement_analysis: Option<RefinementAnalysisResult>,
+}
+
+/// Count the number of analysis phases based on enabled features.
+///
+/// Always-on: safety, cegar, algebraic (3). Each feature-gated
+/// analysis adds 1 (trs-analysis adds 2 for confluence + termination).
+pub(crate) fn count_analysis_phases() -> u32 {
+    #[allow(unused_mut)] // mut needed when feature flags add to count
+    let mut count = 3u32; // safety, cegar, algebraic
+    {
+        count += 2;
+    } // confluence, termination
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    } // buchi analysis (separate from LTL)
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    count
+}
+
+/// Run all mathematical analyses in parallel using `std::thread::scope`.
+///
+/// All inputs are borrowed references that are `Send + Sync`, allowing
+/// scoped threads to share them without cloning. Each analysis runs in
+/// its own thread; results are joined when the scope exits.
+///
+/// # Panics
+///
+/// Propagates panics from any analysis thread via `.join().expect(...)`.
+pub(crate) fn run_math_analyses_parallel(
+    bundle: &ParserBundle,
+    wpds_analysis: Option<&crate::wpds::WpdsAnalysis>,
+) -> MathAnalysisResults {
+    let all_syntax = &bundle.all_syntax;
+    let categories = &bundle.categories;
+    let wpds_ref = wpds_analysis;
+
+    // Pre-build petri category info outside the thread scope.
+    let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = categories
+        .iter()
+        .map(|c| crate::wpds::WpdsCategoryInfo {
+            name: c.name.clone(),
+            is_primary: c.is_primary,
+        })
+        .collect();
+
+    let phase_count = count_analysis_phases();
+
+    // Phase 7A: Predicate dispatch classification (before thread scope so
+    // spawned threads can borrow it)
+    let dispatch_plan = crate::predicate_dispatch::classify_grammar(all_syntax, categories);
+
+    #[allow(unused_mut)] // mut needed when egraph feature adds post-scope mutation
+    let mut results = std::thread::scope(|s| {
+        // Phase 1: TRS (no dependencies)
+        let h_confluence = s.spawn(|| crate::confluence::analyze_from_bundle(all_syntax, 100));
+        let h_termination = s.spawn(|| crate::termination::analyze_from_bundle(all_syntax));
+
+        // Phase 2: Automata (no dependencies)
+        let h_vpa = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Vpa) {
+                return None;
+            }
+            crate::vpa::analyze_from_bundle(categories, all_syntax)
+        });
+        let h_wta = s.spawn(|| crate::tree_automaton::analyze_from_bundle(categories, all_syntax));
+
+        // Phase 3: WPDS-dependent
+        let h_safety = s.spawn(|| {
+            wpds_ref.and_then(|wa| crate::verify::verify_from_bundle(wa, categories, all_syntax))
+        });
+        let h_cegar = s.spawn(|| wpds_ref.and_then(|wa| crate::cegar::cegar_from_bundle(wa)));
+        let h_algebraic = s.spawn(|| wpds_ref.map(|wa| crate::algebraic::analyze_from_bundle(wa)));
+
+        let h_ewpds =
+            s.spawn(|| wpds_ref.and_then(|wa| crate::ewpds::extend_from_bundle(wa, all_syntax)));
+        let h_ara = s.spawn(|| wpds_ref.map(|wa| crate::ara::analyze_from_bundle(wa, all_syntax)));
+
+        // Phase 4: Concurrency (no dependencies)
+        let h_petri = s.spawn(|| Some(crate::petri::analyze_from_bundle(all_syntax, &petri_cats)));
+        let h_nominal = s.spawn(|| Some(crate::nominal::analyze_from_bundle(all_syntax)));
+        // Phase 5: Temporal
+        let h_ltl = s.spawn(|| wpds_ref.map(|wa| crate::ltl::check_from_bundle(wa)));
+        let h_provenance = s.spawn(|| crate::provenance::track_from_bundle(all_syntax, categories));
+        let h_cra = s.spawn(|| crate::cra::analyze_from_bundle(all_syntax));
+
+        // Phase 6: Meta
+        let h_morphism = s.spawn(|| crate::morphism::check_from_bundle(all_syntax, categories));
+        let h_kat =
+            s.spawn(|| wpds_ref.and_then(|wa| crate::kat::check_from_bundle(wa, all_syntax)));
+
+        // Phase 7B: Advanced automata — conditional spawning via dispatch plan
+        // When predicate-dispatch is disabled, all modules run unconditionally.
+        let h_symbolic = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Symbolic) {
+                return None;
+            }
+            Some(crate::symbolic::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_buchi = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Buchi) {
+                return None;
+            }
+            Some(crate::buchi::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_mso = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Mso) {
+                return None;
+            }
+            Some(crate::weighted_mso::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_probabilistic = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Probabilistic) {
+                return None;
+            }
+            Some(crate::probabilistic::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_register = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Register) {
+                return None;
+            }
+            Some(crate::register_automata::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_parity_tree = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::ParityTree) {
+                return None;
+            }
+            Some(crate::parity_tree::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_multi_tape = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::MultiTape) {
+                return None;
+            }
+            Some(crate::multi_tape::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_multiset = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Multiset) {
+                return None;
+            }
+            Some(crate::multiset_automata::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_two_way = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::TwoWay) {
+                return None;
+            }
+            Some(crate::two_way_transducer::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_sft = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Sft) {
+                return None;
+            }
+            Some(crate::sft::analyze_from_bundle(all_syntax, categories))
+        });
+        let h_alternating = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Awa) {
+                return None;
+            }
+            Some(crate::alternating::analyze_from_bundle(all_syntax, categories))
+        });
+
+        // Phase 8: Constraint theory analyses
+        let h_presburger = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::LinearArithmetic) {
+                return None;
+            }
+            Some(crate::presburger::analyze_from_bundle(all_syntax))
+        });
+        let h_unification = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Unification) {
+                return None;
+            }
+            Some(crate::unification::analyze_from_bundle(all_syntax))
+        });
+        let h_lattice = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::SubtypeLattice) {
+                return None;
+            }
+            Some(crate::lattice_theory::analyze_from_bundle(all_syntax, categories))
+        });
+
+        // Phase 8B: Refinement type analysis (synchronous — lightweight syntactic checks)
+        let refinement_analysis_result: Option<RefinementAnalysisResult> = {
+            if bundle.refinement_types.is_empty() {
+                None
+            } else {
+                Some(analyze_refinement_types(bundle))
+            }
+        };
+
+        // ── Collect results ──────────────────────────────────────────────
+        MathAnalysisResults {
+            phase_count,
+            safety_result: h_safety
+                .join()
+                .expect("DB03: safety verification thread panicked"),
+            cegar_result: h_cegar
+                .join()
+                .expect("DB03: CEGAR refinement thread panicked"),
+            algebraic_result: h_algebraic
+                .join()
+                .expect("DB03: algebraic analysis thread panicked"),
+            confluence_result: h_confluence
+                .join()
+                .expect("DB03: confluence analysis thread panicked"),
+            termination_result: h_termination
+                .join()
+                .expect("DB03: termination analysis thread panicked"),
+            vpa_result: h_vpa.join().expect("DB03: VPA analysis thread panicked"),
+            wta_result: h_wta.join().expect("DB03: WTA analysis thread panicked"),
+            ewpds_result: h_ewpds
+                .join()
+                .expect("DB03: EWPDS analysis thread panicked"),
+            ara_result: h_ara.join().expect("DB03: ARA analysis thread panicked"),
+            petri_result: h_petri
+                .join()
+                .expect("DB03: Petri net analysis thread panicked"),
+            nominal_result: h_nominal
+                .join()
+                .expect("DB03: nominal analysis thread panicked"),
+            alternating_result: h_alternating
+                .join()
+                .expect("DB03: alternating analysis thread panicked"),
+            ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
+            provenance_result: h_provenance
+                .join()
+                .expect("DB03: provenance tracking thread panicked"),
+            cra_result: h_cra.join().expect("DB03: CRA analysis thread panicked"),
+            morphism_result: h_morphism
+                .join()
+                .expect("DB03: morphism check thread panicked"),
+            kat_result: h_kat.join().expect("DB03: KAT check thread panicked"),
+            symbolic_result: h_symbolic
+                .join()
+                .expect("DB03: symbolic analysis thread panicked"),
+            buchi_result: h_buchi
+                .join()
+                .expect("DB03: Büchi analysis thread panicked"),
+            mso_result: h_mso.join().expect("DB03: MSO analysis thread panicked"),
+            probabilistic_result: h_probabilistic
+                .join()
+                .expect("DB03: probabilistic analysis thread panicked"),
+            register_result: h_register
+                .join()
+                .expect("DB03: register analysis thread panicked"),
+            parity_tree_result: h_parity_tree
+                .join()
+                .expect("DB03: parity tree analysis thread panicked"),
+            multi_tape_result: h_multi_tape
+                .join()
+                .expect("DB03: multi-tape analysis thread panicked"),
+            multiset_result: h_multiset
+                .join()
+                .expect("DB03: multiset analysis thread panicked"),
+            two_way_result: h_two_way
+                .join()
+                .expect("DB03: two-way transducer analysis thread panicked"),
+            sft_result: h_sft.join().expect("DB03: SFT analysis thread panicked"),
+            // ── E-graph equality saturation; populated after confluence joins ──
+            egraph_result: None,
+            // ── Constraint theory analyses ──
+            presburger_result: h_presburger
+                .join()
+                .expect("DB03: Presburger analysis thread panicked"),
+            unification_result: h_unification
+                .join()
+                .expect("DB03: Unification analysis thread panicked"),
+            lattice_result: h_lattice
+                .join()
+                .expect("DB03: Lattice analysis thread panicked"),
+            // ── Refinement type analysis ──
+            refinement_analysis: refinement_analysis_result,
+        }
+    });
+
+    // Phase 8C: E-graph equality saturation (sequential — depends on confluence result)
+    {
+        // egraph feature implies trs-analysis, so confluence_result is available
+        let confluence_ref = results.confluence_result.as_ref();
+        let egraph_result = crate::egraph::analyze_from_bundle(
+            &bundle.all_syntax,
+            confluence_ref,
+            &crate::egraph::EGraphConfig::default(),
+        );
+        results.egraph_result = egraph_result;
+    }
+
+    results
+}
+
+/// Run all mathematical analyses sequentially (fallback when DB03 gate is off
+/// or grammar is not eligible).
+pub(crate) fn run_math_analyses_sequential(
+    bundle: &ParserBundle,
+    wpds_analysis: Option<&crate::wpds::WpdsAnalysis>,
+    eligible: bool,
+) -> MathAnalysisResults {
+    // Build dispatch plan for sequential path so dispatch gates are respected.
+    let dispatch_plan =
+        crate::predicate_dispatch::classify_grammar(&bundle.all_syntax, &bundle.categories);
+
+    /// Helper macro: returns `None` when dispatch says module is not needed.
+    /// The inner `#[cfg]` gate ensures this compiles when `predicate-dispatch` is off.
+    #[allow(unused_macros)]
+    macro_rules! dispatch_gate {
+        ($module:ident) => {{
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::$module) {
+                return None;
+            }
+        }};
+    }
+
+    MathAnalysisResults {
+        phase_count: 0,
+
+        // Always-on analyses
+        safety_result: if eligible {
+            wpds_analysis.and_then(|wa| {
+                crate::verify::verify_from_bundle(wa, &bundle.categories, &bundle.all_syntax)
+            })
+        } else {
+            None
+        },
+        cegar_result: if eligible {
+            wpds_analysis.and_then(|wa| crate::cegar::cegar_from_bundle(wa))
+        } else {
+            None
+        },
+        algebraic_result: if eligible {
+            wpds_analysis.map(|wa| crate::algebraic::analyze_from_bundle(wa))
+        } else {
+            None
+        },
+
+        // Feature-gated analyses
+        confluence_result: if eligible {
+            crate::confluence::analyze_from_bundle(&bundle.all_syntax, 100)
+        } else {
+            None
+        },
+        termination_result: if eligible {
+            crate::termination::analyze_from_bundle(&bundle.all_syntax)
+        } else {
+            None
+        },
+        vpa_result: if eligible {
+            (|| {
+                dispatch_gate!(Vpa);
+                crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
+            })()
+        } else {
+            None
+        },
+        wta_result: if eligible {
+            crate::tree_automaton::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
+        } else {
+            None
+        },
+        ewpds_result: if eligible {
+            wpds_analysis.and_then(|wa| crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax))
+        } else {
+            None
+        },
+        ara_result: if eligible {
+            wpds_analysis.map(|wa| crate::ara::analyze_from_bundle(wa, &bundle.all_syntax))
+        } else {
+            None
+        },
+        petri_result: if eligible {
+            let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
+                .categories
+                .iter()
+                .map(|c| crate::wpds::WpdsCategoryInfo {
+                    name: c.name.clone(),
+                    is_primary: c.is_primary,
+                })
+                .collect();
+            Some(crate::petri::analyze_from_bundle(&bundle.all_syntax, &petri_cats))
+        } else {
+            None
+        },
+        nominal_result: if eligible {
+            Some(crate::nominal::analyze_from_bundle(&bundle.all_syntax))
+        } else {
+            None
+        },
+        alternating_result: if eligible {
+            (|| {
+                dispatch_gate!(Awa);
+                Some(crate::alternating::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        ltl_results: if eligible {
+            wpds_analysis.map(|wa| crate::ltl::check_from_bundle(wa))
+        } else {
+            None
+        },
+        provenance_result: if eligible {
+            crate::provenance::track_from_bundle(&bundle.all_syntax, &bundle.categories)
+        } else {
+            None
+        },
+        cra_result: if eligible {
+            crate::cra::analyze_from_bundle(&bundle.all_syntax)
+        } else {
+            None
+        },
+        morphism_result: if eligible {
+            crate::morphism::check_from_bundle(&bundle.all_syntax, &bundle.categories)
+        } else {
+            None
+        },
+        kat_result: if eligible {
+            wpds_analysis.and_then(|wa| crate::kat::check_from_bundle(wa, &bundle.all_syntax))
+        } else {
+            None
+        },
+        symbolic_result: if eligible {
+            (|| {
+                dispatch_gate!(Symbolic);
+                Some(crate::symbolic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else {
+            None
+        },
+        buchi_result: if eligible {
+            (|| {
+                dispatch_gate!(Buchi);
+                Some(crate::buchi::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else {
+            None
+        },
+        mso_result: if eligible {
+            (|| {
+                dispatch_gate!(Mso);
+                Some(crate::weighted_mso::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        probabilistic_result: if eligible {
+            (|| {
+                dispatch_gate!(Probabilistic);
+                Some(crate::probabilistic::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        register_result: if eligible {
+            (|| {
+                dispatch_gate!(Register);
+                Some(crate::register_automata::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        parity_tree_result: if eligible {
+            (|| {
+                dispatch_gate!(ParityTree);
+                Some(crate::parity_tree::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        multi_tape_result: if eligible {
+            (|| {
+                dispatch_gate!(MultiTape);
+                Some(crate::multi_tape::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else {
+            None
+        },
+        multiset_result: if eligible {
+            (|| {
+                dispatch_gate!(Multiset);
+                Some(crate::multiset_automata::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        two_way_result: if eligible {
+            (|| {
+                dispatch_gate!(TwoWay);
+                Some(crate::two_way_transducer::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        sft_result: if eligible {
+            (|| {
+                dispatch_gate!(Sft);
+                Some(crate::sft::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else {
+            None
+        },
+        // ── E-graph equality saturation; populated by the pipeline caller ──
+        egraph_result: None,
+        // ── Constraint theory analyses ──
+        presburger_result: if eligible {
+            (|| {
+                dispatch_gate!(LinearArithmetic);
+                Some(crate::presburger::analyze_from_bundle(&bundle.all_syntax))
+            })()
+        } else {
+            None
+        },
+        unification_result: if eligible {
+            (|| {
+                dispatch_gate!(Unification);
+                Some(crate::unification::analyze_from_bundle(&bundle.all_syntax))
+            })()
+        } else {
+            None
+        },
+        lattice_result: if eligible {
+            (|| {
+                dispatch_gate!(SubtypeLattice);
+                Some(crate::lattice_theory::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        // ── Refinement type analysis ──
+        refinement_analysis: if !bundle.refinement_types.is_empty() {
+            Some(analyze_refinement_types(bundle))
+        } else {
+            None
+        },
+    }
+}
+
+/// Analyze refinement type definitions from the language specification.
+///
+/// This runs at compile time during `language!` macro expansion. It checks:
+/// - RT01: predicate unsatisfiability (dead refinement type)
+/// - RT02: predicate tautology (refinement equivalent to base type)
+/// - RT03: pairwise empty intersection
+/// - RT04: pairwise subtype detection
+/// - RT05: decidability tier classification
+/// - RT06: name shadowing of base types
+pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
+    use crate::RefinementPredKind;
+
+    let mut result = RefinementAnalysisResult::default();
+    let spec = &bundle.refinement_types;
+
+    // Refinement declarations also introduce a same-named category so the
+    // parser can construct refined terms. RT06 should ignore that expected
+    // category and report only an independent base-category collision.
+    let mut category_name_counts: HashMap<String, usize> = HashMap::new();
+    for category in &bundle.categories {
+        *category_name_counts
+            .entry(category.name.to_ascii_lowercase())
+            .or_default() += 1;
+    }
+    let mut refinement_name_counts: HashMap<String, usize> = HashMap::new();
+    for rt in spec {
+        *refinement_name_counts
+            .entry(rt.name.to_ascii_lowercase())
+            .or_default() += 1;
+    }
+
+    for rt in spec {
+        // RT05: Classify decidability tier based on predicate kind
+        let tier = match rt.predicate_kind {
+            RefinementPredKind::Presburger => "T2 (decidable, automata-based)".to_string(),
+            RefinementPredKind::Structural => "T2 (decidable, unification-based)".to_string(),
+            RefinementPredKind::Behavioral => "T3 (bounded, quantified)".to_string(),
+            RefinementPredKind::Mixed => "T3 (bounded, mixed constraint domains)".to_string(),
+        };
+        result.decidability_tiers.push((rt.name.clone(), tier));
+
+        // RT06: Check if the refinement name shadows a base category name.
+        let refinement_key = rt.name.to_ascii_lowercase();
+        let base_key = rt.base_category.to_ascii_lowercase();
+        let category_count = category_name_counts
+            .get(&refinement_key)
+            .copied()
+            .unwrap_or(0);
+        let refinement_count = refinement_name_counts
+            .get(&refinement_key)
+            .copied()
+            .unwrap_or(0);
+        if refinement_key == base_key || category_count > refinement_count {
+            let shadowed_name = if refinement_key == base_key {
+                rt.base_category.clone()
+            } else {
+                rt.name.clone()
+            };
+            result.name_shadows.push((rt.name.clone(), shadowed_name));
+        }
+
+        // RT01/RT02: Predicate analysis
+        // For now, mark predicates that are syntactically trivial.
+        // Full satisfiability checking requires the actual ConstraintTheory
+        // instances (Presburger NFA, etc.) which are only available when
+        // the corresponding features are enabled. The per-predicate analysis
+        // is deferred to the feature-gated analysis modules.
+        if rt.predicate_repr == "true" || rt.predicate_repr.is_empty() {
+            result
+                .tautological
+                .push((rt.name.clone(), "predicate is trivially true".to_string()));
+        } else if rt.predicate_repr == "false" {
+            result
+                .unsatisfiable
+                .push((rt.name.clone(), "predicate is trivially false".to_string()));
+        }
+    }
+
+    // RT03/RT04/RT10: SFA dispatch analysis + pairwise overlap/subsumption
+    // Uses the RefinementDispatchAnalysis from type_system.rs for predicate-aware
+    // disjointness and subsumption checking.
+    let dispatch = crate::type_system::analyze_refinement_dispatch(spec);
+
+    // Merge dispatch results into the RT03/RT04 lints
+    for (sub, sup) in &dispatch.subtype_pairs {
+        if !result
+            .subtype_pairs
+            .iter()
+            .any(|(s, p)| s == sub && p == sup)
+        {
+            result.subtype_pairs.push((sub.clone(), sup.clone()));
+        }
+    }
+    for (a, b) in &dispatch.disjoint_pairs {
+        // Disjoint pairs don't trigger RT03 — they're the *absence* of
+        // empty intersection (both are individually satisfiable but share
+        // no values). RT03 is about detecting that the intersection is empty
+        // when the user might have expected overlap.
+        // (No-op: disjointness is informational, not a warning)
+        let _ = (a, b);
+    }
+    for (a, b) in &dispatch.overlapping_pairs {
+        // Overlapping predicates: potential dispatch ambiguity.
+        // This feeds into future lint for dispatch safety.
+        let _ = (a, b);
+    }
+
+    result.dispatch_analysis = Some(dispatch);
+
+    result
+}
+
+/// Bundle of advanced automata analysis results for codegen promotion.
+///
+/// Passed to [`build_pipeline_analysis()`] to integrate feature-gated analysis
+/// data into the pipeline. Each field is `Option<&AnalysisType>` — `None` when
+/// the corresponding analysis was not run (e.g., no grammar features triggered it).
+pub(crate) struct AdvancedAnalysisBundle<'a> {
+    pub(crate) symbolic: Option<&'a crate::symbolic::SymbolicAnalysis>,
+    pub(crate) alternating: Option<&'a crate::alternating::AlternatingAnalysis>,
+    pub(crate) vpa: Option<&'a crate::vpa::VpaAnalysis>,
+    pub(crate) register: Option<&'a crate::register_automata::RegisterAnalysis>,
+    pub(crate) probabilistic: Option<&'a crate::probabilistic::ProbabilisticAnalysis>,
+    pub(crate) multi_tape: Option<&'a crate::multi_tape::MultiTapeAnalysis>,
+    pub(crate) buchi: Option<&'a crate::buchi::BuchiAnalysis>,
+    /// PhantomData to bind the lifetime when no advanced features are enabled.
+    pub(crate) _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+/// Build a [`PipelineAnalysis`] from the data computed during parser code generation.
+///
+/// Extracts constructor weights from prediction WFSTs, computes category-level
+/// averages, identifies fully unreachable categories, and integrates advanced
+/// automata analysis results for codegen optimization promotion.
+///
+/// # Advanced Automata Integration (Sprints 1-7, A3)
+///
+/// When feature-gated analysis results are available, this function:
+/// - **SYM01-DCE**: Extends `dead_rule_labels` with unsatisfiable symbolic guards
+/// - **PR01-DCE**: Extends `dead_rule_labels` with low-selectivity rules (when normalized)
+/// - **PR01-WEIGHT**: Blends probabilistic selectivity into `constructor_weights`
+/// - **N06-ISO**: Extends `isomorphic_groups` with bisimulation-equivalent category pairs
+/// - **A3**: Adds +0.5 tropical weight penalty to constructors of bisimilar categories'
+///   lexicographically second member, reducing redundant NFA try-all work
+/// - **RA01-SKIP**: Populates `dead_binder_categories` from dead register analysis
+/// - **V05-INFO**: Sets `bracket_deterministic` flag from VPA analysis
+/// - **MT01-INFO**: Populates `independent_categories` from disconnected tape analysis
+pub(crate) fn build_pipeline_analysis(
+    dead_rules: &HashSet<String>,
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+    categories: &[CategoryInfo],
+    rule_infos: &[RuleInfo],
+    decision_trees: HashMap<String, crate::decision_tree::CategoryDecisionTree>,
+    _advanced: &AdvancedAnalysisBundle<'_>,
+) -> crate::PipelineAnalysis {
+    let mut constructor_weights = HashMap::new();
+    let mut category_weights = HashMap::new();
+
+    // Extract per-constructor weights from each category's PredictionWfst.
+    // Each WeightedAction in the WFST's action table maps a dispatch decision
+    // (constructor rule label) to a tropical weight (lower = more frequent).
+    for (cat_name, wfst) in prediction_wfsts {
+        let mut cat_total_weight = 0.0_f64;
+        let mut cat_action_count = 0_usize;
+
+        for action in &wfst.actions {
+            let label = action.action.rule_label();
+            let weight = action.weight.value();
+            // Use the minimum weight if a constructor appears in multiple categories.
+            // Minimum weight = highest frequency = most useful for ordering.
+            let entry = constructor_weights.entry(label).or_insert(f64::INFINITY);
+            if weight < *entry {
+                *entry = weight;
+            }
+            cat_total_weight += weight;
+            cat_action_count += 1;
+        }
+
+        if cat_action_count > 0 {
+            category_weights.insert(cat_name.clone(), cat_total_weight / cat_action_count as f64);
+        }
+    }
+
+    // ── Sprint 3 (PR01-WEIGHT): Blend probabilistic selectivity into constructor weights ──
+    if let Some(prob) = _advanced.probabilistic {
+        if prob.is_normalized {
+            for (label, selectivity) in &prob.rule_selectivities {
+                if *selectivity > 0.0 {
+                    let prob_weight = -selectivity.ln(); // tropical: lower = more frequent
+                    let existing = constructor_weights
+                        .get(label.as_str())
+                        .copied()
+                        .unwrap_or(f64::INFINITY);
+                    // Geometric mean blend: (WFST_weight + prob_weight) / 2
+                    constructor_weights.insert(label.clone(), (existing + prob_weight) / 2.0);
+                }
+            }
+        }
+    }
+
+    // ── Dead rule extension from advanced automata analyses ───────────────
+    // mut needed when symbolic-automata or probabilistic features extend the set.
+    #[allow(unused_mut)]
+    let mut dead_rules_extended = dead_rules.clone();
+
+    // Sprint 1 (SYM01-DCE): Unsatisfiable symbolic guards → dead rules
+    if let Some(sym) = _advanced.symbolic {
+        for label in &sym.unsatisfiable_rule_labels {
+            dead_rules_extended.insert(label.clone());
+        }
+    }
+
+    // Sprint 2 (PR01-DCE): Low-selectivity rules → dead rules (only when normalized)
+    if let Some(prob) = _advanced.probabilistic {
+        if prob.is_normalized && !prob.low_selectivity_rules.is_empty() {
+            for label in &prob.low_selectivity_rules {
+                dead_rules_extended.insert(label.clone());
+            }
+        }
+    }
+
+    // Determine unreachable categories: categories where ALL rules are dead.
+    let mut unreachable_categories = HashSet::new();
+    for cat in categories {
+        let all_dead = rule_infos
+            .iter()
+            .filter(|r| r.category == cat.name)
+            .all(|r| dead_rules_extended.contains(&r.label));
+        // Only mark as unreachable if the category actually has rules
+        let has_rules = rule_infos.iter().any(|r| r.category == cat.name);
+        if has_rules && all_dead {
+            unreachable_categories.insert(cat.name.clone());
+        }
+    }
+
+    // Sprint 8: Detect isomorphic WFST groups using De Bruijn canonicalization.
+    // mut needed when feature = "alternating" extends groups with bisimulation equivalences.
+    #[allow(unused_mut)]
+    let mut isomorphic_groups = group_isomorphic_wfsts(prediction_wfsts);
+
+    // ── Sprint 4 (N06-ISO): Extend isomorphic groups with bisimulation equivalences ──
+    if let Some(alt) = _advanced.alternating {
+        // Collect new bisimulation groups into a separate vec to avoid borrow conflict.
+        let new_groups = {
+            // Categories already in De Bruijn groups
+            let already_grouped: HashSet<&str> = isomorphic_groups
+                .iter()
+                .flatten()
+                .map(|s| s.as_str())
+                .collect();
+
+            // Build set of non-bisimilar pairs for fast lookup
+            let non_bisimilar: HashSet<(&str, &str)> = alt
+                .non_bisimilar_pairs
+                .iter()
+                .flat_map(|(a, b)| vec![(a.as_str(), b.as_str()), (b.as_str(), a.as_str())])
+                .collect();
+
+            // Find bisimilar pairs not already grouped
+            let cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+            let mut groups = Vec::new();
+            for i in 0..cat_names.len() {
+                for j in (i + 1)..cat_names.len() {
+                    let a = cat_names[i];
+                    let b = cat_names[j];
+                    if !already_grouped.contains(a)
+                        && !already_grouped.contains(b)
+                        && !non_bisimilar.contains(&(a, b))
+                    {
+                        groups.push(vec![a.to_string(), b.to_string()]);
+                    }
+                }
+            }
+            groups
+        };
+        isomorphic_groups.extend(new_groups);
+    }
+
+    // ── Sprint A3: Bisimilar weight discount ──
+    // Deprioritize the lexicographically second category in each bisimilar pair
+    // by adding 0.5 to its constructor weights. This reduces redundant NFA try-all
+    // work when two categories accept the same language (bisimilar).
+    if let Some(alt) = _advanced.alternating {
+        let cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+        let non_bisimilar: HashSet<(&str, &str)> = alt
+            .non_bisimilar_pairs
+            .iter()
+            .flat_map(|(a, b)| vec![(a.as_str(), b.as_str()), (b.as_str(), a.as_str())])
+            .collect();
+
+        // Build rule-label → category mapping for weight lookup
+        let rule_to_cat: HashMap<&str, &str> = rule_infos
+            .iter()
+            .map(|r| (r.label.as_str(), r.category.as_str()))
+            .collect();
+
+        // Collect all deprioritized categories
+        let mut deprioritized_cats: HashSet<&str> = HashSet::new();
+        for i in 0..cat_names.len() {
+            for j in (i + 1)..cat_names.len() {
+                let a = cat_names[i];
+                let b = cat_names[j];
+                if !non_bisimilar.contains(&(a, b)) {
+                    // Bisimilar pair — deprioritize the lexicographically second
+                    let deprioritized = if a > b { a } else { b };
+                    deprioritized_cats.insert(deprioritized);
+                }
+            }
+        }
+
+        // Apply +0.5 tropical weight penalty to all rules in deprioritized categories
+        for (label, weight) in constructor_weights.iter_mut() {
+            if let Some(&cat) = rule_to_cat.get(label.as_str()) {
+                if deprioritized_cats.contains(cat) {
+                    *weight += 0.5;
+                }
+            }
+        }
+    }
+
+    // Build action maps after bisimulation extension so they reflect all groups.
+    let isomorphic_action_maps = build_isomorphic_action_maps(prediction_wfsts, &isomorphic_groups);
+
+    // ── Sprint 5 (RA01-SKIP): Dead registers → skip binder alpha-equivalence ──
+    let dead_binder_categories = if let Some(reg) = _advanced.register {
+        // Map dead register indices to category names.
+        // In register automata analysis, register index i corresponds to
+        // the i-th category. A dead register means the binder associated
+        // with that category's scope is stored but never tested.
+        reg.dead_registers
+            .iter()
+            .filter_map(|&idx| categories.get(idx).map(|c| c.name.clone()))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // ── Sprint 6 (V05-INFO): VPA bracket deterministic flag ──
+    let bracket_deterministic = _advanced
+        .vpa
+        .map_or(false, |v| v.is_determinizable && v.alphabet_mismatches.is_empty());
+
+    // ── Sprint A1: VPA nesting depth bound ──
+    let vpa_max_nesting_bound = _advanced.vpa.map(|v| v.max_nesting_bound);
+
+    // ── Sprint A2: VPA bracket mismatch tokens ──
+    let bracket_mismatch_tokens: HashSet<String> = _advanced
+        .vpa
+        .map_or_else(HashSet::new, |v| v.alphabet_mismatches.iter().cloned().collect());
+
+    // ── Sprint 7 (MT01-INFO): Independent categories from multi-tape analysis ──
+    let independent_categories = if let Some(mt) = _advanced.multi_tape {
+        mt.disconnected_tapes
+            .iter()
+            .filter_map(|&idx| categories.get(idx).map(|c| c.name.clone()))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // ── Sprint C1: Guard-disambiguated tokens ──
+    // Tokens where one category's guard subsumes another's can be dispatched
+    // without backtracking. A subsumed guard pair (A, B) means guard A ⊂ guard B,
+    // so the subsuming category can be tried first deterministically.
+    let guard_disambiguated_tokens: HashSet<String> = if let Some(sym) = _advanced.symbolic {
+        sym.subsumed_guards
+            .iter()
+            .map(|(subsumed, _subsumer)| subsumed.clone())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // ── Sprint C3: Per-category entropy from probabilistic analysis ──
+    // Compute Shannon entropy per category from rule selectivities.
+    // High entropy → more ambiguous alternatives → wider beam needed.
+    // Categories with a single dominant rule have entropy near zero.
+    let per_category_entropy: HashMap<String, f64> = if let Some(prob) = _advanced.probabilistic {
+        // Group rule selectivities by category and compute per-category entropy.
+        let mut cat_probs: HashMap<String, Vec<f64>> = HashMap::new();
+        for (qualified_label, &selectivity) in &prob.rule_selectivities {
+            // qualified_label format is "Category::Rule"
+            if let Some(cat) = qualified_label.split("::").next() {
+                cat_probs
+                    .entry(cat.to_string())
+                    .or_default()
+                    .push(selectivity);
+            }
+        }
+
+        let mut entropy_map = HashMap::new();
+        for (cat, probs) in &cat_probs {
+            let sum: f64 = probs.iter().sum();
+            if sum > 0.0 {
+                let mut entropy = 0.0_f64;
+                for &p in probs {
+                    let normalized = p / sum;
+                    if normalized > 0.0 {
+                        entropy -= normalized * normalized.ln();
+                    }
+                }
+                entropy_map.insert(cat.clone(), entropy);
+            }
+        }
+        entropy_map
+    } else {
+        HashMap::new()
+    };
+
+    // ── Recursive SCC categories from Buchi analysis ──
+    // Categories participating in accepting SCCs (recursive grammar loops).
+    // Recovery prefers InsertToken in these categories to maintain the loop.
+    let recursive_scc_categories: HashSet<String> = if let Some(buchi) = _advanced.buchi {
+        buchi.accepting_sccs.iter().flatten().cloned().collect()
+    } else {
+        HashSet::new()
+    };
+
+    crate::PipelineAnalysis {
+        dead_rule_labels: dead_rules_extended,
+        unreachable_categories,
+        constructor_weights,
+        category_weights,
+        isomorphic_groups,
+        isomorphic_action_maps,
+        decision_trees,
+        dead_binder_categories,
+        bracket_deterministic,
+        vpa_max_nesting_bound,
+        bracket_mismatch_tokens,
+        independent_categories,
+        guard_disambiguated_tokens,
+        per_category_entropy,
+        recursive_scc_categories,
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Sprint 8: Isomorphic WFST detection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Group categories whose PredictionWFSTs are alpha-equivalent (isomorphic).
+///
+/// Two WFSTs are alpha-equivalent if they have identical De Bruijn-canonicalized
+/// structure: same states, same transitions, same weights, same action shapes —
+/// but potentially different action labels (rule names, category names).
+///
+/// Only returns groups with ≥2 members. Categories within each group are sorted
+/// alphabetically for deterministic output.
+fn group_isomorphic_wfsts(prediction_wfsts: &HashMap<String, PredictionWfst>) -> Vec<Vec<String>> {
+    use crate::wfst::CanonicalWfstStructure;
+
+    // Compute canonical structure for each category's WFST
+    let mut canonical_groups: HashMap<CanonicalWfstStructure, Vec<String>> = HashMap::new();
+
+    for (cat_name, wfst) in prediction_wfsts {
+        let canonical = wfst.canonical_structure();
+        canonical_groups
+            .entry(canonical)
+            .or_default()
+            .push(cat_name.clone());
+    }
+
+    // Keep only groups with ≥2 members, sort members for deterministic output
+    let mut groups: Vec<Vec<String>> = canonical_groups
+        .into_values()
+        .filter(|group| group.len() >= 2)
+        .map(|mut group| {
+            group.sort();
+            group
+        })
+        .collect();
+
+    // Sort groups by first member for deterministic ordering
+    groups.sort_by(|a, b| a[0].cmp(&b[0]));
+    groups
+}
+
+/// Build per-group De Bruijn action maps.
+///
+/// For each isomorphic group, maps De Bruijn action index → `Vec<(category, rule_label)>`.
+/// This records which concrete action label in each category corresponds to each
+/// De Bruijn position, enabling template instantiation to substitute the correct names.
+fn build_isomorphic_action_maps(
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+    isomorphic_groups: &[Vec<String>],
+) -> Vec<HashMap<u32, Vec<(String, String)>>> {
+    isomorphic_groups
+        .iter()
+        .map(|group| {
+            let mut action_map: HashMap<u32, Vec<(String, String)>> = HashMap::new();
+
+            for cat_name in group {
+                if let Some(wfst) = prediction_wfsts.get(cat_name) {
+                    // Re-compute the De Bruijn mapping for this WFST
+                    let mut action_debruijn: HashMap<u32, u32> = HashMap::new();
+                    let mut next_debruijn: u32 = 0;
+
+                    for state in &wfst.states {
+                        let mut sorted_trans: Vec<_> = state.transitions.iter().collect();
+                        sorted_trans.sort_by_key(|t| (t.input, t.action_idx));
+
+                        for t in sorted_trans {
+                            let db_idx =
+                                *action_debruijn.entry(t.action_idx).or_insert_with(|| {
+                                    let idx = next_debruijn;
+                                    next_debruijn += 1;
+                                    idx
+                                });
+
+                            // Record this category's concrete label at this De Bruijn position
+                            if let Some(wa) = wfst.actions.get(t.action_idx as usize) {
+                                let label = wa.action.rule_label();
+                                action_map
+                                    .entry(db_idx)
+                                    .or_default()
+                                    .push((cat_name.clone(), label));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Deduplicate: each (category, label) pair should appear only once per De Bruijn index
+            for entries in action_map.values_mut() {
+                entries.sort();
+                entries.dedup();
+            }
+
+            action_map
+        })
+        .collect()
+}
