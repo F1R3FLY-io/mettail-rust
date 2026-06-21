@@ -217,12 +217,24 @@ pub mod parser;
 /// backward compatibility.
 pub mod behavioral_pred;
 
+// `cek` (reactive CEK-machine parser infrastructure) and `channel` (green-thread
+// MPMC/join-pattern infrastructure) are PARKED behind off-by-default features as of
+// 2026-06-21 (production-readiness pass). Liveness verified at this commit: no
+// checked-in code references `mettail_prattail::cek::*` (the traced-parser codegen
+// that emitted it was removed; only doc-comments remain), and `channel`'s sole
+// consumer `pipeline::analyze_green_thread_safety` is itself uncalled. The code is
+// NOT deleted — it stays compilable under `--features green-threads` (which also
+// enables `cek-runtime` plus the cek/channel-only `dashmap`/`crossbeam-*`/`num_cpus`
+// deps), honoring `channel.rs`'s own documented gating intent.
+
 /// CEK machine architecture: reactive state machine, trace entries,
 /// incremental session, environment infrastructure.
+#[cfg(feature = "cek-runtime")]
 pub mod cek;
 
 /// Channel infrastructure: lock-free MPMC queues, channel maps,
 /// join patterns, channel specifications from `channels {}` block.
+#[cfg(feature = "green-threads")]
 pub mod channel;
 
 /// Railroad diagram generation from grammar specifications.

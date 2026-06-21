@@ -5197,6 +5197,9 @@ fn wpds_confirm_trie_dead_rules(
 ///
 /// Constructed by [`analyze_green_thread_safety()`] from a `ChannelsBlockSpec`.
 /// Consumed by the lint layer (GT01–GT06) and the cost-benefit framework.
+//
+// Parked with `channel` (2026-06-21): consumes `channel::ChannelsBlockSpec`; uncalled. See src/lib.rs.
+#[cfg(feature = "green-threads")]
 #[derive(Debug, Clone)]
 pub struct GreenThreadAnalysis {
     /// Phase 3: Petri net deadlock freedom.
@@ -5234,6 +5237,7 @@ pub struct GreenThreadAnalysis {
 ///
 /// # Returns
 /// A [`GreenThreadAnalysis`] with phase verdicts + accumulated GT01–GT06 lints.
+#[cfg(feature = "green-threads")]
 pub fn analyze_green_thread_safety(
     channels_spec: &crate::channel::ChannelsBlockSpec,
     grammar_name: &str,

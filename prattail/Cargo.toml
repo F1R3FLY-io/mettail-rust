@@ -52,6 +52,15 @@ probabilistic = []
 multi-tape = []
 multiset-automata = []
 two-way-transducer = []
+## Reactive CEK-machine parser infrastructure (`src/cek.rs`) and green-thread
+## channel infrastructure (`src/channel.rs`). Parked OFF by default (2026-06-21,
+## production-readiness pass): no checked-in caller exercises them — the traced-parser
+## codegen that emitted `cek::*` was removed (only doc-comments remain), and
+## `channel`'s sole consumer `pipeline::analyze_green_thread_safety` is itself uncalled.
+## Kept live (compilable under the feature); NOT deleted. `green-threads` also pulls in
+## the cek/channel-only deps (`dashmap`/`crossbeam-channel`/`crossbeam-deque`/`num_cpus`).
+cek-runtime = []
+green-threads = ["cek-runtime", "dep:dashmap", "dep:crossbeam-channel", "dep:crossbeam-deque", "dep:num_cpus"]
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
@@ -72,10 +81,14 @@ nalgebra = { version = "0.33" }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
 im = { version = "15" }
-crossbeam-channel = { version = "0.5" }
-crossbeam-deque = { version = "0.8" }
-dashmap = { version = "6" }
-num_cpus = { version = "1" }
+# cek/channel-only deps — now optional, enabled only by the off-by-default
+# `green-threads` feature (see [features] above). `im` stays non-optional: it is used
+# by the live walker (cursor_store, wpda_walker, cohort_lazy, tomita_frontier).
+# (`crossbeam-deque` is currently unreferenced; kept available under the feature.)
+crossbeam-channel = { version = "0.5", optional = true }
+crossbeam-deque = { version = "0.8", optional = true }
+dashmap = { version = "6", optional = true }
+num_cpus = { version = "1", optional = true }
 # Main-branch numeric-literal deps for BigInt/BigRat literal parsing.
 num-bigint = "0.4"
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
