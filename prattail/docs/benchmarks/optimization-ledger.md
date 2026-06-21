@@ -1476,3 +1476,51 @@ campaigns, and its residual cost is intrinsic GLR fan-out allocation. The episod
 hard rule — **a profile %, even a 14% band, does not imply a tractable win; the wall-clock A/B
 (with a drift-controlled swapped re-run) is the only arbiter**, and "no tractable win without a
 research-scale redesign" is a first-class, honest outcome.
+
+---
+
+## Experiment 9: GLR `FrontierNode` arcs-buffer pool — MEASURED REGRESSION, reverted (2026-06-21, task #11 deeper target)
+
+Per explicit direction to **implement and measure** the deeper alloc target (not predict it
+away), the ledger's "only a cursor bump-arena would move the 14%" claim was put to the test
+with its lowest-risk concrete form — a Stage-1 free-list (Plan-agent design).
+
+### What was built (behaviour-preserving)
+
+`TomitaFrontierMap` gained an `arcs_pool: Vec<Vec<FrontierArc>>` + `drain_scratch` reuse;
+`FrontierNode::new`'s `vec![arc]` per fresh key per step was replaced by a recycled buffer
+(`take_arcs_buffer`); the `step_fanout` drain loop was restructured to iterate by `&mut` and
+**recycle every drained node's now-dead `arcs` buffer after the loop** (sound: each arc is
+materialized OUT into an owned `BranchCursor` that `Arc`-clones the interior, so the buffers
+alias nothing live). Validated: prattail 3725/0 + languages 2648/0, **zero parse diffs** — the
+soundness/representation-independence argument held (below `ForwardOrderOnly.v`'s `Cursor :=
+(key,weight)` abstraction).
+
+### A/B (hyperfine ITERS=300, taskset -c4 + perf governor, release/LLVM, vs `8f38b143`)
+
+**REGRESSION in BOTH drift-controlled orderings:** order 1 before 5.727 vs after 5.832 s
+(before 1.02× faster); order 2 (swapped) before 5.679 vs after 5.843 s (before 1.03× faster).
+Re-profile: `malloc` 6.41% / `cfree` 5.99% — **did not drop**. **REVERTED.**
+
+### Why it regressed (the load-bearing lesson)
+
+The per-step `vec![arc]` allocations are **small and allocator-cached** (glibc tcache); the
+pooling machinery — `Vec::pop`/`push` on the free-list, the extra full pass over `drained_nodes`
+to recycle, and the `mem::take`/restore of `drain_scratch` — costs **more cycles than the cheap
+mallocs it elides**. This is the same failure mode as Experiment 8's `Arc<str>` wash, one level
+deeper: **for small, hot, allocator-cached allocations, the bookkeeping to reuse them exceeds the
+cost of just allocating them.** It also confirms, now by MEASUREMENT rather than prediction, that
+the ledger's "cursor bump-arena" would face the identical overhead-exceeds-savings wall for these
+allocations — the arena's per-cursor handle indirection + reset bookkeeping is strictly more
+overhead than this free-list, against the same cheap mallocs.
+
+### Final verdict on the runtime-parse allocation target (Experiments 7–9)
+
+Five attempts, one ~1% win (the empty-mark `Arc` sentinel, Experiment 8, kept). The runtime
+parser was already alloc-optimized to the point where its residual ~14% `malloc`/`free` is
+**diffuse, cheap, allocator-cached, and intrinsic to the GLR fan-out** — not reducible by
+pooling/arena reuse, because the reuse bookkeeping costs more than the cached allocations. The
+honest, **measured** conclusion: there is no further tractable runtime-parse allocation win
+without changing the fan-out *algorithm* (fewer cursors), which is a parser-design change, not a
+perf tweak. The "benchmark/profile before optimizing" rule held at every step; three self-time-
+justified hypotheses + this pooling attempt all failed the wall-clock A/B.
