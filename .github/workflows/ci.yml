@@ -68,9 +68,27 @@ jobs:
           path: target
           key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run tests
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Run tests (nextest, ci profile — bounded slow-timeouts)
         run: >
-          cargo test -j1
+          cargo nextest run --profile ci -j1
+          -p ast
+          -p ascent_syntax_export
+          -p macros
+          -p prattail
+          -p rigail
+          -p runtime
+          -p query
+          -p testkit
+          -p dovetail
+
+      # nextest does not execute doctests; run them separately so doc examples
+      # stay covered after the migration.
+      - name: Run doctests
+        run: >
+          cargo test --doc -j1
           -p ast
           -p ascent_syntax_export
           -p macros
@@ -182,6 +200,27 @@ jobs:
           --all-targets
           -- -D warnings
 
+  prattail-gates:
+    name: Prattail Lints & Feature Rot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustc-codegen-cranelift-preview
+      # No `-D warnings`: prattail carries pre-existing style lints outside this
+      # campaign's scope. The gate is the crate-level Phase-5 attribute
+      # `#![cfg_attr(not(test), deny(clippy::unwrap_used))]` — a reintroduced
+      # production `.unwrap()` makes this step exit non-zero on its own.
+      - name: Prattail clippy (enforces deny(clippy::unwrap_used) on the production path)
+        run: cargo clippy -j1 -p prattail --all-targets
+      # cek.rs / channel.rs are parked behind `green-threads` (Phase 2); compile
+      # them here so the parked speculative code cannot rot silently.
+      - name: Parked-feature rot check (green-threads → cek/channel)
+        run: cargo check -j1 -p prattail --features green-threads
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest
@@ -276,6 +315,10 @@ jobs:
         run: |
           opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-dovetail-requirements'
 
+      - name: Critical zero-admission Rocq gate
+        run: |
+          opam exec -- sh -lc 'ulimit -Sv 6291456; FORMAL_CAPPED_RUN=1 make -C formal -j1 rocq-critical-zero-admission'
+
   architecture-docs:
     name: Rho-Native Architecture Docs
     runs-on: ubuntu-latest
@@ -296,43 +339,47 @@ jobs:
         working-directory: mettail-rust
         run: docs/architecture/rho-native-integration/validate.sh
 
-  # benchmarks:
-  #   name: Benchmark Regression Check
-  #   runs-on: ubuntu-latest
-  #   if: github.event_name == 'pull_request'
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - name: Install mold linker
-  #       run: sudo apt-get update && sudo apt-get install -y mold
-  #
-  #     - name: Install Rust
-  #       uses: dtolnay/rust-toolchain@nightly
-  #       with:
-  #         components: rustc-codegen-cranelift-preview
-  #
-  #     - name: Cache cargo registry
-  #       uses: actions/cache@v4
-  #       with:
-  #         path: ~/.cargo/registry
-  #         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-  #
-  #     - name: Cache cargo build
-  #       uses: actions/cache@v4
-  #       with:
-  #         path: target
-  #         key: ${{ runner.os }}-cargo-bench-target-${{ hashFiles('**/Cargo.lock') }}
-  #
-  #     - name: Run benchmarks
-  #       run: cargo bench -p prattail --bench bench_end_to_end -- --output-format bencher | tee output.txt
-  #
-  #     - name: Store benchmark result
-  #       uses: benchmark-action/github-action-benchmark@v1
-  #       with:
-  #         tool: 'cargo'
-  #         output-file-path: output.txt
-  #         alert-threshold: '120%'
-  #         fail-on-alert: true
-  #         github-token: ${{ secrets.GITHUB_TOKEN }}
-  #         auto-push: false
-  #         comment-on-alert: true
+  benchmarks:
+    name: Benchmark Regression Check (advisory)
+    # PR-only + advisory: shared GitHub runners are too noisy for a hard perf
+    # gate, so this comments regressions on the PR but never fails CI
+    # (fail-on-alert: false). The authoritative perf gate is the local
+    # taskset + performance-governor optimization-ledger (campaign Phase 6).
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-codegen-cranelift-preview
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-bench-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run benchmarks
+        run: cargo bench -p prattail --bench bench_end_to_end -- --output-format bencher | tee output.txt
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'cargo'
+          output-file-path: output.txt
+          alert-threshold: '120%'
+          fail-on-alert: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: false
+          comment-on-alert: true
