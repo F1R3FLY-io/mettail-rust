@@ -4,11 +4,11 @@
 //! facts. The execution artifact here is normalized `rhoapi::Par`; the
 //! Rholang-looking strings carried by `RhoAstSend` are reader annotations only.
 
-use mettail_rho_adapter::{
+use mettail_rholang_adapter::{
     collect_enabled_ambiguity_witnesses, AmbiguityCandidate, AmbiguityWitnessSet,
 };
-use mettail_rho_codegen::RhoAstSend;
-use mettail_rho_runtime::run_normalized_par_for_oracle_and_read_string_tuples;
+use mettail_rholang_codegen::RhoAstSend;
+use mettail_rholang_runtime::run_normalized_par_for_oracle_and_read_string_tuples;
 use models::rhoapi::Par;
 use std::collections::BTreeMap;
 

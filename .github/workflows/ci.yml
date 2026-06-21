@@ -71,14 +71,14 @@ jobs:
       - name: Run tests
         run: >
           cargo test -j1
-          -p mettail-ast
+          -p ast
           -p ascent_syntax_export
-          -p mettail-macros
-          -p mettail-prattail
+          -p macros
+          -p prattail
           -p rigail
-          -p mettail-runtime
-          -p mettail-query
-          -p mettail-testkit
+          -p runtime
+          -p query
+          -p testkit
           -p dovetail
 
   dovetail-exhaustive:
@@ -122,7 +122,7 @@ jobs:
         run: PROPTEST_CASES=2048 cargo test -p dovetail --test properties
 
       - name: Dovetail rewrite inventory audits
-        run: cargo test -p mettail-ast --test dovetail_rewrite_coverage --test dovetail_language_inventory
+        run: cargo test -p ast --test dovetail_rewrite_coverage --test dovetail_language_inventory
 
       - name: MeTTaIL-shaped Dovetail parity harness
         run: DOVETAIL_PARITY_CASES=512 cargo test -p dovetail --test language_shape_parity
@@ -145,18 +145,18 @@ jobs:
       - name: Check MeTTaIL workspace formatting
         run: >
           cargo fmt
-          -p mettail-ast
+          -p ast
           -p ascent_syntax_export
-          -p mettail-macros
-          -p mettail-prattail
+          -p macros
+          -p prattail
           -p rigail
-          -p mettail-runtime
-          -p mettail-query
-          -p mettail-testkit
+          -p runtime
+          -p query
+          -p testkit
           -p dovetail
-          -p mettail-rho-codegen
-          -p mettail-rho-adapter
-          -p mettail-rho-runtime
+          -p rholang-codegen
+          -p rholang-adapter
+          -p rholang-runtime
           -- --check
 
   clippy:
@@ -176,9 +176,9 @@ jobs:
       - name: Rho runtime bridge clippy
         run: >
           cargo clippy --no-deps -j1
-          -p mettail-rho-codegen
-          -p mettail-rho-adapter
-          -p mettail-rho-runtime
+          -p rholang-codegen
+          -p rholang-adapter
+          -p rholang-runtime
           --all-targets
           -- -D warnings
 
@@ -198,9 +198,9 @@ jobs:
         run: >
           cargo doc --no-deps
           -p dovetail
-          -p mettail-rho-codegen
-          -p mettail-rho-adapter
-          -p mettail-rho-runtime
+          -p rholang-codegen
+          -p rholang-adapter
+          -p rholang-runtime
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -221,19 +221,22 @@ jobs:
           components: rustc-codegen-cranelift-preview
 
       - name: Rho codegen gate
-        run: cargo test -j1 -p mettail-rho-codegen
+        run: cargo test -j1 -p rholang-codegen
 
       - name: Rho adapter gate
-        run: cargo test -j1 -p mettail-rho-adapter
+        run: cargo test -j1 -p rholang-adapter
 
       - name: Rho runtime gate
-        run: cargo test -j1 -p mettail-rho-runtime
+        run: cargo test -j1 -p rholang-runtime
 
       - name: rhocalc parser/runtime corpus gate
-        run: cargo test -j1 -p mettail-languages --no-default-features --features rhocalc --test rhocalc_tests
+        run: cargo test -j1 -p languages --no-default-features --features rhocalc --test rhocalc_tests
 
-      - name: Rho-vs-Ascent differential oracle
-        run: cargo test -j1 -p mettail-rho-runtime --features oracle-ascent --test rho_vs_ascent
+      # Retired in P6 (Ascent backend removal): the `oracle-ascent` feature and the
+      # `rho_vs_ascent` test no longer exist, so this differential-oracle step is dead
+      # (it would fail with "unknown feature `oracle-ascent`"). Kept commented for history.
+      # - name: Rho-vs-Ascent differential oracle
+      #   run: cargo test -j1 -p rholang-runtime --features oracle-ascent --test rho_vs_ascent
 
   formal-rho-dovetail:
     name: Rho/Dovetail Rocq Gates
@@ -321,7 +324,7 @@ jobs:
   #         key: ${{ runner.os }}-cargo-bench-target-${{ hashFiles('**/Cargo.lock') }}
   #
   #     - name: Run benchmarks
-  #       run: cargo bench -p mettail-prattail --bench bench_end_to_end -- --output-format bencher | tee output.txt
+  #       run: cargo bench -p prattail --bench bench_end_to_end -- --output-format bencher | tee output.txt
   #
   #     - name: Store benchmark result
   #       uses: benchmark-action/github-action-benchmark@v1

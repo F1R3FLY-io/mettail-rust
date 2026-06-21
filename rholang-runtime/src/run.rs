@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-use mettail_rho_codegen::ValidatedRhoProgram;
+use mettail_rholang_codegen::ValidatedRhoProgram;
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::RuntimeObservationValue;
 use models::rhoapi::expr::ExprInstance;

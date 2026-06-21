@@ -1,15 +1,18 @@
 [package]
-name = "mettail-testkit"
+name = "testkit"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Auto-generated test framework for MeTTaIL language! specifications"
 
+[lib]
+name = "mettail_testkit"
+
 [features]
 default = []
 
 [dependencies]
-mettail-runtime = { path = "../runtime" }
-mettail-prattail = { path = "../prattail" }
+mettail-runtime = { package = "runtime", path = "../runtime" }
+mettail-prattail = { package = "prattail", path = "../prattail" }
 proptest = "1"

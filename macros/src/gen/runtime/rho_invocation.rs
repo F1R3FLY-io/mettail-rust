@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mettail_ast::grammar::NonTerminalKind;
 use mettail_ast::language::LanguageDef;
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::{
     lower_language_def, plan_scalar_invocations, RhoScalarContractShape, RhoScalarInvocationPlan,
     RhoScalarType,
 };
@@ -44,9 +44,9 @@ fn lit(value: &str) -> LitStr {
 
 fn scalar_type_expr(scalar_type: RhoScalarType) -> TokenStream {
     match scalar_type {
-        RhoScalarType::Int => quote! { ::mettail_rho_codegen::RhoScalarType::Int },
-        RhoScalarType::Bool => quote! { ::mettail_rho_codegen::RhoScalarType::Bool },
-        RhoScalarType::Str => quote! { ::mettail_rho_codegen::RhoScalarType::Str },
+        RhoScalarType::Int => quote! { ::mettail_rholang_codegen::RhoScalarType::Int },
+        RhoScalarType::Bool => quote! { ::mettail_rholang_codegen::RhoScalarType::Bool },
+        RhoScalarType::Str => quote! { ::mettail_rholang_codegen::RhoScalarType::Str },
     }
 }
 
@@ -57,7 +57,7 @@ fn abi_expr(plan: &RhoScalarInvocationPlan) -> TokenStream {
             let argument = scalar_type_expr(argument);
             let result = scalar_type_expr(result);
             quote! {
-                ::mettail_rho_codegen::RhoScalarContractShape::UnaryPrefix {
+                ::mettail_rholang_codegen::RhoScalarContractShape::UnaryPrefix {
                     argument: #argument,
                     result: #result,
                 }
@@ -68,7 +68,7 @@ fn abi_expr(plan: &RhoScalarInvocationPlan) -> TokenStream {
             let right = scalar_type_expr(right);
             let result = scalar_type_expr(result);
             quote! {
-                ::mettail_rho_codegen::RhoScalarContractShape::BinaryInfix {
+                ::mettail_rholang_codegen::RhoScalarContractShape::BinaryInfix {
                     left: #left,
                     right: #right,
                     result: #result,
@@ -78,7 +78,7 @@ fn abi_expr(plan: &RhoScalarInvocationPlan) -> TokenStream {
     };
 
     quote! {
-        ::mettail_rho_codegen::RhoScalarContractAbi {
+        ::mettail_rholang_codegen::RhoScalarContractAbi {
             rule_label: #rule_label.to_string(),
             shape: #shape,
         }
@@ -142,17 +142,17 @@ fn literal_extractor(
     let body = match scalar_type {
         RhoScalarType::Int => quote! {
             #category_ident::#variant(value) => {
-                Ok(::mettail_rho_codegen::RhoAstLiteral::Int(i64::from(*value)))
+                Ok(::mettail_rholang_codegen::RhoAstLiteral::Int(i64::from(*value)))
             }
         },
         RhoScalarType::Bool => quote! {
             #category_ident::#variant(value) => {
-                Ok(::mettail_rho_codegen::RhoAstLiteral::Bool(*value))
+                Ok(::mettail_rholang_codegen::RhoAstLiteral::Bool(*value))
             }
         },
         RhoScalarType::Str => quote! {
             #category_ident::#variant(value) => {
-                Ok(::mettail_rho_codegen::RhoAstLiteral::String(value.clone()))
+                Ok(::mettail_rholang_codegen::RhoAstLiteral::String(value.clone()))
             }
         },
     };
@@ -160,7 +160,7 @@ fn literal_extractor(
     Ok(quote! {
         fn #function_name(
             term: &#category_ident,
-        ) -> Result<::mettail_rho_codegen::RhoAstLiteral, String> {
+        ) -> Result<::mettail_rholang_codegen::RhoAstLiteral, String> {
             match term {
                 #body,
                 other => Err(format!(
@@ -184,10 +184,10 @@ fn build_invocation_expr(plan: &RhoScalarInvocationPlan) -> TokenStream {
     }
 
     quote! {
-        (|| -> Result<::mettail_rho_codegen::RhoScalarContractInvocation, String> {
+        (|| -> Result<::mettail_rholang_codegen::RhoScalarContractInvocation, String> {
             let __mettail_rho_abi = #abi;
             let __mettail_rho_arguments = vec![#(#argument_exprs),*];
-            Ok(::mettail_rho_codegen::RhoScalarContractInvocation::new(
+            Ok(::mettail_rholang_codegen::RhoScalarContractInvocation::new(
                 __mettail_rho_abi,
                 __mettail_rho_arguments,
                 out_channel.to_string(),
@@ -267,7 +267,7 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
         fn __mettail_rho_try_scalar_inner(
             inner: &#inner_enum,
             out_channel: &str,
-        ) -> Option<Result<::mettail_rho_codegen::RhoScalarContractInvocation, String>> {
+        ) -> Option<Result<::mettail_rholang_codegen::RhoScalarContractInvocation, String>> {
             match inner {
                 #(#inner_arms)*
                 #inner_enum::Ambiguous(alternatives) => {
@@ -396,13 +396,13 @@ pub fn generate_rho_scalar_invocation(language: &LanguageDef) -> TokenStream {
             ///
             /// The emitted Rholang-looking contract names are annotations only:
             /// execution carries normalized `rhoapi::Par` through
-            /// `mettail_rho_runtime::build_scalar_contract_invocation_from_contract`.
+            /// `mettail_rholang_runtime::build_scalar_contract_invocation_from_contract`.
             ///
             /// Formal model: `formal/rocq/rho_bridge/theories/RhoScalarOperatorTyping.v`.
             pub fn rho_scalar_contract_invocation_to(
                 term: &dyn mettail_runtime::Term,
                 out_channel: impl AsRef<str>,
-            ) -> Result<::mettail_rho_codegen::RhoScalarContractInvocation, String> {
+            ) -> Result<::mettail_rholang_codegen::RhoScalarContractInvocation, String> {
                 #(#literal_extractors)*
                 #body
             }
@@ -413,7 +413,7 @@ pub fn generate_rho_scalar_invocation(language: &LanguageDef) -> TokenStream {
                 term: &dyn mettail_runtime::Term,
                 report: &mettail_runtime::RuntimeDovetailRunReport,
                 out_channel: impl AsRef<str>,
-            ) -> Result<::mettail_rho_codegen::RhoScalarContractInvocation, String> {
+            ) -> Result<::mettail_rholang_codegen::RhoScalarContractInvocation, String> {
                 report.assert_complete().map_err(|status| {
                     format!(
                         "Rho scalar invocation for language {} requires a complete Dovetail report, got {}",

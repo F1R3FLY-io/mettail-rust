@@ -1,5 +1,5 @@
 [package]
-name = "mettail-rho-codegen"
+name = "rholang-codegen"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -12,7 +12,10 @@ description = "M-RHO bridge: COMPILE-TIME lowering of a MeTTaIL GSLT (LanguageDe
 # `mettail-ast` supplies the LanguageDef/GrammarRule types; `models` supplies the
 # normalized `rhoapi::Par` execution artifact consumed directly by the RhoRuntime.
 
+[lib]
+name = "mettail_rholang_codegen"
+
 [dependencies]
-mettail-ast = { path = "../ast" }
+mettail-ast = { package = "ast", path = "../ast" }
 syn = { workspace = true }
 models = { workspace = true }

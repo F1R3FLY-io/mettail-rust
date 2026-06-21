@@ -1,10 +1,13 @@
 [package]
-name = "mettail-prattail"
+name = "prattail"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "PraTTaIL: Pratt + Recursive Descent parser generator with automata-optimized lexing for MeTTaIL"
+
+[lib]
+name = "mettail_prattail"
 
 [features]
 ## SIGUSR1 hang-dump (T4, 2026-05-05): debugging aid that lets the user send

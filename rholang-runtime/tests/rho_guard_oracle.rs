@@ -5,7 +5,7 @@
 //! `GuardedCommSoundness.v` contract: a failed guard does not consume resting
 //! data, and a later satisfying datum can still commit.
 
-use mettail_rho_runtime::run_rholang_source_sequence_for_oracle_and_read_ints;
+use mettail_rholang_runtime::run_rholang_source_sequence_for_oracle_and_read_ints;
 
 fn take(mut observed: std::collections::HashMap<String, Vec<i64>>, channel: &str) -> Vec<i64> {
     let mut values = observed.remove(channel).unwrap_or_default();

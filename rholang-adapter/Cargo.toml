@@ -1,5 +1,5 @@
 [package]
-name = "mettail-rho-adapter"
+name = "rholang-adapter"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -11,6 +11,9 @@ description = "M-RHO bridge: the OslfResourceLogic<MettaGslt> adapter — pure c
 # canonicalized Par. NO RSpace, NO Tokio. Depends ONE-WAY on f1r3node-rust (never
 # the reverse — proven in formal/rocq/rho_bridge/theories/BridgeInertness.v).
 # Fully integrated (no feature gating): the f1r3node deps are mandatory.
+
+[lib]
+name = "mettail_rholang_adapter"
 
 [dependencies]
 models.workspace = true

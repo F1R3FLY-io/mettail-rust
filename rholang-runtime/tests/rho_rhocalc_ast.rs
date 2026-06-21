@@ -10,12 +10,12 @@ use mettail_ast::language::LanguageDef;
 use mettail_languages::rhocalc::{
     Bag, Int, List, Map, Name, Proc, RhoCalcTerm, RhoCalcTermInner, Str,
 };
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionKind,
 };
-use mettail_rho_runtime::{
+use mettail_rholang_runtime::{
     lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_strings,
     rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, run_normalized_par_for_oracle,
     run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
@@ -87,7 +87,7 @@ fn wrong_name_dynamic_backend() -> PlannedRhoBackend {
         .expect("generated RhoCalcLanguage must expose its definition_source");
     let renamed = source.replacen("name: RhoCalc", "name: NotRhoCalc", 1);
     assert_ne!(renamed, source, "rename must take effect; body must contain `name: RhoCalc`");
-    let def = mettail_rho_codegen::reconstruct_language_def(&renamed)
+    let def = mettail_rholang_codegen::reconstruct_language_def(&renamed)
         .expect("renamed RhoCalc source must reconstruct as a LanguageDef");
     let plan = plan_rho_default_backend(&def, native_handler_requirements(&def))
         .expect("renamed RhoCalc def must still pass the Rho-default gate");

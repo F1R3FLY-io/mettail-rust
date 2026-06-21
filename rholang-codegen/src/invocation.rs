@@ -45,7 +45,7 @@ pub struct RhoScalarInvocationPlan {
 /// `mettail-rho-runtime`, so generated language crates can compile an AST-first
 /// invocation description without depending on the Rho machine runtime. Runtime
 /// adapters validate and normalize this payload with
-/// `mettail_rho_runtime::build_scalar_contract_invocation_from_contract`.
+/// `mettail_rholang_runtime::build_scalar_contract_invocation_from_contract`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhoScalarContractInvocation {
     pub abi: RhoScalarContractAbi,

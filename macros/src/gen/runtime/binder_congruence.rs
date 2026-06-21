@@ -45,7 +45,7 @@ pub(crate) fn should_emit_binder_congruence(language: &LanguageDef) -> bool {
 /// A language is host-backed iff any of its guard obligations is a
 /// `RhoNativeJoin` (a Rho-native guarded join / RSpace atomic continuation).
 fn has_no_host_disposition(language: &LanguageDef) -> bool {
-    use mettail_rho_codegen::backend::{collect_guard_obligations, RhoGuardObligationKind};
+    use mettail_rholang_codegen::backend::{collect_guard_obligations, RhoGuardObligationKind};
     !collect_guard_obligations(language)
         .iter()
         .any(|o| matches!(o.kind, RhoGuardObligationKind::RhoNativeJoin))

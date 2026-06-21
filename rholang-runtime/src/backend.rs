@@ -14,11 +14,11 @@ use std::fmt;
 #[cfg(feature = "runtime-report")]
 use std::thread;
 
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::{
     CallByNeedThunkPlan, RhoArtifactKind, RhoDefaultBackendPlan, ValidatedRhoProgram,
 };
 #[cfg(feature = "runtime-report")]
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::{
     RhoAstBuildError, RhoAstLiteral, RhoAstSend, RhoScalarContractAbi, RhoScalarContractInvocation,
     RhoScalarContractShape, RhoScalarType,
 };
@@ -1832,10 +1832,10 @@ mod tests {
     }
 
     #[cfg(feature = "runtime-report")]
-    fn mini_requirements() -> mettail_rho_codegen::RhoDefaultBackendRequirements {
-        mettail_rho_codegen::RhoDefaultBackendRequirements {
-            coverage: mettail_rho_codegen::RhoCoverageEvidence::AllRulesLowered,
-            guard_coverage: mettail_rho_codegen::RhoGuardCoverageEvidence::NoGuardObligations,
+    fn mini_requirements() -> mettail_rholang_codegen::RhoDefaultBackendRequirements {
+        mettail_rholang_codegen::RhoDefaultBackendRequirements {
+            coverage: mettail_rholang_codegen::RhoCoverageEvidence::AllRulesLowered,
+            guard_coverage: mettail_rholang_codegen::RhoGuardCoverageEvidence::NoGuardObligations,
         }
     }
 
@@ -1843,7 +1843,7 @@ mod tests {
     fn mini_backend_from_fragment(fragment: &str) -> PlannedRhoBackend {
         let def: mettail_ast::language::LanguageDef =
             syn::parse_str(fragment).expect("MiniDefaultRho test fragment must parse");
-        let plan = mettail_rho_codegen::plan_rho_default_backend(&def, mini_requirements())
+        let plan = mettail_rholang_codegen::plan_rho_default_backend(&def, mini_requirements())
             .expect("MiniDefaultRho scalar AddInt rule must pass the Rho-default gate");
         assert_eq!(plan.lowering.lowered, vec!["AddInt"]);
         assert!(plan.lowering.rejected.is_empty());

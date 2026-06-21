@@ -6,7 +6,7 @@
 //! Process-valued payloads are grounded as sentinel sends to the public `OUT`
 //! channel; successful COMM is observed by the resting sentinel data.
 
-use mettail_rho_runtime::{
+use mettail_rholang_runtime::{
     run_rholang_source_for_oracle, run_rholang_source_for_oracle_and_read_ints,
     run_rholang_source_for_oracle_and_read_strings,
     run_rholang_source_for_oracle_then_consume_strings,

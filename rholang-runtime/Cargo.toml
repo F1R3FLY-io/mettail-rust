@@ -1,5 +1,5 @@
 [package]
-name = "mettail-rho-runtime"
+name = "rholang-runtime"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,6 +13,9 @@ description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's R
 # ONE-WAY on f1r3node-rust (proven one-way in
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). The runtime is always
 # integrated; only the heavy generated rhocalc language is feature-gated below.
+
+[lib]
+name = "mettail_rholang_runtime"
 
 [features]
 # Rholang integration is a FIRST-CLASS, default-on citizen (MeTTaIL == Rholang 1.4):
@@ -46,25 +49,25 @@ oracle-rhocalc = ["rhocalc-runtime"]
 source-oracle = []
 
 [dependencies]
-mettail-rho-codegen = { path = "../mettail-rho-codegen" }
+mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
 models = { workspace = true }
 rholang = { workspace = true }
 rho-pure-eval = { workspace = true }
 rspace_plus_plus = { workspace = true }
 crypto = { workspace = true }
 tokio = { workspace = true }
-mettail-languages = { path = "../languages", optional = true, default-features = false }
-mettail-runtime = { path = "../runtime", optional = true }
-mettail-prattail = { path = "../prattail", optional = true }
-mettail-ast = { path = "../ast", optional = true }
+mettail-languages = { package = "languages", path = "../languages", optional = true, default-features = false }
+mettail-runtime = { package = "runtime", path = "../runtime", optional = true }
+mettail-prattail = { package = "prattail", path = "../prattail", optional = true }
+mettail-ast = { package = "ast", path = "../ast", optional = true }
 syn = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
 # the RhoRuntime run / differential oracle.
-mettail-ast = { path = "../ast" }
-mettail-dovetail-runtime = { path = "../mettail-dovetail-runtime" }
-mettail-rho-adapter = { path = "../mettail-rho-adapter" }
+mettail-ast = { package = "ast", path = "../ast" }
+mettail-dovetail-runtime = { package = "dovetail-runtime", path = "../dovetail-runtime" }
+mettail-rholang-adapter = { package = "rholang-adapter", path = "../rholang-adapter" }
 syn = { workspace = true }
 
 [[test]]

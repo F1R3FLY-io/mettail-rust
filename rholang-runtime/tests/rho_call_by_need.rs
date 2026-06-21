@@ -5,11 +5,11 @@
 //! computes and memoizes; the second force reads the memo. Public observations
 //! are read from RSpace after one runtime evaluation.
 
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::{
     plan_call_by_need_thunk_with_spec, CallByNeedBudget, CallByNeedInitialState,
     CallByNeedThunkSpec, RhoAstLiteral,
 };
-use mettail_rho_runtime::PlannedCallByNeedThunk;
+use mettail_rholang_runtime::PlannedCallByNeedThunk;
 
 fn budget_for(initial_state: CallByNeedInitialState) -> CallByNeedBudget {
     match initial_state {

@@ -1,5 +1,5 @@
 //! End-to-end Rho-default backend planning for the REAL `GuardedRho` language
-//! under the LIVE guard-quality wiring (`mettail_rho_codegen::guard_quality`).
+//! under the LIVE guard-quality wiring (`mettail_rholang_codegen::guard_quality`).
 //!
 //! `GuardedRho` is the project's guarded smoke-test language: its
 //! `guards { channels { channel Name; join PGuardedInput(ch: Name); } }` block
@@ -18,8 +18,8 @@
 use std::collections::BTreeSet;
 
 use mettail_languages::guardedrho::GuardedRhoLanguage;
-use mettail_rho_codegen::guard_quality::{derive_guard_qualities, RhoGuardQuality};
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::guard_quality::{derive_guard_qualities, RhoGuardQuality};
+use mettail_rholang_codegen::{
     audit_rho_default_backend, collect_guard_obligations, lower_language_def,
     plan_rho_default_backend, reconstruct_language_def, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,

@@ -11,11 +11,11 @@
 //! without routing generated code through source text.
 
 use mettail_ast::language::LanguageDef;
-use mettail_rho_codegen::{
+use mettail_rholang_codegen::{
     plan_rho_default_backend, RhoArtifactKind, RhoAstLiteral, RhoAstSend, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
-use mettail_rho_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
+use mettail_rholang_runtime::{PlannedRhoBackend, RhoExecutionBoundary};
 use models::rhoapi::Par;
 use std::collections::{BTreeMap, BTreeSet};
 

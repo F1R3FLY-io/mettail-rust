@@ -1,6 +1,6 @@
 [workspace]
-members = ["ast", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "mettail-dovetail-runtime", "rigail",
-    "mettail-rho-codegen", "mettail-rho-runtime", "mettail-rho-adapter",
+members = ["ast", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query", "testkit", "simulation", "dovetail", "dovetail-runtime", "rigail",
+    "rholang-codegen", "rholang-runtime", "rholang-adapter",
     # "ascent/ascent",
     # "ascent/ascent_base",
     # "ascent/ascent_macro",
@@ -19,7 +19,7 @@ name = "mettail"
 path = "repl/src/main.rs"
 
 [dependencies]
-mettail-repl = { path = "repl" }
+mettail-repl = { package = "repl", path = "repl" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 
@@ -97,10 +97,10 @@ codegen-backend = "llvm"
 # capped local validation envelopes while compiling this generated crate. Keep
 # the rest of the workspace on the fast Cranelift dev loop, but compile the
 # generated aggregation crate through LLVM for the profiles used by cargo test.
-[profile.dev.package.mettail-languages]
+[profile.dev.package.languages]
 codegen-backend = "llvm"
 
-[profile.test.package.mettail-languages]
+[profile.test.package.languages]
 codegen-backend = "llvm"
 
 [profile.release]

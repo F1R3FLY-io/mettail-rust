@@ -46,7 +46,7 @@ pub fn rhocalc_ast_runtime_def() -> mettail_ast::language::LanguageDef {
         .metadata()
         .definition_source()
         .expect("generated RhoCalcLanguage must expose its definition_source");
-    mettail_rho_codegen::reconstruct_language_def(source)
+    mettail_rholang_codegen::reconstruct_language_def(source)
         .expect("RhoCalcLanguage definition_source must reconstruct as a LanguageDef")
 }
 

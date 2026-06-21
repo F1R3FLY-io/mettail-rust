@@ -1,5 +1,5 @@
 [package]
-name = "mettail-macros"
+name = "macros"
 version = "0.1.0"
 edition = "2021"
 authors = ["MeTTaIL Contributors"]
@@ -10,6 +10,7 @@ homepage = "https://github.com/f1r3fly-io/mettail-rust"
 readme = "../README.md"
 
 [lib]
+name = "mettail_macros"
 proc-macro = true
 
 [dependencies]
@@ -20,9 +21,9 @@ prettyplease = "0.2"
 proc-macro-error = { workspace = true }
 moniker = { workspace = true }
 indexmap = { workspace = true }
-mettail-ast = { path = "../ast" }
-mettail-rho-codegen = { path = "../mettail-rho-codegen" }
-mettail-prattail = { path = "../prattail" }
+mettail-ast = { package = "ast", path = "../ast" }
+mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
+mettail-prattail = { package = "prattail", path = "../prattail" }
 ascent_syntax_export = { workspace = true }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 rustc-hash = "1.1"

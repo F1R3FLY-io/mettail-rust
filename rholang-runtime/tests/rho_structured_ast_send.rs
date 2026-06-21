@@ -3,8 +3,8 @@
 //! This exercises the generic `RhoAstSend` builder directly: the test does not
 //! parse Rholang text and does not assemble raw `rhoapi::Par` by hand.
 
-use mettail_rho_codegen::{RhoAstLiteral, RhoAstSend};
-use mettail_rho_runtime::run_normalized_par_for_oracle_and_read_runtime_values;
+use mettail_rholang_codegen::{RhoAstLiteral, RhoAstSend};
+use mettail_rholang_runtime::run_normalized_par_for_oracle_and_read_runtime_values;
 use mettail_runtime::RuntimeObservationValue;
 
 #[tokio::test]

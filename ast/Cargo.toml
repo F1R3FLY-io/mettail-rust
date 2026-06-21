@@ -1,5 +1,5 @@
 [package]
-name = "mettail-ast"
+name = "ast"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Surface-syntax AST and parser for the MeTTaIL `language!` macro"
+
+[lib]
+name = "mettail_ast"
 
 [dependencies]
 proc-macro2 = { workspace = true }

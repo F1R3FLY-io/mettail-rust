@@ -1,15 +1,18 @@
 [package]
-name = "mettail-simulation"
+name = "simulation"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Simulation infrastructure for MeTTaIL: stochastic Petri nets, MDPs, Parikh automata, streaming automata, and new semirings"
 
+[lib]
+name = "mettail_simulation"
+
 [dependencies]
-mettail-ast = { path = "../ast" }
-mettail-runtime = { path = "../runtime" }
-mettail-prattail = { path = "../prattail" }
+mettail-ast = { package = "ast", path = "../ast" }
+mettail-runtime = { package = "runtime", path = "../runtime" }
+mettail-prattail = { package = "prattail", path = "../prattail" }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 rand = { workspace = true }
