@@ -280,6 +280,56 @@ fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
     );
 }
 
+/// Calculator-map cross-cat fan-out fix (§6.3 / S7) — gate-disjointness
+/// regression for the single-result weight-dominance subsumption.
+///
+/// The subsumption pass (`subsume_weight_dominated_when_single_result`,
+/// `docs/design/calculator-map-crosscat-fanout.md` §4) fires ONLY on the
+/// single-result demand path. The multi-result `_all` facade
+/// (`parse_via_wpda_all`) routes through the NON-demand driver, so the demand
+/// flag is never set and the pass is a no-op there. `-3!` is genuinely
+/// ambiguous (atomic-negative `Fact(NumLit(-3))` vs prefix-negative
+/// `Neg(Fact(NumLit(3)))`), so the `_all` facade MUST still surface BOTH
+/// alternatives with subsumption default-ON. This test guards that the gate
+/// stays disjoint from the multi-result path (a regression would silently
+/// drop one alternative).
+#[test]
+fn all_facade_preserves_ambiguity_with_sr_subsume_default_on() {
+    use calc::Int;
+
+    // Default environment ⇒ PRATTAIL_SR_SUBSUME is On (the production default).
+    mettail_runtime::clear_var_cache();
+    let alts = Int::parse_via_wpda_all("-3!").expect("-3! should parse through WPDA");
+
+    assert!(
+        alts.len() >= 2,
+        "the _all facade must surface BOTH ambiguity alternatives for -3! even \
+         with single-result subsumption default-ON (gate disjointness, S7); \
+         got {} alternative(s): {:?}",
+        alts.len(),
+        alts
+    );
+    // Both specific readings must be present (the subsumption must not have
+    // collapsed either the atomic-negative or the prefix-negative branch).
+    assert!(
+        alts.iter()
+            .any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
+        "atomic-negative branch Fact(NumLit(-3)) must survive on the _all path; got {:?}",
+        alts
+    );
+    assert!(
+        alts.iter().any(|t| {
+            matches!(
+                t,
+                Int::Neg(a)
+                    if matches!(a.as_ref(), Int::Fact(b) if matches!(b.as_ref(), Int::NumLit(3)))
+            )
+        }),
+        "prefix-negative branch Neg(Fact(NumLit(3))) must survive on the _all path; got {:?}",
+        alts
+    );
+}
+
 #[test]
 fn calculator_wpda_prefix_matches_eager_prefix_for_unary_minus_factorial() {
     use calc::Int;

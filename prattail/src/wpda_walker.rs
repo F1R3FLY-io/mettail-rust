@@ -214,6 +214,49 @@ impl EpP4Demote {
     }
 }
 
+/// Single-result weight-dominance subsumption switch, read once from
+/// `PRATTAIL_SR_SUBSUME` at construction (P-series convention: never per
+/// step; a per-walker field, not a process `OnceLock`, so one process can
+/// run both arms in an A/B differential).
+///
+/// Design: `docs/design/calculator-map-crosscat-fanout.md` §4 (Direction 2).
+/// The pass collapses live concrete cursors that share a [`SubsumeConfigKey`]
+/// — the genuine GLR/GLL configuration MINUS the three `LexicographicWeight`
+/// provenance-triple axes (`lex_alt_idx`, `src_idx`, `rule_idx`) — to their
+/// lex-MIN-weight representative, folding the dropped weights into the
+/// survivor via `⊕`. It fires ONLY when the walker is on the SINGLE-RESULT
+/// demand path (`single_result_demand == true`), where the caller has asked
+/// for one min-weight result, so a weight-DOMINATED same-config cursor is
+/// ruled out by evidence (L1: dominance invariant under common continuation;
+/// L2: SPPF `weight_sum` invariant under dropping a dominated cursor — see
+/// the design §4.2). The multi-result `_all`/`_prefix`/bounding-mode facades
+/// route through the non-demand driver and stay byte-identical.
+///
+/// `On` is the DEFAULT (it fixes the `map_display_parse_roundtrip` timeout);
+/// `PRATTAIL_SR_SUBSUME=0` / `off` is the kill switch (reverts the pass
+/// without touching the plumbing) so a soundness regression can disable it
+/// in isolation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SrSubsumeMode {
+    /// Run the demand-gated subsumption pass (the DEFAULT).
+    On,
+    /// Disable the pass entirely; the demand-path frontier is byte-identical
+    /// to the pre-subsumption behavior (the kill switch).
+    Off,
+}
+
+impl SrSubsumeMode {
+    /// Read `PRATTAIL_SR_SUBSUME` ONCE per walker construction. `0` / `off`
+    /// (any case) disables the pass; unset and any other value default to
+    /// `On` (the recommended fix is the default per the design §4.5 M3).
+    fn from_env() -> Self {
+        match std::env::var("PRATTAIL_SR_SUBSUME").ok().as_deref() {
+            Some("0") | Some("off") | Some("OFF") | Some("Off") => SrSubsumeMode::Off,
+            _ => SrSubsumeMode::On,
+        }
+    }
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -1314,6 +1357,23 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// preserve the frontier and report overflow instead of pruning; see
     /// `CursorBoundingMode` docs for details.
     bounding_mode: crate::wpda_runtime::CursorBoundingMode,
+    /// Single-result demand flag (calculator-map cross-cat fan-out fix,
+    /// `docs/design/calculator-map-crosscat-fanout.md` §4.5 M1). `true`
+    /// ONLY while the SINGLE-RESULT demand driver
+    /// (`run_to_end_of_input_until_accepting` → `…_with_accept_demand`
+    /// with `stop_when_accepting = true`) is running. It gates
+    /// `subsume_weight_dominated_when_single_result` so the weight-
+    /// dominance subsumption fires exclusively on the `Cat::parse` path,
+    /// where the caller has asked for one min-weight result. The multi-
+    /// result `_all`/`_prefix`/bounding-mode facades use the non-demand
+    /// driver (`stop_when_accepting = false`), which clears this flag, so
+    /// their frontier stays byte-identical. Default `false`. NOTE: under
+    /// `PRATTAIL_TRACE`, even the single-result facade routes through the
+    /// exhaustive env-aware driver (so diagnostics stay complete), which
+    /// leaves this `false` — the subsumption is therefore INVISIBLE to
+    /// tracing; debug it with `walker-stats`
+    /// (`cursors_dropped_via_sr_subsume`), not traces.
+    single_result_demand: bool,
     // Phase F.3c.5 (2026-05-20): `builder: SemanticBuilder` DELETED.
     // Pre-Phase-F.3c the walker maintained a live builder for legacy
     // accessors (walker.builder() / walker.builder_mut() /
@@ -1573,6 +1633,13 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// permutation; ForwardOrderOnly.v T5). The ESS reporting half is
     /// always-on regardless of this switch.
     ep_p4_demote: EpP4Demote,
+    /// Single-result weight-dominance subsumption kill switch, read once
+    /// from `PRATTAIL_SR_SUBSUME` at construction (P-series convention).
+    /// `On` (default) runs `subsume_weight_dominated_when_single_result`
+    /// on the demand path; `Off` (`PRATTAIL_SR_SUBSUME=0`) disables the
+    /// pass without touching the plumbing. See the `SrSubsumeMode` docs
+    /// and `docs/design/calculator-map-crosscat-fanout.md` §4.5 M3.
+    sr_subsume_mode: SrSubsumeMode,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -3194,6 +3261,144 @@ impl<W: SemiringRef> BranchCursor<W> {
     }
 }
 
+/// Calculator-map cross-cat fan-out fix (§4.1): the single-result
+/// subsumption **config key** — the genuine GLR/GLL configuration of a
+/// cursor MINUS the three `LexicographicWeight` provenance-triple axes
+/// (`lex_alt_idx`, `src_idx`, `rule_idx`).
+///
+/// This is deliberately a REFINEMENT-or-equal of the strict [`ConfigKey`]
+/// on every retained axis: it keeps EVERYTHING the strict merge key keeps
+/// (`state`, `node`, `pos`, `incoming_edge`, `incoming_edge_stack`,
+/// `collection_depth`, `cohort_origin`, `sppf_top`, `sppf_stack`,
+/// `lex_fork_stamp`) and adds `last_action_output_cat`, `recovery_depth`,
+/// and the `recovery_deltas` Arc-id — but DROPS only the three weight-triple
+/// components. Because the subsumption pass runs AFTER the strict merge has
+/// already collapsed everything sharing the full strict key, the only
+/// cursors that can still share a `SubsumeConfigKey` are ones that differed
+/// ONLY in the weight triple (or in a heavy field this key additionally
+/// requires equal — handled by [`heavy_fields_equal`]).
+///
+/// Only the Hash-able scalar/Copy axes live here (the cheap Phase-1
+/// bucket). The heavy `Arc`/`Vec`/`im::OrdSet`/`W` fields are NOT in this
+/// struct — `im::OrdSet` and `W` are not necessarily `Hash` — so they are
+/// compared by EXACT equality in a within-bucket Phase-2 partition via
+/// [`heavy_fields_equal`]. The combination of the two phases reproduces the
+/// §4.1 ConfigKey EXACTLY (it never merges across a heavy-field difference);
+/// it is an exact grouping, NOT a relaxation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SubsumeConfigKey {
+    /// Cursor's per-branch FSM state (= strict `ConfigKey.state`).
+    state: WpdaState,
+    /// GSS-tip node id (= strict `ConfigKey.node`).
+    node: crate::gss::GssNodeId,
+    /// Per-branch input position (= strict `ConfigKey.pos`).
+    pos: usize,
+    /// Top edge of the incoming-edge stack (= strict `ConfigKey.incoming_edge`).
+    incoming_edge: Option<crate::gss::GssEdgeId>,
+    /// Full incoming-edge stack handle (= strict `ConfigKey.incoming_edge_stack`)
+    /// — KEPT, so the deep-nesting linear-time fix (S4) is never crossed.
+    incoming_edge_stack: crate::edge_stack_arena::EdgeStackId,
+    /// Collection-stack depth (= strict `ConfigKey.collection_depth`).
+    collection_depth: usize,
+    /// Cohort-origin quotient (= strict `ConfigKey.cohort_origin`, via `equiv()`).
+    cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
+    /// SPPF-stack top (= strict `ConfigKey.sppf_top`) — KEPT, so the
+    /// `@a!(Nil)!(Nil)` chained-output distinction (S1) is never crossed.
+    sppf_top: Option<crate::sppf::SppfId>,
+    /// Full SPPF-stack handle (= strict `ConfigKey.sppf_stack`).
+    sppf_stack: crate::sppf_stack_arena::StackId,
+    /// Most-recent lex-Fork stamp (= strict `ConfigKey.lex_fork_stamp`).
+    lex_fork_stamp: Option<LexForkStamp>,
+    /// Walker-maintained output-category mirror. NOT in the strict key, but
+    /// required CONTENT-equal here (design §4.5 M2): two cursors at the same
+    /// strict config with different `last_action_output_cat` are kept apart
+    /// (conservative — fewer collapses, never unsound).
+    last_action_output_cat: Option<u16>,
+    /// Per-cursor recovery dispatch count. Required equal here (design M2).
+    recovery_depth: u8,
+    /// Arc-IDENTITY of the cursor's recovery-delta journal (design M2:
+    /// "recovery_deltas Arc-id"). Two cursors whose journals are distinct
+    /// allocations bucket separately even if their contents happen to match
+    /// — the conservative choice (the §3.3 probe shows the journal content is
+    /// equal in 100% of the redundant arcs, so this never blocks a real
+    /// collapse on the hot path, and it can never cause an unsound one).
+    recovery_deltas_arc_id: usize,
+}
+
+impl SubsumeConfigKey {
+    /// Build the subsumption config key from a cursor, reading the two
+    /// arena `top()` values (the incoming-edge stack top and the SPPF-stack
+    /// top) EXACTLY as the strict `ConfigKey` construction does in
+    /// `merge_equivalent_cursors`.
+    #[inline]
+    fn from_cursor<W, E>(walker: &WpdaWalker<W, E>, cursor: &BranchCursor<W>) -> Self
+    where
+        W: SemiringRef
+            + crate::automata::semiring::TropicalDeltaWeight
+            + crate::automata::semiring::LexProvenance,
+        E: WpdaEngine<W>,
+    {
+        SubsumeConfigKey {
+            state: cursor.inner_state.clone(),
+            node: cursor.node,
+            pos: cursor.pos,
+            incoming_edge: walker
+                .incoming_edge_stack_arena
+                .top(cursor.incoming_edge_stack_id),
+            incoming_edge_stack: cursor.incoming_edge_stack_id,
+            collection_depth: cursor.collection_stack_depth as usize,
+            cohort_origin: cursor.cohort_origin.as_ref().map(|k| k.equiv()),
+            sppf_top: walker.sppf_stack_arena.top(cursor.sppf_stack_id),
+            sppf_stack: cursor.sppf_stack_id,
+            lex_fork_stamp: cursor.lex_fork_path.last().copied(),
+            last_action_output_cat: cursor.last_action_output_cat,
+            recovery_depth: cursor.recovery_depth,
+            recovery_deltas_arc_id: Arc::as_ptr(&cursor.recovery_deltas) as *const () as usize,
+        }
+    }
+}
+
+/// Calculator-map cross-cat fan-out fix (§4.1): EXACT content-equality of the
+/// heavy per-cursor fields that the Phase-1 [`SubsumeConfigKey`] bucket does
+/// NOT (or cannot) carry — `im::OrdSet`/`W` are not necessarily `Hash`, and
+/// the design mandates these participate by CONTENT (the `Arc`/`Vec` fields)
+/// in the group key.
+///
+/// Two cursors are subsumed against each other ONLY if their Phase-1 key is
+/// equal AND this returns `true`. Combined with the §3.3 finding that these
+/// fields are content-identical across the redundant arcs, this is an exact
+/// grouping (it never merges two genuinely-different configurations) while
+/// staying conservative (a heavy-field difference simply blocks the collapse).
+///
+/// `sppf_collection_arena` / `collection_sep_counts` use an `Arc::ptr_eq`
+/// fast path before falling back to deep content equality (mirroring the
+/// committed `register_arc_with_aggregation` Cluster-D arena comparison at
+/// `tomita_frontier.rs`), so the common shared-Arc case is O(1).
+#[inline]
+fn heavy_fields_equal<W>(a: &BranchCursor<W>, b: &BranchCursor<W>) -> bool
+where
+    W: SemiringRef,
+{
+    // Cross-cat cycle-defense descriptor set — the §3.3 GENUINE discriminator
+    // (differs in 53.1% of no-merges). Compared first (most likely to differ
+    // ⇒ short-circuit fast).
+    a.visited_proj_descriptors == b.visited_proj_descriptors
+        && a.visited_dispatch == b.visited_dispatch
+        && a.visited_recovery == b.visited_recovery
+        // SPPF collection accumulator + separator counts (Arc-CoW): ptr_eq
+        // fast path, then deep content equality.
+        && (Arc::ptr_eq(&a.sppf_collection_arena, &b.sppf_collection_arena)
+            || *a.sppf_collection_arena == *b.sppf_collection_arena)
+        && (Arc::ptr_eq(&a.collection_sep_counts, &b.collection_sep_counts)
+            || *a.collection_sep_counts == *b.collection_sep_counts)
+        // Binder / optional scope marks (content).
+        && a.binder_scope_marks == b.binder_scope_marks
+        && a.optional_scope_marks == b.optional_scope_marks
+        // Pending per-Fork-arm packing weight (content; design M2 requires it
+        // equal so the `⊕` fold the strict merge would apply is reproduced).
+        && a.pending_packing_weight == b.pending_packing_weight
+}
+
 /// Stage 3.5b (2026-05-01): WPDS configuration key for cursor ⊕-merging.
 ///
 /// WPDS semantics require: two paths reaching the same configuration
@@ -4518,6 +4723,9 @@ where
             engine,
             top_node: None,
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
+            // Calculator-map cross-cat fan-out fix (§4.5 M1): the demand
+            // driver flips this true at entry; cleared elsewhere.
+            single_result_demand: false,
             deterministic: true,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
@@ -4546,6 +4754,9 @@ where
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
             ep_p4_demote: EpP4Demote::from_env(),
+            // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
+            // weight-dominance subsumption kill switch (default On).
+            sr_subsume_mode: SrSubsumeMode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -4627,6 +4838,9 @@ where
             engine,
             top_node: Some(top_id),
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
+            // Calculator-map cross-cat fan-out fix (§4.5 M1): the demand
+            // driver flips this true at entry; cleared elsewhere.
+            single_result_demand: false,
             deterministic: true,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
@@ -4655,6 +4869,9 @@ where
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
             ep_p4_demote: EpP4Demote::from_env(),
+            // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
+            // weight-dominance subsumption kill switch (default On).
+            sr_subsume_mode: SrSubsumeMode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -4735,6 +4952,9 @@ where
             engine,
             top_node,
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
+            // Calculator-map cross-cat fan-out fix (§4.5 M1): the demand
+            // driver flips this true at entry; cleared elsewhere.
+            single_result_demand: false,
             deterministic: true,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
@@ -4763,6 +4983,9 @@ where
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
             ep_p4_demote: EpP4Demote::from_env(),
+            // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
+            // weight-dominance subsumption kill switch (default On).
+            sr_subsume_mode: SrSubsumeMode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -5649,6 +5872,18 @@ where
         // satisfies both bounds.
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
+        // Calculator-map cross-cat fan-out fix (§4.5 M1): mirror the demand
+        // mode onto the walker so `subsume_weight_dominated_when_single_result`
+        // (called from `merge_equivalent_cursors`) can gate on it. `true`
+        // ONLY when this is the single-result accept-stop driver
+        // (`run_to_end_of_input_until_accepting`); `run_to_end_of_input`
+        // passes `false`, so the multi-result `_all`/`_prefix` path clears
+        // it and stays byte-identical. This is the SOLE write site: the demand
+        // driver is the only place a single result is requested, so leaving
+        // the flag set across the run is correct (each parse uses a fresh
+        // walker; the next driver invocation re-asserts the right value at
+        // entry).
+        self.single_result_demand = stop_when_accepting;
         // Phase F.13 Task #117 (2026-05-23): pin recovery cache/config
         // for the duration of the parse loop so the codegen-emitted
         // recovery path can find them via TLS without changing the
@@ -16988,6 +17223,217 @@ where
             .map(crate::cohort_lazy::Frame::Concrete)
             .collect();
         self.branch_cursors.extend(cohort_frames);
+        // Calculator-map cross-cat fan-out fix (§4.5 M2): AFTER the strict-
+        // ConfigKey merge has written back `self.branch_cursors`, collapse
+        // any residual weight-separated same-config cursors to their lex-min
+        // representative — but ONLY on the single-result demand path. This
+        // sits exactly where the deleted M7c pass used to live, but is now
+        // demand-gated (see `feedback_never_disambiguate_early.md`: the pruned
+        // cursors are ruled out by weight EVIDENCE for the stated single-
+        // result demand, which the mandate permits — multi-result callers
+        // never set the flag and stay byte-identical). No-op when the demand
+        // flag is false OR the `PRATTAIL_SR_SUBSUME` kill switch is `Off`.
+        self.subsume_weight_dominated_when_single_result();
+    }
+
+    /// Calculator-map cross-cat fan-out fix — single-result demand-mode
+    /// weight-dominance subsumption.
+    /// (`docs/design/calculator-map-crosscat-fanout.md` §4, Direction 2.)
+    ///
+    /// **What it does.** Groups the live `Frame::Concrete` cursors by a
+    /// [`SubsumeConfigKey`] — the genuine GLR/GLL configuration MINUS the
+    /// three `LexicographicWeight` provenance-triple axes (`lex_alt_idx`,
+    /// `src_idx`, `rule_idx`) — and retains per group only the lex-MIN-weight
+    /// cursor, folding the dropped cursors' weights into the survivor via the
+    /// semiring `⊕` (mirroring `register_arc_with_aggregation`'s weight fold).
+    /// `Frame::Cohort` frames are left UNTOUCHED (they are lazy unresolved
+    /// evidence, not concrete configurations).
+    ///
+    /// **When it fires.** ONLY when `self.single_result_demand` (the
+    /// `Cat::parse` accept-stop driver is active) AND the `PRATTAIL_SR_SUBSUME`
+    /// kill switch is `On`. On the multi-result `_all`/`_prefix`/bounding-mode
+    /// path the demand flag is `false`, so this is a no-op and that frontier
+    /// is byte-identical.
+    ///
+    /// **Why it is sound** (design §4.2). In single-result demand mode the
+    /// facade returns `min_by(weight)`. By **L1** (dominance invariant under
+    /// common continuation — `⊗` does tropical-sum on the primary and
+    /// left-projection on the triple, so the order is preserved as `≤` along
+    /// any common continuation, and once `primary > 0` the triple is frozen),
+    /// a weight-dominated cursor at the SAME configuration can never out-rank
+    /// its survivor at any later configuration, including any accepting root.
+    /// By **L2** the SPPF `weight_sum` is `⊕`-aggregated over the SET of
+    /// distinct packings (interned in `emit_fire_action` DURING the step,
+    /// before this pass), and the dropped cursor contributes no packing the
+    /// survivor does not — so the realized min-weight term is unchanged.
+    ///
+    /// **Why it is mandate-compliant** (design §4.3). The forbidden M7c pass
+    /// pruned weight-dominated cursors UNCONDITIONALLY for ALL callers
+    /// (including `_all`/`_prefix`); this pass drops a cursor only (a) in
+    /// single-result demand mode and (b) when a SAME-configuration sibling
+    /// provably dominates it — an evidence-based rule-out the mandate permits.
+    /// It does NOT touch `merge_disambiguator` /
+    /// `register_arc_with_aggregation`; the strict merge gate is byte-identical
+    /// (the §6.2 invariant tests pass unchanged).
+    ///
+    /// **The config key.** [`SubsumeConfigKey`] keeps EVERY axis the strict
+    /// `ConfigKey` keeps EXCEPT the three weight-triple components — including
+    /// `sppf_stack` / `sppf_top` (the `@a!(Nil)!(Nil)` chained-output
+    /// distinction, S1), the incoming edge stack (the deep-nesting linear-time
+    /// fix, S4), `cohort_origin`, `visited_proj_descriptors`, and
+    /// `lex_fork_stamp`. The heavy `Arc`/`Vec`/`im::OrdSet` fields
+    /// (`binder_scope_marks`, `optional_scope_marks`, `sppf_collection_arena`,
+    /// `collection_sep_counts`, `visited_proj_descriptors`, `visited_dispatch`,
+    /// `visited_recovery`, `pending_packing_weight`, `recovery_deltas`)
+    /// participate by EXACT equality in a second within-bucket partition pass
+    /// (`im::OrdSet`/`W` are not necessarily `Hash`), so this is an exact
+    /// grouping, NOT a relaxation. `recovery_deltas` participates by Arc-id
+    /// (pointer identity); the rest by content.
+    ///
+    /// M7c was unsound on BOTH counts (it ran for all modes AND used a lossy
+    /// relaxed key that dropped `incoming_edge_stack`); this pass differs on
+    /// both (demand-gated AND keeps the full edge stack).
+    fn subsume_weight_dominated_when_single_result(&mut self) {
+        // Gate 1: demand mode. Gate 2: kill switch. Either off ⇒ no-op (the
+        // multi-result frontier and the kill-switch-off frontier are both
+        // byte-identical to the pre-subsumption behavior).
+        if !self.single_result_demand || self.sr_subsume_mode == SrSubsumeMode::Off {
+            return;
+        }
+        // Nothing to collapse with fewer than two frames.
+        if self.branch_cursors.len() < 2 {
+            return;
+        }
+
+        // Phase 1 — bucket by the Hash-able scalar/Copy axes of the config
+        // key (the cheap discriminators). Within each bucket, Phase 2 does an
+        // EXACT-equality partition on the heavy fields (`im::OrdSet`, `Arc`
+        // content, `Vec` content, the weight `W`) that are not `Hash`. This
+        // two-phase scheme reproduces the §4.1 ConfigKey EXACTLY (it never
+        // merges across a heavy-field difference) without requiring `Hash` on
+        // `im::OrdSet`/`W`. Cohort frames pass through untouched.
+        //
+        // Preallocate the bucket map AND the output vector to the frontier
+        // size (preallocation is a best practice — at most one survivor per
+        // input frame, so `frame_count` is the exact upper bound).
+        let frame_count = self.branch_cursors.len();
+        let drained: Vec<crate::cohort_lazy::Frame<W>> =
+            std::mem::take(&mut self.branch_cursors);
+        let mut survivors: Vec<crate::cohort_lazy::Frame<W>> = Vec::with_capacity(frame_count);
+
+        // Each Phase-1 bucket holds the survivor indices (into `survivors`)
+        // for the concrete cursors that share the scalar key. Phase 2 walks a
+        // bucket's existing survivors and either folds the incoming cursor
+        // into a heavy-field-equal survivor (lex-min retain + `⊕` fold) or
+        // appends it as a new survivor (heavy fields differ ⇒ distinct config).
+        let mut buckets: rustc_hash::FxHashMap<SubsumeConfigKey, Vec<usize>> =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(
+                frame_count,
+                rustc_hash::FxBuildHasher::default(),
+            );
+
+        for frame in drained {
+            // Cohort frames are lazy unresolved evidence — never subsumed.
+            let cursor = match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => c,
+                cohort @ crate::cohort_lazy::Frame::Cohort(_) => {
+                    survivors.push(cohort);
+                    continue;
+                },
+            };
+            let key = SubsumeConfigKey::from_cursor(self, &cursor);
+            match buckets.entry(key) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    let new_idx = survivors.len();
+                    v.insert(vec![new_idx]);
+                    survivors.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                },
+                std::collections::hash_map::Entry::Occupied(mut o) => {
+                    // Phase 2: find an existing survivor in this scalar bucket
+                    // whose HEAVY fields are exactly equal — that survivor is
+                    // at the SAME full config. If found, retain the lex-min
+                    // and `⊕`-fold the loser's weight in. Otherwise the heavy
+                    // fields differ ⇒ a genuinely distinct config ⇒ append.
+                    let bucket = o.get_mut();
+                    let mut folded = false;
+                    for &surv_idx in bucket.iter() {
+                        let surv = survivors[surv_idx].as_concrete_expect();
+                        if heavy_fields_equal(surv, &cursor) {
+                            // Same full config (modulo the weight triple).
+                            // Determine the lex-min survivor via the semiring
+                            // `⊕` (= lex-min for `LexicographicWeight`), the
+                            // SAME order `merge_equivalent_cursors` and
+                            // `register_arc_with_aggregation` use. `combined`
+                            // IS the `⊕` fold of both weights.
+                            let combined = surv.weight.plus_ref(&cursor.weight);
+                            let incoming_wins = combined != surv.weight
+                                && combined == cursor.weight;
+                            let tie = combined == surv.weight && combined == cursor.weight;
+                            // Source-priority is the SAME final tiebreak the
+                            // strict merge applies on a weight tie (lower wins
+                            // — Fork-source order), so the retained cursor is
+                            // identical to what a full strict merge would keep
+                            // had the weight triple matched.
+                            let incoming_wins = incoming_wins
+                                || (tie && cursor.source_priority < surv.source_priority);
+                            let survivor_mut = survivors[surv_idx].as_concrete_expect_mut();
+                            if incoming_wins {
+                                // Incoming cursor becomes the survivor; fold
+                                // the displaced weight in (mirroring the merge
+                                // win-branch: own SUMS, lineage MAXes for ESS
+                                // fidelity).
+                                let loser_own = survivor_mut.p5_steps_own;
+                                let loser_lineage = survivor_mut.p5_steps_lineage;
+                                let loser_pending =
+                                    survivor_mut.pending_packing_weight.clone();
+                                let mut replacement = cursor.clone();
+                                replacement.weight = combined;
+                                // Heavy fields are exactly equal (gate above),
+                                // so the survivor's pending weight equals the
+                                // incoming's; the `⊕` fold is idempotent on a
+                                // tie and lex-min otherwise — match the strict
+                                // merge's `pending_packing_weight` ⊕ fold.
+                                replacement.pending_packing_weight = replacement
+                                    .pending_packing_weight
+                                    .plus_ref(&loser_pending);
+                                replacement.p5_steps_own =
+                                    replacement.p5_steps_own.saturating_add(loser_own);
+                                replacement.p5_steps_lineage =
+                                    replacement.p5_steps_lineage.max(loser_lineage);
+                                *survivor_mut = replacement;
+                            } else {
+                                // Existing survivor wins or ties; keep its
+                                // operational state, update its weight to the
+                                // `⊕` fold (idempotent on a tie), and fold the
+                                // loser's step counts + pending weight in.
+                                survivor_mut.weight = combined;
+                                survivor_mut.pending_packing_weight = survivor_mut
+                                    .pending_packing_weight
+                                    .plus_ref(&cursor.pending_packing_weight);
+                                survivor_mut.p5_steps_own = survivor_mut
+                                    .p5_steps_own
+                                    .saturating_add(cursor.p5_steps_own);
+                                survivor_mut.p5_steps_lineage = survivor_mut
+                                    .p5_steps_lineage
+                                    .max(cursor.p5_steps_lineage);
+                            }
+                            crate::stats_inc!(self, cursors_dropped_via_sr_subsume);
+                            folded = true;
+                            break;
+                        }
+                    }
+                    if !folded {
+                        // Heavy fields differ from every survivor in this
+                        // scalar bucket ⇒ a genuinely distinct config; keep it.
+                        let new_idx = survivors.len();
+                        bucket.push(new_idx);
+                        survivors.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                    }
+                },
+            }
+        }
+
+        self.branch_cursors = survivors;
     }
 
     // M7c (2026-05-13): `subsume_lex_dominated_cursors` DELETED.
@@ -30605,6 +31051,235 @@ mod tests {
             "cur_pos must advance monotonically across multi-step replay (got {} → {})",
             trace[0].pos,
             trace[1].pos,
+        );
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Calculator-map cross-cat fan-out fix (§6.3): single-result weight-
+    // dominance subsumption unit tests.
+    // `docs/design/calculator-map-crosscat-fanout.md` §4 (Direction 2).
+    // ────────────────────────────────────────────────────────────────────
+
+    /// Helper: a fresh walker with the demand flag forced on and the kill
+    /// switch on, so the subsumption pass fires. (Production sets
+    /// `single_result_demand` in `run_to_end_of_input_with_accept_demand`;
+    /// the unit tests set it directly to exercise the pass in isolation.)
+    fn subsume_test_walker() -> WpdaWalker<LexicographicWeight, ScriptedEngine> {
+        let mut w = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        w.single_result_demand = true;
+        w.sr_subsume_mode = SrSubsumeMode::On;
+        w
+    }
+
+    /// §6.3 / S1 guard: two cursors with the same `SubsumeConfigKey`-scalar
+    /// fields but DIFFERENT `sppf_stack_id` are at distinct GLL configurations
+    /// (the `@a!(Nil)!(Nil)` chained-output discriminant) and MUST NOT be
+    /// subsumed against each other.
+    #[test]
+    fn subsume_weight_dominated_keeps_distinct_sppf_stack_arcs() {
+        let mut w = subsume_test_walker();
+        // Cursor A: push SPPF id 0 onto its stack (distinct lineage). Clone to
+        // B (shared recovery_deltas Arc) so the ONLY difference is the
+        // sppf_stack_id — isolating the S1 discriminant. (Without the clone,
+        // the by-Arc-id key would block the collapse for an unrelated reason
+        // and the test would pass vacuously.)
+        let mut a = queue_cursor(5, lex(1.0, 0, 0));
+        a.sppf_stack_id = w.sppf_stack_arena.intern_push(a.sppf_stack_id, 0);
+        let mut b = a.clone();
+        b.weight = lex(3.0, 0, 1);
+        // B gets a DIFFERENT SPPF id 1 ⇒ a distinct sppf_stack_id ⇒ a distinct
+        // SubsumeConfigKey.
+        b.sppf_stack_id = w
+            .sppf_stack_arena
+            .intern_push(crate::sppf_stack_arena::STACK_ID_ROOT, 1);
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Concrete(a),
+            crate::cohort_lazy::Frame::Concrete(b),
+        ];
+
+        w.subsume_weight_dominated_when_single_result();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            2,
+            "cursors with distinct sppf_stack_id are distinct configs and must \
+             NOT be subsumed (S1: @a!(Nil)!(Nil) chained-output guard)"
+        );
+    }
+
+    /// §6.3 core: two cursors at the IDENTICAL `SubsumeConfigKey` (same
+    /// scalar config AND content-equal heavy fields) that differ only in the
+    /// weight triple collapse to the lex-MIN representative in single-result
+    /// mode. The survivor's weight is the `⊕` (lex-min) fold.
+    #[test]
+    fn subsume_weight_dominated_collapses_same_config_weight_separated() {
+        let mut w = subsume_test_walker();
+        // Both at pos 5, GSS_NODE_NONE, Ready{0}, STACK_ID_ROOT stacks ⇒
+        // identical SubsumeConfigKey (the weight triple is DROPPED). They
+        // differ only in weight: A primary 1.0 (lex-min), B primary 3.0 with
+        // a distinct provenance triple (src=1, rule=2).
+        //
+        // CLONE A to get B (then change B's weight) so the two SHARE the
+        // `recovery_deltas` Arc — faithfully modelling the PRODUCTION case
+        // where the redundant cross-cat arcs descend from a common ancestor
+        // via Fork-child clone (`BranchCursor::clone` does
+        // `Arc::clone(&recovery_deltas)`). A freshly-`seed_from_live`d cursor
+        // gets a DISTINCT empty `recovery_deltas` Arc, which the by-Arc-id
+        // key (design §4.5 M2) correctly treats as a distinct config.
+        let a = queue_cursor(5, lex(1.0, 0, 0));
+        let mut b = a.clone();
+        b.weight = lex(3.0, 1, 2);
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Concrete(a),
+            crate::cohort_lazy::Frame::Concrete(b),
+        ];
+
+        w.subsume_weight_dominated_when_single_result();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            1,
+            "same-config weight-separated cursors collapse to one in single-result mode"
+        );
+        let survivor = w.branch_cursors[0].as_concrete_expect();
+        // The survivor is the lex-min (primary 1.0), and its weight is the
+        // ⊕-fold of both (lex-min = the 1.0 weight).
+        assert_eq!(
+            survivor.weight.primary.0, 1.0,
+            "the retained cursor must be the lex-MIN-weight representative"
+        );
+        assert_eq!(
+            survivor.weight.lex_cmp(&lex(1.0, 0, 0)),
+            std::cmp::Ordering::Equal,
+            "survivor weight == the ⊕ (lex-min) of the two input weights"
+        );
+    }
+
+    /// §6.3 / S7 guard: with the demand flag `false` (the multi-result
+    /// `_all`/`_prefix` path), the pass is a NO-OP — the frontier is
+    /// byte-identical, preserving every ambiguity alternative.
+    #[test]
+    fn subsume_is_noop_when_not_single_result() {
+        let mut w = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        w.single_result_demand = false; // multi-result path
+        w.sr_subsume_mode = SrSubsumeMode::On;
+        // Cloned pair (shared recovery_deltas Arc) at the SAME config — these
+        // WOULD collapse if the demand gate were absent, so the assert is a
+        // genuine guard, not a vacuous pass.
+        let a = queue_cursor(5, lex(1.0, 0, 0));
+        let mut b = a.clone();
+        b.weight = lex(3.0, 1, 2);
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Concrete(a),
+            crate::cohort_lazy::Frame::Concrete(b),
+        ];
+
+        w.subsume_weight_dominated_when_single_result();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            2,
+            "NOT single-result ⇒ no subsumption ⇒ both ambiguity alternatives kept (S7)"
+        );
+    }
+
+    /// §6.3 / M3 guard: with the `PRATTAIL_SR_SUBSUME` kill switch `Off`,
+    /// the pass is a NO-OP even on the single-result path — the plumbing is
+    /// installed but the subsumption is disabled (the soundness-regression
+    /// escape hatch).
+    #[test]
+    fn subsume_is_noop_when_kill_switch_off() {
+        let mut w = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        w.single_result_demand = true; // demand path
+        w.sr_subsume_mode = SrSubsumeMode::Off; // but kill switch off
+        // Cloned pair (shared recovery_deltas Arc) at the SAME config — these
+        // WOULD collapse if the kill switch were On, so the assert is a
+        // genuine guard, not a vacuous pass.
+        let a = queue_cursor(5, lex(1.0, 0, 0));
+        let mut b = a.clone();
+        b.weight = lex(3.0, 1, 2);
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Concrete(a),
+            crate::cohort_lazy::Frame::Concrete(b),
+        ];
+
+        w.subsume_weight_dominated_when_single_result();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            2,
+            "kill switch Off ⇒ pass disabled ⇒ frontier byte-identical (M3)"
+        );
+    }
+
+    /// §6.3 heavy-field guard: two cursors at the same scalar config but with
+    /// DIFFERENT `visited_proj_descriptors` (the §3.3 genuine cross-cat
+    /// cycle-defense discriminant, 53.1% of no-merges) have distinct
+    /// cycle-defense `w` histories and MUST NOT be subsumed.
+    #[test]
+    fn subsume_keeps_distinct_visited_proj_descriptors() {
+        let mut w = subsume_test_walker();
+        // Clone A to B (shared recovery_deltas Arc) so the ONLY difference is
+        // visited_proj_descriptors — isolating the heavy-field discriminant.
+        let a = queue_cursor(5, lex(1.0, 0, 0));
+        let mut b = a.clone();
+        b.weight = lex(3.0, 1, 2);
+        // Give B a non-empty visited_proj_descriptors set ⇒ heavy_fields_equal
+        // returns false ⇒ the two are NOT folded together.
+        b.visited_proj_descriptors =
+            b.visited_proj_descriptors.update(ProjDescriptorKey {
+                gss_node: 1,
+                sppf_stack: 0,
+                pos: 5,
+                cat_src: 2,
+                cur_bp: 0,
+            });
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Concrete(a),
+            crate::cohort_lazy::Frame::Concrete(b),
+        ];
+
+        w.subsume_weight_dominated_when_single_result();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            2,
+            "distinct visited_proj_descriptors ⇒ distinct cross-cat cycle-defense \
+             history ⇒ NOT subsumed"
+        );
+    }
+
+    /// §6.3 cohort guard: `Frame::Cohort` frames are lazy unresolved evidence
+    /// and must pass through the subsumption pass UNTOUCHED.
+    #[test]
+    fn subsume_leaves_cohort_frames_untouched() {
+        let mut w = subsume_test_walker();
+        let key = crate::dispatch_cohort::DispatchKey::new(0, 1, 0, 0, 0);
+        let shell_cursor = queue_cursor(0, lex(1.0, 0, 0));
+        let shell = std::sync::Arc::new(crate::cohort_lazy::CohortShell::from_branch_cursor(
+            &shell_cursor,
+            key,
+        ));
+        let cohort = crate::cohort_lazy::CohortFrame::new(shell);
+        // A concrete cursor alongside the cohort — only the cohort is checked.
+        let concrete = queue_cursor(5, lex(1.0, 0, 0));
+        w.branch_cursors = vec![
+            crate::cohort_lazy::Frame::Cohort(Box::new(cohort)),
+            crate::cohort_lazy::Frame::Concrete(concrete),
+        ];
+
+        w.subsume_weight_dominated_when_single_result();
+
+        assert_eq!(
+            w.branch_cursors.len(),
+            2,
+            "the cohort frame must survive the subsumption pass untouched"
+        );
+        assert!(
+            w.branch_cursors
+                .iter()
+                .any(|f| matches!(f, crate::cohort_lazy::Frame::Cohort(_))),
+            "the Cohort frame must still be present after the pass"
         );
     }
 }

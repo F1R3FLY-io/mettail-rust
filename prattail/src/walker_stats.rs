@@ -110,6 +110,16 @@ pub struct WalkerStats {
     /// `merge_collapses_total`; tracked separately for lifecycle
     /// conservation check (sum of sinks ≈ sum of sources).
     pub cursors_dropped_via_merge: u64,
+    /// Calculator-map cross-cat fan-out fix
+    /// (`docs/design/calculator-map-crosscat-fanout.md` §4): cursors dropped
+    /// by `subsume_weight_dominated_when_single_result` — the single-result
+    /// demand-mode weight-dominance subsumption. NON-zero ONLY on the
+    /// `Cat::parse` (single-result) path; always 0 on `_all`/`_prefix`/
+    /// bounding-mode and when `PRATTAIL_SR_SUBSUME=0`. The subsumption is
+    /// INVISIBLE under `PRATTAIL_TRACE` (tracing routes the single-result
+    /// facade to the exhaustive driver, so the demand flag stays false) — so
+    /// this counter (not a trace) is the way to observe the pass firing.
+    pub cursors_dropped_via_sr_subsume: u64,
 
     // ── Fork composition ──────────────────────────────────────────────
     /// Total `WpdaStepAction::Fork` firings.
@@ -1477,11 +1487,12 @@ impl fmt::Display for WalkerStats {
         )?;
         writeln!(
             f,
-            "  cursors_dropped: resolution={} explicit={} outcome={} merge={}",
+            "  cursors_dropped: resolution={} explicit={} outcome={} merge={} sr_subsume={}",
             self.cursors_dropped_via_resolution_check,
             self.cursors_dropped_via_explicit_drop,
             self.cursors_dropped_via_outcome_drop,
             self.cursors_dropped_via_merge,
+            self.cursors_dropped_via_sr_subsume,
         )?;
         writeln!(
             f,
@@ -2975,6 +2986,7 @@ mod tests {
             cursors_dropped_via_explicit_drop: 4,
             cursors_dropped_via_outcome_drop: 58,
             cursors_dropped_via_merge: 1_772,
+            cursors_dropped_via_sr_subsume: 0,
             fork_total: 1_968,
             fork_kind_push: 5_904,
             fork_kind_opt_group_absent: 0,
