@@ -1036,10 +1036,14 @@ impl PredictionWfst {
         let safe_cat = self
             .category
             .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-        writeln!(out, "digraph PredictionWfst_{} {{", safe_cat).unwrap();
-        writeln!(out, "  rankdir=LR;").unwrap();
-        writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];").unwrap();
-        writeln!(out, "  edge [fontname=\"Helvetica\", fontsize=10];").unwrap();
+        writeln!(out, "digraph PredictionWfst_{} {{", safe_cat)
+            .expect("wfst: DOT write into in-memory String is infallible");
+        writeln!(out, "  rankdir=LR;")
+            .expect("wfst: DOT write into in-memory String is infallible");
+        writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];")
+            .expect("wfst: DOT write into in-memory String is infallible");
+        writeln!(out, "  edge [fontname=\"Helvetica\", fontsize=10];")
+            .expect("wfst: DOT write into in-memory String is infallible");
 
         // Emit nodes
         for state in &self.states {
@@ -1060,7 +1064,8 @@ impl PredictionWfst {
                     label.push_str(&format!("\\n(final, w={:.2})", w));
                 }
             }
-            writeln!(out, "  {} [shape={}, label=\"{}\"];", state.id, shape, label).unwrap();
+            writeln!(out, "  {} [shape={}, label=\"{}\"];", state.id, shape, label)
+                .expect("wfst: DOT write into in-memory String is infallible");
         }
 
         // Emit edges
@@ -1083,11 +1088,11 @@ impl PredictionWfst {
                     "  {} -> {} [label=\"{} / {} [{:.2}]\", color={}];",
                     t.from, t.to, token_label, action_label, w, color
                 )
-                .unwrap();
+                .expect("wfst: DOT write into in-memory String is infallible");
             }
         }
 
-        writeln!(out, "}}").unwrap();
+        writeln!(out, "}}").expect("wfst: DOT write into in-memory String is infallible");
         out
     }
 }

@@ -1481,7 +1481,7 @@ fn parse_bounded_quantifier(
         });
     }
     let max: u32 = std::str::from_utf8(&input[max_start..i])
-        .unwrap()
+        .expect("regex: bounded-repetition max is an all-ASCII-digit run — valid UTF-8")
         .parse()
         .map_err(|_| RegexError {
             position: max_start,

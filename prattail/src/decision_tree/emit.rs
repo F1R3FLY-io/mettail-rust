@@ -98,7 +98,7 @@ pub fn emit_match_arms(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf
         tree.stats.total_rules,
         by_first.len(),
     )
-    .unwrap();
+    .expect("decision_tree: codegen write into in-memory String is infallible");
 
     // Actual code emission is handled by the trampoline integration (Phase 5),
     // which maps tree entries back to concrete rule handler code. The tree
@@ -112,7 +112,8 @@ fn emit_action_code(action: &DecisionAction, _category: &str, buf: &mut String) 
 
     match action {
         DecisionAction::Commit { rule_label, .. } => {
-            write!(buf, "/* COMMIT: {} */", rule_label).unwrap();
+            write!(buf, "/* COMMIT: {} */", rule_label)
+                .expect("decision_tree: codegen write into in-memory String is infallible");
         },
         DecisionAction::Ambiguous { candidates } => {
             write!(
@@ -125,10 +126,11 @@ fn emit_action_code(action: &DecisionAction, _category: &str, buf: &mut String) 
                     .collect::<Vec<_>>()
                     .join(", "),
             )
-            .unwrap();
+            .expect("decision_tree: codegen write into in-memory String is infallible");
         },
         DecisionAction::NonterminalBoundary { .. } => {
-            write!(buf, "/* NT_BOUNDARY */").unwrap();
+            write!(buf, "/* NT_BOUNDARY */")
+                .expect("decision_tree: codegen write into in-memory String is infallible");
         },
     }
 }
@@ -224,17 +226,20 @@ pub fn emit_flat_table(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf
     let cat_upper = tree.category.to_uppercase();
 
     // Emit state transition table
-    write!(buf, "const DISPATCH_TABLE_{}: &[(u8, u16)] = &[", cat_upper,).unwrap();
+    write!(buf, "const DISPATCH_TABLE_{}: &[(u8, u16)] = &[", cat_upper,)
+        .expect("decision_tree: codegen write into in-memory String is infallible");
 
     for state in &states {
         for (byte, target) in &state.transitions {
-            write!(buf, "({}, {}),", byte, target).unwrap();
+            write!(buf, "({}, {}),", byte, target)
+                .expect("decision_tree: codegen write into in-memory String is infallible");
         }
     }
     buf.push_str("];");
 
     // Emit state metadata (offset into transition table + action tag)
-    write!(buf, "const STATE_META_{}: &[(u16, u16, u8)] = &[", cat_upper,).unwrap();
+    write!(buf, "const STATE_META_{}: &[(u16, u16, u8)] = &[", cat_upper,)
+        .expect("decision_tree: codegen write into in-memory String is infallible");
 
     let mut offset: u16 = 0;
     for state in &states {
@@ -245,7 +250,8 @@ pub fn emit_flat_table(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf
             Some(DecisionAction::Ambiguous { .. }) => 2,
             Some(DecisionAction::NonterminalBoundary { .. }) => 3,
         };
-        write!(buf, "({}, {}, {}),", offset, count, action_tag).unwrap();
+        write!(buf, "({}, {}, {}),", offset, count, action_tag)
+            .expect("decision_tree: codegen write into in-memory String is infallible");
         offset += count;
     }
     buf.push_str("];");

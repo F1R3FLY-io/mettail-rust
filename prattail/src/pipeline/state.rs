@@ -116,7 +116,11 @@ impl PipelineState {
                     .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
                 PipelineState::Complete(ts)
             },
-            PipelineState::Complete(_) => panic!("Pipeline already complete"),
+            // Forward-only state machine: Complete is terminal. Calling advance()
+            // again is a caller contract violation (guard with is_complete() first).
+            PipelineState::Complete(_) => {
+                panic!("PraTTaIL pipeline: advance() called on the terminal Complete state — the pipeline state machine is forward-only and Complete is terminal; check is_complete() before advancing")
+            },
         }
     }
 }

@@ -400,11 +400,15 @@ impl RecoveryWfst {
         let safe_cat = self
             .category
             .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-        writeln!(out, "digraph RecoveryWfst_{} {{", safe_cat).unwrap();
-        writeln!(out, "  rankdir=LR;").unwrap();
-        writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];").unwrap();
-        writeln!(out, "  edge [fontname=\"Helvetica\", fontsize=10];").unwrap();
-        writeln!(out, "  error [shape=doublecircle, label=\"Error\\n(start)\", style=filled, fillcolor=lightyellow];").unwrap();
+        writeln!(out, "digraph RecoveryWfst_{} {{", safe_cat)
+            .expect("recovery: DOT write into in-memory String is infallible");
+        writeln!(out, "  rankdir=LR;")
+            .expect("recovery: DOT write into in-memory String is infallible");
+        writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];")
+            .expect("recovery: DOT write into in-memory String is infallible");
+        writeln!(out, "  edge [fontname=\"Helvetica\", fontsize=10];")
+            .expect("recovery: DOT write into in-memory String is infallible");
+        writeln!(out, "  error [shape=doublecircle, label=\"Error\\n(start)\", style=filled, fillcolor=lightyellow];").expect("recovery: DOT write into in-memory String is infallible");
 
         for (i, &token_id) in self.sync_tokens.iter().enumerate() {
             let token_name = self.token_map.name(token_id).unwrap_or("?").to_string();
@@ -412,7 +416,7 @@ impl RecoveryWfst {
 
             // Node: sync token target
             writeln!(out, "  {} [shape=doublecircle, label=\"Sync\\n{}\"];", node_id, token_name)
-                .unwrap();
+                .expect("recovery: DOT write into in-memory String is infallible");
 
             // Edge: Error → Sync token, with discount annotation
             let discount = self.prediction_discount(token_id);
@@ -423,10 +427,10 @@ impl RecoveryWfst {
             };
             let color = if discount < 1.0 { "blue" } else { "black" };
             writeln!(out, "  error -> {} [label=\"{}\", color={}];", node_id, label, color)
-                .unwrap();
+                .expect("recovery: DOT write into in-memory String is infallible");
         }
 
-        writeln!(out, "}}").unwrap();
+        writeln!(out, "}}").expect("recovery: DOT write into in-memory String is infallible");
         out
     }
 }

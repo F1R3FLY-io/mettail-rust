@@ -580,7 +580,11 @@ pub(crate) fn detect_inter_category_dead_paths(
                 (false, false) => "forward+backward",
                 (false, true) => "forward",
                 (true, false) => "backward",
-                (true, true) => unreachable!(),
+                // Unreachable: this match is inside `if !fwd || !bwd`, so at
+                // least one of fwd/bwd is false — both-true cannot enter here.
+                (true, true) => {
+                    unreachable!("inter-category dead-path direction: (fwd, bwd) = (true, true) is excluded by the enclosing `if !fwd || !bwd` guard")
+                },
             };
 
             warnings.push(DeadRuleWarning::InterCategoryDeadPath {

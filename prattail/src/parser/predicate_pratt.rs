@@ -168,7 +168,7 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
             while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                 end += 1;
             }
-            let ident = std::str::from_utf8(&bytes[i..end]).unwrap().to_string();
+            let ident = std::str::from_utf8(&bytes[i..end]).expect("predicate_pratt: identifier run is ASCII alphanumeric/underscore — valid UTF-8").to_string();
             out.push(TokenSpan { tok: Tok::Ident(ident), pos: start });
             i = end;
             continue;
@@ -179,7 +179,8 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
             while end < bytes.len() && bytes[end].is_ascii_digit() {
                 end += 1;
             }
-            let num_str = std::str::from_utf8(&bytes[i..end]).unwrap();
+            let num_str = std::str::from_utf8(&bytes[i..end])
+                .expect("predicate_pratt: integer-literal run is ASCII digits — valid UTF-8");
             let n: i64 = num_str.parse().map_err(|_| ParseError {
                 message: format!("invalid integer: {}", num_str),
                 position: start,
@@ -200,7 +201,7 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
                     position: start,
                 });
             }
-            let s = std::str::from_utf8(&bytes[i + 1..end]).unwrap().to_string();
+            let s = std::str::from_utf8(&bytes[i + 1..end]).expect("predicate_pratt: string body lies between ASCII-quote char boundaries within a valid UTF-8 str").to_string();
             out.push(TokenSpan { tok: Tok::Str(s), pos: start });
             i = end + 1;
             continue;
@@ -783,9 +784,11 @@ impl PredicateParser {
 
 fn fold_and(mut clauses: Vec<BehavioralPred>) -> BehavioralPred {
     if clauses.len() == 1 {
-        return clauses.pop().unwrap();
+        return clauses
+            .pop()
+            .expect("predicate_pratt: clauses.len()==1 guard guarantees Some");
     }
-    let mut acc = clauses.pop().unwrap();
+    let mut acc = clauses.pop().expect("predicate_pratt: clauses non-empty (callers seed vec![parse_implication()?]); len==1 returned above");
     while let Some(c) = clauses.pop() {
         acc = BehavioralPred::And(Box::new(c), Box::new(acc));
     }
@@ -794,9 +797,11 @@ fn fold_and(mut clauses: Vec<BehavioralPred>) -> BehavioralPred {
 
 fn fold_or(mut clauses: Vec<BehavioralPred>) -> BehavioralPred {
     if clauses.len() == 1 {
-        return clauses.pop().unwrap();
+        return clauses
+            .pop()
+            .expect("predicate_pratt: clauses.len()==1 guard guarantees Some");
     }
-    let mut acc = clauses.pop().unwrap();
+    let mut acc = clauses.pop().expect("predicate_pratt: clauses non-empty (callers seed vec![parse_implication()?]); len==1 returned above");
     while let Some(c) = clauses.pop() {
         acc = BehavioralPred::Or(Box::new(c), Box::new(acc));
     }

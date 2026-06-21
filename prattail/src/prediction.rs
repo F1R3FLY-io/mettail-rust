@@ -2022,7 +2022,7 @@ pub fn generate_sync_predicate(
         cat = category,
         pats = patterns.join(" | "),
     )
-    .unwrap();
+    .expect("prediction: write into in-memory String is infallible");
 }
 
 /// Convert a token name (from FIRST/FOLLOW sets) to a match pattern string.

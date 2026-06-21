@@ -361,43 +361,55 @@ pub fn write_mph_tables(buf: &mut String, table: &MphTable) {
     }
 
     // Constants
-    write!(buf, "const MPH_FNV_OFFSET_BASIS: u32 = 0x{:08X};", FNV_OFFSET_BASIS).unwrap();
-    write!(buf, "const MPH_FNV_PRIME: u32 = 0x{:08X};", FNV_PRIME).unwrap();
-    write!(buf, "const MPH_FNV_SEED2: u32 = 0x{:08X};", FNV_SEED2).unwrap();
-    write!(buf, "const MPH_NUM_BUCKETS: u32 = {};", table.num_buckets()).unwrap();
-    write!(buf, "const MPH_TABLE_SIZE: u32 = {};", table.table_size()).unwrap();
+    write!(buf, "const MPH_FNV_OFFSET_BASIS: u32 = 0x{:08X};", FNV_OFFSET_BASIS)
+        .expect("mph: write into in-memory String is infallible");
+    write!(buf, "const MPH_FNV_PRIME: u32 = 0x{:08X};", FNV_PRIME)
+        .expect("mph: write into in-memory String is infallible");
+    write!(buf, "const MPH_FNV_SEED2: u32 = 0x{:08X};", FNV_SEED2)
+        .expect("mph: write into in-memory String is infallible");
+    write!(buf, "const MPH_NUM_BUCKETS: u32 = {};", table.num_buckets())
+        .expect("mph: write into in-memory String is infallible");
+    write!(buf, "const MPH_TABLE_SIZE: u32 = {};", table.table_size())
+        .expect("mph: write into in-memory String is infallible");
 
     // Displacement array
-    write!(buf, "static MPH_DISPLACEMENTS: [u32; {}] = [", table.displacements().len()).unwrap();
+    write!(buf, "static MPH_DISPLACEMENTS: [u32; {}] = [", table.displacements().len())
+        .expect("mph: write into in-memory String is infallible");
     for (i, &d) in table.displacements().iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", d).unwrap();
+        write!(buf, "{}", d).expect("mph: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
     // Keys array (for verification). None slots use "" as sentinel.
-    write!(buf, "static MPH_KEYS: [&str; {}] = [", table.values().len()).unwrap();
+    write!(buf, "static MPH_KEYS: [&str; {}] = [", table.values().len())
+        .expect("mph: write into in-memory String is infallible");
     for (i, slot) in table.values().iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
         match slot {
-            Some((key, _)) => write!(buf, "\"{}\"", key).unwrap(),
+            Some((key, _)) => {
+                write!(buf, "\"{}\"", key).expect("mph: write into in-memory String is infallible")
+            },
             None => buf.push_str("\"\""),
         }
     }
     buf.push_str("];");
 
     // Token ID array. None slots use usize::MAX as sentinel.
-    write!(buf, "static MPH_TOKEN_IDS: [usize; {}] = [", table.values().len()).unwrap();
+    write!(buf, "static MPH_TOKEN_IDS: [usize; {}] = [", table.values().len())
+        .expect("mph: write into in-memory String is infallible");
     for (i, slot) in table.values().iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
         match slot {
-            Some((_, id)) => write!(buf, "{}", id).unwrap(),
+            Some((_, id)) => {
+                write!(buf, "{}", id).expect("mph: write into in-memory String is infallible")
+            },
             None => buf.push_str("usize::MAX"),
         }
     }

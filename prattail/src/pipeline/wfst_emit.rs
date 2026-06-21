@@ -136,12 +136,13 @@ pub(crate) fn emit_prediction_wfst_static(
             "#[allow(non_upper_case_globals)] static WFST_TRANSITIONS_{cat}: &[(u16, u32, f64)] = &[",
             cat = category,
         )
-        .unwrap();
+        .expect("pipeline: codegen write into in-memory String is infallible");
         for (i, (token_id, target, weight)) in transitions_flat.iter().enumerate() {
             if i > 0 {
                 buf.push(',');
             }
-            write!(buf, "({}_u16, {}_u32, {})", token_id, target, format_f64(*weight)).unwrap();
+            write!(buf, "({}_u16, {}_u32, {})", token_id, target, format_f64(*weight))
+                .expect("pipeline: codegen write into in-memory String is infallible");
         }
         buf.push_str("];");
 
@@ -151,13 +152,13 @@ pub(crate) fn emit_prediction_wfst_static(
             "#[allow(non_upper_case_globals)] static WFST_STATE_OFFSETS_{cat}: &[(usize, usize, bool, f64)] = &[",
             cat = category,
         )
-        .unwrap();
+        .expect("pipeline: codegen write into in-memory String is infallible");
         for (i, (start, count, is_final, fw)) in state_offsets.iter().enumerate() {
             if i > 0 {
                 buf.push(',');
             }
             write!(buf, "({}_usize, {}_usize, {}, {})", start, count, is_final, format_f64(*fw))
-                .unwrap();
+                .expect("pipeline: codegen write into in-memory String is infallible");
         }
         buf.push_str("];");
 
@@ -167,12 +168,13 @@ pub(crate) fn emit_prediction_wfst_static(
             "#[allow(non_upper_case_globals)] static WFST_TOKEN_NAMES_{cat}: &[&str] = &[",
             cat = category,
         )
-        .unwrap();
+        .expect("pipeline: codegen write into in-memory String is infallible");
         for (i, name) in token_names.iter().enumerate() {
             if i > 0 {
                 buf.push(',');
             }
-            write!(buf, "\"{}\"", name).unwrap();
+            write!(buf, "\"{}\"", name)
+                .expect("pipeline: codegen write into in-memory String is infallible");
         }
         buf.push_str("];");
 
@@ -184,14 +186,14 @@ pub(crate) fn emit_prediction_wfst_static(
                 category,
                 format_f64(bw.value()),
             )
-            .unwrap(),
+            .expect("pipeline: codegen write into in-memory String is infallible"),
             None => {
                 write!(
                     buf,
                     "#[allow(non_upper_case_globals)] static WFST_BEAM_WIDTH_{cat}: Option<f64> = None;",
                     cat = category,
                 )
-                .unwrap()
+                .expect("pipeline: codegen write into in-memory String is infallible")
             },
         }
 
@@ -208,7 +210,7 @@ pub(crate) fn emit_prediction_wfst_static(
                 ) \
              }});",
             cat = category,
-        ).unwrap();
+        ).expect("pipeline: codegen write into in-memory String is infallible");
     }
 }
 
@@ -289,7 +291,8 @@ pub(crate) fn emit_token_to_id_fn(
         } else {
             format!("Token::{}", name)
         };
-        write!(buf, "{} => {}_u16,", pattern, id).unwrap();
+        write!(buf, "{} => {}_u16,", pattern, id)
+            .expect("pipeline: codegen write into in-memory String is infallible");
     }
 
     // Catch-all for any unmapped variants → use u16::MAX as sentinel

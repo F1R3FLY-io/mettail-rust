@@ -2281,7 +2281,7 @@ impl GrammarComplexityReport {
             self.profile.nfa_spillover_categories,
             self.composed_dispatch_entries,
             self.resolved_ambiguities,
-        ).unwrap();
+        ).expect("cost_benefit: write into in-memory String is infallible");
 
         // Line 2: per-category summary (only if ≤ 8 categories)
         if !self.categories.is_empty() && self.categories.len() <= 8 {
@@ -2292,7 +2292,8 @@ impl GrammarComplexityReport {
                     format!("{}({}t/{}a)", c.name, c.dispatch_token_count, c.wfst_action_count)
                 })
                 .collect();
-            write!(out, "\n  per-category: {}", cat_parts.join(" ")).unwrap();
+            write!(out, "\n  per-category: {}", cat_parts.join(" "))
+                .expect("cost_benefit: write into in-memory String is infallible");
         }
 
         out

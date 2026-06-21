@@ -444,7 +444,8 @@ fn write_token_enum(
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen.insert(variant_name.clone()) {
-                    write!(buf, "{},", variant_name).unwrap();
+                    write!(buf, "{},", variant_name)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::Dollar => {
@@ -466,12 +467,15 @@ fn write_token_enum(
                     {
                         // Payload-carrying variant: use &'a str for str types, type directly otherwise
                         if pt == "str" {
-                            write!(buf, "{}(&'a str),", name).unwrap();
+                            write!(buf, "{}(&'a str),", name)
+                                .expect("codegen: write into in-memory String is infallible");
                         } else {
-                            write!(buf, "{}({}),", name, pt).unwrap();
+                            write!(buf, "{}({}),", name, pt)
+                                .expect("codegen: write into in-memory String is infallible");
                         }
                     } else {
-                        write!(buf, "{},", name).unwrap();
+                        write!(buf, "{},", name)
+                            .expect("codegen: write into in-memory String is infallible");
                     }
                 }
             },
@@ -482,7 +486,8 @@ fn write_token_enum(
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(buf, "{}(&'a str),", cat).unwrap();
+                    write!(buf, "{}(&'a str),", cat)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::BooleanLit => {
@@ -560,7 +565,7 @@ fn write_token_display(
                     // Escape backticks in the text for the format string
                     let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
                     write!(buf, "Token::{} => \"`{}`\".to_string(),", variant_name, escaped)
-                        .unwrap();
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::Dollar => {
@@ -582,9 +587,10 @@ fn write_token_display(
                         .is_some();
                     if has_payload {
                         write!(buf, "Token::{}(v) => format!(\"{} `{{}}`\", v),", name, name)
-                            .unwrap();
+                            .expect("codegen: write into in-memory String is infallible");
                     } else {
-                        write!(buf, "Token::{} => \"`{}`\".to_string(),", name, name).unwrap();
+                        write!(buf, "Token::{} => \"`{}`\".to_string(),", name, name)
+                            .expect("codegen: write into in-memory String is infallible");
                     }
                 }
             },
@@ -592,7 +598,8 @@ fn write_token_display(
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(buf, "Token::{}(s) => format!(\"{} `{{}}`\", s),", cat, cat).unwrap();
+                    write!(buf, "Token::{}(s) => format!(\"{} `{{}}`\", s),", cat, cat)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::BooleanLit => {
@@ -671,7 +678,7 @@ fn write_token_to_kind(
                         "Token::{} => TokenKind::Fixed({:?}.to_string()),\n",
                         variant_name, text
                     )
-                    .unwrap();
+                    .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::Dollar => {
@@ -695,14 +702,14 @@ fn write_token_to_kind(
                             "Token::{}(_) => TokenKind::Custom({:?}.to_string()),\n",
                             name, name
                         )
-                        .unwrap();
+                        .expect("codegen: write into in-memory String is infallible");
                     } else {
                         write!(
                             buf,
                             "Token::{} => TokenKind::Custom({:?}.to_string()),\n",
                             name, name
                         )
-                        .unwrap();
+                        .expect("codegen: write into in-memory String is infallible");
                     }
                 }
             },
@@ -713,7 +720,7 @@ fn write_token_to_kind(
                         "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n",
                         cat, cat
                     )
-                    .unwrap();
+                    .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::RationalLit(cat) => {
@@ -723,7 +730,7 @@ fn write_token_to_kind(
                         "Token::{}(_) => TokenKind::RationalLit({:?}.to_string()),\n",
                         cat, cat
                     )
-                    .unwrap();
+                    .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::FixedPointLit(cat) => {
@@ -733,7 +740,7 @@ fn write_token_to_kind(
                         "Token::{}(_) => TokenKind::FixedPointLit({:?}.to_string()),\n",
                         cat, cat
                     )
-                    .unwrap();
+                    .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::LexError(_) => unreachable!(
@@ -798,7 +805,8 @@ fn write_token_to_kind(
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen2.insert(variant_name.clone()) {
-                    write!(buf, "Token::{} => {:?},\n", variant_name, text).unwrap();
+                    write!(buf, "Token::{} => {:?},\n", variant_name, text)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::Dollar => {
@@ -823,14 +831,15 @@ fn write_token_to_kind(
                             .and_then(|s| s.payload_type.as_deref())
                             .unwrap_or("str");
                         if pt == "str" {
-                            write!(buf, "Token::{}(s) => s,\n", name).unwrap();
+                            write!(buf, "Token::{}(s) => s,\n", name)
+                                .expect("codegen: write into in-memory String is infallible");
                         } else {
                             write!(
                                 buf,
                                 "Token::{}(_) => &source[range.start.byte_offset..range.end.byte_offset],\n",
                                 name
                             )
-                            .unwrap();
+                            .expect("codegen: write into in-memory String is infallible");
                         }
                     } else {
                         write!(
@@ -838,7 +847,7 @@ fn write_token_to_kind(
                             "Token::{} => &source[range.start.byte_offset..range.end.byte_offset],\n",
                             name
                         )
-                        .unwrap();
+                        .expect("codegen: write into in-memory String is infallible");
                     }
                 }
             },
@@ -846,7 +855,8 @@ fn write_token_to_kind(
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => {
                 if seen2.insert(cat.clone()) {
-                    write!(buf, "Token::{}(s) => s,\n", cat).unwrap();
+                    write!(buf, "Token::{}(s) => s,\n", cat)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             },
             TokenKind::LexError(_) => unreachable!(
@@ -874,7 +884,7 @@ fn write_class_table(buf: &mut String, partition: &AlphabetPartition) {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", class).unwrap();
+        write!(buf, "{}", class).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 }
@@ -907,12 +917,13 @@ fn write_is_accepting_check(buf: &mut String, dfa: &Dfa) {
     }
 
     // Emit the static array
-    write!(buf, "static IS_ACCEPTING: [u64; {}] = [", num_words).unwrap();
+    write!(buf, "static IS_ACCEPTING: [u64; {}] = [", num_words)
+        .expect("codegen: write into in-memory String is infallible");
     for (i, word) in words.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "0x{:016x}", word).unwrap();
+        write!(buf, "0x{:016x}", word).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
@@ -929,7 +940,8 @@ fn write_accept_arms(buf: &mut String, dfa: &Dfa, custom_tokens: &[CustomTokenSp
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
-            write!(buf, "{}u32 => Some(", state_idx).unwrap();
+            write!(buf, "{}u32 => Some(", state_idx)
+                .expect("codegen: write into in-memory String is infallible");
             write_token_constructor(buf, kind, custom_tokens);
             buf.push_str("),");
         }
@@ -946,7 +958,8 @@ fn write_accept_weight_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if state.accept.is_some() {
-            write!(buf, "{}u32 => {:.1}_f64,", state_idx, state.weight.value()).unwrap();
+            write!(buf, "{}u32 => {:.1}_f64,", state_idx, state.weight.value())
+                .expect("codegen: write into in-memory String is infallible");
         }
     }
     buf.push_str("_ => f64::INFINITY }");
@@ -960,10 +973,12 @@ fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
         if !has_transitions {
             continue;
         }
-        write!(buf, "{}u32 => match class {{", state_idx).unwrap();
+        write!(buf, "{}u32 => match class {{", state_idx)
+            .expect("codegen: write into in-memory String is infallible");
         for (class_id, &target) in state.transitions.iter().enumerate() {
             if target != super::DEAD_STATE {
-                write!(buf, "{}u8 => {}u32,", class_id, target).unwrap();
+                write!(buf, "{}u8 => {}u32,", class_id, target)
+                    .expect("codegen: write into in-memory String is infallible");
             }
         }
         buf.push_str("_ => u32::MAX },");
@@ -1019,7 +1034,8 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
         },
         TokenKind::Fixed(text) => {
             let variant_name = terminal_to_variant_name(text);
-            write!(buf, "Token::{}", variant_name).unwrap();
+            write!(buf, "Token::{}", variant_name)
+                .expect("codegen: write into in-memory String is infallible");
         },
         TokenKind::Dollar => buf.push_str("Token::Dollar(&text[1..])"),
         TokenKind::DoubleDollar => {
@@ -1032,21 +1048,25 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
                 // directly as payload regardless of `constructor_code`.
                 let is_str_payload = spec.payload_type.as_deref() == Some("str");
                 if is_str_payload {
-                    write!(buf, "Token::{}(text)", name).unwrap();
+                    write!(buf, "Token::{}(text)", name)
+                        .expect("codegen: write into in-memory String is infallible");
                 } else if let Some(ref code) = spec.constructor_code {
-                    write!(buf, "Token::{}({{ let text = text; {} }})", name, code).unwrap();
+                    write!(buf, "Token::{}({{ let text = text; {} }})", name, code)
+                        .expect("codegen: write into in-memory String is infallible");
                 } else if let Some(ref pt) = spec.payload_type {
                     write!(
                         buf,
                         "Token::{}(text.parse::<{}>().expect(\"invalid {} literal\"))",
                         name, pt, name
                     )
-                    .unwrap();
+                    .expect("codegen: write into in-memory String is infallible");
                 } else {
-                    write!(buf, "Token::{}", name).unwrap();
+                    write!(buf, "Token::{}", name)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             } else {
-                write!(buf, "Token::{}", name).unwrap();
+                write!(buf, "Token::{}", name)
+                    .expect("codegen: write into in-memory String is infallible");
             }
         },
         // Category-bound literal variants modeled identically to Custom.
@@ -1056,14 +1076,18 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *cat) {
                 let is_str_payload = spec.payload_type.as_deref() == Some("str");
                 if is_str_payload {
-                    write!(buf, "Token::{}(text)", cat).unwrap();
+                    write!(buf, "Token::{}(text)", cat)
+                        .expect("codegen: write into in-memory String is infallible");
                 } else if let Some(ref code) = spec.constructor_code {
-                    write!(buf, "Token::{}({{ let text = text; {} }})", cat, code).unwrap();
+                    write!(buf, "Token::{}({{ let text = text; {} }})", cat, code)
+                        .expect("codegen: write into in-memory String is infallible");
                 } else {
-                    write!(buf, "Token::{}(text)", cat).unwrap();
+                    write!(buf, "Token::{}(text)", cat)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             } else {
-                write!(buf, "Token::{}(text)", cat).unwrap();
+                write!(buf, "Token::{}(text)", cat)
+                    .expect("codegen: write into in-memory String is infallible");
             }
         },
         TokenKind::BooleanLit => {
@@ -1085,7 +1109,7 @@ fn write_direct_coded_lexer(
     write_class_table(buf, partition);
 
     write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes)
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -1147,7 +1171,8 @@ fn write_hybrid_lexer(
     let num_classes = partition.num_classes;
 
     write_class_table(buf, partition);
-    write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", num_classes).unwrap();
+    write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", num_classes)
+        .expect("codegen: write into in-memory String is infallible");
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -1214,13 +1239,16 @@ fn write_hybrid_lexer(
         let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
         if !has_transitions {
             // Hot state with no transitions → always dead
-            write!(buf, "{}u32 => u32::MAX,", state_idx).unwrap();
+            write!(buf, "{}u32 => u32::MAX,", state_idx)
+                .expect("codegen: write into in-memory String is infallible");
             continue;
         }
-        write!(buf, "{}u32 => match class {{", state_idx).unwrap();
+        write!(buf, "{}u32 => match class {{", state_idx)
+            .expect("codegen: write into in-memory String is infallible");
         for (class_id, &target) in state.transitions.iter().enumerate() {
             if target != DEAD_STATE {
-                write!(buf, "{}u8 => {}u32,", class_id, target).unwrap();
+                write!(buf, "{}u8 => {}u32,", class_id, target)
+                    .expect("codegen: write into in-memory String is infallible");
             }
         }
         buf.push_str("_ => u32::MAX },");
@@ -1404,18 +1432,21 @@ fn write_accept_alternatives(buf: &mut String, dfa: &Dfa, custom_tokens: &[Custo
                     primary_variant,
                     state.weight.value()
                 )
-                .unwrap();
+                .expect("codegen: write into in-memory String is infallible");
             } else {
                 // Multi-accept: primary + alternatives
-                write!(buf, "{}u32 => vec![", state_idx).unwrap();
+                write!(buf, "{}u32 => vec![", state_idx)
+                    .expect("codegen: write into in-memory String is infallible");
                 // Primary first (best weight)
                 let primary_variant =
                     token_kind_to_constructor(primary_kind, "text", custom_tokens);
-                write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value()).unwrap();
+                write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value())
+                    .expect("codegen: write into in-memory String is infallible");
                 // Alternatives
                 for (alt_kind, alt_weight) in &state.alt_accepts {
                     let alt_variant = token_kind_to_constructor(alt_kind, "text", custom_tokens);
-                    write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value()).unwrap();
+                    write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value())
+                        .expect("codegen: write into in-memory String is infallible");
                 }
                 buf.push_str("],");
             }
@@ -2225,42 +2256,46 @@ pub fn build_bitmap_tables(dfa: &Dfa) -> Result<BitmapTables, String> {
 /// Write the comb-compressed transition tables as static arrays.
 fn write_comb_tables(buf: &mut String, comb: &CombTable) {
     // BASE array
-    write!(buf, "static BASE: [u32; {}] = [", comb.base.len()).unwrap();
+    write!(buf, "static BASE: [u32; {}] = [", comb.base.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &b) in comb.base.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", b).unwrap();
+        write!(buf, "{}", b).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
     // DEFAULT array
-    write!(buf, "static DEFAULT: [u32; {}] = [", comb.default.len()).unwrap();
+    write!(buf, "static DEFAULT: [u32; {}] = [", comb.default.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &d) in comb.default.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", d).unwrap();
+        write!(buf, "{}", d).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
     // NEXT array
-    write!(buf, "static NEXT: [u32; {}] = [", comb.next.len()).unwrap();
+    write!(buf, "static NEXT: [u32; {}] = [", comb.next.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &n) in comb.next.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", n).unwrap();
+        write!(buf, "{}", n).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
     // CHECK array
-    write!(buf, "static CHECK: [u32; {}] = [", comb.check.len()).unwrap();
+    write!(buf, "static CHECK: [u32; {}] = [", comb.check.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &c) in comb.check.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", c).unwrap();
+        write!(buf, "{}", c).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 }
@@ -2268,32 +2303,35 @@ fn write_comb_tables(buf: &mut String, comb: &CombTable) {
 /// Write the bitmap-compressed transition tables as static arrays.
 fn write_bitmap_tables(buf: &mut String, tables: &BitmapTables) {
     // BITMAPS array
-    write!(buf, "static BITMAPS: [u32; {}] = [", tables.bitmaps.len()).unwrap();
+    write!(buf, "static BITMAPS: [u32; {}] = [", tables.bitmaps.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &b) in tables.bitmaps.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", b).unwrap();
+        write!(buf, "{}", b).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
     // OFFSETS array
-    write!(buf, "static OFFSETS: [u16; {}] = [", tables.offsets.len()).unwrap();
+    write!(buf, "static OFFSETS: [u16; {}] = [", tables.offsets.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &o) in tables.offsets.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", o).unwrap();
+        write!(buf, "{}", o).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
     // TARGETS array
-    write!(buf, "static TARGETS: [u32; {}] = [", tables.targets.len()).unwrap();
+    write!(buf, "static TARGETS: [u32; {}] = [", tables.targets.len())
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &t) in tables.targets.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", t).unwrap();
+        write!(buf, "{}", t).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 }
@@ -2340,7 +2378,7 @@ fn write_comb_driven_lexer(
     write_comb_tables(buf, comb);
 
     write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes)
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -2360,7 +2398,7 @@ fn write_comb_driven_lexer(
          if CHECK[idx] == state {{ NEXT[idx] }} else {{ DEFAULT[state as usize] }} \
          }}"
     )
-    .unwrap();
+    .expect("codegen: write into in-memory String is infallible");
 
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
@@ -2403,7 +2441,7 @@ fn write_bitmap_driven_lexer(
     write_bitmap_tables(buf, tables);
 
     write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes)
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -2508,7 +2546,8 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
     }
 
     for (start_state, state_chains) in &chains_by_start {
-        write!(buf, "{}u32 => {{", start_state).unwrap();
+        write!(buf, "{}u32 => {{", start_state)
+            .expect("codegen: write into in-memory String is infallible");
 
         // Sort chains longest-first for greedy matching (longest match wins)
         let mut sorted_chains: Vec<&&MultiByteChain> = state_chains.iter().collect();
@@ -2516,7 +2555,8 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
 
         for chain in sorted_chains {
             let len = chain.chain_len();
-            write!(buf, "if pos + {} <= bytes.len() && ", len).unwrap();
+            write!(buf, "if pos + {} <= bytes.len() && ", len)
+                .expect("codegen: write into in-memory String is infallible");
 
             // Emit byte comparison. For short chains (3-4 bytes), use individual
             // comparisons to help the compiler optimize. For longer chains, use
@@ -2526,20 +2566,24 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
                     if i > 0 {
                         buf.push_str(" && ");
                     }
-                    write!(buf, "bytes[pos + {}] == {}u8", i, byte).unwrap();
+                    write!(buf, "bytes[pos + {}] == {}u8", i, byte)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             } else {
-                write!(buf, "bytes[pos..pos + {}] == [", len).unwrap();
+                write!(buf, "bytes[pos..pos + {}] == [", len)
+                    .expect("codegen: write into in-memory String is infallible");
                 for (i, &byte) in chain.bytes.iter().enumerate() {
                     if i > 0 {
                         buf.push(',');
                     }
-                    write!(buf, "{}u8", byte).unwrap();
+                    write!(buf, "{}u8", byte)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
                 buf.push(']');
             }
 
-            write!(buf, " {{ return Some(({}u32, {})); }}", chain.end_state, len).unwrap();
+            write!(buf, " {{ return Some(({}u32, {})); }}", chain.end_state, len)
+                .expect("codegen: write into in-memory String is infallible");
         }
 
         buf.push_str("None },");
@@ -2710,11 +2754,14 @@ pub fn write_token_variant_id(
         // Integer variant has two payload fields: (i64, IntSuffix).
         let is_two_field = matches!(family, super::TokenFamily::Integer);
         if is_two_field {
-            write!(buf, "Token::{}(_, _) => {},", name, id).unwrap();
+            write!(buf, "Token::{}(_, _) => {},", name, id)
+                .expect("codegen: write into in-memory String is infallible");
         } else if has_payload {
-            write!(buf, "Token::{}(_) => {},", name, id).unwrap();
+            write!(buf, "Token::{}(_) => {},", name, id)
+                .expect("codegen: write into in-memory String is infallible");
         } else {
-            write!(buf, "Token::{} => {},", name, id).unwrap();
+            write!(buf, "Token::{} => {},", name, id)
+                .expect("codegen: write into in-memory String is infallible");
         }
     }
 
@@ -2760,12 +2807,13 @@ pub fn write_mph_keyword_tables(buf: &mut String, terminals: &[super::TerminalPa
 ///
 /// Emits `static CHAR_CLASS_{SUFFIX}: [u8; 256] = [...]` for the given partition.
 fn write_class_table_suffixed(buf: &mut String, partition: &AlphabetPartition, suffix: &str) {
-    write!(buf, "static CHAR_CLASS_{}: [u8; 256] = [", suffix).unwrap();
+    write!(buf, "static CHAR_CLASS_{}: [u8; 256] = [", suffix)
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &class) in partition.byte_to_class.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", class).unwrap();
+        write!(buf, "{}", class).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 }
@@ -2786,12 +2834,13 @@ fn write_is_accepting_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
         }
     }
 
-    write!(buf, "static IS_ACCEPTING_{}: [u64; {}] = [", suffix, num_words).unwrap();
+    write!(buf, "static IS_ACCEPTING_{}: [u64; {}] = [", suffix, num_words)
+        .expect("codegen: write into in-memory String is infallible");
     for (i, &w) in words.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "0x{:016x}", w).unwrap();
+        write!(buf, "0x{:016x}", w).expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("];");
 
@@ -2803,24 +2852,27 @@ fn write_is_accepting_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
         suffix.to_lowercase(),
         suffix
     )
-    .unwrap();
+    .expect("codegen: write into in-memory String is infallible");
 }
 
 /// Write a suffixed `dfa_next_{suffix}` transition function.
 ///
 /// Uses match-arm dispatch (direct-coded) for the given DFA's transitions.
 fn write_dfa_next_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
-    write!(buf, "fn dfa_next_{}(state: u32, class: u8) -> u32 {{", suffix.to_lowercase()).unwrap();
+    write!(buf, "fn dfa_next_{}(state: u32, class: u8) -> u32 {{", suffix.to_lowercase())
+        .expect("codegen: write into in-memory String is infallible");
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
         if !has_transitions {
             continue;
         }
-        write!(buf, "{}u32 => match class {{", state_idx).unwrap();
+        write!(buf, "{}u32 => match class {{", state_idx)
+            .expect("codegen: write into in-memory String is infallible");
         for (class_id, &target) in state.transitions.iter().enumerate() {
             if target != DEAD_STATE {
-                write!(buf, "{}u8 => {}u32,", class_id, target).unwrap();
+                write!(buf, "{}u8 => {}u32,", class_id, target)
+                    .expect("codegen: write into in-memory String is infallible");
             }
         }
         buf.push_str("_ => u32::MAX },");
@@ -2844,11 +2896,12 @@ fn write_accept_token_suffixed(
         "fn accept_token_{}<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {{",
         suffix.to_lowercase()
     )
-    .unwrap();
+    .expect("codegen: write into in-memory String is infallible");
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
-            write!(buf, "{}u32 => Some(", state_idx).unwrap();
+            write!(buf, "{}u32 => Some(", state_idx)
+                .expect("codegen: write into in-memory String is infallible");
             write_token_constructor(buf, kind, custom_tokens);
             buf.push_str("),");
         }
@@ -2879,7 +2932,7 @@ fn write_push_pop_tables(
         "fn push_target_{}(state: u32) -> u8 {{ match state {{",
         suffix.to_lowercase()
     )
-    .unwrap();
+    .expect("codegen: write into in-memory String is infallible");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(TokenKind::Custom(ref name)) = state.accept {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
@@ -2893,7 +2946,8 @@ fn write_push_pop_tables(
                             .map(|m| m.mode_id)
                             .unwrap_or(0)
                     };
-                    write!(buf, "{}u32 => {}u8,", state_idx, target_id).unwrap();
+                    write!(buf, "{}u32 => {}u8,", state_idx, target_id)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             }
         }
@@ -2906,12 +2960,13 @@ fn write_push_pop_tables(
         "fn should_pop_{}(state: u32) -> bool {{ match state {{",
         suffix.to_lowercase()
     )
-    .unwrap();
+    .expect("codegen: write into in-memory String is infallible");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(TokenKind::Custom(ref name)) = state.accept {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
                 if spec.is_pop {
-                    write!(buf, "{}u32 => true,", state_idx).unwrap();
+                    write!(buf, "{}u32 => true,", state_idx)
+                        .expect("codegen: write into in-memory String is infallible");
                 }
             }
         }
@@ -2976,7 +3031,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("0u8 => is_accepting_state_default(0),");
     for mode in mode_results {
         write!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase())
-            .unwrap();
+            .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc_init { last_accept = Some((0, pos, line, col)); }");
@@ -2998,7 +3053,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
             mode.name.to_uppercase(),
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => u32::MAX };");
 
@@ -3019,7 +3074,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc { last_accept = Some((state, pos, line, col)); }");
@@ -3042,7 +3097,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => None };");
 
@@ -3058,7 +3113,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => u8::MAX };");
 
@@ -3071,7 +3126,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false };");
 
@@ -3127,14 +3182,15 @@ fn write_stream_tables(
         "fn stream_id_{}(state: u32) -> u8 {{ match state {{",
         suffix.to_lowercase()
     )
-    .unwrap();
+    .expect("codegen: write into in-memory String is infallible");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(TokenKind::Custom(ref name)) = state.accept {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
                 if let Some(ref stream) = spec.stream {
                     if stream != "main" {
                         if let Some(idx) = stream_names.iter().position(|s| s == stream) {
-                            write!(buf, "{}u32 => {}u8,", state_idx, idx + 1).unwrap();
+                            write!(buf, "{}u32 => {}u8,", state_idx, idx + 1)
+                                .expect("codegen: write into in-memory String is infallible");
                         }
                     }
                 }
@@ -3195,7 +3251,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
     buf.push_str("0u8 => is_accepting_state_default(0),");
     for mode in mode_results {
         write!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase())
-            .unwrap();
+            .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc_init { last_accept = Some((0, pos, line, col)); }");
@@ -3215,7 +3271,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
             mode.name.to_uppercase(),
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => u32::MAX };");
     buf.push_str("if next_state == u32::MAX { break; }");
@@ -3233,7 +3289,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc { last_accept = Some((state, pos, line, col)); }");
@@ -3255,7 +3311,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => None };");
 
@@ -3271,7 +3327,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => u8::MAX };");
 
@@ -3284,7 +3340,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false };");
 
@@ -3298,7 +3354,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
             mode.mode_id,
             mode.name.to_lowercase()
         )
-        .unwrap();
+        .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => 0u8 };");
 
@@ -3386,7 +3442,8 @@ pub fn generate_modal_lexer_string(
     // 3. Mode constants
     buf.push_str("const MODE_DEFAULT: u8 = 0;");
     for mode in mode_results {
-        write!(buf, "const MODE_{}: u8 = {};", mode.name.to_uppercase(), mode.mode_id).unwrap();
+        write!(buf, "const MODE_{}: u8 = {};", mode.name.to_uppercase(), mode.mode_id)
+            .expect("codegen: write into in-memory String is infallible");
     }
 
     // 4. Default mode DFA tables
@@ -3422,7 +3479,8 @@ pub fn generate_modal_lexer_string(
 
         // Stream ID constants (0 = main, 1+ = named streams)
         for (i, name) in stream_names.iter().enumerate() {
-            write!(buf, "const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1).unwrap();
+            write!(buf, "const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1)
+                .expect("codegen: write into in-memory String is infallible");
         }
 
         // Per-mode stream routing tables
@@ -3439,9 +3497,11 @@ pub fn generate_modal_lexer_string(
         }
 
         // Generate stream name array for runtime
-        write!(buf, "static STREAM_NAMES: [&str; {}] = [\"main\"", stream_names.len() + 1).unwrap();
+        write!(buf, "static STREAM_NAMES: [&str; {}] = [\"main\"", stream_names.len() + 1)
+            .expect("codegen: write into in-memory String is infallible");
         for name in &stream_names {
-            write!(buf, ",\"{}\"", name).unwrap();
+            write!(buf, ",\"{}\"", name)
+                .expect("codegen: write into in-memory String is infallible");
         }
         buf.push_str("];");
     }

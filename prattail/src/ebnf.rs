@@ -191,11 +191,13 @@ fn write_header(buf: &mut String, name: &str) {
     let bar = "═".repeat(inner);
     let content_w = EBNF_LINE_WIDTH - 4; /* chars between "(*" and "*)" */
 
-    writeln!(buf, "(* {} *)", bar).unwrap();
-    writeln!(buf, "(*{:<w$}*)", title, w = content_w).unwrap();
-    writeln!(buf, "(*{:<w$}*)", gen, w = content_w).unwrap();
-    writeln!(buf, "(* {} *)", bar).unwrap();
-    writeln!(buf).unwrap();
+    writeln!(buf, "(* {} *)", bar).expect("ebnf: write into in-memory String is infallible");
+    writeln!(buf, "(*{:<w$}*)", title, w = content_w)
+        .expect("ebnf: write into in-memory String is infallible");
+    writeln!(buf, "(*{:<w$}*)", gen, w = content_w)
+        .expect("ebnf: write into in-memory String is infallible");
+    writeln!(buf, "(* {} *)", bar).expect("ebnf: write into in-memory String is infallible");
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 }
 
 /// Emit a `(* ── Title ────────── *)` section header, padded to [`EBNF_LINE_WIDTH`].
@@ -207,7 +209,8 @@ fn write_section_header(buf: &mut String, title: &str) {
     let suffix_chars = suffix.chars().count();
     let dashes_needed = EBNF_LINE_WIDTH.saturating_sub(prefix_chars + suffix_chars);
     let dashes = "─".repeat(dashes_needed);
-    writeln!(buf, "{}{}{}", prefix, dashes, suffix).unwrap();
+    writeln!(buf, "{}{}{}", prefix, dashes, suffix)
+        .expect("ebnf: write into in-memory String is infallible");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -220,7 +223,7 @@ fn write_lexical_tokens(
     patterns: &crate::LiteralPatterns,
 ) {
     write_section_header(buf, "Lexical Tokens");
-    writeln!(buf).unwrap();
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 
     // Collect native types to determine which token patterns to emit
     let mut has_integer = false;
@@ -282,9 +285,10 @@ fn write_lexical_tokens(
 
     for (prefix, comment) in &entries {
         let pad = max_prefix_len - prefix.len() + 1;
-        writeln!(buf, "{}{:>pad$}(* {} *) ;", prefix, "", comment, pad = pad).unwrap();
+        writeln!(buf, "{}{:>pad$}(* {} *) ;", prefix, "", comment, pad = pad)
+            .expect("ebnf: write into in-memory String is infallible");
     }
-    writeln!(buf).unwrap();
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -318,7 +322,8 @@ fn write_precedence_table(
 
     /* Blank separator line */
     let content_w = EBNF_LINE_WIDTH - 4; /* chars between "(*" and "*)" */
-    writeln!(buf, "(*{:>w$}*)", "", w = content_w).unwrap();
+    writeln!(buf, "(*{:>w$}*)", "", w = content_w)
+        .expect("ebnf: write into in-memory String is infallible");
 
     /* ── Pass 1: collect row data ── */
     struct PrecRow {
@@ -469,7 +474,8 @@ fn write_precedence_table(
             w3 = w_label,
             w4 = w_kind,
         );
-        writeln!(buf, "(*{:<w$}*)", raw, w = content_w).unwrap();
+        writeln!(buf, "(*{:<w$}*)", raw, w = content_w)
+            .expect("ebnf: write into in-memory String is infallible");
     };
 
     /* Underline strings: match each header word length */
@@ -486,7 +492,7 @@ fn write_precedence_table(
         emit_row(buf, &row.bp_str, &row.assoc, &row.op, &row.label, &row.kind);
     }
 
-    writeln!(buf).unwrap();
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -505,7 +511,8 @@ fn write_precedence_table(
 /// Continuation lines are indented to align with the first token.
 fn write_wrapped_ebnf_comment(buf: &mut String, prefix: &str, items: &[String], max_width: usize) {
     if items.is_empty() {
-        writeln!(buf, "(* {} {{}} *)", prefix.trim_end()).unwrap();
+        writeln!(buf, "(* {} {{}} *)", prefix.trim_end())
+            .expect("ebnf: write into in-memory String is infallible");
         return;
     }
 
@@ -531,7 +538,8 @@ fn write_wrapped_ebnf_comment(buf: &mut String, prefix: &str, items: &[String], 
         if !first_on_line && line_content.len() + candidate.len() > content_width {
             /* Flush current line, right-padded to content_width */
             let padded = format!("{:<width$}", line_content, width = content_width);
-            writeln!(buf, "{}{}{}", comment_open, padded, comment_close).unwrap();
+            writeln!(buf, "{}{}{}", comment_open, padded, comment_close)
+                .expect("ebnf: write into in-memory String is infallible");
             line_content.clear();
             line_content.push_str(&indent);
             first_on_line = true;
@@ -549,7 +557,8 @@ fn write_wrapped_ebnf_comment(buf: &mut String, prefix: &str, items: &[String], 
 
     /* Flush final line */
     let padded = format!("{:<width$}", line_content, width = content_width);
-    writeln!(buf, "{}{}{}", comment_open, padded, comment_close).unwrap();
+    writeln!(buf, "{}{}{}", comment_open, padded, comment_close)
+        .expect("ebnf: write into in-memory String is infallible");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -584,7 +593,7 @@ fn write_category(
     };
 
     write_section_header(buf, &format!("{}{}", cat.name, annotations));
-    writeln!(buf).unwrap();
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 
     // Order rules for display:
     // 1. Literal, 2. Var, 3. Grouping, 4. RD (structural), 5. Prefix, 6. Cast, 7. Infix (by BP), 8. Postfix
@@ -691,19 +700,21 @@ fn write_category(
     // Render all productions with aligned comments
     for (line, comment) in &production_lines {
         if comment.is_empty() {
-            writeln!(buf, "{}", line).unwrap();
+            writeln!(buf, "{}", line).expect("ebnf: write into in-memory String is infallible");
         } else {
             let pad = if line.len() < comment_col {
                 comment_col - line.len()
             } else {
                 1
             };
-            writeln!(buf, "{}{:>pad$}{}", line, "", comment, pad = pad).unwrap();
+            writeln!(buf, "{}{:>pad$}{}", line, "", comment, pad = pad)
+                .expect("ebnf: write into in-memory String is infallible");
         }
     }
 
-    writeln!(buf, "{:>w$};", "", w = cat_name.len() + 1).unwrap();
-    writeln!(buf).unwrap();
+    writeln!(buf, "{:>w$};", "", w = cat_name.len() + 1)
+        .expect("ebnf: write into in-memory String is infallible");
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 
     // FIRST set comment (wrapped to ~80 columns)
     if let Some(first) = first_set {
@@ -733,7 +744,7 @@ fn write_category(
         }
     }
 
-    writeln!(buf).unwrap();
+    writeln!(buf).expect("ebnf: write into in-memory String is infallible");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

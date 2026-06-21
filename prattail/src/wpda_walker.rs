@@ -8176,12 +8176,12 @@ where
             None => return Vec::new(), // No matching action for this packing.
         };
         debug_assert_eq!(
-            action_entry.unwrap().arity as usize,
+            action_entry.expect("wpda_walker: action_entry is Some — the None arm returned Vec::new() above").arity as usize,
             arity,
             "Bug A guard: Packing.rule_idx encodes ({cat}, {local_rule_idx}) but action_entry.arity ({}) != Packing.children.len() ({arity}). \
              This indicates a corrupt SPPF or a mismatched intern_packing/action_for. \
              rule_idx={rule_idx:#x}",
-            action_entry.unwrap().arity,
+            action_entry.expect("wpda_walker: action_entry is Some — the None arm returned Vec::new() above").arity,
         );
 
         // Cartesian product over children's realized args. Phase C.6

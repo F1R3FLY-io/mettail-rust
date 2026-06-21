@@ -1,5 +1,11 @@
 // AL03: SIMD-accelerated whitespace skipping requires portable_simd (nightly).
 #![feature(portable_simd)]
+// Robustness gate (campaign Phase 5): production code uses `.expect("…")` over
+// `.unwrap()` so every panic names its invariant. `not(test)` keeps test code
+// (which legitimately unwraps in asserts) silent. `deny`, not `warn`: the whole
+// production path was converted, so this is a hard tripwire — a reintroduced
+// bare `.unwrap()` fails `cargo clippy` rather than adding to a warning backlog.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 //! # PraTTaIL — Pratt + Recursive Descent Parser Generator for MeTTaIL
 //!

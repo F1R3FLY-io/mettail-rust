@@ -50,20 +50,22 @@ pub fn generate_weighted_dispatch(wfst: &PredictionWfst, category: &str) -> Opti
         deterministic_count,
         ambiguous_count,
     )
-    .unwrap();
+    .expect("wfst: DOT write into in-memory String is infallible");
 
     // Emit per-token weight annotations as comments (for debugging/documentation)
     for (token_id, group) in &token_groups {
         if let Some(name) = wfst.token_map.name(*token_id) {
             if group.len() > 1 {
-                write!(buf, "// {}: [", name).unwrap();
+                write!(buf, "// {}: [", name)
+                    .expect("wfst: DOT write into in-memory String is infallible");
                 for (i, action) in group.iter().enumerate() {
                     if i > 0 {
                         buf.push_str(", ");
                     }
-                    write!(buf, "w={}", action.weight).unwrap();
+                    write!(buf, "w={}", action.weight)
+                        .expect("wfst: DOT write into in-memory String is infallible");
                 }
-                writeln!(buf, "]").unwrap();
+                writeln!(buf, "]").expect("wfst: DOT write into in-memory String is infallible");
             }
         }
     }
