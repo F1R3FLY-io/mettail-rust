@@ -45,9 +45,9 @@ language! {
 
 From a language definition, it generates:
 - **AST enums** - Type-safe data structures with first-class binding
-- **Grammars** - Parser generation with bidirectional display ([lalrpop])
+- **Grammars** - Compile-time parser generation with bidirectional display (PraTTaIL: Pratt + WFST/WPDA-weighted recursive descent)
 - **Substitution methods** - Capture-avoiding, cross-category substitution ([moniker])
-- **Datalog rewrite engine** - Order-independent pattern matching with indexed joins ([ascent])
+- **Rewrite engine** - Exact-key equality saturation over a runtime e-graph (**Dovetail**), with a first-class **Rholang VM** backend; a Datalog path ([ascent]) is retained only as a differential oracle
 - **Higher-order lambdas** - Auto-generated `LamX`/`ApplyX`, with type inference
 - **Environments** - Named term definitions with eager substitution
 
@@ -63,7 +63,9 @@ From a language definition, it generates:
 
 ## REPL Example
 
-The interactive REPL supports term exploration, step-by-step rewriting, and higher-order metaprogramming:
+The interactive REPL supports term exploration, step-by-step rewriting, and higher-order metaprogramming.
+
+> *The session below was captured against the earlier Ascent-oracle backend (note "Running Ascent…"). The current REPL routes terms through the Dovetail / Rho-native runtime backends — see the [runtime-backend spine](docs/architecture/runtime-backend-spine.md). The interaction shape is unchanged.*
 
 ```
 $ cargo run
@@ -134,11 +136,11 @@ Applied rewrite →
 ## 🙏 Credits
 
 **Core Technologies:**
-- [ascent](https://github.com/s-arash/ascent) - Datalog in Rust via macros
+- [ascent](https://github.com/s-arash/ascent) - Datalog in Rust via macros (now scoped to `logic{}` / query-syntax parsing + differential oracle; the production rewrite engine is the in-repo egg-inspired Dovetail)
 - [syn](https://github.com/dtolnay/syn) - Rust parsing
 - [quote](https://github.com/dtolnay/quote) - Code generation
 - [moniker](https://github.com/brendanzab/moniker) - Variable binding
-- [LALRPOP](https://github.com/lalrpop/lalrpop) - Parser generator
+- [LALRPOP](https://github.com/lalrpop/lalrpop) - Parser generator (legacy; superseded by the in-repo PraTTaIL/WPDA parser)
 
 **Inspiration:**
 - [Rholang](https://rchain.coop/) - Motivating use case

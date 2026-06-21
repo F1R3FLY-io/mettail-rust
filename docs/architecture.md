@@ -2,6 +2,15 @@
 
 Technical overview of MeTTaIL's implementation architecture.
 
+> **Authoritative runtime/backend reference:**
+> [`architecture/runtime-backend-spine.md`](architecture/runtime-backend-spine.md).
+> The production rewrite path is **Dovetail** (exact-key equality saturation over a
+> runtime e-graph) plus the **Rho-native** backend. **Ascent/CESK appear below only as
+> historical/oracle context.** The generated Ascent engine (structs, `eqrel`, BYODS
+> provider, `oracle-ascent` feature) was **removed in P6**; `Language::run_ascent`
+> survives as a fail-closed differential-oracle hook only. Sections still written in
+> the Ascent present tense are retained for history, not as the current execution path.
+
 ---
 
 ## High-Level Architecture
@@ -40,8 +49,8 @@ must not be conflated.
 
 ```
 ┌─────────────────────────────────────────────┐
-│         User Theory Definition              │
-│         (theory! { ... })                   │
+│        User Language Definition             │
+│        (language! { ... })                  │
 └──────────────────┬──────────────────────────┘
                    │
          ┌─────────▼──────────┐
@@ -72,6 +81,12 @@ must not be conflated.
          │   (REPL, tests) │
          └─────────────────┘
 ```
+
+> **Diagram note:** the third macro output above (labeled "Ascent Datalog") is
+> **historical**. The generated Ascent engine was removed in P6; the macro now emits a
+> **Dovetail** rewrite inventory (+ optional **Rho-native** lowering) as the production
+> rewrite/execution path. Ascent survives only as the fail-closed `run_ascent`
+> differential oracle.
 
 ---
 
@@ -105,7 +120,7 @@ parallel.
 
 ### Macro Layer (`macros/`)
 
-Transforms theory definitions into executable code through multiple stages:
+Transforms `language!` definitions into executable code through multiple stages:
 
 #### 1. AST (`ast/`)
 ```
@@ -121,7 +136,7 @@ LanguageDef {
 ```
 
 **Key Types**:
-- `TheoryDef` - Complete theory specification
+- `LanguageDef` - Complete language specification (parsed from `language!`)
 - `GrammarRule` - Constructor definition with category
 - `Equation` - Equality axiom
 - `RewriteRule` - Reduction rule
@@ -187,7 +202,12 @@ impl Proc {
 - `exhaustive.rs` - All terms at depth N
 - `random.rs` - Random term sampling
 
-#### 4. Ascent Generation (`datalog/`)
+#### 4. Historical: Ascent oracle generation (`datalog/`) — retired in production
+
+> Retained for history. The generated Ascent/Datalog engine was **removed in P6**; the
+> production rewrite engine is **Dovetail**. The rules below describe the legacy oracle
+> path that the fail-closed `Language::run_ascent` hook can still reproduce for
+> differential evidence.
 
 Generate Datalog rules for term rewriting:
 
@@ -242,11 +262,15 @@ pub enum Var<N> {
 ```
 
 #### Native types (Int, Float, Bool, Str)
-Category enums for native types (e.g. `![i32] as Int`, `![f64] as Float`) are generated like other categories. Float (f32/f64) is represented via the runtime **canonical float** type (`CanonicalFloat64`/`CanonicalFloat32` in `runtime/src/canonical_float.rs`) so that Float satisfies `Eq`/`Hash`/`Ord` and can be used in Ascent relations. See `docs/design/exploring/float-support-ascent.md` for design and semantics.
+Category enums for native types (e.g. `![i32] as Int`, `![f64] as Float`) are generated like other categories. Float (f32/f64) is represented via the runtime **canonical float** type (`CanonicalFloat64`/`CanonicalFloat32` in `runtime/src/canonical_float.rs`) so that Float satisfies `Eq`/`Hash`/`Ord` and is usable as a Dovetail e-graph key (and in legacy Ascent oracle relations). See `docs/design/exploring/float-support-ascent.md` for design and semantics.
 
 ---
 
-## Ascent Execution Model
+## Historical: Ascent oracle execution model
+
+> Retained for history (legacy oracle path). Production execution is the Dovetail
+> direct lane or the Rho-native lane; see the
+> [runtime-backend spine](architecture/runtime-backend-spine.md).
 
 ### Relation Materialization
 
@@ -425,8 +449,11 @@ Theory → IR → Cranelift → Native Code
 
 ### Correctness
 - Alpha-equivalence via moniker (proven correct)
-- Ascent fixpoint computation (always terminates)
-- Equations are symmetric and transitive (via `eqrel`)
+- Dovetail exact-key equality/rewrite saturation with checked, complete extraction
+  (`SatReport` / `DovetailRunReport`), backed by zero-admission Rocq proofs
+- Rho-native lowering is total-or-explicit-reject; the bridge is a formally-verified
+  one-way `MeTTaIL → F1r3node` dependency
+- *(Historical)* Ascent fixpoint computation via `eqrel` — oracle path only
 
 ### Performance
 - O(1) collection equality
@@ -442,4 +469,4 @@ Theory → IR → Cranelift → Native Code
 - `design/` - Detailed design docs
 - Source code comments - Implementation details
 
-**Last Updated**: June 2026
+**Last Updated**: 2026-06-21 (Ascent/CESK reconciled to the runtime-backend spine; production path is Dovetail + Rho-native)
