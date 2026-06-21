@@ -1353,3 +1353,60 @@ plan's a-priori clone-hotspot prediction (`decision_tree`/`lint`) was wrong, and
 profile found the real one (`kat`). Separately, the campaign's Phase-3 god-file splits are pure
 code-movement (identical compiled functions relocated behind `pub use` façades), hence
 perf-neutral by construction — no A/B is owed for them, and none is recorded.
+
+---
+
+## Experiment 7: Runtime `step_fanout` parallelization — Stage-2 STOP (2026-06-21, task #10)
+
+### Protocol
+
+Goal: decide whether to parallelize the runtime GLR/WPDA cursor fan-out (`wpda_walker::step_fanout`).
+The staged design (Plan agent) makes a runtime-parse **profile** the mandatory gate before any
+concurrency change. Built an isolated fan-out harness `languages/examples/parse_fanout_profile.rs`
+parsing ONLY the cast-then-compare frontier-explosion inputs (`int(float(int(3.14))) == 3` and the
+d5+cmp `int(float(int(float(int(3.14))))) == 3`) — the regime where `step_fanout` is *maximally*
+prominent. `perf record -e task-clock -F 2999 --call-graph dwarf`, `taskset -c 4`, performance
+governor, release/LLVM, ITERS=300.
+
+### Profiling Evidence (isolated fan-out regime — the best case for the hypothesis)
+
+| Function | Self % | Bucket |
+|··········|········|········|
+| `calculator::lex_alt_rules_for_prefix` | 7.00% | **lexing** |
+| `TokenKind::clone` | 6.91% | **lexing (token clone)** |
+| `cfree` / `malloc` / dealloc | ≈18% | **allocation** |
+| `String::clone` | 3.76% | string/alloc |
+| **`step_fanout`** | **3.67%** | fan-out driver |
+| `semiring_priority_cmp` / `sip::write` | ≈4% | weight cmp / hash |
+| **`apply_action_to_cursor`** (the only parallelizable per-cursor compute) | **1.66%** | fan-out |
+| `materialize_branch_cursor_from_arc` / `FrontierArc::from_cursor` / `BranchCursor::clone`+drop / `crosscat_*` / `BinaryHeap::pop` | ≈1% each | fan-out |
+| GSS `get_or_create_node` / `add_edge` (the supposed contention point) | **< 0.9% (below floor)** | GSS |
+
+Whole fan-out machinery ≈ **14%**; the part Option-B parallelization could actually move (the pure
+per-cursor compute) ≈ **1.7–5%**. Lexing ≈ **14%** and allocation ≈ **18%** dominate. (Aggregate
+`cast_tower_bench` profile agrees: `step_fanout` 3.20%, `apply` 1.65%, lexing+alloc ~34%.)
+
+Incidental finding: the d5+cmp input the 2026-06-11 docs marked "pathological / right-censored >580 s
+(debug)" now parses in **~21 ms (release)** — the evidence-pruning / cast-gate work since then already
+tamed the `K^depth` explosion. The fan-out regime is no longer even slow.
+
+### Verdict — **STOP (parallelization NOT justified)**
+
+The Stage-2 STOP criterion is decisively met: no fan-out sub-phase exceeds 15%, the parallelizable
+compute is ~1.7–5%, and GSS ops are negligible. By Amdahl, Option-B (compute-delta-in-parallel /
+commit-sequentially) buys **~4% best case before overhead**; with the explosion tamed to 21 ms, the
+delta-construction + thread-pool + join-barrier overhead on small per-step frontiers would almost
+certainly make it **net-negative** — for a large race-risk + formal-reverification burden on
+formally-verified code (`ForwardOrderOnly.v`, `RuntimeModel.v`, `PrattailWpda.tla`). Stages 3–5 do
+not run. The cast pathology is confirmed a frontier-**count** phenomenon (cost spread across lexing +
+alloc + many cheap steps), immune to thread-parallelism (a constant `1/ncores` against the structure).
+
+### Redirect (the data-revealed real lever)
+
+Runtime parse self-time is dominated by **lexing + allocation**, not cursor fan-out:
+`TokenKind::clone` (6.9%) + `lex_alt_rules_for_prefix` (7.0%) + ~18% malloc/free. `TokenKind`
+(`automata::types`) has `String`-bearing variants (`Custom`/`IntegerLit`/`RationalLit`/`Fixed`/…),
+so each clone deep-copies a `String` → heap alloc → feeds the malloc/free churn. The
+`Arc<KatExpr>`-style fix (intern the `String` payloads as `Arc<str>`, or avoid the clones in
+`lex_alt_rules_for_prefix`) would attack the clone cost AND a chunk of the allocation — a real,
+data-supported optimization, in contrast to parallelizing a 3.67%-of-runtime function.
