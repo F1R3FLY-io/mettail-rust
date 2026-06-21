@@ -406,6 +406,7 @@ pub struct CrossCatLhsReentryOrigin {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EdgeKind {
     /// Fallback / identity-strict — compared via GssEdgeId equality.
     /// Use when the semantic kind cannot be determined OR when the kind

@@ -35,6 +35,7 @@ pub struct Span {
 /// Token kind produced by the lexer. Each variant corresponds to a distinct
 /// terminal symbol in the grammar.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum TokenKind {
     /// End of file
     Eof,
@@ -79,6 +80,7 @@ pub enum TokenKind {
 /// distinguish "no match" (DFA dead-end) from semantic eval failures
 /// (e.g., `parse_int_lit` returning `Err` for an out-of-range literal).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum LexErrorKind {
     /// The DFA had no accepting transition at this byte position. The
     /// nearest match-or-recovery target is determined by the lex-Fork
@@ -135,6 +137,7 @@ impl TokenKind {
 /// - The canonical match-arm pattern string for code emission
 /// - Whether it's a built-in lexer family or a user-defined custom token
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TokenFamily {
     Eof,
     Ident,
@@ -223,6 +226,7 @@ impl TokenFamily {
 
 /// A character class for NFA transitions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum CharClass {
     /// Single character.
     Single(u8),
