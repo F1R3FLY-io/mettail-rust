@@ -6388,6 +6388,43 @@ fn rt03_fires_on_empty_intersection() {
     assert!(diags[0].message.contains("NegInt"), "message: {}", diags[0].message);
 }
 
+/// The `.1` structural path enriches the RT03 hint with an inhabitation witness
+/// for the disjoint pair's shared base category (sourced from
+/// `structural_witnesses`). This mirrors the `RefinementAnalysisResult` the
+/// `sym-tree-structural` pipeline produces: an `empty_intersections` entry, a
+/// `dispatch_analysis.base_type_groups` mapping the two refinements to their base
+/// category, and a `structural_witnesses` entry for that category.
+#[test]
+fn rt03_structural_hint_includes_base_witness() {
+    let mut b = CtxBuilder::new();
+    b.categories.push(cat_info("List", None, true));
+    let mut analysis = make_refinement_analysis();
+    analysis.empty_intersections.push((
+        "One".to_string(),
+        "TwoPlus".to_string(),
+        "structural refinement patterns are disjoint".to_string(),
+    ));
+    let mut dispatch = crate::type_system::RefinementDispatchAnalysis::default();
+    dispatch
+        .base_type_groups
+        .insert("List".to_string(), vec!["One".to_string(), "TwoPlus".to_string()]);
+    analysis.dispatch_analysis = Some(dispatch);
+    analysis
+        .structural_witnesses
+        .push(("List".to_string(), "Nil".to_string()));
+    b.refinement_analysis_data = Some(analysis);
+
+    let mut diags = Vec::new();
+    lint_rt03_empty_intersection(&b.ctx(), &mut diags);
+
+    assert_eq!(diags.len(), 1, "expected 1 RT03 diagnostic: {:?}", diags);
+    let hint = diags[0].hint.as_deref().unwrap_or("");
+    assert!(
+        hint.contains("List") && hint.contains("Nil"),
+        "RT03 hint should mention the base category 'List' and its witness 'Nil': {hint}"
+    );
+}
+
 #[test]
 fn rt04_fires_on_subtype_pair() {
     let mut b = CtxBuilder::new();

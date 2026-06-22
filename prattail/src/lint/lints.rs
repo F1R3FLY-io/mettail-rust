@@ -7044,6 +7044,36 @@ pub(crate) fn lint_rt03_empty_intersection(
         None => return,
     };
     for (type_a, type_b, reason) in &result.empty_intersections {
+        // When the structural recognizer (`.1`) supplied an inhabitation witness
+        // for the base category these two refinements share, append it to the
+        // hint: it concretely shows a term of the base category, contextualizing
+        // *which* base-category terms the two disjoint patterns carve up.
+        let base_witness = result
+            .dispatch_analysis
+            .as_ref()
+            .and_then(|d| {
+                d.base_type_groups.iter().find_map(|(base, names)| {
+                    if names.iter().any(|n| n == type_a) && names.iter().any(|n| n == type_b) {
+                        Some(base.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .and_then(|base| {
+                result
+                    .structural_witnesses
+                    .iter()
+                    .find(|(cat, _)| *cat == base)
+                    .map(|(cat, w)| (cat.clone(), w.clone()))
+            });
+        let hint = match base_witness {
+            Some((cat, w)) => format!(
+                "no value can inhabit both types simultaneously (e.g. the base \
+                 category '{cat}' is inhabited by '{w}')"
+            ),
+            None => "no value can inhabit both types simultaneously".to_string(),
+        };
         diagnostics.push(LintDiagnostic {
             id: DiagnosticId::RT03,
             name: "empty-refinement-intersection",
@@ -7054,7 +7084,7 @@ pub(crate) fn lint_rt03_empty_intersection(
                 "refinement types '{}' and '{}' have empty intersection: {}",
                 type_a, type_b, reason
             ),
-            hint: Some("no value can inhabit both types simultaneously".to_string()),
+            hint: Some(hint),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });

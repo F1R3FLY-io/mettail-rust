@@ -28,3 +28,11 @@ theories/AnyAlgebraProjectionSound.v
 # homomorphisms) and AnyAlgebraProjectionSound (registry decision = leaf EBA
 # decision via wrapper_sat_faithful).
 theories/GuardTierClassificationSound.v
+# OSLF substrate Phase 2 `.1`: structural-type recognizer wiring soundness
+# (sym_tree decision soundness: sat↔¬empty / disjoint=conj-empty /
+# subtype=conj-neg-empty; finite-alphabet agreement over the trivial single-class
+# payload partition; payload-guard faithfulness at the Tree combinator layer).
+# Depends on TreeAlgebraClosure (tree EBA + tsat/tconj/tneg laws),
+# EffectiveBooleanAlgebra (sat_false_iff_empty + decides_implies), and
+# AnyAlgebraProjectionSound (wrapper_sat_faithful at A := tree_eba).
+theories/SymTreeWiringSound.v

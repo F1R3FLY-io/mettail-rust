@@ -51,6 +51,22 @@ walker-stats = []
 ## classification, so it pulls in `mettail-ast` as an optional dependency
 ## (gated below); the default build is byte-for-byte unchanged.
 any-algebra-carrier = ["dep:mettail-ast"]
+## OSLF substrate, Phase 2 `.1`-wire (2026-06-22): route the STRUCTURAL
+## refinement-type dispatch (`type_system::dispatch`) through the
+## `sym_tree`-based `structural_types` recognizer instead of the string
+## heuristic, so structural disjointness / subtype are decided PRECISELY by the
+## symbolic tree automaton (`SymbolicTreeAutomaton<AnyAlgebra>`) over the
+## grammar's ranked alphabet. When enabled,
+## `pipeline::analysis::analyze_refinement_types` calls
+## `analyze_refinement_dispatch_structural` (which falls back to today's
+## `Overlapping` on any predicate-parse failure — never worse than status quo),
+## populates `RefinementAnalysisResult::empty_intersections` from the
+## structurally-disjoint pairs (so the previously-dead RT03 lint fires), and
+## attaches `structural_witnesses` hints. Presburger / Mixed pairs stay on the
+## existing heuristic. Runtime `match_pattern` codegen is UNTOUCHED (analysis
+## only). Requires the `any-algebra-carrier` scalar-sort resolution, so it
+## implies that feature. OFF BY DEFAULT; the default build is unchanged.
+sym-tree-structural = ["any-algebra-carrier"]
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []

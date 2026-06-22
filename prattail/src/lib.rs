@@ -339,6 +339,13 @@ pub mod sym_tree;
 /// output builders (the tree generalization of the word transducer).
 pub mod sym_tree_transducer;
 
+/// Structural-type recognizer (OSLF substrate Phase 2): compile a grammar's
+/// ranked-tree constructor alphabet into a `SymbolicTreeAutomaton<AnyAlgebra>`
+/// so structural refinement-type inhabitation / disjointness / subtype are
+/// decided precisely by `sym_tree` (generalizing the finite
+/// `SetTheoreticTypeSystem`). `.0`-inert: always compiled, no live caller yet.
+pub mod structural_types;
+
 /// Weighted MSO logic: grammar property specification, lint-as-formula,
 /// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
 pub mod weighted_mso;

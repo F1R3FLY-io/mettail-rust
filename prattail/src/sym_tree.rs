@@ -639,6 +639,21 @@ impl<A: BooleanAlgebra> TreeAlgebra<A> {
         result
     }
 
+    /// Compile a tree predicate into a symbolic tree automaton over this
+    /// algebra's ranked alphabet.
+    ///
+    /// This is the public entry point the structural-type recognizer
+    /// (`crate::structural_types`) uses to turn a parsed refinement pattern
+    /// ([`TreePred`]) into a [`SymbolicTreeAutomaton`] so it can be intersected /
+    /// complemented against a category automaton (`is_empty` then deciding
+    /// disjointness / subtype). A `Wild` (or `True`) leaf compiles to the
+    /// universal automaton over the alphabet, so intersecting a pattern automaton
+    /// with a category automaton restricts a `Wild` slot to exactly the
+    /// well-formed terms of that slot's category.
+    pub fn pattern_to_automaton(&self, p: &TreePred<A::Predicate>) -> SymbolicTreeAutomaton<A> {
+        self.compile(p)
+    }
+
     /// Compile a tree predicate into a symbolic tree automaton.
     fn compile(&self, p: &TreePred<A::Predicate>) -> SymbolicTreeAutomaton<A> {
         match p {

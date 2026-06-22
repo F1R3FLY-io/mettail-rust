@@ -51,6 +51,12 @@ pub struct RefinementAnalysisResult {
     pub name_shadows: Vec<(String, String)>, // (refinement_name, base_type_name)
     /// SFA dispatch analysis: disjointness, subsumption, overlap (RT10).
     pub dispatch_analysis: Option<crate::type_system::RefinementDispatchAnalysis>,
+    /// Per-category structural inhabitation witnesses, surfaced as RT-note hints
+    /// (`(category, witness_term_repr)`). Populated by the `sym-tree-structural`
+    /// `.1` path from `structural_types::structural_verdict().witnesses` (a
+    /// minimal inhabiting term per inhabited category, rendered to a string).
+    /// Empty when the feature is off.
+    pub structural_witnesses: Vec<(String, String)>,
 }
 
 /// Collected results from the mathematical analysis phase.
@@ -824,6 +830,19 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
     // RT03/RT04/RT10: SFA dispatch analysis + pairwise overlap/subsumption
     // Uses the RefinementDispatchAnalysis from type_system.rs for predicate-aware
     // disjointness and subsumption checking.
+    //
+    // Under `sym-tree-structural` (`.1`), STRUCTURAL refinement pairs are decided
+    // precisely by the sym_tree recognizer (over the grammar's ranked alphabet)
+    // instead of the string heuristic; Presburger / Behavioral / Mixed pairs stay
+    // on the heuristic, so this is never worse than the default path. Without the
+    // feature, the original heuristic-only dispatch is used unchanged.
+    #[cfg(feature = "sym-tree-structural")]
+    let dispatch = crate::type_system::analyze_refinement_dispatch_structural(
+        spec,
+        &bundle.all_syntax,
+        &bundle.categories,
+    );
+    #[cfg(not(feature = "sym-tree-structural"))]
     let dispatch = crate::type_system::analyze_refinement_dispatch(spec);
 
     // Merge dispatch results into the RT03/RT04 lints
@@ -836,12 +855,65 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
             result.subtype_pairs.push((sub.clone(), sup.clone()));
         }
     }
+
+    // RT03 (empty intersection). On the HEURISTIC path, disjoint pairs are NOT an
+    // RT03 finding — for Presburger refinements (e.g. PosInt vs NegInt) an empty
+    // intersection is expected, not a warning. On the STRUCTURAL `.1` path the
+    // recognizer has *proven* (via tree-automaton emptiness) that two structural
+    // refinement patterns can never co-inhabit; that genuinely-empty intersection
+    // is the RT03 finding the lint was written for, so we populate
+    // `empty_intersections` from the structural disjoint pairs (firing the
+    // previously-dead RT03 lint).
+    #[cfg(feature = "sym-tree-structural")]
+    {
+        // Identify which disjoint pairs are STRUCTURAL (both sides Structural and
+        // both predicates parse) — only those are precise emptiness findings.
+        let alpha = crate::structural_types::ranked_alphabet(&bundle.all_syntax, &bundle.categories);
+        let kind_by_name: std::collections::HashMap<&str, &crate::RefinementPredKind> =
+            spec.iter().map(|s| (s.name.as_str(), &s.predicate_kind)).collect();
+        let repr_by_name: std::collections::HashMap<&str, &str> =
+            spec.iter().map(|s| (s.name.as_str(), s.predicate_repr.as_str())).collect();
+        for (a, b) in &dispatch.disjoint_pairs {
+            let both_structural = kind_by_name.get(a.as_str())
+                == Some(&&crate::RefinementPredKind::Structural)
+                && kind_by_name.get(b.as_str()) == Some(&&crate::RefinementPredKind::Structural);
+            let both_parse = repr_by_name
+                .get(a.as_str())
+                .and_then(|r| crate::structural_types::parse_structural_predicate(r, &alpha))
+                .is_some()
+                && repr_by_name
+                    .get(b.as_str())
+                    .and_then(|r| crate::structural_types::parse_structural_predicate(r, &alpha))
+                    .is_some();
+            if both_structural && both_parse {
+                result.empty_intersections.push((
+                    a.clone(),
+                    b.clone(),
+                    "structural refinement patterns are disjoint (proven by the \
+                     symbolic tree-automaton recognizer)"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // RT structural witnesses: a minimal inhabiting term per inhabited base
+        // category that a refinement refines, surfaced as a hint.
+        let verdict =
+            crate::structural_types::structural_verdict(&bundle.all_syntax, &bundle.categories);
+        let refined_bases: std::collections::HashSet<&str> =
+            spec.iter().map(|s| s.base_category.as_str()).collect();
+        for (cat, witness) in &verdict.witnesses {
+            if refined_bases.contains(cat.as_str()) {
+                result
+                    .structural_witnesses
+                    .push((cat.clone(), render_sym_term(witness)));
+            }
+        }
+    }
+
+    #[cfg(not(feature = "sym-tree-structural"))]
     for (a, b) in &dispatch.disjoint_pairs {
-        // Disjoint pairs don't trigger RT03 — they're the *absence* of
-        // empty intersection (both are individually satisfiable but share
-        // no values). RT03 is about detecting that the intersection is empty
-        // when the user might have expected overlap.
-        // (No-op: disjointness is informational, not a warning)
+        // Heuristic path: disjointness is informational, not an RT03 warning.
         let _ = (a, b);
     }
     for (a, b) in &dispatch.overlapping_pairs {
@@ -853,6 +925,20 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
     result.dispatch_analysis = Some(dispatch);
 
     result
+}
+
+/// Render a structural witness term ([`SymTerm<AnyDomain>`](crate::any_algebra))
+/// to a compact `c(child, …)` string for an RT-note hint. Scalar payload leaves
+/// render their constructor only (the structural shape is what matters for the
+/// hint; a concrete payload value is an arbitrary inhabitant).
+#[cfg(feature = "sym-tree-structural")]
+fn render_sym_term(t: &crate::sym_tree::SymTerm<crate::any_algebra::AnyDomain>) -> String {
+    if t.children.is_empty() {
+        t.constructor.clone()
+    } else {
+        let kids: Vec<String> = t.children.iter().map(render_sym_term).collect();
+        format!("{}({})", t.constructor, kids.join(", "))
+    }
 }
 
 /// Bundle of advanced automata analysis results for codegen promotion.

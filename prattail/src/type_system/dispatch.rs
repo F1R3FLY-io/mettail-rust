@@ -194,3 +194,170 @@ pub(crate) fn is_complement_predicate(a: &str, b: &str) -> bool {
 
     false
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RT10 `.1`: structural refinement dispatch via the sym_tree recognizer
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Analyze refinement-type dispatch with **precise** structural reasoning for
+/// `Structural` (term-pattern) refinements, deciding disjointness / subtype with
+/// the `sym_tree`-based recognizer (`crate::structural_types`) instead of the
+/// string heuristic.
+///
+/// For each pair of refinements sharing a base category:
+///   - if **both** are `Structural`, each `predicate_repr` is parsed into a
+///     [`TreePred`](crate::sym_tree::TreePred) and *refined* against the base
+///     category automaton (`L(base) ∩ L(pattern)`), and the pair is classified:
+///       - **Disjoint** iff `A ∩ B` is empty (`is_empty`);
+///       - **Subtype** (`A <: B`) iff `A ∩ ¬B` is empty;
+///       - **Supertype** iff `B ∩ ¬A` is empty;
+///       - else **Overlapping**.
+///     `!=` (inequality) patterns are handled by complementing the parsed pattern
+///     within the base category (the refined set is the base minus the pattern).
+///   - otherwise (Presburger / Behavioral / Mixed, or a structural pair whose
+///     predicate fails to parse) the existing [`classify_predicate_overlap`]
+///     heuristic is used — so this is **never worse** than the status quo.
+///
+/// This is the `.1` live path; it is selected by
+/// [`pipeline::analysis::analyze_refinement_types`](crate::pipeline) under the
+/// `sym-tree-structural` feature. Analysis only — runtime `match_pattern` codegen
+/// is untouched.
+#[cfg(feature = "sym-tree-structural")]
+pub fn analyze_refinement_dispatch_structural(
+    refinement_specs: &[crate::RefinementTypeSpec],
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> RefinementDispatchAnalysis {
+    use crate::structural_types::{build_tree_algebra, ranked_alphabet};
+
+    let mut analysis = RefinementDispatchAnalysis::default();
+
+    // The grammar's ranked alphabet + tree algebra, built once.
+    let alpha = ranked_alphabet(all_syntax, categories);
+    let elem = build_tree_algebra(&alpha);
+
+    // Group refinements by base category (same as the heuristic path).
+    let mut groups: HashMap<String, Vec<&crate::RefinementTypeSpec>> = HashMap::new();
+    for spec in refinement_specs {
+        groups
+            .entry(spec.base_category.clone())
+            .or_default()
+            .push(spec);
+    }
+
+    for (base, specs) in &groups {
+        let names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
+        analysis.base_type_groups.insert(base.clone(), names);
+
+        for i in 0..specs.len() {
+            for j in (i + 1)..specs.len() {
+                let a = specs[i];
+                let b = specs[j];
+
+                let overlap = structural_pair_overlap(a, b, base, &alpha, &elem)
+                    .unwrap_or_else(|| classify_predicate_overlap(a, b));
+
+                match overlap {
+                    PredicateOverlap::Disjoint => {
+                        analysis
+                            .disjoint_pairs
+                            .push((a.name.clone(), b.name.clone()));
+                    },
+                    PredicateOverlap::Subtype => {
+                        analysis
+                            .subtype_pairs
+                            .push((a.name.clone(), b.name.clone()));
+                    },
+                    PredicateOverlap::Supertype => {
+                        analysis
+                            .subtype_pairs
+                            .push((b.name.clone(), a.name.clone()));
+                    },
+                    PredicateOverlap::Overlapping => {
+                        analysis
+                            .overlapping_pairs
+                            .push((a.name.clone(), b.name.clone()));
+                    },
+                }
+            }
+        }
+    }
+
+    analysis
+}
+
+/// Try to classify a refinement pair *structurally* (precise tree-automaton
+/// decision). Returns `None` to signal "not a structural pair I can decide" — the
+/// caller then falls back to the string heuristic. `None` covers: either side not
+/// `Structural`, a `predicate_repr` that does not parse into a tree pattern, or a
+/// tree algebra that is not `AnyAlgebra::Tree` (never happens for
+/// `build_tree_algebra`, but guarded defensively).
+#[cfg(feature = "sym-tree-structural")]
+fn structural_pair_overlap(
+    a: &crate::RefinementTypeSpec,
+    b: &crate::RefinementTypeSpec,
+    base: &str,
+    alpha: &crate::structural_types::RankedAlphabet,
+    elem: &crate::any_algebra::AnyAlgebra,
+) -> Option<PredicateOverlap> {
+    use crate::structural_types::parse_structural_predicate;
+
+    if a.predicate_kind != crate::RefinementPredKind::Structural
+        || b.predicate_kind != crate::RefinementPredKind::Structural
+    {
+        return None;
+    }
+
+    let (pat_a, eq_a) = parse_structural_predicate(&a.predicate_repr, alpha)?;
+    let (pat_b, eq_b) = parse_structural_predicate(&b.predicate_repr, alpha)?;
+
+    // Build the refined automaton for each side. An equality refinement is the
+    // pattern itself; an inequality is the base category minus the pattern
+    // (pattern complemented within the base alphabet, then intersected with the
+    // base category — which `refined_automaton` already does via the product, so
+    // we complement the *pattern automaton* and re-intersect).
+    let auto_a = refined_side(base, &pat_a, eq_a, alpha, elem)?;
+    let auto_b = refined_side(base, &pat_b, eq_b, alpha, elem)?;
+
+    let inter = auto_a.intersect(&auto_b);
+    if inter.is_empty() {
+        return Some(PredicateOverlap::Disjoint);
+    }
+    // Subtype: A ⊆ B iff A ∩ ¬B = ∅. Complement is over the shared alphabet.
+    let a_minus_b = auto_a.intersect(&auto_b.complement());
+    if a_minus_b.is_empty() {
+        return Some(PredicateOverlap::Subtype);
+    }
+    let b_minus_a = auto_b.intersect(&auto_a.complement());
+    if b_minus_a.is_empty() {
+        return Some(PredicateOverlap::Supertype);
+    }
+    // Inhabited intersection, neither contained in the other.
+    Some(PredicateOverlap::Overlapping)
+}
+
+/// The refined automaton for one side of a structural pair: the pattern's
+/// language (equality) or its complement within the base category (inequality).
+#[cfg(feature = "sym-tree-structural")]
+fn refined_side(
+    base: &str,
+    pattern: &crate::sym_tree::TreePred<crate::any_algebra::AnyPred>,
+    is_equality: bool,
+    alpha: &crate::structural_types::RankedAlphabet,
+    elem: &crate::any_algebra::AnyAlgebra,
+) -> Option<crate::sym_tree::SymbolicTreeAutomaton<crate::any_algebra::AnyAlgebra>> {
+    use crate::structural_types::{category_automaton, refined_automaton};
+
+    let refined = refined_automaton(base, pattern, alpha, elem)?;
+    if is_equality {
+        Some(refined)
+    } else {
+        // Inequality: base ∩ ¬pattern. We have `refined = base ∩ pattern`; the
+        // inequality side is the base category restricted to NOT matching the
+        // pattern, i.e. `base ∩ (¬refined)` — but complementing `refined`
+        // (= base ∩ pattern) and re-intersecting with base yields exactly
+        // `base \ (base ∩ pattern) = base ∩ ¬pattern`.
+        let base_auto = category_automaton(base, alpha, elem);
+        Some(base_auto.intersect(&refined.complement()))
+    }
+}

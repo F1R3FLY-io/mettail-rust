@@ -890,3 +890,236 @@ mod set_theoretic_tests {
         assert_eq!(format!("{ty}"), "(Nat | ~Bool)");
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RT10 `.1`: structural refinement dispatch via the sym_tree recognizer
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// These prove structural disjointness / subtype that the string heuristic
+// (`classify_predicate_overlap`) MISSES: two `Structural` refinements with
+// distinct `predicate_repr`s fall through the heuristic to `Overlapping`, but the
+// precise tree-automaton recognizer decides them. The grammar is the classic
+// `List = Nil | Cons(Int, List)` cons-list.
+
+#[cfg(feature = "sym-tree-structural")]
+mod structural_dispatch_tests {
+    use super::*;
+
+    fn term(s: &str) -> crate::SyntaxItemSpec {
+        crate::SyntaxItemSpec::Terminal(s.to_string())
+    }
+    fn nonterm(cat: &str, name: &str) -> crate::SyntaxItemSpec {
+        crate::SyntaxItemSpec::NonTerminal {
+            category: cat.to_string(),
+            param_name: name.to_string(),
+        }
+    }
+    fn ident(name: &str) -> crate::SyntaxItemSpec {
+        crate::SyntaxItemSpec::IdentCapture { param_name: name.to_string() }
+    }
+    fn scalar_cat(name: &str, native: &str) -> crate::pipeline::CategoryInfo {
+        crate::pipeline::CategoryInfo {
+            name: name.to_string(),
+            native_type: Some(native.to_string()),
+            is_primary: false,
+            has_var: true,
+        }
+    }
+    fn struct_cat(name: &str, native: Option<&str>, primary: bool) -> crate::pipeline::CategoryInfo {
+        crate::pipeline::CategoryInfo {
+            name: name.to_string(),
+            native_type: native.map(|s| s.to_string()),
+            is_primary: primary,
+            has_var: true,
+        }
+    }
+    fn rule(
+        label: &str,
+        cat: &str,
+        syntax: Vec<crate::SyntaxItemSpec>,
+    ) -> (String, String, Vec<crate::SyntaxItemSpec>) {
+        (label.to_string(), cat.to_string(), syntax)
+    }
+
+    /// The cons-list grammar: `List = Nil | Cons(Int, List)`, `Int` scalar.
+    fn cons_list_grammar() -> (
+        Vec<(String, String, Vec<crate::SyntaxItemSpec>)>,
+        Vec<crate::pipeline::CategoryInfo>,
+    ) {
+        let categories = vec![
+            struct_cat("Proc", None, true),
+            scalar_cat("Int", "i64"),
+            struct_cat("List", Some("Vec < Int >"), false),
+        ];
+        let all_syntax = vec![
+            rule("IVar", "Int", vec![ident("x")]),
+            rule("ProcList", "Proc", vec![nonterm("List", "l")]),
+            rule("Nil", "List", vec![term("nil")]),
+            rule("Cons", "List", vec![nonterm("Int", "h"), nonterm("List", "t")]),
+        ];
+        (all_syntax, categories)
+    }
+
+    fn structural_refinement(name: &str, base: &str, repr: &str) -> crate::RefinementTypeSpec {
+        crate::RefinementTypeSpec {
+            name: name.to_string(),
+            base_category: base.to_string(),
+            variable_name: "l".to_string(),
+            predicate_kind: crate::RefinementPredKind::Structural,
+            predicate_repr: repr.to_string(),
+        }
+    }
+
+    /// `cons(x, nil)` (exactly-one-element lists) is DISJOINT from
+    /// `cons(x, cons(y, t))` (≥2-element lists): the tree automaton proves their
+    /// intersection empty. The string heuristic returns `Overlapping` (both are
+    /// `Structural` with distinct reprs → falls through to the default), so this
+    /// is a finding the heuristic MISSES.
+    #[test]
+    fn cons_nil_disjoint_from_cons_cons() {
+        let (all_syntax, categories) = cons_list_grammar();
+        let specs = vec![
+            structural_refinement("One", "List", "l == cons(x, nil)"),
+            structural_refinement("TwoPlus", "List", "l == cons(x, cons(y, t))"),
+        ];
+
+        // Heuristic baseline: distinct Structural reprs ⇒ Overlapping (MISS).
+        let heuristic = analyze_refinement_dispatch(&specs);
+        assert!(
+            heuristic.disjoint_pairs.is_empty(),
+            "string heuristic must NOT find these disjoint (it returns Overlapping): {:?}",
+            heuristic.disjoint_pairs
+        );
+        assert_eq!(
+            heuristic.overlapping_pairs.len(),
+            1,
+            "heuristic classifies the pair as Overlapping"
+        );
+
+        // Structural recognizer: PRECISE Disjoint.
+        let structural =
+            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        assert_eq!(
+            structural.disjoint_pairs,
+            vec![("One".to_string(), "TwoPlus".to_string())],
+            "tree automaton must prove cons(x,nil) ∩ cons(x,cons(y,t)) = ∅"
+        );
+        assert!(
+            structural.overlapping_pairs.is_empty(),
+            "the disjoint pair must not also be reported overlapping"
+        );
+        assert!(
+            structural.subtype_pairs.is_empty(),
+            "disjoint patterns are not in a subtype relation"
+        );
+    }
+
+    /// `cons(x, cons(y, t))` (≥2-element lists) is a SUBTYPE of `cons(x, t)`
+    /// (≥1-element lists): every ≥2-element list is a ≥1-element list, so
+    /// `A ∩ ¬B = ∅`. The string heuristic returns `Overlapping` (the
+    /// repr-containment subtype check only runs for `Presburger`), so this
+    /// subtyping is a finding the heuristic MISSES.
+    #[test]
+    fn cons_cons_subtype_of_cons() {
+        let (all_syntax, categories) = cons_list_grammar();
+        let specs = vec![
+            structural_refinement("TwoPlus", "List", "l == cons(x, cons(y, t))"),
+            structural_refinement("OnePlus", "List", "l == cons(x, t)"),
+        ];
+
+        // Heuristic baseline: Overlapping (MISS — no Structural subtype rule).
+        let heuristic = analyze_refinement_dispatch(&specs);
+        assert!(
+            heuristic.subtype_pairs.is_empty(),
+            "string heuristic must NOT find the subtype: {:?}",
+            heuristic.subtype_pairs
+        );
+
+        // Structural recognizer: PRECISE Subtype (TwoPlus <: OnePlus).
+        let structural =
+            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        assert_eq!(
+            structural.subtype_pairs,
+            vec![("TwoPlus".to_string(), "OnePlus".to_string())],
+            "tree automaton must prove cons(x,cons(y,t)) <: cons(x,t)"
+        );
+        assert!(
+            structural.disjoint_pairs.is_empty(),
+            "a subtype pair is not disjoint (the smaller is inhabited inside the larger)"
+        );
+    }
+
+    /// The Supertype direction (operands swapped): `cons(x, t)` is a SUPERTYPE of
+    /// `cons(x, cons(y, t))`, which the dispatch records as the (sub, super)
+    /// `(TwoPlus, OnePlus)` pair via the `Supertype` arm.
+    #[test]
+    fn cons_supertype_direction() {
+        let (all_syntax, categories) = cons_list_grammar();
+        let specs = vec![
+            // OnePlus first this time ⇒ the precise relation is Supertype(a,b),
+            // recorded as subtype (b, a) = (TwoPlus, OnePlus).
+            structural_refinement("OnePlus", "List", "l == cons(x, t)"),
+            structural_refinement("TwoPlus", "List", "l == cons(x, cons(y, t))"),
+        ];
+        let structural =
+            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        assert_eq!(
+            structural.subtype_pairs,
+            vec![("TwoPlus".to_string(), "OnePlus".to_string())],
+            "Supertype(OnePlus, TwoPlus) is recorded as subtype (TwoPlus, OnePlus)"
+        );
+    }
+
+    /// Defensive fallback: a `Structural` refinement whose `predicate_repr` does
+    /// not parse into a tree pattern (no relation token) must fall back to the
+    /// heuristic — never worse than the status quo (here: Overlapping).
+    #[test]
+    fn unparseable_structural_falls_back_to_heuristic() {
+        let (all_syntax, categories) = cons_list_grammar();
+        let specs = vec![
+            structural_refinement("Weird", "List", "some_relation(l)"),
+            structural_refinement("AlsoWeird", "List", "other_relation(l)"),
+        ];
+        let structural =
+            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        // No parse ⇒ no precise disjoint/subtype; the heuristic's Overlapping
+        // verdict is used, so the pair is Overlapping (not disjoint, not subtype).
+        assert!(structural.disjoint_pairs.is_empty());
+        assert!(structural.subtype_pairs.is_empty());
+        assert_eq!(structural.overlapping_pairs.len(), 1);
+    }
+
+    /// Non-structural pairs (`Presburger`) are left entirely on the heuristic:
+    /// the structural dispatch must reproduce the heuristic's verdict for them.
+    #[test]
+    fn presburger_pairs_unchanged() {
+        let (all_syntax, categories) = cons_list_grammar();
+        let pos = crate::RefinementTypeSpec {
+            name: "Pos".to_string(),
+            base_category: "Int".to_string(),
+            variable_name: "x".to_string(),
+            predicate_kind: crate::RefinementPredKind::Presburger,
+            predicate_repr: "x > 0".to_string(),
+        };
+        let nonpos = crate::RefinementTypeSpec {
+            name: "NonPos".to_string(),
+            base_category: "Int".to_string(),
+            variable_name: "x".to_string(),
+            predicate_kind: crate::RefinementPredKind::Presburger,
+            predicate_repr: "x <= 0".to_string(),
+        };
+        let specs = vec![pos, nonpos];
+        let heuristic = analyze_refinement_dispatch(&specs);
+        let structural =
+            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        // Identical disjoint/subtype/overlapping verdicts for the Presburger pair.
+        assert_eq!(heuristic.disjoint_pairs, structural.disjoint_pairs);
+        assert_eq!(heuristic.subtype_pairs, structural.subtype_pairs);
+        assert_eq!(heuristic.overlapping_pairs, structural.overlapping_pairs);
+        // And the heuristic genuinely finds these disjoint (x>0 vs x<=0).
+        assert_eq!(
+            structural.disjoint_pairs,
+            vec![("Pos".to_string(), "NonPos".to_string())]
+        );
+    }
+}
