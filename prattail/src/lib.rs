@@ -399,6 +399,13 @@ pub mod predicate_dispatch;
 /// pluggable constraint domains and TheoryAlgebra bridge to BooleanAlgebra.
 pub mod logict;
 
+/// OSLF Phase 8: SMT-backed [`ConstraintTheory`](logict::ConstraintTheory) via the
+/// in-process Z3 library. A Sat3-ONLY decider (`is_satisfiable_3v`/`checked_witness`)
+/// — `Z3Theory` is NOT a `BooleanAlgebra` and is never routed into the SFA classical
+/// consumers. Off by default; needs no libz3 in the default build.
+#[cfg(feature = "smt")]
+pub mod logict_smt;
+
 /// Presburger arithmetic: automata-based decision procedure for
 /// multi-variable linear integer arithmetic (Büchi 1960). Zero external deps.
 pub mod presburger;

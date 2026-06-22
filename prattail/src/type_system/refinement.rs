@@ -330,12 +330,95 @@ where
     /// the constraints into the `TheoryAlgebra<T>` `BooleanAlgebra`
     /// wrapper (which exposes negation) and checks
     /// `!is_satisfiable(P ∧ ¬Q)`.
+    ///
+    /// The `TheoryAlgebra<T>` witness-search decider is the PRIMARY (verified)
+    /// decider. When the `smt` feature is enabled (OSLF Phase 8), Z3 is consulted
+    /// as a SECONDARY gap-filler — see [`Self::predicate_entails`]'s `smt` variant —
+    /// only for the concrete [`Z3Theory`](crate::logict_smt::Z3Theory) constraint
+    /// domain that the search cannot decide (mixed numeric/bitvector guards).
+    #[cfg(not(feature = "smt"))]
     pub fn predicate_entails(&self, premise: &T::Constraint, conclusion: &T::Constraint) -> bool {
         use crate::logict::{TheoryAlgebra, TheoryPred};
         use crate::symbolic::BooleanAlgebra;
 
         // 1024 is the same default search bound used by the runtime
         // guard evaluator (`generate_inline_guard_eval` in macros).
+        let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), 1024);
+        let p = TheoryPred::Atom(premise.clone());
+        let q = TheoryPred::Atom(conclusion.clone());
+        let not_q = algebra.not(&q);
+        let p_and_not_q = algebra.and(&p, &not_q);
+        !algebra.is_satisfiable(&p_and_not_q)
+    }
+
+    /// `smt`-feature variant of [`Self::predicate_entails`].
+    ///
+    /// For every NON-`Z3Theory` constraint domain this is byte-for-byte the default
+    /// build: the `TheoryAlgebra<T>` witness-search decides (the `Any` downcast to
+    /// `Z3Theory` fails, so the verified primary decider runs unchanged).
+    ///
+    /// ONLY for the concrete [`Z3Theory`](crate::logict_smt::Z3Theory) domain (a
+    /// genuine SMT constraint — mixed numeric/bitvector — the verified search cannot
+    /// decide) Z3 decides `P ∧ ¬Q` three-valued via
+    /// [`is_satisfiable_3v`](crate::logict_smt::is_satisfiable_3v), and the
+    /// defect-prone `TheoryAlgebra<Z3Theory>::is_satisfiable` (which collapses
+    /// `DontKnow → false`) is NEVER constructed for it:
+    ///
+    /// - `Unsat` ⇒ entailment PROVEN ⇒ `true`.
+    /// - `Sat` ⇒ a genuine counter-model exists (certificate-checked via
+    ///   [`checked_witness`](crate::logict_smt::checked_witness)) ⇒ entailment
+    ///   FAILS ⇒ `false`.
+    /// - `DontKnow` ⇒ do NOT claim entailment (a false-positive would accept an
+    ///   invalid subtype) ⇒ `false` (SOUND, incomplete). Never a silent `true`;
+    ///   `DontKnow` is never collapsed to Unsat/true.
+    #[cfg(feature = "smt")]
+    pub fn predicate_entails(&self, premise: &T::Constraint, conclusion: &T::Constraint) -> bool {
+        use crate::algebra_tower::Sat3;
+        use crate::logict::{TheoryAlgebra, TheoryPred};
+        use crate::logict_smt::{self, SmtConstraint, Z3Theory};
+        use crate::symbolic::BooleanAlgebra;
+        use std::any::Any;
+
+        // SECONDARY (Z3) gap-filler — applies ONLY for the `Z3Theory` constraint
+        // domain (the `Any` downcast of the theory succeeds iff `T = Z3Theory`, so
+        // `T::Constraint = SmtConstraint`). For Z3 the SOUND three-valued decision
+        // REPLACES the verified witness-search entirely: `TheoryAlgebra<Z3Theory>::
+        // is_satisfiable` collapses `DontKnow → witness None → false` (exactly the
+        // unsoundness Phase 8 fixes), so it must NEVER decide a Z3 guard — we do not
+        // even construct it here. For every other theory the downcast fails and we
+        // fall through to the verified primary decider below.
+        let theory_any: &dyn Any = &self.constraint_theory;
+        if let Some(z3) = theory_any.downcast_ref::<Z3Theory>() {
+            let premise_any: &dyn Any = premise;
+            let conclusion_any: &dyn Any = conclusion;
+            if let (Some(p_smt), Some(q_smt)) = (
+                premise_any.downcast_ref::<SmtConstraint>(),
+                conclusion_any.downcast_ref::<SmtConstraint>(),
+            ) {
+                // P ∧ ¬Q over the self-contained SMT constraint AST.
+                let p_and_not_q_smt = SmtConstraint::And(
+                    Box::new(p_smt.clone()),
+                    Box::new(SmtConstraint::Not(Box::new(q_smt.clone()))),
+                );
+                return match logict_smt::is_satisfiable_3v(z3, &p_and_not_q_smt) {
+                    // P ∧ ¬Q unsatisfiable ⇒ P ⟹ Q is valid.
+                    Sat3::Unsat => true,
+                    // A genuine, certificate-checked counter-model ⇒ entailment fails.
+                    Sat3::Sat => {
+                        let _counter = logict_smt::checked_witness(z3, &p_and_not_q_smt);
+                        false
+                    },
+                    // Undecided ⇒ do NOT claim entailment (a false-positive entailment
+                    // would accept an invalid subtype): return `false` — SOUND though
+                    // incomplete. Never a silent `true`; `DontKnow` is never collapsed
+                    // to Unsat/true.
+                    Sat3::DontKnow => false,
+                };
+            }
+        }
+
+        // PRIMARY (verified) decider for every non-Z3 theory — byte-for-byte the
+        // default (`#[cfg(not(feature = "smt"))]`) computation.
         let algebra = TheoryAlgebra::new(self.constraint_theory.clone(), 1024);
         let p = TheoryPred::Atom(premise.clone());
         let q = TheoryPred::Atom(conclusion.clone());

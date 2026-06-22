@@ -169,6 +169,20 @@ two-way-transducer = []
 ## Declared so `cargo check --all-targets` stays check-cfg clean. OFF BY
 ## DEFAULT; the default build never references railroad and is unchanged.
 railroad-diagrams = []
+## OSLF Phase 8 (2026-06-22): SMT-backed `ConstraintTheory` via the in-process Z3
+## library (`prattail/src/logict_smt.rs`), backported from `lling-llang` with its
+## soundness defect removed. OFF BY DEFAULT. When enabled it pulls in the optional
+## `z3` crate (dynamically linked against the system libz3); the DEFAULT build needs
+## no libz3 and is **byte-identical** (the `logict_smt` module does not compile).
+##
+## Sat3-ONLY doctrine: Z3 is reachable ONLY through `logict_smt::is_satisfiable_3v`
+## / `checked_witness` (three-valued; `unknown → Sat3::DontKnow`, NEVER collapsed to
+## `Unsat`/`Sat`). `Z3Theory` implements ONLY `ConstraintTheory` — never
+## `BooleanAlgebra`/`RejectSafeAlgebra`/`HeytingAlgebra` — and is never routed into
+## the SFA classical consumers (complement / determinize / equivalence). It is a
+## SECONDARY gap-filler only where the verified deciders return `DontKnow`; the
+## verified deciders stay PRIMARY.
+smt = ["dep:z3"]
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
@@ -211,6 +225,10 @@ rigail = { path = "../rigail" }
 # not depend on prattail (verified: no cycle). The default build never pulls
 # this in.
 mettail-ast = { package = "ast", path = "../ast", optional = true }
+# OSLF Phase 8 SMT backend (feature `smt`, off by default). The in-process Z3
+# library, dynamically linked against the system libz3 (`/usr/lib/libz3.so`). Only
+# pulled in under `--features smt`; the default build links no libz3.
+z3 = { version = "0.12", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -43,3 +43,8 @@ theories/SymTreeWiringSound.v
 # relational-only evaluator. Self-contained (models the modal-vs-relational shape
 # only).
 theories/BehavioralTierClassificationSound.v
+# OSLF substrate Phase 8: Z3/SMT witness-check soundness. A certificate-checked
+# witness (re-validated under the pure evaluator) implies satisfiable, by
+# construction — so the Z3 oracle's trusted Sat is certificate-backed and NO new
+# admission enters the proven EBA core. Self-contained.
+theories/Z3WitnessChecked.v
