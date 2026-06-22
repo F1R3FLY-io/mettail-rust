@@ -56,7 +56,7 @@ note bottom of Comb
   UNCHANGED. Generalizing "over all data types" = completing the
   family of instances + closing it under type constructors,
   not rewriting the automata. First-order pattern matching
-  is subsumed: a pattern lowers to a `TreePred<AnyAlgebra>`.
+  is subsumed: a pattern lowers to a TreePred<AnyAlgebra>.
 end note
 
 legend right

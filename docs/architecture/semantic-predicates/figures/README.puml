@@ -17,30 +17,30 @@ skinparam rectangle {
 
 ' ── Upstream: the language specification ────────────────────────────────
 rectangle "Upstream" as Up #DBEAFE {
-  component "`language!` spec\n(guards{} / ?guard:Guard /\nlogic{} / #[tier(..)])" as Spec #BFDBFE
+  component "language! spec\n(guards{} / ?guard:Guard /\nlogic{} / #[tier(..)])" as Spec #BFDBFE
   component "MeTTaIL macro\n(prattail_bridge)" as Macro #BFDBFE
 }
 
 ' ── The prattail substrate (the subject of this suite) ──────────────────
 rectangle "prattail substrate\n(theory of guards — compile time, classify-only)" as Sub #DCFCE7 {
-  component "EBA / BooleanAlgebra\n`symbolic.rs`" as EBA #BFDBFE
-  component "SFA\n(predicate-labeled automata)\n`symbolic.rs`" as SFA #CCFBF1
-  component "SFT / STFT\n`sft.rs` · `sym_tree_transducer.rs`" as SFT #EDE9FE
-  component "Algebra tower\nRejectSafe / Heyting\n`algebra_tower.rs`" as Tower #FEF3C7
+  component "EBA / BooleanAlgebra\nsymbolic.rs" as EBA #BFDBFE
+  component "SFA\n(predicate-labeled automata)\nsymbolic.rs" as SFA #CCFBF1
+  component "SFT / STFT\nsft.rs · sym_tree_transducer.rs" as SFT #EDE9FE
+  component "Algebra tower\nRejectSafe / Heyting\nalgebra_tower.rs" as Tower #FEF3C7
 }
 
 ' ── Downstream classification: rholang-codegen ──────────────────────────
 rectangle "rholang-codegen\n(the integration gate)" as Codegen #DCFCE7 {
-  component "classify\n`collect_guard_obligations`" as Classify #BBF7D0
-  component "obligation / disposition\n`backend.rs`" as Disp #BBF7D0
-  component "quality\n`guard_quality.rs`" as Quality #BBF7D0
-  component "fail-closed flip gate\n`flip.rs` · `decide_rho_flip`" as Gate #BBF7D0
+  component "classify\ncollect_guard_obligations" as Classify #BBF7D0
+  component "obligation / disposition\nbackend.rs" as Disp #BBF7D0
+  component "quality\nguard_quality.rs" as Quality #BBF7D0
+  component "fail-closed flip gate\nflip.rs · decide_rho_flip" as Gate #BBF7D0
 }
 
 ' ── Downstream backends ─────────────────────────────────────────────────
 rectangle "Backends (host runtime)" as Back #FCE7F3 {
   component "Dovetail\n(guarded rewrite saturation)" as Dovetail #FBCFE8
-  component "Rho backend / RSpace\n(`rhoapi::Par`, COMM)" as Rho #FBCFE8
+  component "Rho backend / RSpace\n(rhoapi::Par, COMM)" as Rho #FBCFE8
 }
 
 Spec --> Macro : declared guards

@@ -8,7 +8,13 @@ what a language author can write today in a `language!` specification (grounded 
 the real parser, not the design specs), and a **proposed** clean syntax for the
 algebra features that have semantics and proofs but no surface form. The algebras
 themselves are documented in [02](02-effective-boolean-algebra.md)–[05](05-algebra-pyramid-and-decidability.md);
-how guards lower and execute is [07](07-language-to-rholang-integration.md)–[08](08-runtime-comm-enforcement.md).
+the engine that evaluates a quantified or theory guard is
+[13 — Constraint-Theory Engine](13-constraint-theory-engine.md); the reject-safe
+behavioral (Heyting) tier is [12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md);
+and how guards lower and execute is [07](07-language-to-rholang-integration.md)–[08](08-runtime-comm-enforcement.md).
+This document is a **syntax reference**, so each construct's proved result is stated in
+one line and **cross-referenced to its proof-home** in those documents rather than
+re-proved here; the mechanizing Coq lemma is named only as a parenthetical citation.
 
 ![The four guard surfaces and what each builds](figures/06-guard-surfaces.svg)
 
@@ -334,7 +340,7 @@ connectives and quantifiers for free. The design principles:
 
 ### 3.1 P1 — Natural bounded quantifier — ⊳
 
-`Algebra:` `logict::QuantifiedFormula` · `Proof:` model-level · `Builds:`
+`Algebra:` `logict::QuantifiedFormula` · `Proof:` [13 — Constraint-Theory Engine, §3](13-constraint-theory-engine.md) · `Builds:`
 `Quantified` · closes gap G1.
 
 `forall(y, nodes, body)` reads awkwardly where the mathematics is `∀y ∈ nodes. φ`.
@@ -357,16 +363,25 @@ Maps `∀ y ∈ D. φ` to `Quantified { ForAll, var:"y", domain:Some(Named "D"),
 the `<= 100` suffix sets the AST `bound` field (and `QuantifiedDomain::Bounded` on
 the prattail side), finally giving the separate-bound concept a surface. A
 multi-binder `∀ x, y ∈ D. φ` desugars to nested `Quantified`. Adds `∉` / `not in`
-as `Not(RelationQuery(D, [x]))`.
+as `Not(RelationQuery(D, [x]))`. The lowered `logict::QuantifiedFormula` is evaluated
+to a three-valued verdict — exact on a finite domain, and on a bounded one a budget
+exhaustion is reported as `Unknown` and collapsed to `false` (reject-safe: a bounded
+quantifier never wrongly admits), the result stated and proved in
+[13 — Constraint-Theory Engine, §3](13-constraint-theory-engine.md).
 
 ### 3.2 P2 — Modal and temporal behavioral operators — ⊳
 
-`Algebra:` `behavioral_algebra::{ax,ex,ef,ag,af,eg,au,eu}` · `Proof:` exact on a
-finite LTS · `Builds:` `BehavioralFormula` · closes gap G2.
+`Algebra:` `behavioral_algebra::{ax,ex,ef,ag,af,eg,au,eu}` · `Proof:` [12 — Heyting Behavioral Logic, §4](12-heyting-behavioral-logic.md) · `Builds:` `BehavioralFormula` · closes gap G2.
 
-The behavioral algebra already provides proved CTL operators; the proposal exposes
-them so an author can write safety and liveness guards directly. They bind tighter
-than the boolean connectives and scope the following predicate:
+The behavioral algebra already provides the eight branching-time (CTL) operators —
+the state operators `AG`/`EG`/`AF`/`EF`/`AX`/`EX` and the path operators `AU`/`EU`,
+each defined as sugar over the modal μ-calculus fixpoints (for example `AG φ` is
+"`φ` holds in every reachable state" and `EF φ` is "`φ` is reachable on some run"),
+with model checking over a finite labeled transition system *exact* and bounded-reach
+truncation *reject-safe*; both the operator definitions and that exactness are stated
+and proved in [12 — Heyting Behavioral Logic, §4](12-heyting-behavioral-logic.md). The
+proposal exposes them so an author can write safety and liveness guards directly. They
+bind tighter than the boolean connectives and scope the following predicate:
 
 ```ebnf
 modal    ::= state_op pred | path_op "(" pred "," pred ")" | quantifier
@@ -418,8 +433,7 @@ value bound to `x`, then evaluate the residual predicate on the output." The
 
 ### 3.4 P4 — Tree / structural pattern predicate — ⊳
 
-`Algebra:` `sym_tree::TreePred` / `TreeAlgebra` · `Proof:` `TreeAlgebraClosure.v` ·
-`Builds:` `TreePred` (and a faithful `AcMatch`) · closes gaps G4 and G7.
+`Algebra:` `sym_tree::TreePred` / `TreeAlgebra` · `Proof:` [05 — Algebra Pyramid and Decidability, Theorem 7.5](05-algebra-pyramid-and-decidability.md#75-tree-ranked-recursive-terms) · `Builds:` `TreePred` (and a faithful `AcMatch`) · closes gaps G4 and G7.
 
 `TreePred` / `TreeAlgebra` decide "does this term match constructor pattern `C` with
 payload and child constraints." First-order patterns are already MeTTaIL's idiom in
@@ -443,7 +457,11 @@ for (q <- n where q ~ NQuote(_) | PDrop(_))      { p }
 Maps `q ~ PPar(POutput{k>0}, _)` to
 `TreePred::Node { constructor:"PPar", children:[ Node{"POutput", payload_guard:Some(⟦k>0⟧)}, Wild ] }`,
 compiled by `TreeAlgebra`. The ranked alphabet is derived from the language's
-`types { }` / `terms { }` — no new declaration.
+`types { }` / `terms { }` — no new declaration. The ranked-tree algebra over a payload
+EBA is itself a proven effective Boolean algebra — so its complement, satisfiability,
+and witness are exact and it subsumes first-order pattern matching — the closure result
+of [05 — Algebra Pyramid and Decidability, Theorem 7.5](05-algebra-pyramid-and-decidability.md#75-tree-ranked-recursive-terms)
+(mechanized in `TreeAlgebraClosure.v` as `tree_eba_laws`).
 
 A faithful **AC-match** (which the current `ac_match(...)` does not provide) is a
 dedicated multiset form:
@@ -460,8 +478,7 @@ spelling is documented as a non-feature pointing here.
 ### 3.5 P5 — Effective-theory literals — ⊳ (Presburger ◐)
 
 `Algebra:` `IntervalAlgebra` / `CharClassAlgebra` / `presburger.rs` /
-`regex_sfa::RegexPred` / `ordered_field.rs` · `Proof:` `PresburgerBooleanAlgebra.v`
-+ EBA closure · closes gap G5.
+`regex_sfa::RegexPred` / `ordered_field.rs` · `Proof:` [02 — Effective Boolean Algebra, §5.1](02-effective-boolean-algebra.md#51-the-presburger-instance-proved-no-smt-solver) (Presburger) + the [02](02-effective-boolean-algebra.md)/[05 §7](05-algebra-pyramid-and-decidability.md#7-closing-the-family-under-type-constructors) EBA-closure family · closes gap G5.
 
 Intervals, character classes, regexes, and full linear-integer terms have algebras
 but no literal syntax. The proposal uses familiar mathematical and regex notation,
@@ -486,15 +503,21 @@ for (s <- n where s ~ /he(llo)+/)          { p }     (* regex *)
 Maps `k in [1..10]` to an `IntervalAlgebra` guard, `2*k + 3 <= y` to a
 `PresburgerAlgebra` constraint (the general case extending the existing
 `extract_numeric_guard`), `c in ['a'-'z']` to `CharClassAlgebra`, and `s ~ /…/` to a
-`RegexPred` compiled via `regex_sfa`. Integer comparisons are ◐ today (atoms parse,
-no general linear term); the literal forms are ⊳. Each requires the matching
-`theories { }` registration, with a help diagnostic when absent.
+`RegexPred` compiled via `regex_sfa`. The `PresburgerAlgebra` leg is a proven Boolean
+algebra decided *automata-theoretically* — each linear-integer predicate compiles to an
+NFA over the binary encoding of its integers and satisfiability is NFA non-emptiness, so
+no SMT solver is on the path — the result stated and proved in
+[02 — Effective Boolean Algebra, §5.1](02-effective-boolean-algebra.md#51-the-presburger-instance-proved-no-smt-solver)
+(mechanized in `PresburgerBooleanAlgebra.v`), and each of these literal algebras joins
+the EBA-closure family of [05 §7](05-algebra-pyramid-and-decidability.md#7-closing-the-family-under-type-constructors).
+Integer comparisons are ◐ today (atoms parse, no general linear term); the literal forms
+are ⊳. Each requires the matching `theories { }` registration, with a help diagnostic
+when absent.
 
 ### 3.6 P6 — Collection / product / sum field predicates — ⊳
 
 `Algebra:` `collection_algebra::{BagPred,MapPred}` / `product_nary::{NaryProductPred,SumPred}` ·
-`Proof:` `CollectionAlgebraClosure.v`, `ProductAlgebraClosure.v`,
-`SumAlgebraClosure.v` · closes gap G6.
+`Proof:` [05 — Algebra Pyramid and Decidability, Theorems 7.2–7.4](05-algebra-pyramid-and-decidability.md#7-closing-the-family-under-type-constructors) · closes gap G6.
 
 ```ebnf
 atom ::= "count" "(" arg "," pred ")" cmp_op Int     (* bag cardinality *)
@@ -515,13 +538,17 @@ for (v <- n where is Inl(v) { v > 0 })     { p }     (* variant + payload *)
 Maps `count(b, φ) >= k` to `BagPred::Count { class:⟦φ⟧, lo:k, hi:None }`,
 `has_key`/`entry` to `MapPred`, `t.i ⊙ rhs` to `NaryProductPred` lifting the residual
 into field `i`, and `is Ctor(v){φ}` to `SumPred` selecting the variant and applying
-`φ` to its payload.
+`φ` to its payload. Each constructor preserves the EBA contract — given EBAs for the
+parts, the product, sum, and collection algebras are themselves proven effective Boolean
+algebras (so their complement, satisfiability, and witness stay exact) — the closure
+theorems of [05 — Algebra Pyramid and Decidability, Theorems 7.2–7.4](05-algebra-pyramid-and-decidability.md#7-closing-the-family-under-type-constructors)
+(mechanized as `product_eba_laws`, `sum_eba_laws`, and `collection_eba_laws` in
+`ProductAlgebraClosure.v`, `SumAlgebraClosure.v`, and `CollectionAlgebraClosure.v`).
 
 ### 3.7 P7 — Per-guard tier / quality annotation — ⊳ (tier ◐)
 
 `Algebra:` `guard_quality::{RhoGuardTier,RhoGuardQuality,RhoGuardClassification}` ·
-`Proof:` `GuardTierCertificate.v` · `Builds:` `RhoGuardClassification` · closes gap
-G8.
+`Proof:` [12 — Heyting Behavioral Logic, Proposition 6.3](12-heyting-behavioral-logic.md#6-how-heyting-completes-boolean-for-structural-behavioral-types) (tier classification) + [07 — Language-to-Rholang Integration, §4.3](07-language-to-rholang-integration.md#43-quality) (quality grading) · `Builds:` `RhoGuardClassification` · closes gap G8.
 
 `#[tier(...)]` annotates only rules. Authors sometimes want to assert that a
 *specific guard* is T4 (trusted) or carries reject-safe or machine-checked
@@ -541,16 +568,27 @@ for (q <- n where AG safe(q) @[quality(machine_checked)]) { p }
 ```
 
 Maps `@[tier(t4)]` to `RhoGuardTier::T4Asserted`, `@[quality(reject_safe)]` to a
-`RhoGuardClassification { reject_safe:true }` folding (via `classify_quality`) to
-`RhoGuardQuality::RejectSafeApprox`, and `force` to skipping the tier/quality
-mismatch gate.
+`RhoGuardClassification { reject_safe:true }` folding (via `classify_quality`, the
+quality classifier defined in [07 — Language-to-Rholang Integration, §4.3](07-language-to-rholang-integration.md#43-quality))
+to `RhoGuardQuality::RejectSafeApprox`, and `force` to skipping the tier/quality
+mismatch gate. The decidability tiers carry a proven certificate — they form a
+join-semilattice on which combination is a soundness/completeness homomorphism, and a
+tier ↔ regularity correspondence ties `T1`/`T2` to the exact Boolean core, `T3` to the
+`Sat3::DontKnow` boundary, and `T4` to the refutable/trusted class — the result stated
+and proved in [12 — Heyting Behavioral Logic, Proposition 6.3](12-heyting-behavioral-logic.md#6-how-heyting-completes-boolean-for-structural-behavioral-types)
+(mechanized in `GuardTierCertificate.v` as `tier_max_sound_hom` and the
+`tier_regularity_*` family), and how that quality grade then gates the production-default
+flip is [07 — Language-to-Rholang Integration, §4.3](07-language-to-rholang-integration.md#43-quality).
 
 ### 3.8 P8 — Theory combination and LTS hint — ⊳
 
-`Algebra:` Nelson–Oppen combinator (`TheoryCombination.v`) · `Builds:` combined
-`ConstraintTheory` · closes gap G10 and supports P2.
+`Algebra:` Nelson–Oppen joint-search combinator · `Proof:` [05 — Algebra Pyramid and Decidability, Theorem 7.6](05-algebra-pyramid-and-decidability.md#76-theory-combination-the-nelsonoppen-base-case) · `Builds:` combined `ConstraintTheory` · closes gap G10 and supports P2.
 
-`TheoryCombination.v` (the Nelson–Oppen base case) is proved, but `theories { }`
+Two decidable theories over a shared enumerable domain combine into one effective
+Boolean algebra by exhaustive joint search — the Nelson–Oppen *joint-search base case*
+(not the full infinite-domain equality-exchange procedure) — a proven result, stated
+and proved in [05 — Algebra Pyramid and Decidability, Theorem 7.6](05-algebra-pyramid-and-decidability.md#76-theory-combination-the-nelsonoppen-base-case)
+(mechanized in `TheoryCombination.v` as `combined_eba_laws`); but `theories { }`
 registers theories in isolation. The proposal adds a combination form and the LTS
 edge-relation hint that P2 needs:
 
@@ -622,6 +660,10 @@ syntax* — which §3 proposes to close.
   (how a declared guard becomes an obligation, disposition, and quality), and
   [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md) (how the surviving
   guard is enforced at run time).
+- **The engine that evaluates a quantified or theory guard** (the proof-home for the
+  P1 quantifier and P8 theory-combination results): [13 — Constraint-Theory Engine](13-constraint-theory-engine.md).
+- **The reject-safe behavioral (Heyting) tier** (the proof-home for the P2 modal/temporal
+  operators and the P7 tier ↔ regularity certificate): [12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md).
 - **Proofs** per construct: [10 — Formal Verification and Tests](10-formal-verification-and-tests.md).
 - **The design specs this document corrects and operationalizes**:
   `docs/design/predicated-types.md` §2A and `docs/design/guards-block.md`.

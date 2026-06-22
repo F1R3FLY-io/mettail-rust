@@ -12,7 +12,7 @@ skinparam sequence {
   ArrowFontColor #111827
 }
 
-participant "`language!`\nauthor" as Author #DBEAFE
+participant "language!\nauthor" as Author #DBEAFE
 participant "MeTTaIL\nmacro" as Macro #DBEAFE
 participant "prattail\nPredicateParser" as Parser #DBEAFE
 participant "substrate\n(EBA / SFT / tower)" as Sub #DCFCE7

@@ -26,10 +26,10 @@ B -down-> P : behavioral factor
 
 note bottom of P #E0E7FF
   asymmetric De Morgan:
-  `¬(a ∧ b) = (¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)`
-  — `¬a` exact (structural), `¬b` reject-safe (behavioral).
+  ¬(a ∧ b) = (¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)
+  — ¬a exact (structural), ¬b reject-safe (behavioral).
   NOT a BooleanAlgebra (compile_fail doctest);
-  `mixed_negation_soundness` proves it never fires falsely.
+  mixed_negation_soundness proves it never fires falsely.
 end note
 
 legend right

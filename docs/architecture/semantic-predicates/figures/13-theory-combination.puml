@@ -42,7 +42,7 @@ EBA ..> Formal : formal counterpart
 
 legend right
 |= Color |= Role |
-|<#DBEAFE> | decidable input `ConstraintTheory` (blue) |
+|<#DBEAFE> | decidable input ConstraintTheory (blue) |
 |<#FEF3C7> | joint interleaved bounded search — the combination (amber) |
 |<#DCFCE7> | combined theory + the EBA it provides (green) |
 |<#E0E7FF> | formal counterpart discharged in Coq (indigo) |

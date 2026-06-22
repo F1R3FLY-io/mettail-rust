@@ -1,0 +1,79 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+title How a behavioral predicate is concretized: classify at compile time, decide at run time
+
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam package {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #92400E
+  FontColor #111827
+}
+
+' ── Start: the behavioral guard as written in language! ─────────────────────
+rectangle "behavioral guard\n(e.g. safe(P) = ag not bad)" as G #FEF3C7
+
+' ══════════════════════════════════════════════════════════════════════════════
+' COMPILE-TIME LANE — the substrate only CLASSIFIES; it never evaluates the
+' algebra on a real process here.
+' ══════════════════════════════════════════════════════════════════════════════
+package "compile time: classify-only" as CT #E0E7FF {
+  component "semantic-predicate substrate\nclassify: obligation -> disposition -> quality" as CL #DBEAFE
+  rectangle "modal formula => is_satisfiable_3v = DontKnow\nquality = RejectSafeApprox" as CLQ #FEF3C7
+
+  CL --> CLQ
+}
+
+note bottom of CT #FEF3C7
+  The substrate NEVER evaluates the algebra on a real process at compile time:
+  a modal formula is classified semi-decidable (is_satisfiable_3v = DontKnow)
+  and tagged RejectSafeApprox. The flip gate admits the rule fail-closed; the
+  truth of the guard is deferred to one of the three runtime mechanisms below.
+end note
+
+' ══════════════════════════════════════════════════════════════════════════════
+' RUNTIME LANE — the classified guard is DECIDED here by exactly one of three
+' concretization mechanisms.
+' ══════════════════════════════════════════════════════════════════════════════
+package "run time: decide the truth" as RT #DCFCE7 {
+  component "(i) mu-calculus model check\nHostTerm LTS: successors -> build_lts (cap 10000) -> denote\nEXACT over the reachable LTS" as M1 #FEF3C7
+  component "(ii) closed-world facts\nFactBase / runtime snapshot: holds(relation, tuple)\nhalts/safe are host-supplied facts" as M2 #DBEAFE
+  component "(iii) host COMM observation\nRhoNativeJoin / Rholang where-boolean / RSpace match\nf1r3node decides at COMM time" as M3 #E0E7FF
+}
+
+note right of M1 #FEF3C7
+  GAP: only NoTerm and the TestProc fixture implement HostTerm today;
+  no real Rholang Par is wired in yet, so modal truth of a dispatched
+  process is honestly DontKnow. (ii)/(iii) are how dispatched guards decide.
+end note
+
+' ── Flows: guard -> classify -> deferred to one of three runtime mechanisms ──
+G --> CL : declared guard
+CLQ --> M1 : decide at run time
+CLQ --> M2 : decide at run time
+CLQ --> M3 : decide at run time
+
+legend right
+|= Color / mechanism |= Meaning |
+|<#FEF3C7> | semi-decidable leg: DontKnow at compile time; amber gap on (i) |
+|<#DBEAFE> | classical / decidable: closed-world facts, holds(relation, tuple) |
+|<#E0E7FF> | host / formal: compile-time classify-only lane and (iii) COMM at run time |
+|<#DCFCE7> | the runtime decision lane (admitted guard is decided here) |
+|= Mechanism |= How the truth is concretely computed |
+| (i) mu-calculus | build_lts (cap 10000) -> denote: EXACT over the reachable LTS (HostTerm) |
+| (ii) closed-world | FactBase.holds(relation, tuple): halts/safe supplied at run time |
+| (iii) host COMM | RhoNativeJoin / where-boolean / RSpace match: f1r3node decides at COMM |
+endlegend
+@enduml

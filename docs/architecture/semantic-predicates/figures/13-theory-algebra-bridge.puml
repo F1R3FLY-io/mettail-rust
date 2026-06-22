@@ -32,10 +32,10 @@ Adapter -right-> BA       : impl
 BA      -right-> Consumers : reused by
 
 note bottom of Adapter
-  `collect_constraints`:
-  `And` → `fair_conjoin`,  `Or` → `interleave`,
-  `Not` → De Morgan / negation-as-failure;
-  then `collect_bounded(search_bound)`.
+  collect_constraints:
+  And → fair_conjoin,  Or → interleave,
+  Not → De Morgan / negation-as-failure;
+  then collect_bounded(search_bound).
 end note
 
 ' ── Formal counterpart (dashed) ──
@@ -44,8 +44,8 @@ Adapter ..> Formal : formal counterpart
 
 legend right
 |= Color |= Role |
-|<#DBEAFE> | classical / decidable: registration + `ConstraintTheory` |
-|<#DCFCE7> | adapter + the `BooleanAlgebra` it provides |
+|<#DBEAFE> | classical / decidable: registration + ConstraintTheory |
+|<#DCFCE7> | adapter + the BooleanAlgebra it provides |
 |<#CCFBF1> | SFA consumers that reuse the algebra (teal) |
 |<#E0E7FF> | formal counterpart discharged in Coq (indigo) |
 endlegend

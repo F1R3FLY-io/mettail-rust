@@ -60,7 +60,7 @@ note bottom of RSA
   A semi-decidable algebra implements HeytingAlgebra DIRECTLY and
   does NOT implement BooleanAlgebra — so SFA complement / determinize /
   equivalence are statically unavailable on it (Property 4.1; a
-  `compile_fail` doctest turns the safety property into a checked artifact).
+  compile_fail doctest turns the safety property into a checked artifact).
 end note
 
 legend right

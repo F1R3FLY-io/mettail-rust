@@ -13,6 +13,18 @@ effective Boolean algebra (EBA) of
 [02 — Effective Boolean Algebra](02-effective-boolean-algebra.md); the Rust
 realization is `prattail/src/symbolic.rs`.
 
+Following the house style of
+[12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md), each mechanized
+guarantee is **stated here as a Theorem and proved in ordinary mathematical prose**,
+each proof closed with `∎`, with the Coq witness named only as a *citation* (e.g.
+"mechanized as `dispatch_completeness`"). The Rust **analysis** functions — which
+compute diagnostics rather than discharge theorems — are instead presented as
+**Definitions/algorithms** with their `prattail/src/symbolic.rs` realization cited,
+and carry no `∎`. The SFA decision procedures (recognition, emptiness, witnesses,
+determinization, the Boolean closures) are likewise algorithms; their per-data-type
+EBA correctness obligations are cross-referenced to the closure theorems of
+[05 — Algebra Pyramid and Decidability](05-algebra-pyramid-and-decidability.md).
+
 ## 1. What an SFA is
 
 A classical nondeterministic finite automaton (NFA) labels every transition with a
@@ -197,7 +209,16 @@ of regular languages carry over to SFAs *symbolically* — the constructions
 manipulate guards with `∧`, `∨`, `¬`, and prune with `sat`, never touching `D`
 ([D'Antoni & Veanes, 2017](references.md#dantoni-veanes-2017), Section 3). Each
 operation below is stated as a theorem on the recognized languages and realized by
-a named method on `SymbolicAutomaton<A>`.
+a named method on `SymbolicAutomaton<A>`. The *language*-closure theorems below are
+parametric in the algebra; their per-data-type **correctness obligation** — that the
+guard operations `∧`, `∨`, `¬`, `sat`, `wit` the constructions invoke really are a
+sound EBA for whatever type `A` instantiates (intervals, character classes,
+products, sums, ranked trees, …) — is discharged once and for all by the
+EBA-closure theorems of
+[05 — Algebra Pyramid and Decidability](05-algebra-pyramid-and-decidability.md):
+Theorem 7.2 (product), Theorem 7.3 (sum), Theorem 7.4 (collection/bag), and
+Theorem 7.5 (tree) each prove the corresponding constructor preserves the EBA
+contract, so the SFA algorithms apply verbatim over every derived algebra.
 
 ### 5.1 Intersection — product with conjunctive guards
 
@@ -269,6 +290,22 @@ so the live alphabet stays small. The Rust entry point is
 `SymbolicAutomaton::determinize`, computing per-state minterms with
 `compute_minterms`.
 
+> **Definition 6.1 (`compute_minterms`).** Given a finite guard list
+> `φ₁, …, φ_k` over an EBA `𝓐`, `compute_minterms` returns the finite set of
+> **maximal satisfiable Boolean combinations** of those guards — every cell
+> `ψ₁ ∧ ⋯ ∧ ψ_k` in which each `ψᵢ` is either `φᵢ` or `¬φᵢ` and the whole
+> conjunction is satisfiable (`sat(ψ₁ ∧ ⋯ ∧ ψ_k)`). It is computed by iterative
+> refinement: start from the singleton `{⊤}`; for each successive guard `φ`,
+> replace every current cell `m` by the two splits `m ∧ φ` and `m ∧ ¬φ`, keeping
+> only the cells the algebra reports satisfiable; the guard list is deduplicated
+> before refinement. The result partitions `D` into the cells on which every guard
+> is wholly true or wholly false, so within a cell all domain elements trigger the
+> same set of transitions. This is an *algorithm*, not a theorem — its correctness
+> obligation (that the cells genuinely partition `D`, which needs `¬φ` to be a true
+> complement) is discharged by the classical-tier EBA laws of
+> [02 §4](02-effective-boolean-algebra.md#4-minterms-making-the-symbolic-alphabet-finite).
+> Realized in `prattail/src/symbolic.rs` as `compute_minterms`.
+
 > **Algorithm `Determinize` — minterm subset construction.**
 > *Input:* an SFA `M = (Q, 𝓐, Δ, q₀, F)`.
 > *Output:* a deterministic SFA `M′` with `L(M′) = L(M)`.
@@ -304,8 +341,8 @@ so the live alphabet stays small. The Rust entry point is
 The `Minterms` refinement itself — start from `⊤`, split each cell against each
 guard's `φ` and `¬φ`, keep only satisfiable cells — is given in literate form in
 [02 §4](02-effective-boolean-algebra.md#4-minterms-making-the-symbolic-alphabet-finite)
-and realized by `compute_minterms` (`symbolic.rs`), which additionally deduplicates
-the incoming guard list before refining.
+and realized by `compute_minterms` (Definition 6.1, `symbolic.rs`), whose `sat`
+pruning keeps the live cell count far below the `2^k` worst case in practice.
 
 ## 7. Equivalence as product-emptiness
 
@@ -346,32 +383,111 @@ rule selection is sound:
 - **Unsatisfiability.** A guard with `sat(φ) = false` is a *dead rule*: no input
   can ever select it, and it is reported for dead-code elimination.
 
-These are computed by `SymbolicAutomaton::analyze`, which scans every transition,
-records `(description, sat)` per guard, and pairwise tests `overlaps` and `implies`
-to populate a `SymbolicAnalysis`. That report carries `num_states`,
-`num_transitions`, `guard_satisfiability`, `overlapping_guards`, `subsumed_guards`,
-and `unsatisfiable_rule_labels`. At the grammar level the same diagnostics are
-produced directly from a syntax bundle by `analyze_from_bundle(all_syntax,
-categories)` (`symbolic.rs`): it extracts each rule's leading-terminal guard via
-`collect_leading_terminals`, flags rules whose first item is neither a terminal nor
-a dynamic start (`NonTerminal`/`IdentCapture`/`Binder`/`Collection`) nor an epsilon
-production as unsatisfiable, marks same-category rules with intersecting
-leading-terminal sets as overlapping, and marks a rule whose terminal set is a
-*strict subset* of a sibling's as subsumed. The adapter `SymbolicCompiler`
-(implementing `PredicateCompiler`, module M1 — always active) routes the dispatch
-pipeline's per-predicate compilation through `analyze_from_bundle`, so the overlap
-and subsumption findings flow straight into the lint diagnostics. This analysis is
-the input to the language-to-Rholang dispatch integration described in
+These three diagnostics are computed — not *proved*, but *computed* — by a small
+family of analysis functions. They are algorithms over the guard set, so each is
+stated below as a Definition of *what it returns*, with its Rust realization cited;
+none carries a `∎` proof, because none is a theorem.
+
+> **Definition 8.1 (the guard-analysis quantities).** Over an SFA `M` (or, at the
+> grammar level, a syntax bundle), the analysis emits a `SymbolicAnalysis` record
+> whose fields are defined as follows.
+> - `num_states` and `num_transitions` return the counts `|Q|` and `|Δ|` of the
+>   analyzed automaton (for a bundle, the category count and the rule count).
+> - `guard_satisfiability` returns, for each transition, the pair
+>   `(description, sat(φ))` — the guard's printed form together with its
+>   satisfiability verdict.
+> - `overlapping_guards` returns the pairs of guards whose conjunction is
+>   satisfiable — `{ (φ, ψ) : sat(φ ∧ ψ) }` restricted to rules of the same
+>   category (a non-disjoint pair, hence a first-token dispatch ambiguity).
+> - `subsumed_guards` returns the pairs `(φ, ψ)` with `φ` implying `ψ`
+>   (`¬sat(φ ∧ ¬ψ)`, i.e. `⟦φ⟧ ⊆ ⟦ψ⟧`) — the strictly-more-specific guard paired
+>   with the one it refines, a safe priority order.
+> - `unsatisfiable_rule_labels` returns the labels of rules whose guard is
+>   unsatisfiable (`sat(φ) = false`) — the dead rules, fed to dead-code
+>   elimination.
+>
+> Realized in `prattail/src/symbolic.rs`: `SymbolicAutomaton::analyze` populates
+> these by scanning every transition, recording `(description, sat)` per guard, and
+> pairwise testing `overlaps` and `implies`; the field accessors `num_states` and
+> `num_transitions` read `|Q|` and `|Δ|` directly.
+
+> **Definition 8.2 (`analyze_from_bundle`).** At the grammar level the same
+> `SymbolicAnalysis` is produced directly from a syntax bundle by
+> `analyze_from_bundle(all_syntax, categories)`. For each rule it extracts the
+> **leading-terminal guard** — the set of terminal tokens that can start a match —
+> via `collect_leading_terminals`; it then computes the Definition 8.1 quantities
+> over those sets: a rule is *unsatisfiable* when its first item is neither a
+> terminal, nor a dynamic start (`NonTerminal`/`IdentCapture`/`Binder`/`Collection`),
+> nor an epsilon production; two same-category rules *overlap* when their
+> leading-terminal sets intersect; and a rule is *subsumed* when its terminal set is
+> a strict subset of a sibling's. This is an analysis algorithm, not a theorem;
+> realized in `prattail/src/symbolic.rs` as `analyze_from_bundle`.
+
+The adapter `SymbolicCompiler` (implementing `PredicateCompiler`, module M1 —
+always active) routes the dispatch pipeline's per-predicate compilation through
+`analyze_from_bundle`, so the overlap and subsumption findings flow straight into
+the lint diagnostics. This analysis is the input to the language-to-Rholang dispatch
+integration described in
 [07 — Language to Rholang Integration](07-language-to-rholang-integration.md),
 where overlap becomes an ambiguity diagnostic and subsumption becomes a generated
 priority order.
 
-The soundness of treating dispatch this way is mechanized. The model in
-`formal/rocq/predicate_dispatch/theories/DispatchCompleteness.v` represents a
-predicate-dispatch SFA as a module signature and proves `dispatch_completeness`
-(every feature combination that is extracted is accepted) and
-`dispatch_zero_rejected` (no extracted predicate is silently dropped), both closed
-with `Qed` — the proof carries no admissions or axioms.
+### 8.1 Soundness of dispatch: the predicate-dispatch model
+
+The diagnostics of Definitions 8.1–8.2 *describe* a grammar's dispatch; the question
+this subsection settles is whether the dispatch mechanism that consumes them is
+**sound** — whether every predicate combination a rule actually carries is routed to
+a handler, and whether the only thing the dispatcher ever rejects is the empty
+combination. This is mechanized, and the two guarantees are the following theorems.
+
+The model (proof-home
+`formal/rocq/predicate_dispatch/theories/DispatchCompleteness.v`) represents a
+predicate-dispatch decision as a **feature signature**: a bitvector `sig` over the
+eleven predicate modules `M₁, …, M₁₁`, where bit `i` is set exactly when module
+`Mᵢ` is required by the predicate. The dispatch SFA routes a signature to the
+handlers whose bits are set; abstractly, a signature is **accepted** — routed to at
+least one handler — exactly when at least one bit is set, so the acceptance test is
+`dispatch_accepts(sig) = (sig ≠ 0)`, realized as `dispatch_accepts(sig) = ¬(sig =? 0)`.
+Feature extraction starts from a base signature `BASE = sig_union(M₁, M₁₀)` (the
+M1 *Symbolic* and M10 *MSO* bits, always present) and only ever **adds** bits via
+`sig_set`/`sig_union` — it never clears one.
+
+> **Theorem 8.3 (dispatch completeness).** Every non-empty feature signature routes
+> to a handler: for all `sig`, `sig ≠ 0 ⟹ dispatch_accepts(sig) = true`.
+>
+> *Proof.* By definition `dispatch_accepts(sig) = ¬(sig =? 0)`, where `=?` is
+> Boolean equality on signatures. The reflection law `sig =? 0 = true ⟺ sig = 0`
+> gives, contrapositively, `sig ≠ 0 ⟹ (sig =? 0) = false`, whence
+> `dispatch_accepts(sig) = ¬false = true`. `∎` (Mechanized as
+> `dispatch_completeness`, with the supporting equivalence
+> `dispatch_accepts_iff_nonzero`.)
+
+> **Theorem 8.4 (no silent rejection).** The only rejected signature is the empty
+> one, and feature extraction never produces it. Formally:
+> `dispatch_accepts(0) = false`, and for every additional bit set `extra`,
+> `dispatch_accepts(sig_union(BASE, extra)) = true` — so no real feature signature
+> is ever silently dropped.
+>
+> *Proof.* For the first claim, `dispatch_accepts(0) = ¬(0 =? 0) = ¬true = false`:
+> the empty signature, requiring no module, is correctly the sole rejection. For the
+> second, `sig_union(BASE, extra) = BASE ∨ extra` keeps every bit of `BASE` set, in
+> particular the M1 bit; a value with a set bit is not `0`, so
+> `sig_union(BASE, extra) ≠ 0`, and Theorem 8.3 yields
+> `dispatch_accepts(sig_union(BASE, extra)) = true`. Since extraction's output is
+> always of this `BASE ∨ extra` form, it is never `0` and never rejected. `∎`
+> (Mechanized as `dispatch_zero_rejected` together with
+> `extract_features_always_accepted`, resting on the base-bit invariants
+> `base_invariant_m1`/`base_invariant_m10` and the non-degeneracy corollary
+> `extract_features_nonzero`.)
+
+Both theorems are closed with `Qed` in `DispatchCompleteness.v` — the proofs carry
+no admissions or axioms. The abstraction gap is explicit in the development: the
+Rocq acceptance criterion `dispatch_accepts(sig) = (sig ≠ 0)` is the simplified
+shadow of the Rust 13-state dispatch SFA (`build_dispatch_sfa` — one initial state,
+eleven per-module accepting states, one reject sink), provably equivalent because a
+non-zero signature fires some `HasBit(i)` transition into an accepting module state,
+while the zero signature falls through to the reject sink (`DispatchCompleteness.v`
+§4.1).
 
 ## 9. The decidability boundary
 
@@ -406,8 +522,10 @@ is a *type* boundary, not a convention, and the full pyramid
   determinization and minimization). DOI:
   [10.1145/2535838.2535849](https://doi.org/10.1145/2535838.2535849). See
   [references.md](references.md#dantoni-veanes-2014).
-- Local mechanization: `formal/rocq/predicate_dispatch/theories/DispatchCompleteness.v`
-  — `dispatch_completeness` and `dispatch_zero_rejected`, both `Qed`
+- Local mechanization (proof-home of Theorems 8.3 and 8.4):
+  `formal/rocq/predicate_dispatch/theories/DispatchCompleteness.v` —
+  `dispatch_completeness`, `dispatch_zero_rejected`,
+  `extract_features_always_accepted`, and `extract_features_nonzero`, all `Qed`
   (zero-admission). See [References](references.md).
 - Companion documents: [02 — Effective Boolean Algebra](02-effective-boolean-algebra.md)
   (the algebra and minterms), [04 — Symbolic Transducers (SFT, STFT)](04-symbolic-transducers-sft-stft.md)

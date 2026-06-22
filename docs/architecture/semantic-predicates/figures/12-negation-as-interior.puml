@@ -26,14 +26,14 @@ rectangle "space X" as X {
 }
 
 note bottom of B
-  `¬¬U = int(cl(U))`; `U` is regular ⟺ `U = int(cl(U))`
+  ¬¬U = int(cl(U)); U is regular ⟺ U = int(cl(U))
   (regular-open). Excluded middle fails exactly on the boundary.
 end note
 
 legend right
 |= Color |= Region |
-|<#FEF3C7> | `U` — observable / semi-decidable property (open set) |
-|<#FDE68A> | `∂U` — boundary: the indeterminate `Sat3::DontKnow` zone |
-|<#DCFCE7> | `¬U` — refutable region (regular, classical) |
+|<#FEF3C7> | U — observable / semi-decidable property (open set) |
+|<#FDE68A> | ∂U — boundary: the indeterminate Sat3::DontKnow zone |
+|<#DCFCE7> | ¬U — refutable region (regular, classical) |
 endlegend
 @enduml

@@ -41,16 +41,27 @@ logic {
 
 Three guard surfaces are in play ([06 — Guard Syntax](06-guard-syntax-and-extensions.md)):
 the `?guard:Guard` slot on `PGuardedInput`, the `channels { }` sub-block, and the
-`logic { }` relations `halts`/`safe` that a user's `where` predicate may query. The
-relations are *external* — "populated by user code" — which is the crux: they are
-not Rholang-computable.
+`logic { }` relations `halts`/`safe` that a user's `where` predicate may query. Here
+`halts(P)` and `safe(P)` are **state propositions over a process** — `halts(P)` that
+`P` terminates, `safe(P)` that `P` never reaches a bad state — and they are *external*:
+"populated by user code," concretized as host-supplied facts rather than computed by
+reduction (the closed-world relational mechanism of
+[12 §4.2(ii)](12-heyting-behavioral-logic.md#42-the-three-concretization-mechanisms)).
+That externality is the crux: the relations are not Rholang-computable.
 
 ## 2. Compile-time classification — the substrate's left half
 
 The substrate ([07 §4](07-language-to-rholang-integration.md)) walks the
 `LanguageDef` and induces the guard obligations, then classifies each into a
-disposition and a quality. `collect_guard_obligations` yields exactly four
-obligations for GuardedRho:
+disposition and a quality. These three terms are defined in
+[07 §4](07-language-to-rholang-integration.md) and used here as given: an
+**obligation** is a unit of guard work induced from the `LanguageDef` (each tagged
+with a `RhoGuardObligationKind`, [07 §4.1](07-language-to-rholang-integration.md));
+a **disposition** is the run-time *mechanism* chosen to cover it (a
+`RhoGuardDispositionKind`, [07 §4.2](07-language-to-rholang-integration.md)); a
+**quality** grades *how good* the covering evidence is (a `RhoGuardQuality`, ordered
+so `Unknown` is the fail-closed bottom, [07 §4.3](07-language-to-rholang-integration.md)).
+`collect_guard_obligations` yields exactly four obligations for GuardedRho:
 
 | Obligation id | `RhoGuardObligationKind` | Source |
 |---|---|---|
@@ -70,30 +81,38 @@ qualities:
 | `predicate:standard-builtins` | `EffectiveBooleanAlgebra` | `RejectSafeApprox` |
 | `term:PGuardedInput:guard:guard` | `EffectiveBooleanAlgebra` | `RejectSafeApprox` |
 
-The two behavioral legs land on **`RejectSafeApprox`** — the reject-safe quality of
-the algebra tower ([05 §5](05-algebra-pyramid-and-decidability.md)), *not* `Unknown`.
-This is the test's load-bearing assertion: every derived quality is non-`Unknown`,
-and the behavioral legs are reject-safe. Why reject-safe and not exact? Because a
-guard like `where safe(p)` queries the external relation `safe`, which is
-semi-decidable: the substrate can soundly reject but cannot classically complement
-it, so its disposition carries the Heyting reject-safe evidence
-([05 §2](05-algebra-pyramid-and-decidability.md)).
+The two behavioral legs land on **`RejectSafeApprox`** — the reject-safe quality
+([07 §4.3](07-language-to-rholang-integration.md)) of the algebra tower
+([05 §5](05-algebra-pyramid-and-decidability.md)), *not* `Unknown`. `RejectSafeApprox`
+is the grade the substrate assigns a behavioral leg whose complement is reject-safe
+but not classically involutive: it may soundly reject, never wrongly admit — the
+Heyting reject-safe evidence whose theory is
+[12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md). This is the test's
+load-bearing assertion: every derived quality is non-`Unknown`, and the behavioral
+legs are reject-safe. Why reject-safe and not exact? Because a guard like
+`where safe(p)` queries the external relation `safe`, which is semi-decidable: the
+substrate can soundly reject but cannot classically complement it, so its disposition
+carries the Heyting reject-safe evidence
+([05 §2](05-algebra-pyramid-and-decidability.md), [12 §6](12-heyting-behavioral-logic.md#6-how-heyting-completes-boolean-for-structural-behavioral-types)).
 
 > **The key derivation — why host-routed is forced, not chosen.** GuardedRho's
 > `?guard` is a `RelationQuery` over `halts`/`safe`. The `rhoapi::ReceiveBind` AST
 > struct has fields `{patterns, source, remainder, free_count}` — **no guard
 > field** — and `halts`/`safe` are external relations that are not Rholang-computable.
 > A sound generated-AST lowering of the guarded receive is therefore *impossible*;
-> the only sound disposition for the channel/join surfaces is `RhoNativeJoin`,
-> enforced by a host join. This is *derived-required*, exactly as
-> [08 §3.3](08-runtime-comm-enforcement.md) describes.
+> the only sound disposition for the channel/join surfaces is `RhoNativeJoin` — the
+> host-routed native-join disposition of
+> [07 §4.2](07-language-to-rholang-integration.md), enforced by a host join. This is
+> *derived-required*, exactly as [08 §3.3](08-runtime-comm-enforcement.md) describes.
 
 ## 3. The fail-closed flip gate
 
 With every obligation covered by a compatible disposition and no `Unknown` quality,
-`plan_rho_default_backend` admits GuardedRho on the Rho backend
-([07 §5](07-language-to-rholang-integration.md)). The test exercises both directions
-of the gate:
+the **fail-closed flip-gate planner** — which admits a language onto the Rho backend
+only when every obligation is covered with non-`Unknown` quality, and otherwise
+refuses rather than falling through (`plan_rho_default_backend`, the flip gate of
+[07 §5](07-language-to-rholang-integration.md)) — admits GuardedRho. The test
+exercises both directions of the gate:
 
 > **Algorithm `GuardedRhoFlip` — the gate the test drives.**
 >
@@ -138,16 +157,27 @@ obligation at compile time. The native join handler consults the external relati
 atomicity: a failed guard leaves the message resting, a later satisfying message
 still commits.
 
-That run-time behavior is verified directly by `rho_guard_oracle.rs` against the
-live f1r3node `RhoRuntime`, using the `where`-guard form to validate the same
-"rest, then commit" semantics the native join must reproduce:
+That run-time behavior is not asserted but *witnessed*: the host oracle
+`rho_guard_oracle.rs` runs real `where`-guarded Rholang against the live f1r3node
+`RhoRuntime`, exercising the same "rest, then commit" semantics the native join must
+reproduce. These are runtime witnesses, not theorems — they exhibit the guard-atomicity
+guarantee on an actual interpreter rather than prove it. The guarantee they witness is
+the one proved as a theorem in [08 §3.4](08-runtime-comm-enforcement.md#34-the-guard-atomicity-model-and-its-theorems):
+a failed guard commits nothing (`GuardedCommSoundness.v`'s `failed_guard_no_commit`).
+Concretely (all in `rholang-runtime/tests/rho_guard_oracle.rs`):
 
-| Oracle test | Observation |
-|---|---|
-| `false_single_bind_guard_leaves_data_and_emits_no_output` | a failed guard emits no body; the rejected datum stays readable |
-| `guard_filters_multiple_messages_without_consuming_failed_candidate` | a later satisfying datum fires; the earlier failing datum remains |
-| `false_cross_bind_guard_leaves_all_join_inputs` | a failed join guard consumes no input |
-| `cross_bind_guard_can_commit_later_without_consuming_failed_pair` | the later satisfying pair commits; the earlier failing input remains |
+- A `where`-guarded *single* receive whose guard is false leaves the datum resting and
+  emits nothing — the rejected datum stays readable on its channel while the body
+  channel stays silent (`false_single_bind_guard_leaves_data_and_emits_no_output`).
+- Filtering a stream, a *later satisfying* datum fires the receive while the earlier
+  failing datum remains available — rejection does not consume
+  (`guard_filters_multiple_messages_without_consuming_failed_candidate`).
+- A failed *multi-input join* guard leaves all of its join inputs resting — a false
+  cross-bind guard consumes none of the inputs it spans
+  (`false_cross_bind_guard_leaves_all_join_inputs`).
+- A *later satisfying datum still commits without consuming the earlier failed pair* —
+  the join's later satisfying inputs commit and are consumed, while the earlier failing
+  input remains (`cross_bind_guard_can_commit_later_without_consuming_failed_pair`).
 
 ## 5. The end-to-end picture
 
@@ -162,8 +192,12 @@ GuardedRho is the proof, in one language, of the suite's two crux claims:
    not the algebra — gates the COMM ([08](08-runtime-comm-enforcement.md)).
 2. **The logic axis composes with the resource axis.** The COMM fires iff the guard
    holds *and* the rewrite is funded ([09 — OSLF Composition](09-oslf-composition.md)),
-   both checked at the boundary, both proven in the same zero-admission `rho_bridge`
-   tree ([10 — Formal Verification](10-formal-verification-and-tests.md)).
+   both checked at the boundary. Both are mechanized in the `rho_bridge` Coq theory
+   tree — the zero-admission proof tree at `formal/rocq/rho_bridge/theories/` that
+   carries the algebra's verdict across the classify-only boundary to a live COMM and
+   composes it with OSLF funding and the flip gate (its run-time mirror rows are
+   catalogued in [12 §9](12-heyting-behavioral-logic.md#9-the-mechanized-account), its
+   full proof matrix in [10 — Formal Verification](10-formal-verification-and-tests.md)).
 
 For the syntax a future GuardedRho author could use to write richer behavioral
 guards — `AG safe(q)`, bounded quantifiers, transducer guards — see the proposed

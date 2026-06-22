@@ -129,15 +129,18 @@ is the sound choice — it rejects rather than wrongly admitting, the run-time m
 of the reject-safe posture of [05 §2.1](05-algebra-pyramid-and-decidability.md) and
 the Heyting / Kleene three-valued logic of [12](12-heyting-behavioral-logic.md).
 
-> **Accuracy: where the monad is literal and where it is semantic.** The two-valued
-> `evaluate_quantified` recurses over the materialized tuples from `domain_enumerate`
-> with `all`/`any` and a `Bounded` domain's `min(limit, default_bound)` truncation —
-> it does not construct a `LogicStream` per quantifier. The logic monad backs
-> `TheoryAlgebra::witness` and `multiset_partitions` *literally* (fair search), and
-> backs the quantifier evaluator *semantically*: the closed-world `∀x. φ ≡ ¬∃x. ¬φ`
-> identity is the `gnot` equivalence, and the bounded enumeration mirrors
-> `collect_bounded`. The fairness of §1 matters at the `witness` layer beneath a
-> theory-guided quantifier, not in the plain enumeration.
+> **Accuracy: where the monad is literal and where it is semantic.** Here
+> `domain_enumerate` is the Rust callback that materializes a quantifier domain into a
+> finite list of candidate tuples, and `multiset_partitions` is the Rust function that
+> lazily streams the ways to split a bag across a set of classes (used by the
+> collection algebra). The two-valued `evaluate_quantified` recurses over the
+> materialized tuples from `domain_enumerate` with `all`/`any` and a `Bounded` domain's
+> `min(limit, default_bound)` truncation — it does not construct a `LogicStream` per
+> quantifier. The logic monad backs `TheoryAlgebra::witness` and `multiset_partitions`
+> *literally* (fair search), and backs the quantifier evaluator *semantically*: the
+> closed-world `∀x. φ ≡ ¬∃x. ¬φ` identity is the `gnot` equivalence, and the bounded
+> enumeration mirrors `collect_bounded`. The fairness of §1 matters at the `witness`
+> layer beneath a theory-guided quantifier, not in the plain enumeration.
 
 ## 4. Theory combination — the Nelson–Oppen base case
 
@@ -149,12 +152,20 @@ labels under the bounded budget.
 
 PlantUML source: [figures/13-theory-combination.puml](figures/13-theory-combination.puml).
 
-The formal counterpart is `TheoryCombination.v` (`combined_eba_laws`, with
-`csat_sound`/`csat_complete`, [10 §2.1](10-formal-verification-and-tests.md)). This
-is the **base case** of [Nelson & Oppen, 1979](references.md#nelson-oppen-1979) —
-joint search over a shared domain — *not* the full equality-exchange procedure, and
-the documentation says so rather than implying it. The proposed `arithmetic <+> text`
-syntax ([06 §3.8](06-guard-syntax-and-extensions.md)) is the surface for it.
+**Result (stated; proved elsewhere).** *Two decidable constraint theories over a
+shared **enumerable** domain combine into one effective Boolean algebra by exhaustive
+joint search; `csat` is exact precisely because the domain enumeration is exhaustive.*
+This is the **joint-search base case** of [Nelson & Oppen, 1979](references.md#nelson-oppen-1979)
+— *not* the full infinite-domain equality-exchange procedure (which exchanges only
+equalities over a shared signature under the stably-infinite, disjoint-signature, and
+convexity hypotheses) — and the documentation says so rather than implying it. The
+result, with its `eval`-homomorphism and `csat`/`cwit` soundness-and-completeness laws,
+is stated and proved as
+[05 — Algebra Pyramid and Decidability, Theorem 7.6](05-algebra-pyramid-and-decidability.md)
+(mechanized as `combined_eba_laws`, with `csat_sound`, `csat_complete`, `cwit_sound`,
+`cwit_total`, in `TheoryCombination.v`); this page does not re-prove it. The proposed
+`arithmetic <+> text` syntax ([06 §3.8](06-guard-syntax-and-extensions.md)) is the
+surface for it.
 
 ## 5. Enforcement of predicated types
 
@@ -170,13 +181,24 @@ which the fail-closed gate ([07 §5](07-language-to-rholang-integration.md)) act
 Two places turn the engine's "don't know" into a *rejection*, never a false
 admission: `into_safe_bool` (`Unknown → false`) and the bridge's
 `is_satisfiable = witness().is_some()`. Both are the operational realization of the
-reject-safe discipline ([05 §5](05-algebra-pyramid-and-decidability.md),
-`mixed_negation_soundness`), and they connect directly to `classify_quality`'s
-`behavioral → reject-safe` rule ([07 §4.3](07-language-to-rholang-integration.md))
-and the flip gate's block on `Unknown`. The decidability-tier lattice (
-[05 §6](05-algebra-pyramid-and-decidability.md), `GuardTierCertificate.v`) is the
-formal frame; `collect_bounded(search_bound)` plus the `LT01` lint is the resource
-meter that decides which tier a given guard lands in.
+reject-safe discipline ([05 §5](05-algebra-pyramid-and-decidability.md)). The
+governing soundness result — *the asymmetric mixed De Morgan complement
+`(¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)` of a structural-times-behavioral guard accepts an element only
+if the true product `a ∧ b` rejects it, so a guarded action can never fire when its
+complement holds* — is stated and proved as
+[12 — Heyting Behavioral Logic, Theorem 6.1](12-heyting-behavioral-logic.md)
+(mechanized as `mixed_negation_soundness` in `BehavioralNegation.v`, with the run-time
+mirror `rho_complement_no_commit` in `RhoGuardedCommSoundness.v`); this page does not
+re-prove it. The two rejection sites connect directly to `classify_quality` — the
+Rust classifier (defined in [07 §4.3](07-language-to-rholang-integration.md)) that maps
+a guard's obligation and disposition to a quality grade — whose
+`behavioral → reject-safe` rule the flip gate then acts on alongside its block on
+`Unknown`. The decidability-tier lattice
+([05 §6](05-algebra-pyramid-and-decidability.md), the tier ↔ regularity correspondence
+of [12 — Heyting Behavioral Logic, Proposition 6.3](12-heyting-behavioral-logic.md),
+mechanized as `GuardTierCertificate.v`) is the formal frame;
+`collect_bounded(search_bound)` plus the `LT01` lint is the resource meter that decides
+which tier a given guard lands in.
 
 ## 6. Accuracy corrections
 
@@ -200,13 +222,18 @@ reader tracing the integration:
 
 ## 7. The mechanized and reference account
 
-| Claim | Where |
-|---|---|
-| theory combination is an EBA (Nelson–Oppen base case) | `TheoryCombination.v` (`combined_eba_laws`, `csat_sound`, `csat_complete`) — [10 §2.1](10-formal-verification-and-tests.md) |
-| the bridge soundness (a covered theory guard never false-fires) | `BehavioralNegation.v` (`mixed_negation_soundness`) — [10 §2.1](10-formal-verification-and-tests.md) |
-| the tier ↔ regularity / decidability frame the engine populates | `GuardTierCertificate.v` — [05 §6](05-algebra-pyramid-and-decidability.md), [12 §5](12-heyting-behavioral-logic.md) |
-| the bounded-search lint | `prattail/docs/diagnostics/logict/LT01.md` (`logict-search-bound-exceeded`) |
-| full API + algorithms (msplit, interleave, fair_conjoin, witness, evaluate_quantified) | `prattail/docs/design/constraint-theories/logict-framework.md` |
+Each named result below is **stated and proved in its proof-home document**; this
+table is the citation index, not a second proof site. The Coq names appear only as the
+mechanizing witnesses of the cited theorems.
+
+| Claim | Stated-and-proved in | Coq witness |
+|---|---|---|
+| theory combination is an EBA (Nelson–Oppen joint-search base case) | [05 — Theorem 7.6](05-algebra-pyramid-and-decidability.md) | `combined_eba_laws`, `csat_sound`, `csat_complete`, `cwit_sound`, `cwit_total` (`TheoryCombination.v`) |
+| the mixed-guard complement is reject-safe (a covered theory guard never false-fires) | [12 — Theorem 6.1](12-heyting-behavioral-logic.md) | `mixed_negation_soundness` (`BehavioralNegation.v`); run-time mirror `rho_complement_no_commit` (`RhoGuardedCommSoundness.v`) |
+| the tier ↔ regularity / decidability frame the engine populates | [12 — Proposition 6.3](12-heyting-behavioral-logic.md) ([05 §6](05-algebra-pyramid-and-decidability.md) summary) | `tier_max_sound_hom`, `tier_regularity_reg`, `tier_regularity_boundary`, `tier_regularity_closed` (`GuardTierCertificate.v`) |
+| the consolidated proof ledger for all three rows above | [10 §2.1](10-formal-verification-and-tests.md) | — |
+| the bounded-search lint | `prattail/docs/diagnostics/logict/LT01.md` | `logict-search-bound-exceeded` |
+| full API + algorithms (`msplit`, `interleave`, `fair_conjoin`, `witness`, `evaluate_quantified`) | `prattail/docs/design/constraint-theories/logict-framework.md` | — |
 
 The engine is cited from [Kiselyov et al., 2005](references.md#kiselyov-2005)
 (the LogicT monad and its fair operators) and [Hemann & Friedman, 2013](references.md#hemann-friedman-2013)

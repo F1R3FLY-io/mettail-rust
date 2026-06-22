@@ -1,5 +1,5 @@
 @startuml
-title SFT transduction: input-predicate / output-term edges (`case_fold_sft`)
+title SFT transduction: input-predicate / output-term edges (case_fold_sft)
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -21,9 +21,9 @@ q0 --> [*]
 
 note right of q0
   Each edge carries a guard AND an
-  output function: the guard `φ`
+  output function: the guard φ
   decides WHETHER the edge fires;
-  the output function `f` decides
+  the output function f decides
   WHAT is emitted when it does.
   The two guards are complementary
   ([A-Z] ∧ ¬[A-Z] is unsatisfiable),
@@ -35,6 +35,6 @@ end note
 legend bottom
 |= Color |= Element |
 |<#EDE9FE> | symbolic transducer (SFT) state |
-| φ / f | input guard `/` output function on an edge |
+| φ / f | input guard / output function on an edge |
 endlegend
 @enduml

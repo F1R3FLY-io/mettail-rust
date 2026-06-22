@@ -119,8 +119,8 @@ end-of-input the outputs of the pairs sitting in accepting states are collected.
 > frontier (bounded by `|Q|` distinct states, though the accumulator multiplicity
 > grows with nondeterminism) against every transition. A *functional* SFT keeps a
 > single output per step, so the accumulator count stays at one and the simulation
-> is linear in the word length (the mechanized bound `functional_output_bounded`
-> in [`SftFunctionality.v`](#9-references) certifies `|out| ≤ |w|`).
+> is linear in the word length (Theorem 7.6 certifies `|out| ≤ |w|`, mechanized in
+> [`SftFunctionality.v`](#10-references) as `functional_output_bounded`).
 
 `domain_sfa` projects an SFT onto an SFA over `𝓐ᵢₙ` by dropping every output
 function and keeping only the guards; the resulting automaton accepts exactly the
@@ -151,36 +151,150 @@ pub enum OutputTerm<A: BooleanAlgebra, B: BooleanAlgebra> {
 Every node is inspectable, so composition over `OutputTerm`s is a *precise symbolic
 operation* (`then`) that yields another `OutputTerm` — never a closure. `OutputTerm`
 carries **two compatible algebraic structures**, both proven up to denotational
-equivalence `oeq s t ≝ ∀x. ⟦s⟧(x) = ⟦t⟧(x)` in
-`formal/rocq/sft/theories/OutputTermAlgebra.v`. Write `⟦t⟧` for the denotation
-`OutputTerm::apply : Dᵢₙ → Dₒᵤₜ*` and `⟦t⟧*` for its sequence lift
-`OutputTerm::apply_all` (the per-element `flat_map`).
+equivalence in `formal/rocq/sft/theories/OutputTermAlgebra.v`. This section states
+and proves both, in ordinary mathematical prose; the Coq names that mechanize each
+result are given only as parenthetical citations. We work in the single-sorted
+*endo* model `OTerm X` — input and output share one domain `X` — which the Coq
+development uses; the Rust two-sorted `OutputTerm<A, B>` is the object-indexed
+(typed) realization of the same algebra, identity-on-objects via the `Into`
+coherence, so every identity below transfers verbatim.
+
+**Definition 4.0 (denotation and denotational equivalence).** An output term `t`
+*denotes* a function `apply t : X → list X` interpreting it as an emission rule:
+
+`apply OEps x = []`,  `apply OId x = [x]`,  `apply (OConst v) x = v`,
+`apply (OConcat a b) x = apply a x ++ apply b x`.
+
+Its **sequence lift** is `apply_all t xs := flat_map (apply t) xs : list X → list X`
+(run `t` on each element of the input sequence and concatenate). Two terms are
+**denotationally equivalent**, written `s ≈ t`, when they denote the same function:
+`oeq s t :⟺ ∀x. apply s x = apply t x`. The relation `≈` is reflexive, symmetric,
+and transitive (mechanized in `OutputTermAlgebra.v` as `oeq_refl`, `oeq_sym`,
+`oeq_trans`), so the laws below may be chained freely. Throughout we write `⟦t⟧` for
+`apply t` and `⟦t⟧*` for `apply_all t`.
+
+We first isolate the one combinatorial fact every proof in §4–§8 rests on; it is the
+shared foundation noted at the end of §5.
+
+**Lemma 4.1 (flat-map fusion).** For `f : Y → list Z`, `g : Z → list W`, and any
+list `l : list Y`,
+
+`flat_map g (flat_map f l) = flat_map (λy. flat_map g (f y)) l`.
+
+*Proof.* Induction on `l`. If `l = []`, both sides are `[]`. If `l = y :: l′`, then
+`flat_map f (y :: l′) = f y ++ flat_map f l′`, so the left side is
+`flat_map g (f y ++ flat_map f l′)`. Distributing `flat_map g` over `++` (the law
+`flat_map g (l₁ ++ l₂) = flat_map g l₁ ++ flat_map g l₂`, itself an easy induction on
+`l₁` using associativity of `++`) gives
+`flat_map g (f y) ++ flat_map g (flat_map f l′)`. By the induction hypothesis the
+second summand is `flat_map (λy. flat_map g (f y)) l′`, and the first is the head of
+the right side; so the two sides agree. `∎` (Mechanized in `OutputTermAlgebra.v` as
+`flat_map_flat_map_`, with the append-distribution step `flat_map_app_` and the
+companion `flat_map_singleton_` — `flat_map (λy.[y]) l = l` — reused below.)
 
 **(a) A monoid `(Concat, Eps)` — output concatenation.** Concatenation is
-associative with the empty output `Eps` as a two-sided unit:
+associative with the empty output `Eps` as a two-sided unit. The three monoid laws
+are stated and proved next; the smart constructor `OutputTerm::concat` performs the
+unit normalization directly — `(Eps, t)` and `(t, Eps)` collapse to `t` — so monoid
+identities never accumulate in a built term.
 
-| Law | Statement | Coq theorem |
+**Lemma 4.2 (concatenation is associative).** For all output terms `a, b, c`,
+`OConcat (OConcat a b) c ≈ OConcat a (OConcat b c)`.
+
+*Proof.* Fix `x`. By the denotation clause for `OConcat`,
+`⟦OConcat (OConcat a b) c⟧(x) = (⟦a⟧(x) ++ ⟦b⟧(x)) ++ ⟦c⟧(x)` and
+`⟦OConcat a (OConcat b c)⟧(x) = ⟦a⟧(x) ++ (⟦b⟧(x) ++ ⟦c⟧(x))`. List append is
+associative, so the two are equal at every `x`; hence the terms are `≈`. `∎`
+(Mechanized as `oconcat_assoc`.)
+
+**Lemma 4.3 (left and right unit).** For every output term `a`,
+`OConcat OEps a ≈ a` and `OConcat a OEps ≈ a`.
+
+*Proof.* Fix `x`. For the left unit, `⟦OConcat OEps a⟧(x) = ⟦OEps⟧(x) ++ ⟦a⟧(x)
+= [] ++ ⟦a⟧(x) = ⟦a⟧(x)`, using `[]` as the left-neutral element of `++`. For the
+right unit, `⟦OConcat a OEps⟧(x) = ⟦a⟧(x) ++ [] = ⟦a⟧(x)`, using `[]` as the
+right-neutral element. Both hold at every `x`. `∎` (Mechanized as `oconcat_eps_l`
+and `oconcat_eps_r`.)
+
+Lemmas 4.2 and 4.3 say `(OConcat, OEps)` is a monoid on `OTerm X` up to `≈`.
+
+| Law | Statement | Proved as |
 |---|---|---|
-| associativity | `Concat(Concat(a, b), c) ≈ Concat(a, Concat(b, c))` | `oconcat_assoc` |
-| left unit | `Concat(Eps, a) ≈ a` | `oconcat_eps_l` |
-| right unit | `Concat(a, Eps) ≈ a` | `oconcat_eps_r` |
-
-The smart constructor `OutputTerm::concat` performs the unit normalization
-directly — `(Eps, t)` and `(t, Eps)` collapse to `t` — so monoid identities never
-accumulate in a built term.
+| associativity | `Concat(Concat(a, b), c) ≈ Concat(a, Concat(b, c))` | Lemma 4.2 (`oconcat_assoc`) |
+| left unit | `Concat(Eps, a) ≈ a` | Lemma 4.3 (`oconcat_eps_l`) |
+| right unit | `Concat(a, Eps) ≈ a` | Lemma 4.3 (`oconcat_eps_r`) |
 
 **(b) A category `(then, Id)` — sequential composition.** `self.then(next)`
-composes `self : A→B*` with `next : B→C*` into a term `A→C*`. Its defining law is
-the β / compose-correctness equation: composing then applying equals applying then
-re-applying.
+composes `self : A→B*` with `next : B→C*` into a term `A→C*`. The structural
+definition mirrors `OutputTerm::then` exactly:
 
-| Law | Statement | Coq theorem |
+`othen OEps t = OEps`,  `othen (OConst v) t = OConst (⟦t⟧*(v))`,
+`othen OId t = t`,  `othen (OConcat a b) t = OConcat (othen a t) (othen b t)`.
+
+Its defining law is the β / compose-correctness equation — composing then applying
+equals applying then re-applying — from which the category laws follow.
+
+**Theorem 4.4 (β / compose-correctness).** For all output terms `s, t` and every
+`x`, `⟦othen s t⟧(x) = ⟦t⟧*(⟦s⟧(x))`. That is, running the composite `othen s t`
+on `x` is the same as running `s` on `x` and mapping `t` over each output.
+
+*Proof.* Induction on the structure of `s`.
+- `s = OEps`: `othen OEps t = OEps`, so `⟦othen OEps t⟧(x) = []`. On the right,
+  `⟦OEps⟧(x) = []` and `⟦t⟧*([]) = flat_map (⟦t⟧) [] = []`. Equal.
+- `s = OId`: `othen OId t = t`, so the left side is `⟦t⟧(x)`. On the right,
+  `⟦OId⟧(x) = [x]` and `⟦t⟧*([x]) = flat_map (⟦t⟧) [x] = ⟦t⟧(x) ++ [] = ⟦t⟧(x)`.
+  Equal.
+- `s = OConst v`: `othen (OConst v) t = OConst (⟦t⟧*(v))`, so the left side is
+  `⟦t⟧*(v)`. On the right, `⟦OConst v⟧(x) = v`, so the right side is also `⟦t⟧*(v)`.
+  Equal.
+- `s = OConcat a b`: `othen (OConcat a b) t = OConcat (othen a t) (othen b t)`, so
+  the left side is `⟦othen a t⟧(x) ++ ⟦othen b t⟧(x)`. By the induction hypotheses
+  for `a` and `b` this equals `⟦t⟧*(⟦a⟧(x)) ++ ⟦t⟧*(⟦b⟧(x))`. The right side is
+  `⟦t⟧*(⟦OConcat a b⟧(x)) = ⟦t⟧*(⟦a⟧(x) ++ ⟦b⟧(x))`; since `⟦t⟧* = flat_map (⟦t⟧)`
+  distributes over `++` (`flat_map_app_`, the append-distribution step of Lemma 4.1),
+  this is `⟦t⟧*(⟦a⟧(x)) ++ ⟦t⟧*(⟦b⟧(x))`. Equal.
+All four cases hold, so the equation holds for every `s`. `∎` (Mechanized as
+`othen_correct`.)
+
+A corollary used twice below records that the sequence lift of a composite factors:
+`⟦othen t u⟧*(ys) = ⟦u⟧*(⟦t⟧*(ys))` for every list `ys` — apply Theorem 4.4
+pointwise inside the `flat_map` and then Lemma 4.1 (mechanized as `oapply_all_othen`).
+We also record the unit of the sequence lift: `⟦OId⟧*(xs) = xs`, which is exactly
+`flat_map (λx.[x]) xs = xs` from Lemma 4.1 (mechanized as `oapply_all_id`).
+
+**Theorem 4.5 (the category laws).** Up to `≈`, `(othen, OId)` is a category on
+`OTerm X`: for all `s, t, u`,
+
+1. (left unit) `othen OId t ≈ t`;
+2. (right unit) `othen s OId ≈ s`;
+3. (associativity) `othen (othen s t) u ≈ othen s (othen t u)`.
+
+*Proof.*
+1. `othen OId t = t` holds definitionally (the `OId` clause of `othen`), so in
+   particular `othen OId t ≈ t` by reflexivity of `≈`.
+2. Fix `x`. By Theorem 4.4, `⟦othen s OId⟧(x) = ⟦OId⟧*(⟦s⟧(x))`, and
+   `⟦OId⟧*(ys) = ys` for every `ys` (the unit of the sequence lift). Hence
+   `⟦othen s OId⟧(x) = ⟦s⟧(x)` at every `x`, so `othen s OId ≈ s`.
+3. Fix `x`. Applying Theorem 4.4 twice on each side,
+   `⟦othen (othen s t) u⟧(x) = ⟦u⟧*(⟦othen s t⟧(x)) = ⟦u⟧*(⟦t⟧*(⟦s⟧(x)))` and
+   `⟦othen s (othen t u)⟧(x) = ⟦othen t u⟧*(⟦s⟧(x)) = ⟦u⟧*(⟦t⟧*(⟦s⟧(x)))`, the last
+   step by the factoring corollary `⟦othen t u⟧*(ys) = ⟦u⟧*(⟦t⟧*(ys))`. Both sides
+   reduce to `⟦u⟧*(⟦t⟧*(⟦s⟧(x)))` at every `x`, so they are `≈`. `∎` (Mechanized as
+   `othen_id_l`, `othen_id_r`, `othen_assoc`.)
+
+**Lemma 4.6 (`Eps` is left-absorbing).** For every `t`, `othen OEps t ≈ OEps`.
+
+*Proof.* `othen OEps t = OEps` definitionally (the `OEps` clause of `othen`), so the
+two sides are equal — in particular `≈` — at every `x`. `∎` (Mechanized as
+`othen_eps_l`.)
+
+| Law | Statement | Proved as |
 |---|---|---|
-| β (compose-correctness) | `⟦self.then(next)⟧(i) = ⟦next⟧*(⟦self⟧(i))` | `othen_correct` |
-| left unit (η) | `Id.then(t) ≈ t` | `othen_id_l` |
-| right unit (η) | `t.then(Id) ≈ t` | `othen_id_r` |
-| associativity | `(s.then(t)).then(u) ≈ s.then(t.then(u))` | `othen_assoc` |
-| absorbing `Eps` | `Eps.then(t) ≈ Eps` | `othen_eps_l` |
+| β (compose-correctness) | `⟦self.then(next)⟧(i) = ⟦next⟧*(⟦self⟧(i))` | Theorem 4.4 (`othen_correct`) |
+| left unit (η) | `Id.then(t) ≈ t` | Theorem 4.5(1) (`othen_id_l`) |
+| right unit (η) | `t.then(Id) ≈ t` | Theorem 4.5(2) (`othen_id_r`) |
+| associativity | `(s.then(t)).then(u) ≈ s.then(t.then(u))` | Theorem 4.5(3) (`othen_assoc`) |
+| absorbing `Eps` | `Eps.then(t) ≈ Eps` | Lemma 4.6 (`othen_eps_l`) |
 
 `then` is *structural*, not closure-building: `Eps.then(_) = Eps`,
 `Const(v).then(next) = Const(⟦next⟧*(v))` (the constant is pushed through eagerly),
@@ -201,10 +315,10 @@ analysis and composition happen on the term; only execution drops to the closure
 > cannot statically tell which downstream guards a computed output can satisfy, so
 > it connects to *every* satisfiable successor and re-wraps the output as a fresh
 > `FlatMap` — a sound but lossy over-approximation. Replacing the structural cases
-> with `OutputTerm` makes their composition *exact*: `othen_correct` guarantees the
-> composed term denotes precisely the function-composition of the two stages, with
-> no spurious product edges and no nested closures. `Concat` is the genuinely new
-> expressive power beyond `Epsilon`/`Constant`/`Identity`.
+> with `OutputTerm` makes their composition *exact*: the β-law (Theorem 4.4)
+> guarantees the composed term denotes precisely the function-composition of the two
+> stages, with no spurious product edges and no nested closures. `Concat` is the
+> genuinely new expressive power beyond `Epsilon`/`Constant`/`Identity`.
 
 ## 5. Composition
 
@@ -255,22 +369,64 @@ output algebra of the first stage *is* the input algebra of the second
 (`A → B*` then `B → C*`), which is exactly why composability requires the middle
 algebra `B` to match.
 
-**Composition is a monoid.** Modeling each SFT abstractly as a list-lifted
-per-element function `f : A → list B` (the `flat_map` lift to words), composition
-`sft_compose f g ≝ λa. flat_map g (f a)` forms a monoid under the identity
-transducer. The laws are proven in `formal/rocq/sft/theories/SftComposition.v`:
+**Composition is a monoid.** Model each SFT abstractly as a list-lifted per-element
+function `f : A → list B`, lifted to words by `apply f w := flat_map f w` (transduce
+each input element and concatenate). Composition is
+`compose f g := λa. flat_map g (f a) : A → list C`, and the identity transducer is
+`sft_identity x := [x]`. These form a monoid under composition; the three laws are
+stated and proved next, in `formal/rocq/sft/theories/SftComposition.v`. All three
+ride on Lemma 4.1 (flat-map fusion) and its append/singleton companions — the
+*same* combinatorial foundation that closes the `OutputTerm` category laws of §4, so
+`then` (§4) and `compose` agree by construction.
 
-| Law | Statement | Coq theorem |
+**Theorem 5.1 (composition is associative).** For `f : A → list B`,
+`g : B → list C`, `h : C → list D`, and every input word `w`,
+
+`apply (compose (compose f g) h) w = apply (compose f (compose g h)) w`,
+
+and the composite realizes the relational composition of the two transductions.
+
+*Proof.* Unfolding `apply` and `compose`, the goal at a word `w` is
+`flat_map (λa. flat_map h (flat_map g (f a))) w
+= flat_map (λa. flat_map (λb. flat_map h (g b)) (f a)) w`. It suffices that the two
+λ-bodies agree on every `a`, i.e. `flat_map h (flat_map g (f a))
+= flat_map (λb. flat_map h (g b)) (f a)`. That is exactly Lemma 4.1 (flat-map
+fusion) with `f := g`, `g := h`, `l := f a`. (The mechanized proof inducts on `w`
+and rewrites the single step by `flat_map_flat_map`, the local copy of Lemma 4.1.)
+`∎` (Mechanized as `sft_compose_assoc`; the per-element form is
+`sft_compose_assoc_element`.)
+
+**Theorem 5.2 (identity is a two-sided unit).** For every `f : A → list B` and word
+`w`,
+
+`apply (compose sft_identity f) w = apply f w`  and  `apply (compose f sft_identity) w = apply f w`,
+
+where on the right `sft_identity` is the `B`-typed identity `λx.[x]`.
+
+*Proof.* For the left identity, induct on `w`. The base `w = []` gives `[] = []`. For
+`w = a :: w′`, `compose sft_identity f` unfolds at `a` to `flat_map f (sft_identity a)
+= flat_map f [a] = f a ++ []`; absorbing the trailing `[]` (`flat_map f [] = []`)
+leaves `f a`, and the induction hypothesis handles `w′`, so the step matches
+`apply f (a :: w′) = f a ++ apply f w′`. For the right identity, induct on `w`; the
+step rewrites `flat_map (λx.[x]) (f a) = f a` by the singleton law
+(`flat_map (λx.[x]) l = l`, the companion of Lemma 4.1), then applies the induction
+hypothesis. `∎` (Mechanized as `sft_compose_left_identity` and
+`sft_compose_right_identity`; the element-level corollaries are
+`sft_compose_identity_element_left` / `_right`.)
+
+Theorems 5.1 and 5.2 establish the monoid.
+
+| Law | Statement | Proved as |
 |---|---|---|
-| left identity | `id ∘ T ≈ T` | `sft_compose_left_identity` |
-| right identity | `T ∘ id ≈ T` | `sft_compose_right_identity` |
-| associativity | `(T₁ ∘ T₂) ∘ T₃ ≈ T₁ ∘ (T₂ ∘ T₃)` | `sft_compose_assoc` |
+| left identity | `id ∘ T ≈ T` | Theorem 5.2 (`sft_compose_left_identity`) |
+| right identity | `T ∘ id ≈ T` | Theorem 5.2 (`sft_compose_right_identity`) |
+| associativity | `(T₁ ∘ T₂) ∘ T₃ ≈ T₁ ∘ (T₂ ∘ T₃)` | Theorem 5.1 (`sft_compose_assoc`) |
 
-The same three `flat_map` lemmas (`flat_map_app`, `flat_map_singleton`,
-`flat_map_flat_map`) that close these also close the `OutputTerm` category laws in
-`OutputTermAlgebra.v` — the output-term algebra and the transducer-composition
-monoid rest on **one shared foundation**, so `then` (§4) and `compose` agree by
-construction.
+The three `flat_map` lemmas (`flat_map_app`, `flat_map_singleton`,
+`flat_map_flat_map`) that close these are the local copies of Lemma 4.1 and its
+companions — the same ones that close the `OutputTerm` category laws in
+`OutputTermAlgebra.v`. The output-term algebra and the transducer-composition monoid
+therefore rest on **one shared foundation**.
 
 ## 6. Pre-image and post-image
 
@@ -327,23 +483,95 @@ unequal). Any overlapping-but-disagreeing pair witnesses nondeterminism and retu
   is a conservative distinctness check on constant outputs.
 
 The mechanized model (`formal/rocq/sft/theories/SftFunctionality.v`) abstracts an
-SFT as `f : A → list B` and defines `functional f ≝ ∀a. length (f a) ≤ 1` — the
-per-element bound that forces per-word single-valuedness:
+SFT as `f : A → list B`, writes `in_domain f w :⟺ apply f w ≠ []` for domain
+membership, and makes single-valuedness precise with a per-element bound.
 
-| Property | Statement | Coq theorem |
+**Definition 7.0 (functionality).** A transduction `f : A → list B` is **functional**
+when `functional f :⟺ ∀a. |f a| ≤ 1`, i.e. every input element emits at most one
+output element. The next lemma is the decidability hook: functionality unfolds to
+exactly this checkable per-element condition.
+
+**Lemma 7.1 (decidability hook).** `functional f ⟺ ∀a. |f a| ≤ 1`.
+
+*Proof.* Immediate: `functional f` is *defined* as `∀a. |f a| ≤ 1`, so the
+biconditional holds by unfolding the definition in both directions. `∎` (Mechanized
+as `functional_iff_all_le1`.) The point of stating it is that the right-hand side is
+the structural condition `SymbolicFiniteTransducer::is_functional` checks per state.
+
+**Lemma 7.2 (identity and constant are functional).** `functional sft_identity`,
+and for every constant `c`, `functional (sft_constant c)` (where
+`sft_constant c _ := [c]`).
+
+*Proof.* For both, the image of any input is a one-element list:
+`sft_identity a = [a]` has length `1 ≤ 1`, and `sft_constant c a = [c]` has length
+`1 ≤ 1`. So the bound of Definition 7.0 holds for every input. `∎` (Mechanized as
+`identity_functional` and `constant_functional`; the empty transducer
+`sft_epsilon _ := []` is functional likewise, `epsilon_functional`.)
+
+The load-bearing closure result rests on a single combinatorial step.
+
+**Lemma 7.3 (functional pushforward of a `≤1` list).** If `g : B → list C` is
+functional and `|l| ≤ 1`, then `|flat_map g l| ≤ 1`.
+
+*Proof.* A list of length `≤ 1` is either `[]` or a singleton `[x]`. If `l = []`
+then `flat_map g [] = []` has length `0 ≤ 1`. If `l = [x]` then
+`flat_map g [x] = g x ++ [] = g x`, whose length is `≤ 1` because `g` is functional
+(Definition 7.0 at `x`). Both cases give the bound. `∎` (Mechanized as
+`flat_map_functional_le1`, using the case split `length_le_1_cases`.)
+
+**Theorem 7.4 (composition preserves functionality).** If `f : A → list B` and
+`g : B → list C` are both functional, then `compose f g` is functional.
+
+*Proof.* Fix an input `a`. We must show `|flat_map g (f a)| ≤ 1`. Since `f` is
+functional, `|f a| ≤ 1` (Definition 7.0); since `g` is functional, Lemma 7.3 with
+`l := f a` gives `|flat_map g (f a)| ≤ 1`. As `a` was arbitrary, `compose f g` is
+functional. `∎` (Mechanized as `compose_preserves_functional`.)
+
+Theorem 7.4 is the result the whole section exists for: chaining single-valued
+transducers (the `compose`/`then` of §4–§5) never introduces ambiguity, so a
+pipeline of functions is itself a function.
+
+**Theorem 7.5 (domain characterization).** `in_domain f w ⟺ ∃a. a ∈ w ∧ f a ≠ []`:
+a word lies in the domain exactly when at least one of its letters produces output.
+
+*Proof.* By definition `in_domain f w ⟺ flat_map f w ≠ []`, so it suffices to show
+`flat_map f w ≠ [] ⟺ ∃a ∈ w. f a ≠ []`. (⟹) Induct on `w`. The empty word makes
+`flat_map f [] = []`, contradicting the hypothesis, so it does not arise. For
+`w = x :: w′`: if `f x ≠ []` take `a := x`; otherwise `f x = []`, so
+`flat_map f (x :: w′) = flat_map f w′ ≠ []`, and the induction hypothesis yields a
+witness in `w′`, hence in `w`. (⟸) Given `a ∈ w` with `f a ≠ []`, induct on `w` to
+locate `a`: when `a` is the head, `flat_map f (a :: w′) = f a ++ … ≠ []` because
+`f a ≠ []`; when `a` lies in the tail, the tail's `flat_map` is non-empty by the
+induction hypothesis, and prepending `f x` keeps it non-empty. `∎` (Mechanized as
+`domain_characterization`, via `flat_map_nonempty_iff`.) Operationally this is what
+`domain_sfa` recovers: the projected SFA accepts a word iff the SFT emits on it.
+
+**Theorem 7.6 (functional output bound).** If `f` is functional, then
+`|apply f w| ≤ |w|` for every word `w`: a single-valued SFT never emits more
+elements than it consumes.
+
+*Proof.* Unfold `apply f w = flat_map f w` and induct on `w`. The empty word gives
+`|[]| = 0 ≤ 0`. For `w = a :: w′`, `flat_map f (a :: w′) = f a ++ flat_map f w′`, so
+its length is `|f a| + |flat_map f w′|` (length of an append). Functionality gives
+`|f a| ≤ 1`, and the induction hypothesis gives `|flat_map f w′| ≤ |w′|`; summing,
+`|f a| + |flat_map f w′| ≤ 1 + |w′| = |a :: w′|`. `∎` (Mechanized as
+`functional_output_bounded`; the exact-length companion for the identity is
+`identity_preserves_length`.) This is the bound §3 cites to keep the `transduce`
+simulation linear when the SFT is functional.
+
+| Property | Statement | Proved as |
 |---|---|---|
-| identity is functional | `functional sft_identity` | `identity_functional` |
-| constant is functional | `∀c. functional (sft_constant c)` | `constant_functional` |
-| **composition preserves it** | `functional f → functional g → functional (f ∘ g)` | `compose_preserves_functional` |
-| decidability hook | `functional f ↔ ∀a. length (f a) ≤ 1` | `functional_iff_all_le1` |
-| domain characterization | `in_domain f w ↔ ∃a ∈ w. f a ≠ []` | `domain_characterization` |
-| output bound | `functional f → length (transduce f w) ≤ length w` | `functional_output_bounded` |
+| identity is functional | `functional sft_identity` | Lemma 7.2 (`identity_functional`) |
+| constant is functional | `∀c. functional (sft_constant c)` | Lemma 7.2 (`constant_functional`) |
+| **composition preserves it** | `functional f → functional g → functional (f ∘ g)` | Theorem 7.4 (`compose_preserves_functional`) |
+| decidability hook | `functional f ↔ ∀a. length (f a) ≤ 1` | Lemma 7.1 (`functional_iff_all_le1`) |
+| domain characterization | `in_domain f w ↔ ∃a ∈ w. f a ≠ []` | Theorem 7.5 (`domain_characterization`) |
+| output bound | `functional f → length (transduce f w) ≤ length w` | Theorem 7.6 (`functional_output_bounded`) |
 
-`compose_preserves_functional` is the load-bearing result: it certifies that
-chaining single-valued transducers (the `compose`/`then` of §4–§5) never
-introduces ambiguity, so a pipeline of functions is itself a function. The single
-step is `flat_map_functional_le1` — feeding a `≤ 1`-length intermediate through a
-functional second stage stays `≤ 1`.
+Theorem 7.4 is the load-bearing result: it certifies that chaining single-valued
+transducers (the `compose`/`then` of §4–§5) never introduces ambiguity, so a
+pipeline of functions is itself a function. Its single step is Lemma 7.3 — feeding a
+`≤ 1`-length intermediate through a functional second stage stays `≤ 1`.
 
 ## 8. Symbolic tree transducers (STFT)
 
@@ -395,42 +623,163 @@ bottom-up *relabeling homomorphism* (rename each head, keep the structure), and 
 `Project` is node deletion — the building blocks of a tree-to-tree transformation.
 
 **Two algebraic layers, both zero-admission.** `StftComposition.v` and
-`StftFunctionality.v` model ranked trees `Tree X ≝ tnode : X → list (Tree X) → Tree X`
-with a hand-rolled strong induction principle `tree_ind'` (a plain `Fixpoint`,
-hence axiom-free, because Coq's generated principle is too weak through the
-`list (Tree X)` nesting). They establish:
+`StftFunctionality.v` model the tree machine and prove two layers of laws. We state
+the model, then each layer's results in prose with the Coq names cited.
 
-*(a) the deterministic relabeling homomorphism* `thom g` (rebuild every node,
-relabel the head by `g`):
+**Definition 8.0 (ranked trees and their operations).** A **ranked tree** over `X`
+is `Tree X`, generated by `tnode : X → list (Tree X) → Tree X` (a head label with an
+ordered child list — the Coq model of the Rust `SymTerm`, whose `constructor` and
+`payload` collapse into the head and whose `children` is the child list). Two
+recursive functions are needed:
+- the **node count** `tcount (tnode _ ch) := 1 + Σ (map tcount ch)` — a node
+  contributes `1` plus its children's counts; this is the tree analog of word
+  `length`;
+- the **bottom-up relabeling homomorphism** `thom g (tnode a ch) := tnode (g a) (map (thom g) ch)`
+  — rebuild every node with the *same* shape, relabeling its head by `g` and
+  recursing into the children. `thom` is the `OutputBuilder::Build` case that reuses
+  the input shape and selects children in order: a pure structural rebuild.
 
-| Property | Statement | Coq theorem |
+Because the child subtrees sit under `list`, Coq's auto-generated induction
+principle for `Tree` gives no hypothesis about them; the development therefore uses a
+hand-rolled strong principle `tree_ind'` — a plain `Fixpoint` that builds a
+`Forall P ch` witness over the children, hence axiom-free (mechanized as `tree_ind'`,
+audited by `Print Assumptions`). Every tree-recursive proof below proceeds by this
+principle: the `Forall` hypothesis supplies the child induction hypotheses pointwise,
+and `map_ext_in` rewrites the child list using them.
+
+*(a) the deterministic relabeling homomorphism* `thom g`. The relabels form a monoid
+under fusion and preserve node count exactly.
+
+**Theorem 8.1 (relabel fusion).** For head maps `g₁ : X → Y`, `g₂ : Y → Z` and every
+tree `t`, `thom g₂ (thom g₁ t) = thom (λa. g₂ (g₁ a)) t` — two successive relabels
+fuse into one relabel by the composed head map. This is the tree analog of Lemma 4.1
+(the doubled rebuild commutes through composition).
+
+*Proof.* Strong induction on `t = tnode a ch` via `tree_ind'`. Unfolding `thom`
+twice on the left, `thom g₂ (thom g₁ (tnode a ch)) = tnode (g₂ (g₁ a)) (map (thom g₂) (map (thom g₁) ch))`;
+unfolding `thom` once on the right,
+`thom (λa. g₂ (g₁ a)) (tnode a ch) = tnode (g₂ (g₁ a)) (map (λc. thom g₂ (g₁-relabel of c)) ch)`.
+The heads already agree. For the children, fuse the doubled `map` by
+`map (thom g₂) (map (thom g₁) ch) = map (λc. thom g₂ (thom g₁ c)) ch` (the
+`map`-fusion law `map f (map h l) = map (f ∘ h) l`); then `map_ext_in` reduces it
+child-by-child, each child fixed by the `Forall` induction hypothesis
+`thom g₂ (thom g₁ c) = thom (λa. g₂ (g₁ a)) c`. The child lists agree, so the trees
+do. `∎` (Mechanized as `thom_fusion`, with the unfolding step `thom_unfold`.)
+
+**Corollary 8.2 (identity relabel; associativity).** `thom (λa. a) t = t` for every
+`t`, and relabeling associates: `thom g₃ (thom g₂ (thom g₁ t)) = thom (λa. g₃ (g₂ (g₁ a))) t`.
+
+*Proof.* For the identity relabel, strong-induct on `t = tnode a ch`: the head
+`(λa.a) a = a` is unchanged, and `map (thom (λa.a)) ch = ch` because each child is
+fixed by the induction hypothesis (`map_ext_in` against the `Forall`, then `map_id`),
+so `thom (λa.a) (tnode a ch) = tnode a ch`. For associativity, apply Theorem 8.1
+twice: `thom g₃ (thom g₂ (thom g₁ t)) = thom g₃ (thom (λa. g₂ (g₁ a)) t)` and a
+second fusion gives `thom (λa. g₃ (g₂ (g₁ a))) t`. `∎` (Mechanized as `thom_id` and
+`thom_compose_assoc`.)
+
+**Theorem 8.3 (relabel preserves node count).** `tcount (thom g t) = tcount t` for
+every head map `g` and tree `t`: relabeling never changes the shape, so the node
+count is unchanged. This is the tree analog of Theorem 7.6's word-length bound —
+here an exact equality, the role `length` plays for words.
+
+*Proof.* Strong induction on `t = tnode a ch` via `tree_ind'`. Unfolding `thom` and
+`tcount`, both sides become `1 + Σ (map tcount …)`, so it remains to equate
+`Σ (map tcount (map (thom g) ch))` with `Σ (map tcount ch)`. Fuse the doubled `map`
+by `map tcount (map (thom g) ch) = map (λc. tcount (thom g c)) ch`, then `map_ext_in`
+reduces it child-by-child, each child fixed by the induction hypothesis
+`tcount (thom g c) = tcount c`. The summands agree termwise, so the sums — and the
+node counts — agree. `∎` (Mechanized as `tcount_thom` in `StftComposition.v` and
+identically as `thom_preserves_tcount` in `StftFunctionality.v`.)
+
+| Property | Statement | Proved as |
 |---|---|---|
-| identity relabel | `thom (λa.a) t = t` | `thom_id` |
-| forest fusion | `thom g₂ (thom g₁ t) = thom (λa. g₂ (g₁ a)) t` | `thom_fusion` |
-| associativity | `thom g₃ (thom g₂ (thom g₁ t)) = thom (λa. g₃ (g₂ (g₁ a))) t` | `thom_compose_assoc` |
-| node-count preserved | `tcount (thom g t) = tcount t` | `tcount_thom` / `thom_preserves_tcount` |
+| identity relabel | `thom (λa.a) t = t` | Corollary 8.2 (`thom_id`) |
+| forest fusion | `thom g₂ (thom g₁ t) = thom (λa. g₂ (g₁ a)) t` | Theorem 8.1 (`thom_fusion`) |
+| associativity | `thom g₃ (thom g₂ (thom g₁ t)) = thom (λa. g₃ (g₂ (g₁ a))) t` | Corollary 8.2 (`thom_compose_assoc`) |
+| node-count preserved | `tcount (thom g t) = tcount t` | Theorem 8.3 (`tcount_thom` / `thom_preserves_tcount`) |
 
 *(b) the forest transducer monoid* `ft` modeling the full nondeterministic
-transduction `f : Tree A → list (Tree B)`, with `ft_compose f g ≝ λt. flat_map g (f t)`
-and unit `ft_identity t ≝ [t]`:
+transduction `f : Tree A → list (Tree B)` (zero, one, or many output trees per
+input), with composition `ft_compose f g := λt. flat_map g (f t)`, unit
+`ft_identity t := [t]`, and functionality `functional f :⟺ ∀t. |f t| ≤ 1` exactly as
+for words (Definition 7.0, with trees in place of letters). Layer (b) reuses the
+**same** `flat_map` lemmas as the word proofs (local copies of Lemma 4.1 and its
+companions), so word and tree transducers share their composition foundation.
 
-| Property | Statement | Coq theorem |
+**Theorem 8.4 (the forest-transducer monoid laws).** Up to pointwise equality of the
+output lists, `(ft_compose, ft_identity)` is a monoid on forest transductions:
+
+1. (left identity) `ft_compose ft_identity g ≈ g`;
+2. (right identity) `ft_compose f ft_identity ≈ f`;
+3. (associativity) `ft_compose (ft_compose f g) h ≈ ft_compose f (ft_compose g h)`.
+
+*Proof.* These are the tree instances of the word laws of §5, with `Tree _` as the
+element type. (1) `ft_compose ft_identity g t = flat_map g (ft_identity t)
+= flat_map g [t] = g t ++ [] = g t`. (2) `ft_compose f ft_identity t
+= flat_map (λx.[x]) (f t) = f t` by the singleton companion of Lemma 4.1. (3)
+`ft_compose (ft_compose f g) h t = flat_map h (flat_map g (f t))` and
+`ft_compose f (ft_compose g h) t = flat_map (λs. flat_map h (g s)) (f t)`; these are
+equal by Lemma 4.1 (flat-map fusion) with `l := f t`. `∎` (Mechanized as
+`ft_compose_left_identity`, `ft_compose_right_identity`, `ft_compose_assoc`; the
+pointwise corollaries are `ft_compose_identity_left_pointwise` / `_right_pointwise`
+and `ft_compose_assoc_pointwise`.)
+
+**Theorem 8.5 (composition preserves functionality; relabel is single-valued).** If
+`f` and `g` are functional forest transducers then `ft_compose f g` is functional;
+and the deterministic relabel viewed as a transduction, `λt. [thom g t]`, is
+functional.
+
+*Proof.* The composition argument is the word argument of Theorem 7.4 with trees as
+elements: for any `t`, `|f t| ≤ 1` (f functional), and pushing a `≤1`-length list
+through `flat_map g` with `g` functional keeps the length `≤ 1` (Lemma 7.3 at the
+tree element type), so `|flat_map g (f t)| ≤ 1`. The relabel is single-valued because
+`λt. [thom g t]` emits the one-element list `[thom g t]`, of length `1 ≤ 1`, for
+every input. `∎` (Mechanized as `compose_preserves_functional` and
+`thom_singleton_functional` in `StftFunctionality.v`; the per-input restatement of
+the bound is `functional_output_le1`. The constant and epsilon tree transducers are
+functional likewise, `constant_functional` / `epsilon_functional`.)
+
+**Theorem 8.6 (domain characterization for composition).** A tree lies in the domain
+of a composite iff the first stage produces some intermediate tree on which the
+second stage is non-empty: `in_domain (ft_compose f g) t ⟺ ∃s. s ∈ f t ∧ g s ≠ []`.
+
+*Proof.* By definition `in_domain (ft_compose f g) t ⟺ flat_map g (f t) ≠ []`, so it
+suffices that `flat_map g (f t) ≠ [] ⟺ ∃s ∈ f t. g s ≠ []` — the same
+non-emptiness characterization proved for words in Theorem 7.5, applied to the list
+`f t` (the image set of the first stage). `∎` (Mechanized as
+`domain_characterization` in `StftFunctionality.v`, via `flat_map_nonempty_iff`;
+this is what the Rust `domain_sta` keeps — a node's transition survives exactly when
+the transducer can emit there.)
+
+| Property | Statement | Proved as |
 |---|---|---|
-| left identity | `id ; g ≈ g` | `ft_compose_left_identity` |
-| right identity | `f ; id ≈ f` | `ft_compose_right_identity` |
-| **associativity** | `(f ; g) ; h ≈ f ; (g ; h)` | `ft_compose_assoc` |
-| composition preserves functionality | `functional f → functional g → functional (f ; g)` | `compose_preserves_functional` (STFT) |
-| relabel is single-valued | `functional (λt. [thom g t])` | `thom_singleton_functional` |
-| domain characterization | `in_domain (f ; g) t ↔ ∃s ∈ f(t). g(s) ≠ []` | `domain_characterization` (STFT) |
+| left identity | `id ; g ≈ g` | Theorem 8.4(1) (`ft_compose_left_identity`) |
+| right identity | `f ; id ≈ f` | Theorem 8.4(2) (`ft_compose_right_identity`) |
+| **associativity** | `(f ; g) ; h ≈ f ; (g ; h)` | Theorem 8.4(3) (`ft_compose_assoc`) |
+| composition preserves functionality | `functional f → functional g → functional (f ; g)` | Theorem 8.5 (`compose_preserves_functional`, STFT) |
+| relabel is single-valued | `functional (λt. [thom g t])` | Theorem 8.5 (`thom_singleton_functional`) |
+| domain characterization | `in_domain (f ; g) t ↔ ∃s ∈ f(t). g(s) ≠ []` | Theorem 8.6 (`domain_characterization`, STFT) |
 
-The bridge corollary `ft_compose_thom_singleton` shows the deterministic relabels
-form a *sub-monoid* of the forest transducer monoid whose composition is precisely
-homomorphism fusion — so the structural-rewrite layer and the general transduction
-layer are one algebra. Layer (b) reuses the **same** `flat_map` lemmas as the word
-proofs in `SftComposition.v`, so word and tree transducers share their composition
-foundation; `tcount` (node count) plays the role the word `length` plays in
-`SftFunctionality.v` (e.g. `thom_preserves_tcount` is the tree analog of
-`identity_preserves_length`).
+The two layers join in a bridge corollary: the deterministic relabels are a
+*sub-monoid* of the forest-transducer monoid whose composition is precisely
+homomorphism fusion.
+
+**Corollary 8.7 (relabels are a sub-monoid via fusion).** For head maps `g₁ : A → B`,
+`g₂ : B → C` and every tree `t`,
+`ft_compose (λu. [thom g₁ u]) (λu. [thom g₂ u]) t = [thom (λa. g₂ (g₁ a)) t]`.
+
+*Proof.* Unfold `ft_compose`: the left side is
+`flat_map (λu. [thom g₂ u]) [thom g₁ t]`, which reduces to `[thom g₂ (thom g₁ t)]`
+(applying the function to the single element and absorbing the trailing `[]`). By
+Theorem 8.1 (relabel fusion), `thom g₂ (thom g₁ t) = thom (λa. g₂ (g₁ a)) t`, so the
+list is `[thom (λa. g₂ (g₁ a)) t]`. `∎` (Mechanized as `ft_compose_thom_singleton`.)
+
+So the structural-rewrite layer and the general transduction layer are one
+algebra: composing single-valued relabel transductions stays inside the relabels and
+agrees with head-map composition. As noted, `tcount` (node count) plays the role
+word `length` plays in §7 — Theorem 8.3 is the tree analog of the identity's
+exact-length law (`identity_preserves_length`, restated for trees as
+`identity_relabel_preserves_tcount`).
 
 ## 9. Where SFTs sit in the integration
 
@@ -476,22 +825,25 @@ the local Rocq/Rust anchors in [References](references.md)):
   transducers, homomorphisms, composition) — the classical tree-transducer
   background for §8 ([references.md#tata](references.md#tata)).
 
-Local zero-admission Coq theories (`formal/rocq/sft/theories/`), each closing with
-a `Print Assumptions` audit and built by
-`make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-sft`:
+The consolidated proof-to-Coq cross-reference. Every result stated and proved in
+§4–§8 is a piece of ordinary mathematics in this document; the table below names the
+zero-admission Coq theorem that *mechanizes* each, so a reader can locate the machine
+witness without the Coq name ever standing in for the argument. All theories live in
+`formal/rocq/sft/theories/`, each closes with a `Print Assumptions` audit, and the
+suite is built by `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-sft`.
 
-- `OutputTermAlgebra.v` — `OutputTerm` is a monoid (`oconcat_assoc`,
-  `oconcat_eps_l`, `oconcat_eps_r`) and a category (`othen_correct` the β-law,
-  `othen_id_l`, `othen_id_r`, `othen_assoc`).
-- `SftComposition.v` — the composition monoid (`sft_compose_left_identity`,
-  `sft_compose_right_identity`, `sft_compose_assoc`).
-- `SftFunctionality.v` — `compose_preserves_functional`, `functional_iff_all_le1`,
-  `domain_characterization`, `functional_output_bounded`.
-- `StftComposition.v` — the tree layer (`thom_id`, `thom_fusion`,
-  `thom_compose_assoc`, `tcount_thom`, `ft_compose_assoc`).
-- `StftFunctionality.v` — the tree single-valuedness layer
-  (`compose_preserves_functional`, `thom_preserves_tcount`,
-  `thom_singleton_functional`, `domain_characterization`).
+| Result (here) | Coq witness | File |
+|---|---|---|
+| Lemma 4.1 (flat-map fusion) and companions | `flat_map_flat_map_`, `flat_map_app_`, `flat_map_singleton_` | `OutputTermAlgebra.v` |
+| Lemmas 4.2–4.3 (`OConcat`/`OEps` monoid) | `oconcat_assoc`, `oconcat_eps_l`, `oconcat_eps_r` | `OutputTermAlgebra.v` |
+| Theorem 4.4 (β / compose-correctness) | `othen_correct` (with `oapply_all_othen`, `oapply_all_id`) | `OutputTermAlgebra.v` |
+| Theorem 4.5 + Lemma 4.6 (`othen`/`OId` category, `OEps`-absorption) | `othen_id_l`, `othen_id_r`, `othen_assoc`, `othen_eps_l` | `OutputTermAlgebra.v` |
+| Theorems 5.1–5.2 (composition monoid) | `sft_compose_assoc`, `sft_compose_left_identity`, `sft_compose_right_identity` | `SftComposition.v` |
+| Lemmas 7.1–7.3, Theorems 7.4–7.6 (functionality) | `functional_iff_all_le1`, `identity_functional`, `constant_functional`, `flat_map_functional_le1`, `compose_preserves_functional`, `domain_characterization`, `functional_output_bounded` | `SftFunctionality.v` |
+| Theorems 8.1, 8.3 + Corollary 8.2 (relabel layer) | `thom_fusion`, `thom_id`, `thom_compose_assoc`, `tcount_thom` | `StftComposition.v` |
+| Theorem 8.4 + Corollary 8.7 (forest-transducer monoid, sub-monoid bridge) | `ft_compose_left_identity`, `ft_compose_right_identity`, `ft_compose_assoc`, `ft_compose_thom_singleton` | `StftComposition.v` |
+| Theorems 8.5–8.6 + Theorem 8.3 (tree single-valuedness, domain, node count) | `compose_preserves_functional`, `thom_singleton_functional`, `domain_characterization`, `thom_preserves_tcount` | `StftFunctionality.v` |
+| strong tree induction (axiom-free) | `tree_ind'` | `StftComposition.v` / `StftFunctionality.v` |
 
 The Rust substrate lives in `prattail/src/sft.rs` (word transducer + `OutputTerm`)
 and `prattail/src/sym_tree_transducer.rs` (tree transducer). Continue to

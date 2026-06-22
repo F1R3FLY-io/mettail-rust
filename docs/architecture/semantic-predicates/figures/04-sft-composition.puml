@@ -1,5 +1,5 @@
 @startuml
-title SFT composition pipeline — `T₁ ∘ T₂` (the output algebra of T₁ is the input algebra of T₂)
+title SFT composition pipeline — T₁ ∘ T₂ (the output algebra of T₁ is the input algebra of T₂)
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -26,12 +26,12 @@ deactivate T2
 deactivate T1
 
 note over T1, T2
-  `compose::<C>` builds the product T₁ ∘ T₂ — ONE transducer,
+  compose::<C> builds the product T₁ ∘ T₂ — ONE transducer,
   not a runtime chain. The middle algebra B must match
   (output of T₁ = input of T₂), which is exactly why
   composability requires the middle algebra to agree.
   Composition preserves functionality
-  (`compose_preserves_functional`, SftFunctionality.v):
+  (compose_preserves_functional, SftFunctionality.v):
   chaining single-valued transducers stays single-valued.
 end note
 

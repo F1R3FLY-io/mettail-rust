@@ -24,7 +24,7 @@ RS -> RS : structural pattern match
 alt structural guard
   RS -> RS : RSpace decides (spatial match)
 else where boolean (source path)
-  RS -> RS : evaluate `where` before commit
+  RS -> RS : evaluate where before commit
 else behavioral / EBA / SFT
   RS -> NJ : consult host relation / decide
   activate NJ

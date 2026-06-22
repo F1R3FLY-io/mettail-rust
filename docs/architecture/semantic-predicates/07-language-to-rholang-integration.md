@@ -158,6 +158,17 @@ from `refuses_production_default`.
 
 ## 5. Admission — the fail-closed flip gate
 
+This document's earlier sections define the three pipeline stages the gate consumes,
+so the theorems below use only defined terms. To restate them compactly: an
+**obligation** is a unit of guard work induced from the `LanguageDef` (§4.1, each
+tagged with a `RhoGuardObligationKind`); a **disposition** is the mechanism chosen to
+cover an obligation (§4.2, a `RhoGuardDispositionKind`), admissible only when the
+compatibility matrix `guard_disposition_covers` permits the pairing; a **quality** is
+the grade of the covering evidence (§4.3, a `RhoGuardQuality`, with `Unknown` the
+fail-closed bottom). The gate is the conjunction that admits a language onto the Rho
+backend exactly when its `obligation → disposition → quality` pipeline is fully and
+soundly discharged.
+
 A language adopts the Rho backend as its production default only when the planner
 `plan_rho_default_backend` and the flip gate `decide_rho_flip`
 (`rholang-codegen/src/flip.rs`) agree. The executable flip predicate is:
@@ -177,6 +188,124 @@ The gate is **fail-closed**: absent positive coverage evidence with non-`Unknown
 quality, the default backend selection refuses rather than falling through. This is
 mechanized as `RhoBackendFlipGate.v` (which composes with `RhoGuardedCommSoundness.v`)
 and surfaced in [10 — Formal Verification](10-formal-verification-and-tests.md).
+
+This document is the **proof-home** of the flip gate. The results of §5.1–§5.2 are
+stated and proved here as ordinary mathematical Theorems, each closed with `∎`; the
+Coq objects that mechanize them are named only as parenthetical citations, so a reader
+who never opens `RhoBackendFlipGate.v` can still follow every step. The run-time
+soundness the gate licenses is §5.3.
+
+### 5.1 The gate is the conjunction of three independent gates
+
+Model the gate's three inputs as the Booleans `coverage_passed(g)`,
+`artifact_validated(g)`, `no_new_deadlocks(g)` of a gate state `g`, and define the
+flip decision as their conjunction `can_flip_to_rho(g) = coverage_passed(g) ∧ artifact_validated(g) ∧ no_new_deadlocks(g)`.
+
+**Theorem 5.1 (the flip gate is the conjunction of three gates).** The flip decision
+`can_flip_to_rho(g) = true` holds **iff** all three input gates pass — that is, iff
+`coverage_passed(g) = true` and `artifact_validated(g) = true` and `no_new_deadlocks(g) = true`.
+
+*Proof.* Write the gate as `b₁ ∧ b₂ ∧ b₃` with `b₁ = coverage_passed(g)`,
+`b₂ = artifact_validated(g)`, `b₃ = no_new_deadlocks(g)`. Boolean conjunction over `{true, false}` satisfies `b ∧ c = true ⟺ (b = true ∧ c = true)` (the truth table of `∧`: the meet is `true` exactly when both arguments are `true`). Apply this equivalence to the outer conjunction `(b₁ ∧ b₂) ∧ b₃` to split off `b₃`, then again to the inner `b₁ ∧ b₂` to split `b₁` from `b₂`. The two applications give `(b₁ ∧ b₂) ∧ b₃ = true ⟺ b₁ = true ∧ b₂ = true ∧ b₃ = true`, which is the claim. `∎` (Mechanized as `can_flip_iff_all_gates`; the two splits are two rewrites by `andb_true_iff`.)
+
+**Theorem 5.2 (each gate is necessary).** If any one of `coverage_passed(g)`,
+`artifact_validated(g)`, `no_new_deadlocks(g)` is `false`, then `can_flip_to_rho(g) = false`.
+
+*Proof.* A `false` factor short-circuits the conjunction: for Booleans,
+`false ∧ c = false`, `b ∧ false = false`, and these compose, so any `false` argument
+of `b₁ ∧ b₂ ∧ b₃` forces the whole expression to `false` regardless of the other two.
+Taking each factor `false` in turn discharges the three cases. `∎` (Mechanized as the
+three theorems `missing_coverage_blocks_flip`, `missing_artifact_validation_blocks_flip`,
+and `missing_deadlock_gate_blocks_flip`, one per failing input.) Theorem 5.1 already
+yields this as its contrapositive; the three named witnesses make the per-gate
+necessity individually citable, which is what the gate's `RhoFlipBlocker` reporting
+needs.
+
+The contrapositive reading of Theorems 5.1–5.2 is the architectural claim: **no single
+green light admits the flip** — coverage without a validated artifact, or a validated
+artifact with a fresh deadlock, each leaves the gate `false`. The gate is therefore a
+true `AND`, not a weighted score with a passing threshold.
+
+### 5.2 Unknown quality is fail-closed
+
+The quality axis of §4.3 enters the gate as an additional, additive family of
+blockers. Let `qs` be the covered obligations paired with their qualities; the planner
+derives one `RhoFlipBlocker::GuardQuality` per obligation whose quality
+`refuses_production_default()`, and only `Unknown` does so (§4.3). Write
+`can_flip_with_qualities(g, qs)` for the full gate: the Boolean gate of §5.1 **and**
+the absence of any quality blocker, i.e. `can_flip_with_qualities(g, qs) = can_flip_to_rho(g) ∧ (blocker-count(qs) = 0)`, where `blocker-count(qs)` is the number of obligations in `qs` whose quality refuses the production default.
+
+**Theorem 5.3 (Unknown quality is fail-closed).** If any covered guard obligation in
+`qs` carries quality `Unknown`, the flip is blocked: `can_flip_with_qualities(g, qs) = false`.
+
+*Proof.* Suppose some obligation `q ∈ qs` has quality `Unknown`. Because exactly
+`Unknown` satisfies `refuses_production_default` (§4.3), `q` is counted by
+`blocker-count`, so `blocker-count(qs) ≥ 1`, hence `blocker-count(qs) ≠ 0` and the
+conjunct `(blocker-count(qs) = 0)` is `false`. The full gate is the conjunction
+`can_flip_to_rho(g) ∧ (blocker-count(qs) = 0)`; a `false` second conjunct zeroes the
+whole conjunction (`b ∧ false = false`, Theorem 5.2's short-circuit) independently of
+the Boolean gate `can_flip_to_rho(g)`. Therefore `can_flip_with_qualities(g, qs) = false`. `∎` (Mechanized as `unknown_guard_quality_blocks_flip`, resting on
+`refuses_production_default_iff_unknown` — that only `Unknown` refuses — and
+`unknown_quality_contributes_blocker` — that an `Unknown` obligation makes the blocker
+count non-zero.)
+
+This is the precise content of "**fail-closed**": an obligation the substrate could
+not classify (quality `Unknown` — *no evidence*, §4.3) is not silently admitted; it
+is converted into a hard blocker. The complementary positive fact — that a gate with
+no quality blocker is licensed exactly when the Boolean gate passes — is mechanized as
+`can_flip_with_qualities_iff`, and the genuinely-gated nature of the licensing (an
+`Unknown` obligation denies it outright) as `unknown_guard_quality_denies_licensing`.
+
+### 5.3 What the gate licenses: a sound guarded COMM
+
+Passing the gate is the compile-time *permission* to lower the surviving guard to a
+run-time enforcement mechanism (§5's closing note; the mechanisms themselves are
+[08](08-runtime-comm-enforcement.md)). The soundness of that run-time step is the
+companion result, mechanized in `RhoGuardedCommSoundness.v` and proved here for the
+firing factorization and the soundness of the product evaluation; the asymmetric
+reject-safety it pairs with is cross-referenced to its proof-home rather than
+re-proved.
+
+Model a guarded receive by a substitution `s` carrying the match. Three Booleans
+decide on it: `name_match(s)` (the channel names unify), `structural_eval(s)` (the
+classical structural leg, decided exactly), and `behavioral_eval(s)` (the reject-safe
+behavioral leg — a *sound under-approximation* of the true behavioral property
+`behavioral_true(s)`, so `behavioral_eval(s) = true ⟹ behavioral_true(s) = true`, the
+Heyting/`Sat3::DontKnow` boundary of [12](12-heyting-behavioral-logic.md)). The
+**product guard's run-time evaluation** is `product_eval(s) = structural_eval(s) ∧ behavioral_eval(s)`, the **true product property** is `product_true(s) = structural_eval(s) ∧ behavioral_true(s)`, and a guarded COMM **fires** iff `comm_fires(s) = name_match(s) ∧ product_eval(s)`.
+
+**Theorem 5.4 (a guarded COMM fires iff names match and the product guard holds).**
+For every `s`, `comm_fires(s) = true` **iff** `name_match(s) = true` and `product_eval(s) = true`.
+
+*Proof.* By definition `comm_fires(s) = name_match(s) ∧ product_eval(s)`. Boolean
+conjunction satisfies `b ∧ c = true ⟺ (b = true ∧ c = true)`; applied to the two
+factors `name_match(s)` and `product_eval(s)` this is exactly the claim. `∎`
+(Mechanized as `comm_fires_iff`, a single application of `andb_true_iff`.)
+
+**Theorem 5.5 (the run-time product evaluation is sound).** For every `s`,
+`product_eval(s) = true ⟹ product_true(s) = true`: a firing product guard soundly
+certifies the true product property.
+
+*Proof.* Assume `product_eval(s) = true`, i.e. `structural_eval(s) ∧ behavioral_eval(s) = true`. By `b ∧ c = true ⟺ (b = true ∧ c = true)`, both `structural_eval(s) = true` and `behavioral_eval(s) = true`. The structural leg is **exact**, so its contribution to `product_true(s)` is the same `structural_eval(s) = true`. The behavioral leg is **reject-safe**, the soundness hypothesis `behavioral_eval(s) = true ⟹ behavioral_true(s) = true`; from `behavioral_eval(s) = true` it gives `behavioral_true(s) = true`. Hence both conjuncts of `product_true(s) = structural_eval(s) ∧ behavioral_true(s)` are `true`, so `product_true(s) = true`. `∎` (Mechanized as `product_eval_sound`; the behavioral step discharges the `behavioral_sound` hypothesis of `RhoGuardedCommSoundness.v`. Soundness is one-directional: the converse can fail, because the reject-safe leg may report `false` on a state where `behavioral_true` holds — it never wrongly admits, only conservatively rejects.)
+
+Theorems 5.4 and 5.5 compose into the firing-soundness statement *a fired COMM
+satisfies the true guard* (`name_match(s) ∧ product_true(s)`, mechanized as
+`comm_fires_implies_true_guard`): unfold the firing equivalence (Theorem 5.4), then
+upgrade the product evaluation to the true property (Theorem 5.5). The asymmetric
+counterpart — that the **complement** guard `¬(structural ∧ behavioral)`, lowered in
+its padded double-`⊤` De Morgan form, never fires on a satisfiable product (so a
+`DontKnow` can never commit a COMM) — is **Theorem 6.1 of [12 — Heyting Algebras for
+Behavioral Constraints](12-heyting-behavioral-logic.md#6-how-heyting-completes-boolean-for-structural-behavioral-types)**;
+its run-time mirror is `RhoGuardedCommSoundness.v`'s `mixed_negation_soundness` and
+`rho_complement_no_commit`. We cross-reference it rather than restate its proof.
+
+Finally, the two halves join: a flip-eligible (`Unknown`-free, Boolean-passing) plan
+*licenses* the production-default lowering, and exactly under that license the
+firing-soundness of Theorem 5.5 applies — mechanized as `licensed_flip_is_guard_sound`,
+which consumes the flip-eligibility premise via `can_flip_with_qualities_iff` and then
+instantiates `comm_fires_implies_true_guard`. The gate and the guard are sound
+together: the gate admits no un-evidenced guard, and an admitted guard never fires a
+COMM it does not truly satisfy.
 
 > **Lowering target follows the disposition.** Once a language passes the gate, the
 > *surviving* guard is lowered to one of three run-time enforcement mechanisms

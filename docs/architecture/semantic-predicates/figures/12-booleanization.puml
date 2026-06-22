@@ -19,8 +19,8 @@ title The Booleanization: regular elements are the Boolean core inside the Heyti
 package "Heyting algebra H" as H #FEF3C7 {
 
   ' non-regular elements live in H but OUTSIDE H_reg
-  component "M\n(`¬¬M = ⊤ ≠ M`)" as M #FEF3C7
-  component "φ with boundary\n(`¬¬φ > φ`)" as Phi #FEF3C7
+  component "M\n(¬¬M = ⊤ ≠ M)" as M #FEF3C7
+  component "φ with boundary\n(¬¬φ > φ)" as Phi #FEF3C7
 
   ' the Boolean core: the fixed points of ¬¬
   package "H_reg = { a : ¬¬a = a }\n(a Boolean algebra)" as Hreg #DCFCE7 {
@@ -35,16 +35,16 @@ M   -[#4F46E5,thickness=2]-> Top    : ¬¬  (regularization /\nclosure operator)
 Phi -[#4F46E5,thickness=2]-> NegPhi : ¬¬  (regularize)
 
 note bottom of Hreg
-  Regular elements form a **Boolean algebra** under `(∧, ⊔, ¬)`
-  with `⊔ = ¬(¬a ∧ ¬b)`; excluded middle `a ⊔ ¬a = ⊤` holds
-  there (`excluded_middle_reg`). `Classical<A>` is the
-  all-regular case (`regularize = id`).
+  Regular elements form a **Boolean algebra** under (∧, ⊔, ¬)
+  with ⊔ = ¬(¬a ∧ ¬b); excluded middle a ⊔ ¬a = ⊤ holds
+  there (excluded_middle_reg). Classical<A> is the
+  all-regular case (regularize = id).
 end note
 
 legend right
 |= Color |= Region |
 |<#FEF3C7> | Heyting algebra H (non-regular elements live here) |
-|<#DCFCE7> | `H_reg` — the regular Boolean core (`¬¬a = a`) |
-|<#E0E7FF> | `¬¬` regularization (the closure operator) |
+|<#DCFCE7> | H_reg — the regular Boolean core (¬¬a = a) |
+|<#E0E7FF> | ¬¬ regularization (the closure operator) |
 endlegend
 @enduml

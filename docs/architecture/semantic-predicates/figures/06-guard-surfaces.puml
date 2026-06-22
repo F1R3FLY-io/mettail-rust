@@ -16,12 +16,12 @@ skinparam rectangle {
 }
 
 ' ── The surfaces a language author writes (left) ────────────────────────
-rectangle "Guard surfaces in `language!`" as Surf #DBEAFE {
-  component "`guards { }` block\n(parse_guards)" as G #BFDBFE
-  component "`?guard:Guard` slot\n(parse_term_param)" as Slot #BFDBFE
-  component "`where`-clause sublanguage\n(predicate_pratt.rs)" as Where #BFDBFE
-  component "`logic { relation }` block\n(parse_logic)" as Logic #BFDBFE
-  component "`#[tier(...)]` directive\n(parse_tier_directive)" as Tier #BFDBFE
+rectangle "Guard surfaces in language!" as Surf #DBEAFE {
+  component "guards { } block\n(parse_guards)" as G #BFDBFE
+  component "?guard:Guard slot\n(parse_term_param)" as Slot #BFDBFE
+  component "where-clause sublanguage\n(predicate_pratt.rs)" as Where #BFDBFE
+  component "logic { relation } block\n(parse_logic)" as Logic #BFDBFE
+  component "#[tier(...)] directive\n(parse_tier_directive)" as Tier #BFDBFE
 }
 
 ' ── What each surface builds (right) ────────────────────────────────────
@@ -40,9 +40,9 @@ Logic --> Rel : builds
 Tier --> TD : builds
 
 note bottom of Where
-  The `where`-clause text is parsed by prattail's PredicateParser;
-  `where` is NOT a reserved keyword — it is a literal sitting before
-  the `?guard:Guard` slot, which lowers to a `GuardExpression` parser
+  The where-clause text is parsed by prattail's PredicateParser;
+  where is NOT a reserved keyword — it is a literal sitting before
+  the ?guard:Guard slot, which lowers to a GuardExpression parser
   item and switches into the predicate sublanguage. Any literal could
   precede the slot.
 end note
