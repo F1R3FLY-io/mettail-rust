@@ -44,9 +44,6 @@ struct DisplayBpInfo {
     is_postfix: bool,
     /// Whether this is a mixfix operator.
     is_mixfix: bool,
-    /// Whether this operator's surface token is also accepted by a category
-    /// that can syntaxlessly project into this operator's result category.
-    shadowed_by_syntaxless_projection: bool,
 }
 
 /// Binding power information for a unary prefix operator.
@@ -135,12 +132,6 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
     // The local max_infix_bp HashMap was removed.
 
     let mut lookup = BpLookup::empty();
-    let syntaxless_projection_sources = syntaxless_projection_sources_for_display(language);
-    let operator_terminals_by_category: HashSet<(String, String)> = bp_table
-        .operators
-        .iter()
-        .map(|op| (op.category.clone(), op.terminal.clone()))
-        .collect();
 
     // Build a terminal→same-operand-category BP map so cross-category operators
     // can share a threshold with a same-category operator on the same operand
@@ -168,15 +159,6 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
         } else {
             (op.left_bp, op.right_bp)
         };
-        let shadowed_by_syntaxless_projection = syntaxless_projection_sources
-            .get(&op.result_category)
-            .map_or(false, |sources| {
-                sources.iter().any(|source| {
-                    source != &op.category
-                        && operator_terminals_by_category
-                            .contains(&(source.clone(), op.terminal.clone()))
-                })
-            });
         lookup.infix.insert(
             op.label.clone(),
             DisplayBpInfo {
@@ -184,7 +166,6 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
                 right_bp: display_right_bp,
                 is_postfix: op.is_postfix,
                 is_mixfix: op.is_mixfix,
-                shadowed_by_syntaxless_projection,
             },
         );
         let own_bp = display_left_bp.max(display_right_bp);
@@ -211,20 +192,6 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
     }
 
     lookup
-}
-
-fn syntaxless_projection_sources_for_display(
-    language: &LanguageDef,
-) -> HashMap<String, HashSet<String>> {
-    let mut sources_by_target: HashMap<String, HashSet<String>> = HashMap::new();
-    for rule in &language.terms {
-        let mut normalized = rule.clone();
-        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
-        if let Some((source, target)) = simple_projection_shape_for_display(&normalized) {
-            sources_by_target.entry(target).or_default().insert(source);
-        }
-    }
-    sources_by_target
 }
 
 fn first_nonterminal_category_for_display(syntax: &[SyntaxItemSpec]) -> Option<String> {
@@ -1129,14 +1096,40 @@ fn generate_engine_regular_arm(
     // Reverse so stack processes left-to-right
     forward_ops.reverse();
 
-    // Wrap in parenthesization logic for infix/prefix/postfix operators
+    // Wrap in parenthesization logic for infix/prefix/postfix operators.
+    //
+    // Parenthesization is decided PURELY by precedence (`own_left_bp <
+    // min_bp`): an operator wraps itself in `(…)` exactly when the inherited
+    // threshold from its parent context exceeds its own left binding power.
+    // This is the standard Pratt-symmetric rule and it makes Display a
+    // one-cycle fixed point: the parser's binding-power table (the same
+    // `analyze_binding_powers` output) re-derives the identical grouping
+    // from the parenthesis-minimal surface, so `display(parse(display(t)))`
+    // == `display(parse(t))` for every well-formed `t`.
+    //
+    // (2026-06-22) The earlier `|| (shadowed_by_syntaxless_projection &&
+    // min_bp != 0)` disjunct was REMOVED. It force-parenthesized every
+    // non-root occurrence of any operator whose result category is the
+    // target of a syntaxless projection (e.g. every `BigInt` `+`/`-`/`bitand`
+    // because `Int` projects syntaxlessly into `BigInt` and shares those
+    // terminals). Those parentheses are precedence-REDUNDANT — a syntaxless
+    // projection contributes no surface token, so it cannot change the
+    // grouping the parser recovers — and they BREAK one-cycle idempotence:
+    // the redundant parens are dropped on the second display, so the
+    // canonical form oscillates between the parenthesized and bare forms.
+    // (At the ambiguity-budget boundary the two surface forms even elect
+    // different parse winners — `IntToBigInt(AddInt(…))` vs
+    // `AddBigInt(…)` — which displayed to each other forever; see
+    // `gen_calculator_prop::bigint_display_parse_roundtrip`.) The genuinely
+    // necessary disambiguation parentheses for a syntaxless-projection node
+    // used AS an operand (e.g. `(816675508 <= cast_error_int) bitand …` for a
+    // `BoolToUInt32`-wrapped comparison) are emitted by the projection node's
+    // own `forwards_projection_min_bp` path below, NOT by this flag.
     if let Some(info) = infix_info {
         let own_left_bp = info.left_bp;
-        let shadowed_by_syntaxless_projection = info.shadowed_by_syntaxless_projection;
         quote! {
             #category::#label(#(#field_names),*) => {
-                let needs_parens = #own_left_bp < min_bp
-                    || (#shadowed_by_syntaxless_projection && min_bp != 0);
+                let needs_parens = #own_left_bp < min_bp;
                 if needs_parens {
                     stack.push(DisplayTask::WriteLiteral(")"));
                 }
@@ -1679,9 +1672,6 @@ fn generate_engine_syntax_pattern_arm(
     } else {
         0
     };
-    let shadowed_by_syntaxless_projection =
-        infix_info.map_or(false, |info| info.shadowed_by_syntaxless_projection);
-
     if has_abstraction {
         field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
 
@@ -1746,8 +1736,12 @@ fn generate_engine_syntax_pattern_arm(
         {
             quote! {
                 #category::#label(#(#field_idents),*) => {
-                    let needs_parens = #own_bp < min_bp
-                        || (#shadowed_by_syntaxless_projection && min_bp != 0);
+                    // Precedence-only parenthesization — see the rationale at
+                    // `generate_engine_regular_arm` (the projection-shadow
+                    // disjunct was removed 2026-06-22 because it injected
+                    // precedence-redundant parens that broke one-cycle Display
+                    // idempotence).
+                    let needs_parens = #own_bp < min_bp;
                     if needs_parens {
                         stack.push(DisplayTask::WriteLiteral(")"));
                     }
