@@ -5288,6 +5288,19 @@ properties of programs, membership is undecidable.
 | `forall(y, entails(rewrites_to(x, y), safe(y)))` | Unbounded ∀ over ∞ domain | `assert_pred` annotation       |
 | `forall(X, φ(X))`                                | Second-order universal    | Restricted MSO or user proof   |
 
+> **Phase 3 implementation status (OSLF, 2026-06-22; commits `b946dbc2`
+> classifier + `6953fc6a` routing).** The behavioral-tier classification above
+> is **wired** for behavioral guard formulas: `BehavioralFormula::decidability_tier`
+> is now backed by the `algebra_tower`, and the live testkit guard-tier tally in
+> `testkit/src/analytical/guards.rs` routes freshness / congruence / binder
+> guards through it — relational (`Atom`/`Relation`) predicates classify to
+> **T2** and modal predicates to **T3**. This `.1` routing is *behavior-preserving*
+> (the guard-tier golden tuples are byte-identical, asserted by
+> `languages/tests/guard_tier_golden.rs`), and it touches only testkit guard
+> analysis — the default `prattail` build is unchanged. The classifier and the
+> production mixed-guard B-leg composition are proven zero-admission in
+> `formal/rocq/symbolic_algebra/theories/BehavioralTierClassificationSound.v`.
+
 ### Classification Decision Tree
 
 The `classify_decidability()` function implements the following decision tree,
@@ -5763,6 +5776,32 @@ inverts this: given `ch2`'s guard, it computes a predicate on `ch1` values that
 filters out values guaranteed to make the combined guard fail. This backward
 propagation is the Symbolic Finite Transducer (SFT) pre-image operation (§16)
 applied to the guard's transducer representation.
+
+> **Phase 4 implementation status (OSLF, 2026-06-22; commit `bce952d5` `.0`
+> engines + `58b2afec` `.1` routing).** Two SHIPPED-but-previously-dead engines
+> are now **wired (feature-gated, off-by-default)** as pipeline entrypoints:
+>
+> - **Symbolic finite-state transducer** (feature `oslf-transducer`): for each
+>   cast / refinement rule `r : src → tgt`, `sym_tree_transducer::analyze_from_bundle`
+>   builds a `SymbolicTreeTransducer`, computes the pre-image `domain_sta()`,
+>   decides cast totality via `is_total()`, and intersects the pre-image with the
+>   Phase-2 `structural_types::category_automaton` of `src` to decide
+>   cast-reachability — yielding `TransducerAnalysis { non_total_casts, dead_casts }`.
+>   The **dead-cast lint (RT07)** fires when a cast's pre-image is empty against
+>   the source category (the cast can never apply). Pinned by
+>   `prattail/tests/transducer_preimage_snapshot.rs`; proven in
+>   `formal/rocq/sft/theories/StftWiringSound.v`.
+> - **Bisimulation** (feature `oslf-bisimulation`): `bisimulation::analyze_from_bundle`
+>   builds one `Lts` over the grammar's categories-as-states, runs
+>   `Lts::bisimulation`, certifies the partition, and returns a
+>   `BisimulationAnalysis { non_bisimilar_pairs }` shaped identically to
+>   `alternating::AlternatingAnalysis` — superseding the behavioral-iso check
+>   (**N06-ISO**) with a partition-refinement decision. Pinned by
+>   `prattail/tests/bisimulation_agreement_snapshot.rs`; proven in
+>   `formal/rocq/advanced_automata/theories/BisimulationWiringSound.v`.
+>
+> Both are OFF BY DEFAULT and `.0`-inert when their feature is off; the default
+> build is byte-identical.
 
 ### Recursive Predicates (letprop)
 
@@ -6805,6 +6844,21 @@ effective Boolean algebra is a Boolean algebra with computable operations and a
 decidable satisfiability test. The `BooleanAlgebra` trait provides that
 algebraic foundation for the entire predicated types pipeline. (For how SFA
 intersection supports guard selectivity and overlap analysis, see §13.)
+
+> **Phase 1 implementation status (OSLF, 2026-06-22; feature
+> `any-algebra-carrier`).** A unified guard-predicate carrier, `AnyAlgebra`, is
+> compiled behind the off-by-default `any-algebra-carrier` feature as a
+> deliberately **`.0`-inert** route — it is **NOT live**. When the feature is
+> enabled, `symbolic::analyze_from_bundle` dispatches to
+> `analyze_from_bundle_carrier`, which lifts the existing
+> terminal/nonterminal-start/empty boolean into an `AnyPred` (`True`/`False`)
+> and decides it through `AnyAlgebra::is_satisfiable` over a scalar
+> `SortRegistry`, producing **byte-identical** `SymbolicAnalysis` on every
+> grammar — proven by `prattail/tests/guard_carrier_snapshot.rs`. The carrier
+> is the substrate the sibling OSLF phases build on (`sym-tree-structural`,
+> `oslf-bisimulation`, `oslf-letprop`, `oslf-hindley-milner` all imply it); the
+> live flip that would route real guard decisions through `AnyAlgebra` is future
+> work. OFF BY DEFAULT and inert; the default build is byte-for-byte unchanged.
 
 ### The BooleanAlgebra Trait
 
@@ -8039,7 +8093,7 @@ and alphabet Σ is a tuple M = (Q, Σ, δ, I, F) where:
 - The weight of an accepting run requires the `StarSemiring` extension
   (closure operation a* = 1 ⊕ a ⊕ a² ⊕ ⋯) to sum over infinite paths
 
-**Status:** Design-only (not yet implemented). Design doc:
+**Status:** Implemented (see disclaimer above); design doc retained for theory:
 [weighted-buchi.md](../../prattail/docs/design/weighted-buchi.md).
 
 **Pipeline role:** Feature gate `omega`. Cost 3. Would be activated by guards
@@ -8078,7 +8132,7 @@ over semiring W is a tuple M = (Q⊕, Q⊗, Σ, δ, I, F) where:
 - H-polynomial fixpoints (Kostolanyi & Misun 2018) enable evaluation of
   nested quantifier patterns without exponential blowup
 
-**Status:** Design-only (not yet implemented). Design doc:
+**Status:** Implemented (see disclaimer above); design doc retained for theory:
 [polynomial-awa.md](../../prattail/docs/design/polynomial-awa.md).
 
 **Pipeline role:** Feature gate `alternating`. Cost 3. Would be activated
@@ -8118,13 +8172,31 @@ M = (Q, Σ_c, Σ_r, Σ_int, Γ, δ, I, F) where:
   - δ_r ⊆ Q × Σ_r × Γ × Q × W (return: pop and match)
   - δ_int ⊆ Q × Σ_int × Q × W (internal: no stack change)
 
-**Status:** Design-only (not yet implemented). Design doc:
+**Status:** Implemented (see disclaimer above); design doc retained for theory:
 [weighted-vpa.md](../../prattail/docs/design/weighted-vpa.md).
 
 **Pipeline role:** Feature gate `vpa`. Cost 4. Would be activated by guards
 with nested quantifier scopes or parenthesized expressions.
 
 #### M5: Parity Alternating Tree Automata — Mu-Calculus
+
+> **Phase 5 implementation status (OSLF, 2026-06-22; commit `65c9cd78`,
+> feature `oslf-letprop`).** The `letprop` → modal-μ-calculus → PATA decision
+> machinery described below is **wired (feature-gated, off-by-default)**, not
+> merely planned. When `oslf-letprop` is enabled,
+> `parity_tree::analyze_recursive_predicates` walks the grammar's guard
+> predicates, lowers each recursive (fixpoint) predicate through
+> `letprop::letprop_to_pata` (the SHIPPED bridge's first real caller), and
+> decides non-emptiness via the Zielonka-aligned `parity_tree::check_emptiness`;
+> verdicts surface in `ParityTreeAnalysis::fixpoint_decisions`, and the `LP01`
+> lint fires when a recursive guard's PATA is EMPTY (the behavioral type can
+> never be satisfied). No surface syntax is added yet (a tracked follow-up in
+> `ast/`), so on every *current* grammar this path finds no recursive predicate
+> and is fully inert — the default build is byte-for-byte unchanged. The parity
+> arm of `prattail/tests/letprop_pata_snapshot.rs` proves the inert behavior;
+> the positive arm exercises the live decision over a synthetic
+> `RecursivePredicate`. Soundness is proven in
+> `formal/rocq/advanced_automata/theories/LetpropPataWiringSound.v`.
 
 **Motivation.** Recursive behavioral predicates defined via `letprop` create
 fixpoint definitions: `letprop safe(x) = base(x) ∨ (step(x) ∧ safe(child(x)))`.
@@ -9549,6 +9621,21 @@ representation for compile-time analysis and runtime codegen.
 4. Use `TypeSystemAlgebra<S>` for SFA-based dispatch analysis when multiple
    refinement types refine the same base type
 
+> **Phase 2 implementation status (OSLF, 2026-06-22; commit `bfe0cc0c`,
+> feature `sym-tree-structural`).** The structural refinement-type dispatch is
+> **wired (feature-gated, off-by-default)** through the `sym_tree` recognizer.
+> When `sym-tree-structural` is enabled, `pipeline::analysis::analyze_refinement_types`
+> routes structural disjointness / subtype through
+> `analyze_refinement_dispatch_structural`, deciding them precisely with a
+> `SymbolicTreeAutomaton<AnyAlgebra>` over the grammar's ranked alphabet instead
+> of the string heuristic (falling back to today's `Overlapping` on any
+> predicate-parse failure — never worse than the status quo). This populates
+> `RefinementAnalysisResult::empty_intersections` from the structurally-disjoint
+> pairs, so the previously-dead **RT03** lint (below) now fires. Presburger /
+> Mixed pairs stay on the existing heuristic, and runtime `match_pattern` codegen
+> is untouched (analysis only). OFF BY DEFAULT; the default build is byte-identical.
+> The recognizer agreement is pinned by `prattail/tests/sym_tree_structural_snapshot.rs`.
+
 ### Lints
 
 | Code | Severity | Description                                                          |
@@ -9612,6 +9699,22 @@ predicates incur O(k · |value|) with the user-specified bound `k`.
   (TATA).
 
 ### Future Feature: Hindley-Milner Type Inference
+
+> **Phase 6 implementation status (OSLF, 2026-06-22; commit `958deca6`,
+> feature `oslf-hindley-milner`).** A *base-sort-consistency* slice of HM is
+> already **wired (feature-gated, off-by-default)**: when `oslf-hindley-milner`
+> is enabled, `hindley_milner::analyze_from_bundle` builds each rule's principal
+> arrow type `HmType::Arrow(field_sort₁, …Arrow(field_sortₙ, result))` from its
+> `SyntaxItemSpec` fields and checks (via the existing `unify`/`apply`) that the
+> inferred result sort unifies with the rule's declared category, recording a
+> `sort_mismatch` iff unification fails; the **HM01** lint emits one note per
+> mismatch. It uses only `HmType::{Mono,Arrow}` — no `HmTerm`/`infer`/fresh type
+> variables — so on real grammars the inferred result sort always unifies and
+> the path is fully inert (the default build is byte-identical). Pinned by
+> `prattail/tests/hindley_inference_snapshot.rs`; proven in
+> `formal/rocq/advanced_automata/theories/HindleyMilnerWiringSound.v`. The FULL
+> principal-type inference (`HmTerm`/`infer`, let-polymorphism) sketched below
+> remains future work.
 
 The `TypeSystem` trait is designed to accommodate Hindley-Milner (HM) type
 inference as a pluggable implementation. HM is the standard type discipline

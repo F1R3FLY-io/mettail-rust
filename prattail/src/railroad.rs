@@ -23,10 +23,20 @@
 //! - Cold paths: blue (low frequency)
 //! - Dead paths: gray (never taken)
 //!
-//! ## Feature Gate
+//! ## Output Surfaces
 //!
-//! This module is available under the `railroad-diagrams` feature.
-//! The `railroad` crate is an optional dependency.
+//! This module is an author-facing developer-experience (DX) tool: it is
+//! compiled unconditionally but is NOT wired into the default parser pipeline,
+//! so the default build is byte-identical whether or not it is used.
+//!
+//! - **Text/ASCII** — `render_grammar_railroad_text` is *always* available and
+//!   needs no extra dependency. It folds [`generate_railroad_diagrams`] and
+//!   [`diagram_to_text`] into a per-category `BTreeMap<String, String>`. See
+//!   `prattail/examples/railroad.rs` for a runnable demo.
+//! - **SVG** — `render_grammar_railroad_svg` is gated behind the
+//!   `railroad-diagrams` Cargo feature (off by default). The SVG is emitted by
+//!   hand from the format-independent [`RailroadNode`] tree, so enabling the
+//!   feature pulls in NO new crate dependency.
 
 use std::collections::HashMap;
 
@@ -314,6 +324,187 @@ pub fn diagram_to_text(node: &RailroadNode) -> String {
         },
         RailroadNode::Empty => "──ε──".to_string(),
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Author-DX Rendering Entrypoints
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Render every category's grammar railroad diagram as ASCII text.
+///
+/// This is the always-on author-DX entrypoint: it folds
+/// [`generate_railroad_diagrams`] (one [`CategoryDiagram`] per category) and
+/// [`diagram_to_text`] into a deterministically-ordered map from category name
+/// to its rendered diagram. A `BTreeMap` is returned (rather than the internal
+/// `HashMap`) so the output order is stable across runs — convenient for
+/// golden-file snapshots and human review.
+///
+/// Needs no extra dependency and adds no caller to the parser pipeline, so the
+/// default build is unaffected.
+pub fn render_grammar_railroad_text(
+    spec: &LanguageSpec,
+) -> std::collections::BTreeMap<String, String> {
+    let diagrams = generate_railroad_diagrams(spec);
+    let mut rendered = std::collections::BTreeMap::new();
+    for (category, diagram) in diagrams {
+        rendered.insert(category, diagram_to_text(&diagram.root));
+    }
+    rendered
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SVG Rendering (feature-gated, dependency-free)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Render every category's grammar railroad diagram as a standalone SVG string.
+///
+/// Gated behind the `railroad-diagrams` Cargo feature. The SVG is emitted by
+/// hand from the format-independent [`RailroadNode`] tree, so enabling the
+/// feature pulls in NO new crate dependency. Like the text variant this returns
+/// a deterministically-ordered `BTreeMap` from category name to SVG document.
+///
+/// The layout is intentionally simple: each node renders to a horizontal run of
+/// labeled boxes (terminals as rounded rects, nonterminals as plain rects),
+/// with choices stacked vertically and repeats/optionals annotated. It is a
+/// review aid, not a typeset diagram.
+#[cfg(feature = "railroad-diagrams")]
+pub fn render_grammar_railroad_svg(
+    spec: &LanguageSpec,
+) -> std::collections::BTreeMap<String, String> {
+    let diagrams = generate_railroad_diagrams(spec);
+    let mut rendered = std::collections::BTreeMap::new();
+    for (category, diagram) in diagrams {
+        let svg = node_to_svg_document(&category, &diagram.root);
+        rendered.insert(category, svg);
+    }
+    rendered
+}
+
+/// Wrap a node's emitted SVG fragment in a minimal standalone `<svg>` document.
+#[cfg(feature = "railroad-diagrams")]
+fn node_to_svg_document(category: &str, node: &RailroadNode) -> String {
+    let mut cursor_x: u32 = 10;
+    let mut max_y: u32 = 60;
+    let body = node_to_svg_fragment(node, &mut cursor_x, 30, &mut max_y);
+    let width = cursor_x + 10;
+    let height = max_y + 20;
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" \
+         viewBox=\"0 0 {width} {height}\">\n  \
+         <title>{category}</title>\n  \
+         <rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"#ffffff\"/>\n\
+         {body}</svg>\n",
+        width = width,
+        height = height,
+        category = svg_escape(category),
+        body = body,
+    )
+}
+
+/// Emit an SVG fragment for one node, advancing `cursor_x` left-to-right and
+/// tracking the maximum vertical extent in `max_y`.
+#[cfg(feature = "railroad-diagrams")]
+fn node_to_svg_fragment(
+    node: &RailroadNode,
+    cursor_x: &mut u32,
+    y: u32,
+    max_y: &mut u32,
+) -> String {
+    match node {
+        RailroadNode::Terminal { text } => svg_box(text, cursor_x, y, max_y, true),
+        RailroadNode::NonTerminal { text } => svg_box(text, cursor_x, y, max_y, false),
+        RailroadNode::Empty => svg_box("ε", cursor_x, y, max_y, true),
+        RailroadNode::Sequence { children } => children
+            .iter()
+            .map(|child| node_to_svg_fragment(child, cursor_x, y, max_y))
+            .collect::<Vec<_>>()
+            .join(""),
+        RailroadNode::Choice { alternatives } => {
+            // Stack alternatives vertically; each starts at the same x and
+            // descends by a fixed row height. The cursor advances by the widest.
+            let start_x = *cursor_x;
+            let mut widest = start_x;
+            let mut out = String::new();
+            for (i, alt) in alternatives.iter().enumerate() {
+                let mut branch_x = start_x;
+                let branch_y = y + (i as u32) * 50;
+                out.push_str(&node_to_svg_fragment(alt, &mut branch_x, branch_y, max_y));
+                widest = widest.max(branch_x);
+            }
+            *cursor_x = widest;
+            out
+        },
+        RailroadNode::Optional { inner } => {
+            // Render the inner run, then annotate the bypass arc above it.
+            let start_x = *cursor_x;
+            let fragment = node_to_svg_fragment(inner, cursor_x, y, max_y);
+            format!(
+                "{fragment}  <path d=\"M{start} {arc_y} q {half} -18 {span} 0\" \
+                 fill=\"none\" stroke=\"#888888\"/>\n",
+                fragment = fragment,
+                start = start_x,
+                arc_y = y - 2,
+                half = (*cursor_x - start_x) / 2,
+                span = *cursor_x - start_x,
+            )
+        },
+        RailroadNode::Repeat { element, separator } => {
+            let start_x = *cursor_x;
+            let mut fragment = node_to_svg_fragment(element, cursor_x, y, max_y);
+            if let Some(sep) = separator {
+                fragment.push_str(&node_to_svg_fragment(sep, cursor_x, y, max_y));
+            }
+            format!(
+                "{fragment}  <path d=\"M{end} {arc_y} q -{half} 18 -{span} 0\" \
+                 fill=\"none\" stroke=\"#3366cc\"/>\n",
+                fragment = fragment,
+                end = *cursor_x,
+                arc_y = y + 22,
+                half = (*cursor_x - start_x) / 2,
+                span = *cursor_x - start_x,
+            )
+        },
+    }
+}
+
+/// Emit one labeled box (rounded rect for terminals, plain rect for
+/// nonterminals), advancing `cursor_x` by its width.
+#[cfg(feature = "railroad-diagrams")]
+fn svg_box(label: &str, cursor_x: &mut u32, y: u32, max_y: &mut u32, terminal: bool) -> String {
+    // Width heuristic: ~8px per glyph plus padding, clamped to a sane minimum.
+    let width = (label.chars().count() as u32 * 8 + 20).max(40);
+    let x = *cursor_x;
+    let (rx, fill) = if terminal {
+        (10u32, "#e8f0fe")
+    } else {
+        (0u32, "#f4f4f4")
+    };
+    *max_y = (*max_y).max(y + 30);
+    *cursor_x = x + width + 12;
+    format!(
+        "  <rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"24\" rx=\"{rx}\" \
+         fill=\"{fill}\" stroke=\"#333333\"/>\n  \
+         <text x=\"{tx}\" y=\"{ty}\" font-family=\"monospace\" font-size=\"12\" \
+         text-anchor=\"middle\">{label}</text>\n",
+        x = x,
+        y = y,
+        width = width,
+        rx = rx,
+        fill = fill,
+        tx = x + width / 2,
+        ty = y + 16,
+        label = svg_escape(label),
+    )
+}
+
+/// Escape the five XML metacharacters for safe inclusion in SVG text/titles.
+#[cfg(feature = "railroad-diagrams")]
+fn svg_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

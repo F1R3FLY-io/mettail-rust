@@ -7,7 +7,7 @@
 //! ## Module Structure
 //!
 //! - `properties/` — Property assertion functions (structural, semantic, algebraic)
-//! - `analytical/` — Analytical test drivers (confluence, termination, CEGAR)
+//! - `analytical/` — Analytical test drivers (confluence, termination)
 //! - `strategies` — Shared proptest strategy helpers
 //! - `alpha` — Alpha-equivalence assertion utilities
 //! - `program` — `ProgramTestSuite` builder for application-level testing
