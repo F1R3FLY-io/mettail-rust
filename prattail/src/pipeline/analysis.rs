@@ -331,7 +331,21 @@ pub(crate) fn run_math_analyses_parallel(
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::ParityTree) {
                 return None;
             }
-            Some(crate::parity_tree::analyze_from_bundle(all_syntax, categories))
+            // OSLF Phase 5 `.1`: route to the live recursive-predicate decision
+            // path (which lowers each `letprop` predicate through
+            // `letprop::letprop_to_pata` + `check_emptiness`). The dispatch gate
+            // above only fires on `has_recursive_predicate`, and no current
+            // grammar surface syntax produces one, so on real grammars this is
+            // unreachable and the analysis stays inert. The `#[cfg(not)]` arm is
+            // the original stub, byte-for-byte.
+            #[cfg(feature = "oslf-letprop")]
+            {
+                Some(crate::parity_tree::analyze_recursive_predicates(all_syntax, categories))
+            }
+            #[cfg(not(feature = "oslf-letprop"))]
+            {
+                Some(crate::parity_tree::analyze_from_bundle(all_syntax, categories))
+            }
         });
         let h_multi_tape = s.spawn(|| {
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::MultiTape) {
@@ -704,10 +718,21 @@ pub(crate) fn run_math_analyses_sequential(
         parity_tree_result: if eligible {
             (|| {
                 dispatch_gate!(ParityTree);
-                Some(crate::parity_tree::analyze_from_bundle(
-                    &bundle.all_syntax,
-                    &bundle.categories,
-                ))
+                // OSLF Phase 5 `.1`: same live routing as the parallel path.
+                #[cfg(feature = "oslf-letprop")]
+                {
+                    Some(crate::parity_tree::analyze_recursive_predicates(
+                        &bundle.all_syntax,
+                        &bundle.categories,
+                    ))
+                }
+                #[cfg(not(feature = "oslf-letprop"))]
+                {
+                    Some(crate::parity_tree::analyze_from_bundle(
+                        &bundle.all_syntax,
+                        &bundle.categories,
+                    ))
+                }
             })()
         } else {
             None

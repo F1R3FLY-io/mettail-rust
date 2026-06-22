@@ -7219,6 +7219,8 @@ mod predicated_types_lint_coverage {
             max_priority: 0,
             is_empty: true,
             priority_depth: 0,
+            #[cfg(feature = "oslf-letprop")]
+            fixpoint_decisions: Vec::new(),
         });
         let mut diags = Vec::new();
         lint_pt01_pata_emptiness_violation(&b.ctx(), &mut diags);
@@ -7234,6 +7236,8 @@ mod predicated_types_lint_coverage {
             max_priority: 2,
             is_empty: false,
             priority_depth: 2,
+            #[cfg(feature = "oslf-letprop")]
+            fixpoint_decisions: Vec::new(),
         });
         let mut diags = Vec::new();
         lint_pt01_pata_emptiness_violation(&b.ctx(), &mut diags);

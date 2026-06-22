@@ -115,6 +115,12 @@ define_diagnostic_ids! {
     // ── Literal (LT) ──
     LT01 => "LT01",
 
+    // ── LetProp behavioral type (LP) — OSLF Phase 5 `.1` ──
+    // LP01: a `letprop` recursive guard's PATA is empty (the behavioral type can
+    // never be satisfied — dead). Emitted only when `oslf-letprop` is on; the
+    // variant is always defined so the ID table stays total.
+    LP01 => "LP01",
+
     // ── Morphism (M) ──
     M01 => "M01", M02 => "M02",
 

@@ -7191,6 +7191,54 @@ pub(crate) fn lint_rt07_dead_cast(ctx: &LintContext, diagnostics: &mut Vec<LintD
     }
 }
 
+/// LP01: Surface OSLF Phase 5 `.1` dead behavioral types as RT-notes.
+///
+/// A `letprop` recursive behavioral predicate whose Parity Alternating Tree
+/// Automaton (PATA) is EMPTY can never be satisfied by any AST — the behavioral
+/// type is dead. [`analyze_recursive_predicates`](crate::parity_tree::analyze_recursive_predicates)
+/// records each predicate's satisfiability (PATA non-emptiness) verdict in
+/// [`ParityTreeAnalysis::fixpoint_decisions`](crate::parity_tree::ParityTreeAnalysis);
+/// this lint emits one informational note per `false` (unsatisfiable) verdict.
+/// Mirrors the RT07 transducer dead-cast surfacing pattern exactly.
+///
+/// On every current grammar `fixpoint_decisions` is EMPTY (no surface syntax
+/// produces a `letprop` recursive predicate yet — a tracked follow-up touching
+/// `ast/`), so this lint is inert and fires nothing.
+///
+/// Severity: Note (informational — the behavioral type is dead code).
+#[cfg(feature = "oslf-letprop")]
+pub(crate) fn lint_lp01_dead_behavioral_type(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    let result = match ctx.parity_tree_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (name, satisfiable) in &result.fixpoint_decisions {
+        if !satisfiable {
+            diagnostics.push(LintDiagnostic {
+                id: DiagnosticId::LP01,
+                name: "dead-behavioral-type",
+                severity: LintSeverity::Note,
+                category: None,
+                rule: Some(name.clone()),
+                message: format!(
+                    "RT-note: recursive behavioral type `{name}` is unsatisfiable \
+                     (its parity tree automaton is empty — no AST can match it)"
+                ),
+                hint: Some(
+                    "the letprop fixpoint has no inhabiting AST; remove the predicate or \
+                     add a reachable base case to its recursion"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CEK Machine Lints
 // ══════════════════════════════════════════════════════════════════════════════

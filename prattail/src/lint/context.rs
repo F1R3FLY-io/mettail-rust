@@ -459,6 +459,9 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_pt01_pata_emptiness_violation(ctx, &mut diagnostics);
         lint_pt02_pata_subsumption(ctx, &mut diagnostics);
         lint_pt03_pata_high_priority(ctx, &mut diagnostics);
+        // OSLF Phase 5 `.1`: dead behavioral type RT-notes (feature-gated).
+        #[cfg(feature = "oslf-letprop")]
+        lint_lp01_dead_behavioral_type(ctx, &mut diagnostics);
     }
 
     // Register automata

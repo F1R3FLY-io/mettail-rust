@@ -26,3 +26,11 @@ theories/TwoWayCrossingSequence.v
 # RegisterEquivalence.v (reuses its is_bisimulation / bisimilar) — a certified
 # partition relates only bisimilar states, so N06-ISO category dedup is sound.
 theories/BisimulationWiringSound.v
+# OSLF substrate Phase 5: letprop μ/ν→PATA dead-behavioral-type decision
+# soundness. Depends on PataEmptiness.v (reuses zielonka termination +
+# empty-game correctness) — the dead-type lint's empty verdict is sound.
+theories/LetpropPataWiringSound.v
+# OSLF substrate Phase 5: temporal trace-LTL adaptor soundness (the per-step
+# normal-form derivation in `trace_to_ltl_steps`). Self-contained; the LTL
+# decision itself rests on BuchiWpdsProduct.v.
+theories/TraceLtlCheckSound.v

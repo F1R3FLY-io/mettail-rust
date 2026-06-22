@@ -387,6 +387,21 @@ pub struct ParityTreeAnalysis {
     pub is_empty: bool,
     /// Nesting depth of fixpoints (number of distinct priority levels).
     pub priority_depth: u32,
+    /// OSLF Phase 5 `.1`: per-recursive-predicate emptiness verdicts.
+    ///
+    /// Each entry is `(predicate_name, is_satisfiable)` where `is_satisfiable`
+    /// is the NON-emptiness of the predicate's PATA — i.e. `true` iff some AST
+    /// can satisfy the recursive behavioral type. Computed by
+    /// [`analyze_recursive_predicates`] via [`decide_recursive_predicate`] (which
+    /// lowers through [`crate::letprop::letprop_to_pata`] and decides with
+    /// [`check_emptiness`]). EMPTY on every current grammar because no surface
+    /// syntax yet produces a `letprop` recursive predicate (that is a tracked
+    /// follow-up touching `ast/`), so the live path is parity-safe and inert; the
+    /// `LP01` dead-behavioral-type lint consumes the `false` entries. Only present
+    /// under the `oslf-letprop` feature; absent (and the struct byte-identical) in
+    /// the default build.
+    #[cfg(feature = "oslf-letprop")]
+    pub fixpoint_decisions: Vec<(String, bool)>,
 }
 
 /// Analyze grammar tree structure using parity tree automata.
@@ -403,7 +418,116 @@ pub fn analyze_from_bundle(
         max_priority: if categories.is_empty() { 0 } else { 1 },
         is_empty: all_syntax.is_empty(),
         priority_depth: 1,
+        #[cfg(feature = "oslf-letprop")]
+        fixpoint_decisions: Vec::new(),
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OSLF Phase 5 `.1`: live recursive-predicate decision path
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Decide whether a `letprop` recursive behavioral predicate is *satisfiable*
+/// (its PATA is NON-empty).
+///
+/// This is the first live caller of [`crate::letprop::letprop_to_pata`]: the
+/// predicate is lowered to a modal-μ-calculus formula (μ for least / ν for
+/// greatest fixpoint, by [`crate::letprop::analyze_polarity`]), compiled to a
+/// Parity Alternating Tree Automaton over the recognized arity, then decided by
+/// the Zielonka-aligned [`check_emptiness`] (Rocq-aligned to `PataEmptiness.v`).
+///
+/// Returns `true` iff `L(PATA) ≠ ∅` — i.e. some finite AST can satisfy the
+/// recursive type. A lowering failure (mixed polarity, argument mismatch, a
+/// non-recursive body, or an ill-scoped μ-formula) is treated as `false`: an
+/// undecidable / malformed predicate has no witnessed inhabitant, which the
+/// `LP01` lint surfaces as a dead behavioral type rather than crashing the
+/// build.
+///
+/// `max_arity` for the tree alphabet is derived from the predicate's parameter
+/// count (each parameter contributes at most one child direction in the lowered
+/// formula); a parameterless predicate still needs arity ≥ 1 so leaf
+/// transitions are representable.
+#[cfg(feature = "oslf-letprop")]
+pub fn decide_recursive_predicate(rp: &crate::letprop::RecursivePredicate) -> bool {
+    let max_arity = rp.params.len().max(1);
+    match crate::letprop::letprop_to_pata(rp, max_arity) {
+        Ok(pata) => !check_emptiness(&pata),
+        // A predicate that cannot be lowered has no decided inhabitant; report it
+        // as unsatisfiable so LP01 flags it instead of panicking the pipeline.
+        Err(_) => false,
+    }
+}
+
+/// OSLF Phase 5 `.1`: richer parity-tree analysis that decides every recursive
+/// (`letprop`-style) behavioral predicate reachable from the grammar's guards.
+///
+/// Extends the stub [`analyze_from_bundle`] result with a per-predicate
+/// satisfiability verdict in [`ParityTreeAnalysis::fixpoint_decisions`]. The set
+/// of recursive predicates is gathered by [`collect_recursive_predicates`], which
+/// walks the grammar's guard predicates; **no current grammar surface syntax
+/// produces a `letprop` recursive predicate** (that is a tracked follow-up that
+/// touches `ast/`), so on every present grammar this returns an EMPTY
+/// `fixpoint_decisions` and is byte-equivalent (modulo the new empty field) to
+/// the stub — the live path is parity-safe and inert. When a recursive predicate
+/// *is* present (exercised today by the synthetic positive case in
+/// `prattail/tests/letprop_pata_snapshot.rs`), each is decided via
+/// [`decide_recursive_predicate`].
+#[cfg(feature = "oslf-letprop")]
+pub fn analyze_recursive_predicates(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> ParityTreeAnalysis {
+    let mut analysis = analyze_from_bundle(all_syntax, categories);
+
+    let recursive = collect_recursive_predicates(all_syntax, categories);
+    let mut decisions: Vec<(String, bool)> = Vec::with_capacity(recursive.len());
+    for rp in &recursive {
+        let satisfiable = decide_recursive_predicate(rp);
+        decisions.push((rp.name.clone(), satisfiable));
+    }
+
+    // Surface the richest PATA shape we actually built. When at least one
+    // recursive predicate was decided, recompute the headline (num_states /
+    // max_priority / is_empty / priority_depth) from the *first* predicate's
+    // automaton so the existing PT01–PT03 lints reflect a real PATA rather than
+    // the category-count stub. With no recursive predicates the stub is kept
+    // verbatim (inert).
+    if let Some(first) = recursive.first() {
+        let max_arity = first.params.len().max(1);
+        if let Ok(pata) = crate::letprop::letprop_to_pata(first, max_arity) {
+            analysis.num_states = pata.num_states();
+            analysis.max_priority = pata.max_priority();
+            analysis.priority_depth = pata.priority_depth();
+            analysis.is_empty = check_emptiness(&pata);
+        }
+    }
+
+    analysis.fixpoint_decisions = decisions;
+    analysis
+}
+
+/// Gather every `letprop` recursive predicate reachable from the grammar's guard
+/// predicates.
+///
+/// This is the seam to the (tracked, not-yet-built) surface syntax: once a
+/// `letprop` declaration lowers into the grammar IR's guard predicates, this
+/// function will return one [`crate::letprop::RecursivePredicate`] per recursive
+/// guard. Today there is **no** such surface syntax, and the parser bundle
+/// (`all_syntax` + `categories`) carries no recursive-predicate payload, so this
+/// always returns an empty vector — the live decision path stays inert on every
+/// present grammar. It is written as a total walk (rather than `unimplemented!`)
+/// so the analysis is a no-op, never a panic, when the feature is enabled on a
+/// real grammar.
+#[cfg(feature = "oslf-letprop")]
+fn collect_recursive_predicates(
+    _all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    _categories: &[crate::pipeline::CategoryInfo],
+) -> Vec<crate::letprop::RecursivePredicate> {
+    // No surface syntax yet lowers a `letprop` into the parser bundle; the
+    // recursive-predicate payload does not exist on `SyntaxItemSpec` /
+    // `CategoryInfo`. Returning an empty set keeps the live path parity-safe
+    // and inert until the tracked `ast/` follow-up wires the surface form.
+    Vec::new()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1152,6 +1276,10 @@ pub fn analyze(automaton: &ParityAlternatingTreeAutomaton<BooleanWeight>) -> Par
         max_priority: automaton.max_priority(),
         is_empty: check_emptiness(automaton),
         priority_depth: automaton.priority_depth(),
+        // OSLF Phase 5 `.1`: this summary path has no recursive-predicate
+        // context, so there are no per-fixpoint verdicts to report.
+        #[cfg(feature = "oslf-letprop")]
+        fixpoint_decisions: Vec::new(),
     }
 }
 
