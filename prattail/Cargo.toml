@@ -38,6 +38,19 @@ hang-dump = ["dep:signal-hook", "dep:parking_lot"]
 ## Use: `cargo test --features mettail-prattail/walker-stats ... \
 ##       -- --nocapture` with `PRATTAIL_WALKER_STATS=1` env var.
 walker-stats = []
+## OSLF substrate, Phase 1 `.0`-inert (2026-06-22): the M0→M1 *carrier route*
+## that wires `any_algebra::AnyAlgebra` as the unified guard-predicate carrier
+## for `symbolic::analyze_from_bundle`. OFF BY DEFAULT and **inert**: when
+## enabled, `analyze_from_bundle` dispatches to `analyze_from_bundle_carrier`,
+## which derives `guard_satisfiability` by lifting the existing
+## terminal/nonterminal-start/empty boolean into an `AnyPred` (`True`/`False`)
+## and deciding it through `AnyAlgebra::is_satisfiable` over a scalar
+## `SortRegistry` — producing **byte-identical** `SymbolicAnalysis` on every
+## grammar (proven by `prattail/tests/guard_carrier_snapshot.rs`). The live
+## flip (`.1`) is a later step. The carrier needs the real `NativeKind`
+## classification, so it pulls in `mettail-ast` as an optional dependency
+## (gated below); the default build is byte-for-byte unchanged.
+any-algebra-carrier = ["dep:mettail-ast"]
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []
@@ -87,6 +100,13 @@ parking_lot = { version = "0.12", optional = true }
 # LexicographicWeight) lives in rigail; this crate re-exports it via
 # the automata::{semiring,lex_weight} facades.
 rigail = { path = "../rigail" }
+# OSLF substrate `.0`-inert carrier route only (feature `any-algebra-carrier`,
+# off by default). Provides the real `NativeKind` classification that
+# `any_algebra::sort_of_native` / `sort_of_category` reuse, so the carrier
+# resolves a category's scalar `Sort` exactly as the parser does. `ast` does
+# not depend on prattail (verified: no cycle). The default build never pulls
+# this in.
+mettail-ast = { package = "ast", path = "../ast", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

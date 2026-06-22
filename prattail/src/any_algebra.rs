@@ -782,6 +782,96 @@ impl SortRegistry {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// SortedGuard — a guard predicate tagged with the sort it constrains
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A guard predicate paired with the [`Sort`] of the value it constrains.
+///
+/// This is the OSLF carrier's unit of currency: instead of carrying a guard as
+/// an untyped [`AnyPred`] (whose `leaf_sort` may be `None` for boolean
+/// combinations), a `SortedGuard` records the *owning* sort explicitly so a
+/// consumer can resolve the deciding algebra from a [`SortRegistry`] without
+/// re-deriving it from the predicate shape. The `.0`-inert wiring produces
+/// these but does not yet route live consumers through them (that is `.1`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SortedGuard {
+    /// The sort the value being guarded ranges over.
+    pub sort: Sort,
+    /// The predicate constraining that value.
+    pub pred: AnyPred,
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NativeKind → Sort  (OSLF carrier route; feature `any-algebra-carrier` only)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Map the parser's native-type classification ([`mettail_ast::language::NativeKind`])
+/// to the carrier [`Sort`] that decides it.
+///
+/// Every bounded-integer width collapses to [`Sort::Int`] (the bounded
+/// [`IntervalAlgebra`] universe); `Bool → Bool`, `Str → Str`,
+/// `Float32/Float64 → Float`, `CanonicalBigInt → BigInt`,
+/// `CanonicalBigRat → BigRat`, `CanonicalFixedPoint → Fixed`. `Other` (custom
+/// wrappers, collection containers, user ADTs) has no scalar sort and returns
+/// `None` — such a category is decided structurally, not by a scalar leaf.
+///
+/// This reuses the *real* `NativeKind` variants (it does not re-classify a
+/// string), so the carrier's scalar resolution tracks the parser's
+/// `NativeKind::from_syn_type` exactly. Gated behind `any-algebra-carrier`
+/// because it is the only thing in this module that needs the `mettail-ast`
+/// dependency; the default build never compiles it.
+#[cfg(feature = "any-algebra-carrier")]
+pub fn sort_of_native(kind: mettail_ast::language::NativeKind) -> Option<Sort> {
+    use mettail_ast::language::NativeKind;
+    match kind {
+        NativeKind::Int8
+        | NativeKind::Int16
+        | NativeKind::Int32
+        | NativeKind::Int64
+        | NativeKind::Int128
+        | NativeKind::Isize
+        | NativeKind::UInt8
+        | NativeKind::UInt16
+        | NativeKind::UInt32
+        | NativeKind::UInt64
+        | NativeKind::UInt128
+        | NativeKind::Usize => Some(Sort::Int),
+        NativeKind::Bool => Some(Sort::Bool),
+        NativeKind::Str => Some(Sort::Str),
+        NativeKind::Float32 | NativeKind::Float64 => Some(Sort::Float),
+        NativeKind::CanonicalBigInt => Some(Sort::BigInt),
+        NativeKind::CanonicalBigRat => Some(Sort::BigRat),
+        NativeKind::CanonicalFixedPoint => Some(Sort::Fixed),
+        NativeKind::Other => None,
+    }
+}
+
+/// Resolve a parser [`CategoryInfo`](crate::pipeline::CategoryInfo)'s scalar
+/// [`Sort`], if it has one.
+///
+/// `ci.native_type` is the *full path string* the bridge stores
+/// (`native_type_to_full_string` — e.g. `"i32"`, `"mettail_runtime::CanonicalBigRat"`,
+/// `"Vec < Proc >"`). This parses it back into a [`syn::Type`] and classifies
+/// it with the **same** `NativeKind::from_syn_type` the parser uses (which keys
+/// off the last path segment), then maps through [`sort_of_native`]. A category
+/// with no `native_type`, an unparseable type, or an `Other` kind has no scalar
+/// sort and returns `None`.
+///
+/// Gated behind `any-algebra-carrier` (needs `mettail-ast`); the default build
+/// never compiles it.
+#[cfg(feature = "any-algebra-carrier")]
+pub fn sort_of_category(ci: &crate::pipeline::CategoryInfo) -> Option<Sort> {
+    let type_str = ci.native_type.as_deref()?;
+    // Mirror the parser: classify by the last path segment via the real
+    // `NativeKind::from_syn_type`. `native_type_to_full_string` collapses
+    // `::` spacing but otherwise yields a parseable type; if a future bridge
+    // ever stored an unparseable string the category is treated as non-scalar.
+    let ty: syn::Type = syn::parse_str(type_str).ok()?;
+    let kind = mettail_ast::language::NativeKind::from_syn_type(&ty);
+    sort_of_native(kind)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,6 +894,259 @@ mod tests {
         assert_eq!(bare.is_satisfiable(&p), any.is_satisfiable(&wrapped));
         assert!(any.evaluate(&wrapped, &AnyDomain::Int(15)));
         assert!(!any.evaluate(&wrapped, &AnyDomain::Int(25)));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Wrapper faithfulness (M0 invariant) — property tests
+    //
+    // The carrier invariant `AnyAlgebra::<Sort>(leaf) ≡ leaf`: for every scalar
+    // sort, the wrapped algebra decides the wrapped predicate exactly as the
+    // bare leaf decides the bare predicate, on `is_satisfiable`, `witness`
+    // (Some/None agreement + the carried witness genuinely satisfies the
+    // wrapped predicate through the carrier), and `evaluate` (agreement on a
+    // freely-chosen domain element). These three are the Rust counterpart of
+    // the Coq `AnyAlgebraProjectionSound.v` wrapper-faithfulness theorem.
+    //
+    // Predicate / domain generators mirror the shapes the existing per-leaf
+    // suites (Interval / CharClass / KAT / String / OrderedField) exercise.
+    // ══════════════════════════════════════════════════════════════════════
+
+    use num_rational::BigRational;
+    use proptest::prelude::*;
+
+    use crate::ordered_field::{OrderedF64, OrderedFieldPred};
+
+    /// Assert the three faithfulness facts for one (bare algebra, wrapped
+    /// algebra, bare pred, wrap-pred, wrap-domain) tuple at a single element.
+    fn assert_faithful<L>(
+        bare: &L,
+        any: &AnyAlgebra,
+        p: &L::Predicate,
+        wrap_pred: impl Fn(&L::Predicate) -> AnyPred,
+        wrap_dom: impl Fn(L::Domain) -> AnyDomain,
+        elem: L::Domain,
+    ) -> Result<(), proptest::test_runner::TestCaseError>
+    where
+        L: BooleanAlgebra,
+    {
+        let wrapped = wrap_pred(p);
+        // (1) SAT agreement.
+        prop_assert_eq!(bare.is_satisfiable(p), any.is_satisfiable(&wrapped));
+        // (2) WITNESS Some/None agreement + carried witness validity.
+        let bare_w = bare.witness(p);
+        let any_w = any.witness(&wrapped);
+        prop_assert_eq!(bare_w.is_some(), any_w.is_some());
+        if let Some(d) = any_w {
+            // The carrier's own witness must satisfy the wrapped predicate
+            // through the carrier (closes the loop without comparing the raw
+            // domain elements, which the leaf is free to choose differently).
+            prop_assert!(any.evaluate(&wrapped, &d));
+        }
+        // (3) EVALUATE agreement on a freely-chosen element.
+        prop_assert_eq!(
+            bare.evaluate(p, &elem),
+            any.evaluate(&wrapped, &wrap_dom(elem))
+        );
+        Ok(())
+    }
+
+    // ── Int (IntervalAlgebra over [0,100)) ──────────────────────────────────
+    prop_compose! {
+        fn arb_interval_pred()(
+            choice in 0u8..6,
+            a in 0i64..100, b in 0i64..100,
+        ) -> IntervalPred {
+            let (lo, hi) = (a.min(b), a.max(b) + 1);
+            match choice {
+                0 => IntervalPred::True,
+                1 => IntervalPred::False,
+                2 => IntervalPred::Range(lo, hi),
+                3 => IntervalPred::Union(vec![(lo, hi)]),
+                4 => IntervalPred::Not(Box::new(IntervalPred::Range(lo, hi))),
+                _ => IntervalPred::Range(a, a + 1),
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_int(p in arb_interval_pred(), e in 0i64..100) {
+            let bare = IntervalAlgebra::new(0, 100);
+            let any = AnyAlgebra::Int(IntervalAlgebra::new(0, 100));
+            assert_faithful(&bare, &any, &p, |q| AnyPred::Int(q.clone()), AnyDomain::Int, e)?;
+        }
+    }
+
+    // ── Char (CharClassAlgebra) ─────────────────────────────────────────────
+    prop_compose! {
+        fn arb_charclass_pred()(
+            choice in 0u8..5,
+            a in 0u32..128, b in 0u32..128,
+        ) -> CharClassPred {
+            let ca = char::from_u32(a).unwrap_or('a');
+            let cb = char::from_u32(b).unwrap_or('z');
+            let (lo, hi) = if ca <= cb { (ca, cb) } else { (cb, ca) };
+            match choice {
+                0 => CharClassPred::True,
+                1 => CharClassPred::False,
+                2 => CharClassPred::Range(lo, hi),
+                3 => CharClassPred::Union(vec![(lo, hi)]),
+                _ => CharClassPred::Not(Box::new(CharClassPred::Range(lo, hi))),
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_char(p in arb_charclass_pred(), e in 0u32..128) {
+            let bare = CharClassAlgebra::new();
+            let any = AnyAlgebra::Char(CharClassAlgebra::new());
+            let ce = char::from_u32(e).unwrap_or('a');
+            assert_faithful(&bare, &any, &p, |q| AnyPred::Char(q.clone()), AnyDomain::Char, ce)?;
+        }
+    }
+
+    // ── Bool (KatBooleanAlgebra over atoms {p,q}) ───────────────────────────
+    fn arb_boolean_test() -> impl Strategy<Value = BooleanTest> {
+        let leaf = prop_oneof![
+            Just(BooleanTest::True),
+            Just(BooleanTest::False),
+            Just(BooleanTest::Atom("p".to_string())),
+            Just(BooleanTest::Atom("q".to_string())),
+        ];
+        leaf.prop_recursive(3, 8, 2, |inner| {
+            prop_oneof![
+                inner.clone().prop_map(|t| BooleanTest::not(t)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| BooleanTest::and(a, b)),
+                (inner.clone(), inner).prop_map(|(a, b)| BooleanTest::or(a, b)),
+            ]
+        })
+    }
+
+    prop_compose! {
+        fn arb_bool_valuation()(p in any::<bool>(), q in any::<bool>()) -> HashMap<String, bool> {
+            let mut m = HashMap::new();
+            m.insert("p".to_string(), p);
+            m.insert("q".to_string(), q);
+            m
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_bool(p in arb_boolean_test(), v in arb_bool_valuation()) {
+            let atoms = vec!["p".to_string(), "q".to_string()];
+            let bare = KatBooleanAlgebra::new(atoms.clone());
+            let any = AnyAlgebra::Bool(KatBooleanAlgebra::new(atoms));
+            assert_faithful(&bare, &any, &p, |q| AnyPred::Bool(q.clone()), AnyDomain::Bool, v)?;
+        }
+    }
+
+    // ── BigInt (OrderedFieldAlgebra<BigInt>) ────────────────────────────────
+    prop_compose! {
+        fn arb_bigint_pred()(choice in 0u8..6, a in -50i64..50, b in -50i64..50) -> OrderedFieldPred<BigInt> {
+            let (lo, hi) = (a.min(b), a.max(b));
+            match choice {
+                0 => OrderedFieldPred::top(),
+                1 => OrderedFieldPred::bottom(),
+                2 => OrderedFieldPred::closed(bi(lo), bi(hi)),
+                3 => OrderedFieldPred::at_least(bi(lo)),
+                4 => OrderedFieldPred::at_most(bi(hi)),
+                _ => OrderedFieldPred::point(bi(a)),
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_bigint(p in arb_bigint_pred(), e in -50i64..50) {
+            let bare = OrderedFieldAlgebra::<BigInt>::new();
+            let any = AnyAlgebra::BigInt(OrderedFieldAlgebra::<BigInt>::new());
+            assert_faithful(&bare, &any, &p, |q| AnyPred::BigInt(q.clone()), AnyDomain::BigInt, bi(e))?;
+        }
+    }
+
+    // ── BigRat / Fixed (OrderedFieldAlgebra<BigRational>) ────────────────────
+    prop_compose! {
+        fn arb_rational_pred()(choice in 0u8..6, a in -20i64..20, b in -20i64..20) -> OrderedFieldPred<BigRational> {
+            let ra = BigRational::from(bi(a.min(b)));
+            let rb = BigRational::from(bi(a.max(b)));
+            match choice {
+                0 => OrderedFieldPred::top(),
+                1 => OrderedFieldPred::bottom(),
+                2 => OrderedFieldPred::closed(ra.clone(), rb),
+                3 => OrderedFieldPred::at_least(ra),
+                4 => OrderedFieldPred::at_most(rb),
+                _ => OrderedFieldPred::point(BigRational::from(bi(a))),
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_bigrat(p in arb_rational_pred(), e in -20i64..20) {
+            let bare = OrderedFieldAlgebra::<BigRational>::new();
+            let any = AnyAlgebra::BigRat(OrderedFieldAlgebra::<BigRational>::new());
+            let re = BigRational::from(bi(e));
+            assert_faithful(&bare, &any, &p, |q| AnyPred::BigRat(q.clone()), AnyDomain::BigRat, re)?;
+        }
+
+        #[test]
+        fn faithful_fixed(p in arb_rational_pred(), e in -20i64..20) {
+            let bare = OrderedFieldAlgebra::<BigRational>::new();
+            let any = AnyAlgebra::Fixed(OrderedFieldAlgebra::<BigRational>::new());
+            let re = BigRational::from(bi(e));
+            assert_faithful(&bare, &any, &p, |q| AnyPred::Fixed(q.clone()), AnyDomain::Fixed, re)?;
+        }
+    }
+
+    // ── Float (OrderedFieldAlgebra<OrderedF64>) ─────────────────────────────
+    prop_compose! {
+        fn arb_float_pred()(choice in 0u8..6, a in -100i64..100, b in -100i64..100) -> OrderedFieldPred<OrderedF64> {
+            let fa = OrderedF64((a.min(b)) as f64);
+            let fb = OrderedF64((a.max(b)) as f64);
+            match choice {
+                0 => OrderedFieldPred::top(),
+                1 => OrderedFieldPred::bottom(),
+                2 => OrderedFieldPred::closed(fa, fb),
+                3 => OrderedFieldPred::at_least(fa),
+                4 => OrderedFieldPred::at_most(fb),
+                _ => OrderedFieldPred::point(OrderedF64(a as f64)),
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_float(p in arb_float_pred(), e in -100i64..100) {
+            let bare = OrderedFieldAlgebra::<OrderedF64>::new();
+            let any = AnyAlgebra::Float(OrderedFieldAlgebra::<OrderedF64>::new());
+            let fe = OrderedF64(e as f64);
+            assert_faithful(&bare, &any, &p, |q| AnyPred::Float(q.clone()), AnyDomain::Float, fe)?;
+        }
+    }
+
+    // ── Str (StringAlgebra) ─────────────────────────────────────────────────
+    prop_compose! {
+        fn arb_str_pred()(choice in 0u8..6, s in "[ab]{0,3}", lo in 0usize..3, extra in 0usize..3) -> StrPred {
+            match choice {
+                0 => StrPred::Empty,
+                1 => StrPred::Epsilon,
+                2 => StrPred::Literal(s),
+                3 => StrPred::Length(lo, Some(lo + extra)),
+                4 => StrPred::any(),
+                _ => StrPred::char_range('a', 'b'),
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn faithful_str(p in arb_str_pred(), e in "[ab]{0,4}") {
+            let bare = StringAlgebra::new();
+            let any = AnyAlgebra::Str(StringAlgebra::new());
+            assert_faithful(&bare, &any, &p, |q| AnyPred::Str(q.clone()), AnyDomain::Str, e)?;
+        }
     }
 
     #[test]

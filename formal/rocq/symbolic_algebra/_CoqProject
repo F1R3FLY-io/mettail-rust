@@ -17,3 +17,8 @@ theories/TheoryCombination.v
 theories/HeytingAlgebra.v
 theories/GuardTierCertificate.v
 theories/BehavioralNegation.v
+# OSLF substrate Phase 1 `.0`-inert: AnyAlgebra carrier projection soundness
+# (fold_pred ⊥-projection + scalar-wrapper faithfulness). Depends on
+# EffectiveBooleanAlgebra + Product/Sum closure (for the combinator-layer
+# re-export).
+theories/AnyAlgebraProjectionSound.v

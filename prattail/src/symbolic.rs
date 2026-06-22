@@ -1807,6 +1807,29 @@ pub fn analyze_from_bundle(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],
 ) -> SymbolicAnalysis {
+    // OSLF substrate Phase 1 `.0`-inert: under `any-algebra-carrier`, route the
+    // guard analysis through the `AnyAlgebra` carrier. The carrier is proven
+    // byte-identical (see `analyze_from_bundle_carrier` and
+    // `prattail/tests/guard_carrier_snapshot.rs`), so the call site
+    // (`pipeline/analysis.rs`) is untouched. The live flip is `.1`.
+    #[cfg(feature = "any-algebra-carrier")]
+    {
+        return analyze_from_bundle_carrier(all_syntax, categories);
+    }
+    #[cfg(not(feature = "any-algebra-carrier"))]
+    {
+        analyze_from_bundle_string_set(all_syntax, categories)
+    }
+}
+
+/// The historical string-set guard analysis (the `.0` path's reference
+/// implementation). Computes guard satisfiability purely from leading-terminal
+/// sets and the first-item shape — no algebra. Kept as a named function so the
+/// carrier path can be A/B-compared against it byte-for-byte in tests.
+pub fn analyze_from_bundle_string_set(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> SymbolicAnalysis {
     let num_states = categories.len().max(1);
     let num_transitions = all_syntax.len();
 
@@ -1894,6 +1917,199 @@ pub fn analyze_from_bundle(
         overlapping_guards,
         subsumed_guards,
         unsatisfiable_rule_labels,
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OSLF carrier route — AnyAlgebra-backed guard analysis (`.0`-inert)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// `AnyAlgebra`-carrier guard analysis, **byte-identical** to
+/// [`analyze_from_bundle_string_set`].
+///
+/// The only difference is *how* `guard_satisfiability` is decided: instead of
+/// reading the per-rule boolean
+/// (`has_terminal || has_nonterminal_start || is_empty_rule`) directly, this
+/// **lifts** that boolean into an [`AnyPred`](crate::any_algebra::AnyPred)
+/// (`True` when the boolean holds, `False` otherwise), then decides it through
+/// [`AnyAlgebra::is_satisfiable`](crate::symbolic::BooleanAlgebra::is_satisfiable)
+/// over a fixed scalar carrier. By the effective-Boolean-algebra laws
+/// (`is_satisfiable(True) = true`, `is_satisfiable(False) = false`, formalized
+/// in `formal/rocq/symbolic_algebra/theories/AnyAlgebraProjectionSound.v`), the
+/// lifted decision equals the original boolean for *every* algebra in the
+/// registry — so the four output vectors, `num_states`, and `num_transitions`
+/// are identical to the string-set path on every grammar. The carrier merely
+/// makes the predicate *typed* (the substrate `.1` needs); the disposition is
+/// unchanged.
+///
+/// `overlapping_guards`, `subsumed_guards`, `unsatisfiable_rule_labels`, and
+/// the counts are computed by exactly the string-set logic (they are not a
+/// function of the carrier at `.0`).
+pub fn analyze_from_bundle_carrier(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> SymbolicAnalysis {
+    use crate::any_algebra::{AnyAlgebra, AnyPred, SortRegistry};
+
+    let num_states = categories.len().max(1);
+    let num_transitions = all_syntax.len();
+
+    // Same per-rule leading-terminal sets as the string-set path.
+    let mut rule_guards: Vec<(String, String, HashSet<String>)> =
+        Vec::with_capacity(all_syntax.len());
+    for (label, cat, items) in all_syntax {
+        let qualified = format!("{}::{}", cat, label);
+        let mut leading_terminals = HashSet::new();
+        if let Some(first_item) = items.first() {
+            collect_leading_terminals(first_item, &mut leading_terminals);
+        }
+        rule_guards.push((qualified, cat.clone(), leading_terminals));
+    }
+
+    // The carrier: a single scalar registry, built once. The decision a guard's
+    // lifted `AnyPred` receives is invariant across the registry's algebras
+    // (True ↦ true, False ↦ false), so any active scalar sort decides it
+    // identically; we use the `Bool` (KAT) leaf as the canonical decider. The
+    // empty `bool_atoms` list is sufficient — `True`/`False` need no atoms.
+    let registry = SortRegistry::scalars(i64::MIN / 2, i64::MAX / 2, Vec::new());
+    let decider: &AnyAlgebra = registry
+        .get(crate::any_algebra::Sort::Bool)
+        .expect("scalar registry always contains Sort::Bool");
+
+    // Guard satisfiability: derive the SAME boolean, then decide it through the
+    // carrier. `decide_via_carrier(b)` == `b` by the EBA laws, so this is
+    // byte-identical to `(qualified, b)`.
+    let decide_via_carrier = |holds: bool| -> bool {
+        let lifted = if holds { AnyPred::True } else { AnyPred::False };
+        decider.is_satisfiable(&lifted)
+    };
+    let guard_satisfiability: Vec<(String, bool)> = all_syntax
+        .iter()
+        .zip(rule_guards.iter())
+        .map(|((_, _, items), (qualified, _, terminals))| {
+            let has_terminal = !terminals.is_empty();
+            let has_nonterminal_start = items.first().map_or(false, |item| {
+                matches!(
+                    item,
+                    crate::SyntaxItemSpec::NonTerminal { .. }
+                        | crate::SyntaxItemSpec::IdentCapture { .. }
+                        | crate::SyntaxItemSpec::Binder { .. }
+                        | crate::SyntaxItemSpec::Collection { .. }
+                )
+            });
+            let is_empty_rule = items.is_empty();
+            let holds = has_terminal || has_nonterminal_start || is_empty_rule;
+            (qualified.clone(), decide_via_carrier(holds))
+        })
+        .collect();
+
+    let unsatisfiable_rule_labels: Vec<String> = guard_satisfiability
+        .iter()
+        .filter(|(_, sat)| !sat)
+        .map(|(desc, _)| desc.clone())
+        .collect();
+
+    // Overlapping / subsumed guards: identical string-set logic (carrier-
+    // independent at `.0`).
+    let mut overlapping_guards: Vec<(String, String)> = Vec::new();
+    for i in 0..rule_guards.len() {
+        for j in (i + 1)..rule_guards.len() {
+            let (ref qual_i, ref cat_i, ref terms_i) = rule_guards[i];
+            let (ref qual_j, ref cat_j, ref terms_j) = rule_guards[j];
+            if cat_i == cat_j && !terms_i.is_empty() && !terms_j.is_empty() {
+                if terms_i.intersection(terms_j).next().is_some() {
+                    overlapping_guards.push((qual_i.clone(), qual_j.clone()));
+                }
+            }
+        }
+    }
+
+    let mut subsumed_guards: Vec<(String, String)> = Vec::new();
+    for i in 0..rule_guards.len() {
+        for j in 0..rule_guards.len() {
+            if i == j {
+                continue;
+            }
+            let (ref qual_i, ref cat_i, ref terms_i) = rule_guards[i];
+            let (ref qual_j, ref cat_j, ref terms_j) = rule_guards[j];
+            if cat_i == cat_j && !terms_i.is_empty() && !terms_j.is_empty() {
+                if terms_i.is_subset(terms_j) && terms_i != terms_j {
+                    subsumed_guards.push((qual_i.clone(), qual_j.clone()));
+                }
+            }
+        }
+    }
+
+    SymbolicAnalysis {
+        num_states,
+        num_transitions,
+        guard_satisfiability,
+        overlapping_guards,
+        subsumed_guards,
+        unsatisfiable_rule_labels,
+    }
+}
+
+/// Classify the decidability tier of a [`SortedGuard`](crate::any_algebra::SortedGuard).
+///
+/// A guard whose owning sort is a *registry-resident scalar* is decided by a
+/// concrete effective Boolean algebra whose SAT/witness procedures terminate —
+/// so it is [`CompileTimeDecidable`](DecidabilityTier::CompileTimeDecidable).
+/// For any other sort (no registered algebra, or a structural combinator sort
+/// not in the scalar registry), the guard's boolean *structure* is projected to
+/// the untyped [`PredicateExpr`] language and classified by the existing
+/// [`classify_decidability`], preserving today's tiering.
+///
+/// Defined as part of the `.0`-inert wiring; **no live consumer is switched to
+/// it** (that is `.1`). It is feature-independent (only needs `SortedGuard` +
+/// `SortRegistry`, both always compiled) so tests and `.1` can call it directly.
+pub fn classify_decidability_sorted(
+    g: &crate::any_algebra::SortedGuard,
+    registry: &crate::any_algebra::SortRegistry,
+) -> DecidabilityTier {
+    if registry.contains(g.sort) {
+        // A registered scalar algebra decides this guard with a terminating
+        // SAT/witness procedure ⇒ compile-time decidable.
+        DecidabilityTier::CompileTimeDecidable
+    } else {
+        // Fall back to the untyped structural classifier on the projected
+        // boolean skeleton (leaves abstract to ground-decidable atoms).
+        classify_decidability(&project_anypred_to_predicate_expr(&g.pred))
+    }
+}
+
+/// Project an [`AnyPred`](crate::any_algebra::AnyPred)'s Boolean *structure*
+/// onto the untyped [`PredicateExpr`] skeleton used by
+/// [`classify_decidability`]. Every leaf (of any sort) becomes a ground-
+/// decidable [`PredicateExpr::Atom`]; the Boolean connectives are preserved.
+/// `True`/`False` map to the corresponding [`PredicateExpr`] constants. This is
+/// a *structure-preserving* abstraction: it never invents quantifiers or
+/// relations, so the resulting tier is at most `CompileTimeDecidable` for a
+/// purely propositional carrier predicate — matching the pre-carrier behavior
+/// of a leading-terminal guard.
+fn project_anypred_to_predicate_expr(p: &crate::any_algebra::AnyPred) -> PredicateExpr {
+    use crate::any_algebra::AnyPred;
+    match p {
+        AnyPred::True => PredicateExpr::True,
+        AnyPred::False => PredicateExpr::False,
+        AnyPred::And(a, b) => PredicateExpr::And(
+            Box::new(project_anypred_to_predicate_expr(a)),
+            Box::new(project_anypred_to_predicate_expr(b)),
+        ),
+        AnyPred::Or(a, b) => PredicateExpr::Or(
+            Box::new(project_anypred_to_predicate_expr(a)),
+            Box::new(project_anypred_to_predicate_expr(b)),
+        ),
+        AnyPred::Not(x) => PredicateExpr::Not(Box::new(project_anypred_to_predicate_expr(x))),
+        // Every typed leaf is ground-decidable: abstract it to a named atom
+        // keyed by its sort (the name is irrelevant to the tier; only the
+        // shape matters to `classify_decidability`).
+        leaf => {
+            let sort = leaf
+                .leaf_sort()
+                .expect("non-boolean-combination AnyPred is a typed leaf");
+            PredicateExpr::Atom(format!("{:?}", sort))
+        },
     }
 }
 
