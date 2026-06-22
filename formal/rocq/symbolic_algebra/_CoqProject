@@ -22,3 +22,9 @@ theories/BehavioralNegation.v
 # EffectiveBooleanAlgebra + Product/Sum closure (for the combinator-layer
 # re-export).
 theories/AnyAlgebraProjectionSound.v
+# OSLF substrate Phase 1 `.1`: guard-tier classifier soundness
+# (classify_decidability_sorted) + structural∪behavioral partition-fold
+# soundness. Depends on GuardTierCertificate (Tier lattice + guarantee
+# homomorphisms) and AnyAlgebraProjectionSound (registry decision = leaf EBA
+# decision via wrapper_sat_faithful).
+theories/GuardTierClassificationSound.v

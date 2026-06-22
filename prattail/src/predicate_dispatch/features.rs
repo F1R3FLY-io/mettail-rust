@@ -195,6 +195,13 @@ pub fn extract_features_with_config(
     profile.quantifier_depth = max_depth;
     profile.channel_count = channels_seen.len() as u32;
     profile.register_count = register_vars.len() as u32;
+    // NOTE: this tiers a *parsing/dispatch* predicate skeleton; it is intentionally
+    // left as the untyped `classify_decidability` (changing it risks a scheduling
+    // regression). The structural-vs-behavioral guard *typing* — routing data-sort
+    // type assertions through the EBA-backed sorted classifier and rewrite-relation
+    // side conditions to their runtime tier — is handled in
+    // `testkit/src/analytical/guards.rs`; the `algebra_tower`-backed behavioral
+    // tiering (modal/μ-calculus) moves here in Phase 3.
     profile.decidability_tier = crate::symbolic::classify_decidability(expr);
 
     // Multi-guard heuristic: ≥2 channels suggests selectivity ordering need.
