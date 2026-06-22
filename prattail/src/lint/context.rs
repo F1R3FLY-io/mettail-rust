@@ -587,6 +587,9 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_rt04_subtype_detected(ctx, &mut diagnostics);
         lint_rt05_decidability_tier(ctx, &mut diagnostics);
         lint_rt06_name_shadow(ctx, &mut diagnostics);
+        // OSLF Phase-4 `.1`: transducer dead-cast RT-notes (feature-gated).
+        #[cfg(feature = "oslf-transducer")]
+        lint_rt07_dead_cast(ctx, &mut diagnostics);
     }
 
     // ── CEK machine lints ──

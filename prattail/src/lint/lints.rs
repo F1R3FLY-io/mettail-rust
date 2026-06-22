@@ -12,6 +12,7 @@ impl DiagnosticId {
                 | DiagnosticId::RT04
                 | DiagnosticId::RT05
                 | DiagnosticId::RT06
+                | DiagnosticId::RT07
         )
     }
 
@@ -7153,6 +7154,37 @@ pub(crate) fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<Lin
             hint: Some(
                 "rename the refinement type to avoid ambiguity with the base type".to_string(),
             ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// RT07: Surface OSLF Phase-4 `.1` transducer dead-cast findings as RT-notes.
+///
+/// A cast rule `r : src → tgt` whose symbolic-tree-transducer pre-image has an
+/// empty intersection with the source category's term automaton can never fire
+/// (no source term is cast-reachable). [`analyze_refinement_types`](crate::pipeline::analysis::analyze_refinement_types)
+/// records each such `(cast_label, reason)` in `RefinementAnalysisResult::dead_casts`
+/// under the `oslf-transducer` feature; this lint emits one informational note
+/// per finding. Mirrors the `structural_witnesses` `.1` surfacing pattern.
+///
+/// Severity: Note (informational — the cast is dead code).
+#[cfg(feature = "oslf-transducer")]
+pub(crate) fn lint_rt07_dead_cast(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.refinement_analysis {
+        Some(r) => r,
+        None => return,
+    };
+    for (label, reason) in &result.dead_casts {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::RT07,
+            name: "unreachable-cast",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(label.clone()),
+            message: format!("RT-note: cast `{label}` is unreachable (empty pre-image)"),
+            hint: Some(format!("{reason}; remove the cast rule or relax its source pattern")),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });

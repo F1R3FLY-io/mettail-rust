@@ -263,7 +263,9 @@ where
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Pipeline bridge (OSLF substrate, Phase 4 `.0`-inert)
+// Pipeline bridge (OSLF substrate, Phase 4 — `.0` introduced inert; `.1` live:
+// `dead_casts` is consumed by `analyze_refinement_types` and surfaced as the
+// RT07 dead-cast note when `oslf-transducer` is on)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Pipeline-level cast-transduction analysis result.
@@ -307,11 +309,12 @@ pub struct TransducerAnalysis {
 ///
 /// `refinement_types` supplies the declared refinement bases so a *refinement*
 /// downcast (a cast whose owning category is a refinement type over `src`) is
-/// recognized; ordinary casts are analyzed too. This is the `.0`-inert
-/// entrypoint — no live caller yet; the agreement gate
-/// (`prattail/tests/transducer_preimage_snapshot.rs`) proves the transducer
-/// pre-image accept-set agrees, category-for-category, with the Phase-2 source
-/// `category_automaton`.
+/// recognized; ordinary casts are analyzed too. Introduced inert at `.0`; at
+/// `.1` this is the live dead-cast entrypoint — `analyze_refinement_types`
+/// calls it under `oslf-transducer` and surfaces `dead_casts` as RT07 notes.
+/// The agreement gate (`prattail/tests/transducer_preimage_snapshot.rs`) proves
+/// the transducer pre-image accept-set agrees, category-for-category, with the
+/// Phase-2 source `category_automaton`.
 ///
 /// # Arguments
 ///
@@ -428,7 +431,7 @@ pub fn cast_preimage_automaton(
 /// the cast image is a single-child `tgt` wrapper at the accepting state.
 ///
 /// Reuses the Phase-2 ranked alphabet rather than re-deriving tree-automaton
-/// machinery, per the `.0`-inert contract.
+/// machinery.
 #[cfg(feature = "oslf-transducer")]
 fn build_cast_transducer(
     cast_label: &str,

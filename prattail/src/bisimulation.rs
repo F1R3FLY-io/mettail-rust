@@ -152,7 +152,9 @@ impl Lts {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Pipeline bridge (OSLF substrate, Phase 4 `.0`-inert)
+// Pipeline bridge (OSLF substrate, Phase 4 — `.0` introduced inert; `.1` live:
+// supersedes `alternating` at the N06-ISO / A3 codegen seams in
+// `pipeline::analysis` when `oslf-bisimulation` is on)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Pipeline-level bisimulation analysis result.

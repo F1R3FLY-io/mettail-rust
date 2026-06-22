@@ -57,6 +57,12 @@ pub struct RefinementAnalysisResult {
     /// minimal inhabiting term per inhabited category, rendered to a string).
     /// Empty when the feature is off.
     pub structural_witnesses: Vec<(String, String)>,
+    /// Casts `r : src → tgt` whose pre-image ∩ source-category is empty — the
+    /// cast can never fire (OSLF transducer dead-cast detection). Each entry is
+    /// `(cast_rule_label, reason)`. Populated by the `oslf-transducer` `.1` path
+    /// from [`crate::sym_tree_transducer::analyze_from_bundle`]'s `dead_casts`.
+    /// Empty when `oslf-transducer` is off.
+    pub dead_casts: Vec<(String, String)>,
 }
 
 /// Collected results from the mathematical analysis phase.
@@ -88,6 +94,13 @@ pub(crate) struct MathAnalysisResults {
     pub petri_result: Option<crate::petri::PetriAnalysis>,
     pub nominal_result: Option<crate::nominal::NominalAnalysis>,
     pub alternating_result: Option<crate::alternating::AlternatingAnalysis>,
+    /// OSLF Phase-4 `.1`: bisimulation partition computed by
+    /// [`crate::bisimulation::analyze_from_bundle`] (Kanellakis–Smolka /
+    /// Paige–Tarjan refinement over one LTS). Drop-in for `alternating_result`
+    /// at the N06-ISO / A3 codegen seams — the agreement gate proves parity.
+    /// `None` (and the field absent) when `oslf-bisimulation` is off.
+    #[cfg(feature = "oslf-bisimulation")]
+    pub bisimulation_result: Option<crate::bisimulation::BisimulationAnalysis>,
     pub ltl_results: Option<Vec<crate::ltl::LtlCheckResult>>,
     pub provenance_result: Option<crate::provenance::ProvenanceAnalysis>,
     pub cra_result: Option<crate::cra::CraAnalysis>,
@@ -350,6 +363,16 @@ pub(crate) fn run_math_analyses_parallel(
             }
             Some(crate::alternating::analyze_from_bundle(all_syntax, categories))
         });
+        // OSLF Phase-4 `.1`: parallel bisimulation pass gated by the SAME `Awa`
+        // dispatch predicate `alternating` uses — the live supersede at the
+        // N06-ISO / A3 seams reads this when `oslf-bisimulation` is on.
+        #[cfg(feature = "oslf-bisimulation")]
+        let h_bisimulation = s.spawn(|| {
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Awa) {
+                return None;
+            }
+            Some(crate::bisimulation::analyze_from_bundle(all_syntax, categories))
+        });
 
         // Phase 8: Constraint theory analyses
         let h_presburger = s.spawn(|| {
@@ -413,6 +436,10 @@ pub(crate) fn run_math_analyses_parallel(
             alternating_result: h_alternating
                 .join()
                 .expect("DB03: alternating analysis thread panicked"),
+            #[cfg(feature = "oslf-bisimulation")]
+            bisimulation_result: h_bisimulation
+                .join()
+                .expect("DB03: bisimulation analysis thread panicked"),
             ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
             provenance_result: h_provenance
                 .join()
@@ -580,6 +607,19 @@ pub(crate) fn run_math_analyses_sequential(
             (|| {
                 dispatch_gate!(Awa);
                 Some(crate::alternating::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
+            })()
+        } else {
+            None
+        },
+        // OSLF Phase-4 `.1`: same `Awa` dispatch gate as the alternating pass.
+        #[cfg(feature = "oslf-bisimulation")]
+        bisimulation_result: if eligible {
+            (|| {
+                dispatch_gate!(Awa);
+                Some(crate::bisimulation::analyze_from_bundle(
                     &bundle.all_syntax,
                     &bundle.categories,
                 ))
@@ -911,6 +951,27 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
         }
     }
 
+    // OSLF Phase-4 `.1`: dead-cast detection via bottom-up symbolic tree
+    // transduction. A cast `r : src → tgt` whose pre-image (over the ranked
+    // alphabet) has empty intersection with the source category's term
+    // automaton can never fire — the transducer reports its rule label in
+    // `dead_casts`. `non_total_casts` is intentionally NOT surfaced: every
+    // refinement downcast is non-total by nature, so it is noise; `dead_casts`
+    // is the genuine unreachability defect signal.
+    #[cfg(feature = "oslf-transducer")]
+    {
+        let analysis = crate::sym_tree_transducer::analyze_from_bundle(
+            &bundle.all_syntax,
+            &bundle.categories,
+            spec,
+        );
+        result.dead_casts = analysis
+            .dead_casts
+            .into_iter()
+            .map(|label| (label, "pre-image empty — cast unreachable".to_string()))
+            .collect();
+    }
+
     #[cfg(not(feature = "sym-tree-structural"))]
     for (a, b) in &dispatch.disjoint_pairs {
         // Heuristic path: disjointness is informational, not an RT03 warning.
@@ -949,6 +1010,11 @@ fn render_sym_term(t: &crate::sym_tree::SymTerm<crate::any_algebra::AnyDomain>) 
 pub(crate) struct AdvancedAnalysisBundle<'a> {
     pub(crate) symbolic: Option<&'a crate::symbolic::SymbolicAnalysis>,
     pub(crate) alternating: Option<&'a crate::alternating::AlternatingAnalysis>,
+    /// OSLF Phase-4 `.1`: bisimulation partition that supersedes `alternating`
+    /// at the N06-ISO / A3 seams when `oslf-bisimulation` is on (falls back to
+    /// `alternating` when this is `None`). Absent when the feature is off.
+    #[cfg(feature = "oslf-bisimulation")]
+    pub(crate) bisimulation: Option<&'a crate::bisimulation::BisimulationAnalysis>,
     pub(crate) vpa: Option<&'a crate::vpa::VpaAnalysis>,
     pub(crate) register: Option<&'a crate::register_automata::RegisterAnalysis>,
     pub(crate) probabilistic: Option<&'a crate::probabilistic::ProbabilisticAnalysis>,
@@ -1069,8 +1135,24 @@ pub(crate) fn build_pipeline_analysis(
     #[allow(unused_mut)]
     let mut isomorphic_groups = group_isomorphic_wfsts(prediction_wfsts);
 
+    // ── OSLF Phase-4 `.1`: select the non-bisimilar-pair source for N06-ISO/A3 ──
+    // Both seams below consume `&Vec<(String, String)>` of non-bisimilar category
+    // pairs. When `oslf-bisimulation` is on, the bisimulation pass supersedes
+    // `alternating` (falling back to it when the bisimulation result is absent);
+    // otherwise the source is `alternating` exactly as before. The two analyses
+    // carry the *same* `non_bisimilar_pairs` shape (parity proven by the
+    // agreement gate), so the seam bodies are unchanged.
+    #[cfg(feature = "oslf-bisimulation")]
+    let equiv_pairs: Option<&Vec<(String, String)>> = _advanced
+        .bisimulation
+        .map(|b| &b.non_bisimilar_pairs)
+        .or_else(|| _advanced.alternating.map(|a| &a.non_bisimilar_pairs));
+    #[cfg(not(feature = "oslf-bisimulation"))]
+    let equiv_pairs: Option<&Vec<(String, String)>> =
+        _advanced.alternating.map(|a| &a.non_bisimilar_pairs);
+
     // ── Sprint 4 (N06-ISO): Extend isomorphic groups with bisimulation equivalences ──
-    if let Some(alt) = _advanced.alternating {
+    if let Some(equiv_pairs) = equiv_pairs {
         // Collect new bisimulation groups into a separate vec to avoid borrow conflict.
         let new_groups = {
             // Categories already in De Bruijn groups
@@ -1081,8 +1163,7 @@ pub(crate) fn build_pipeline_analysis(
                 .collect();
 
             // Build set of non-bisimilar pairs for fast lookup
-            let non_bisimilar: HashSet<(&str, &str)> = alt
-                .non_bisimilar_pairs
+            let non_bisimilar: HashSet<(&str, &str)> = equiv_pairs
                 .iter()
                 .flat_map(|(a, b)| vec![(a.as_str(), b.as_str()), (b.as_str(), a.as_str())])
                 .collect();
@@ -1111,10 +1192,9 @@ pub(crate) fn build_pipeline_analysis(
     // Deprioritize the lexicographically second category in each bisimilar pair
     // by adding 0.5 to its constructor weights. This reduces redundant NFA try-all
     // work when two categories accept the same language (bisimilar).
-    if let Some(alt) = _advanced.alternating {
+    if let Some(equiv_pairs) = equiv_pairs {
         let cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
-        let non_bisimilar: HashSet<(&str, &str)> = alt
-            .non_bisimilar_pairs
+        let non_bisimilar: HashSet<(&str, &str)> = equiv_pairs
             .iter()
             .flat_map(|(a, b)| vec![(a.as_str(), b.as_str()), (b.as_str(), a.as_str())])
             .collect();

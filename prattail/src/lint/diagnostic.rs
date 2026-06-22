@@ -164,6 +164,10 @@ define_diagnostic_ids! {
     // ── Runtime (RT) ──
     RT01 => "RT01", RT02 => "RT02", RT03 => "RT03",
     RT04 => "RT04", RT05 => "RT05", RT06 => "RT06",
+    // RT07: OSLF Phase-4 `.1` transducer dead-cast (empty pre-image). Emitted
+    // only when `oslf-transducer` is on; the variant is always defined so the
+    // ID table stays total.
+    RT07 => "RT07",
 
     // ── Syntax (S) ──
     S01 => "S01", S02 => "S02", S03 => "S03", S04 => "S04", S05 => "S05", S06 => "S06",
