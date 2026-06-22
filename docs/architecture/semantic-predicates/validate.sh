@@ -158,6 +158,6 @@ if (( online != 0 )); then
 fi
 
 printf 'checking whitespace with git diff --check...\n'
-git -C "$repo_root" diff --check -- docs/architecture/symbolic-predicates docs/README.md docs/architecture.md
+git -C "$repo_root" diff --check -- docs/architecture/semantic-predicates docs/README.md docs/architecture.md
 
-printf 'symbolic-predicates documentation validation passed (%s PlantUML figure assets).\n' "$figure_puml_count"
+printf 'semantic-predicates documentation validation passed (%s PlantUML figure assets).\n' "$figure_puml_count"

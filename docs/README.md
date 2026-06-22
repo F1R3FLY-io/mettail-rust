@@ -14,7 +14,7 @@ These documents are actively maintained and should always reflect the current st
 - **`architecture/runtime-backend-spine.md`** - Cohesive artifact spine for the Dovetail and Rho runtime-backend replacement path
 - **`architecture/dovetail/README.md`** - Standalone Dovetail rewrite engine architecture, design, proof, and handoff suite
 - **`architecture/rho-native-integration/README.md`** - Rho-native MeTTaIL / Dovetail / F1r3node integration architecture
-- **`architecture/symbolic-predicates/README.md`** - Semantic-predicate symbolic algebra (EBA / SFA / SFT / Heyting tower) and its end-to-end `language!`-to-Rholang integration
+- **`architecture/semantic-predicates/README.md`** - Semantic-predicate symbolic algebra (EBA / SFA / SFT / Heyting tower) and its end-to-end `language!`-to-Rholang integration
 - **`contributing.md`** - How to contribute to the project
 
 ---
@@ -79,23 +79,23 @@ algebras, symbolic finite automata and transducers, the Heyting algebra tower fo
 behavioral constraints, and the end-to-end path from a `language!` guard through to
 Rholang enforcement:
 
-- **`architecture/symbolic-predicates/README.md`** - Overview, reading paths, diagramming policy, and validation
-- **`architecture/symbolic-predicates/00-executive-brief.md`** - One-page decision brief for principals
-- **`architecture/symbolic-predicates/00-requirements-traceability.md`** - Requirement-to-document coverage map
-- **`architecture/symbolic-predicates/01-concepts-and-glossary.md`** - Symbols, acronyms, and key terms
-- **`architecture/symbolic-predicates/02-effective-boolean-algebra.md`** - The EBA, decision procedures, minterms, and instances
-- **`architecture/symbolic-predicates/03-symbolic-automata-sfa.md`** - Predicate-labeled automata: recognition, closure, determinization
-- **`architecture/symbolic-predicates/04-symbolic-transducers-sft-stft.md`** - Symbolic (tree) transducers, output-term algebra, composition, functionality
-- **`architecture/symbolic-predicates/05-algebra-pyramid-and-decidability.md`** - The reject-safe / Heyting / Boolean tower, `Sat3`, tiers, and the closure family
-- **`architecture/symbolic-predicates/06-guard-syntax-and-extensions.md`** - Supported guard syntax and proposed extensions for the unsupported features
-- **`architecture/symbolic-predicates/07-language-to-rholang-integration.md`** - Guard declaration to classified obligation, disposition, quality, and the fail-closed flip gate
-- **`architecture/symbolic-predicates/08-runtime-comm-enforcement.md`** - How the surviving guard is enforced at run time (and what Rholang does not do)
-- **`architecture/symbolic-predicates/09-oslf-composition.md`** - How the predicate algebra composes with OSLF funding at the guarded-COMM boundary
-- **`architecture/symbolic-predicates/10-formal-verification-and-tests.md`** - The mechanized-proof matrix and the zero-admission gate
-- **`architecture/symbolic-predicates/11-worked-example.md`** - GuardedRho end-to-end to a host-routed join
-- **`architecture/symbolic-predicates/12-heyting-behavioral-logic.md`** - Why Heyting/intuitionistic logic governs behavioral constraints, bisimulation invariance, and the OSLF affinity
-- **`architecture/symbolic-predicates/references.md`** - Citations, DOI links, and repository-local proof references
-- **`architecture/symbolic-predicates/validate.sh`** - Reproducible local validation for the suite
+- **`architecture/semantic-predicates/README.md`** - Overview, reading paths, diagramming policy, and validation
+- **`architecture/semantic-predicates/00-executive-brief.md`** - One-page decision brief for principals
+- **`architecture/semantic-predicates/00-requirements-traceability.md`** - Requirement-to-document coverage map
+- **`architecture/semantic-predicates/01-concepts-and-glossary.md`** - Symbols, acronyms, and key terms
+- **`architecture/semantic-predicates/02-effective-boolean-algebra.md`** - The EBA, decision procedures, minterms, and instances
+- **`architecture/semantic-predicates/03-symbolic-automata-sfa.md`** - Predicate-labeled automata: recognition, closure, determinization
+- **`architecture/semantic-predicates/04-symbolic-transducers-sft-stft.md`** - Symbolic (tree) transducers, output-term algebra, composition, functionality
+- **`architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md`** - The reject-safe / Heyting / Boolean tower, `Sat3`, tiers, and the closure family
+- **`architecture/semantic-predicates/06-guard-syntax-and-extensions.md`** - Supported guard syntax and proposed extensions for the unsupported features
+- **`architecture/semantic-predicates/07-language-to-rholang-integration.md`** - Guard declaration to classified obligation, disposition, quality, and the fail-closed flip gate
+- **`architecture/semantic-predicates/08-runtime-comm-enforcement.md`** - How the surviving guard is enforced at run time (and what Rholang does not do)
+- **`architecture/semantic-predicates/09-oslf-composition.md`** - How the predicate algebra composes with OSLF funding at the guarded-COMM boundary
+- **`architecture/semantic-predicates/10-formal-verification-and-tests.md`** - The mechanized-proof matrix and the zero-admission gate
+- **`architecture/semantic-predicates/11-worked-example.md`** - GuardedRho end-to-end to a host-routed join
+- **`architecture/semantic-predicates/12-heyting-behavioral-logic.md`** - Why Heyting/intuitionistic logic governs behavioral constraints, bisimulation invariance, and the OSLF affinity
+- **`architecture/semantic-predicates/references.md`** - Citations, DOI links, and repository-local proof references
+- **`architecture/semantic-predicates/validate.sh`** - Reproducible local validation for the suite
 
 ---
 

@@ -182,7 +182,7 @@ predicate is enforced by the host, not by the substrate — see
 Run the suite documentation checks from the repository root:
 
 ```text
-docs/architecture/symbolic-predicates/validate.sh
+docs/architecture/semantic-predicates/validate.sh
 ```
 
 Run the formal-verification gates under the 32 GiB RSS cap:

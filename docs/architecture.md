@@ -111,7 +111,7 @@ for differential evidence during rollout.
 The *theory-of-guards* layer — the semantic-predicate substrate that decides which
 guarded rewrites and communications a generated language may perform — is documented
 in a third suite,
-[architecture/symbolic-predicates/README.md](architecture/symbolic-predicates/README.md).
+[architecture/semantic-predicates/README.md](architecture/semantic-predicates/README.md).
 That suite covers the effective Boolean algebras, symbolic finite automata and
 transducers, the Heyting algebra tower for behavioral constraints, and the
 end-to-end path from a `language!` guard through classification and the fail-closed

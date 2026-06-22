@@ -12,14 +12,14 @@
 > how this engine sits under the symbolic-predicate substrate, plus the four
 > rendered figures (fair-search swimlane, theory-algebra bridge, quantified-eval
 > sequence, theory-combination) — read the companion document
-> [13 — The Constraint-Theory Engine: LogicT Under the Substrate](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md).
+> [13 — The Constraint-Theory Engine: LogicT Under the Substrate](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md).
 > That page links back here for depth; this page links there for figures and the
 > substrate wiring rather than duplicating them.
 >
 > The mechanized proofs that ground §9 (theory combination) live in
 > [`TheoryCombination.v`](../../../../formal/rocq/symbolic_algebra/theories/TheoryCombination.v)
 > and are surveyed in
-> [10 — Formal Verification and Tests](../../../../docs/architecture/symbolic-predicates/10-formal-verification-and-tests.md).
+> [10 — Formal Verification and Tests](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md).
 > The bounded-search diagnostic is
 > [`LT01`](../../diagnostics/logict/LT01.md) (`logict-search-bound-exceeded`).
 
@@ -760,7 +760,7 @@ any theory, and the direct algebra is a *faster, theory-specific* path where the
 theory happens to support exact complementation. Cross-validation tests document
 the agreed behavior. The mirror of this distinction at the substrate level — and
 why "don't know" is collapsed to *rejection* rather than admission — is described
-in [13 §5](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md).
+in [13 §5](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md).
 
 ### 7.6 A complete `TheoryAlgebra` example (in-tree, decidable)
 
@@ -929,7 +929,7 @@ empty domain returns `false` (`⊥`). These are pinned by
 When the domain is undecidable or the search budget is exhausted, "unknown" is
 the only honest verdict. `TriState` is the in-crate three-valued logic that
 carries it. It is the **twin of `Sat3`** used at the substrate level
-([13 §3](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md)):
+([13 §3](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md)):
 where `Sat3` is `{ Sat, Unsat, DontKnow }`, `TriState` is `{ True, False,
 Unknown }`, with the same Kleene operators.
 
@@ -1053,14 +1053,14 @@ the engine does not yet propagate entailed equalities between the theories'
 signatures (the convex/stably-infinite machinery). The documentation states this
 limitation plainly rather than implying the general procedure. The proposed
 surface syntax for combination is `arithmetic <+> text`
-([06 §3.8](../../../../docs/architecture/symbolic-predicates/06-guard-syntax-and-extensions.md)).
+([06 §3.8](../../../../docs/architecture/semantic-predicates/06-guard-syntax-and-extensions.md)).
 
 The mechanized counterpart is
 [`TheoryCombination.v`](../../../../formal/rocq/symbolic_algebra/theories/TheoryCombination.v):
 `combined_eba_laws`, with `csat_sound` and `csat_complete`, proves that the
 joint-search combination is itself an effective Boolean algebra (the base-case
 soundness/completeness), surveyed in
-[10 §2.1](../../../../docs/architecture/symbolic-predicates/10-formal-verification-and-tests.md).
+[10 §2.1](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md).
 
 ---
 
@@ -1156,17 +1156,17 @@ into `QuantifiedFormula`/`TheoryPred`, how a `theories { name = T for [Cat] }`
 registration becomes a usable guard algebra, and how the engine's verdict earns a
 **tier** and **quality** that the fail-closed flip gate acts on — is told, with
 four rendered figures, in
-[13 — The Constraint-Theory Engine: LogicT Under the Substrate](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md).
+[13 — The Constraint-Theory Engine: LogicT Under the Substrate](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md).
 The essential bridges, in one table, so a reader need not chase them:
 
 | Engine artifact (this doc) | Substrate role | Where |
 |---|---|---|
-| `TheoryAlgebra<T> : BooleanAlgebra` (§7) | makes a registered theory a reusable guard algebra → `SymbolicAutomaton`, minterms, determinization | [13 §2](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md), [02](../../../../docs/architecture/symbolic-predicates/02-effective-boolean-algebra.md) |
-| `evaluate_quantified*` → `TriState` (§8) | quantified-guard verdict, three-valued | [13 §3](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md), [06 §2.3.1](../../../../docs/architecture/symbolic-predicates/06-guard-syntax-and-extensions.md) |
-| `TriState` ↔ `Sat3`; `into_safe_bool` (§8.3) | reject-safe collapse feeding the flip gate | [13 §5](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md), [05](../../../../docs/architecture/symbolic-predicates/05-algebra-pyramid-and-decidability.md), [12](../../../../docs/architecture/symbolic-predicates/12-heyting-behavioral-logic.md) |
-| joint-search combination (§9) | Nelson–Oppen base-case EBA | `TheoryCombination.v`, [10 §2.1](../../../../docs/architecture/symbolic-predicates/10-formal-verification-and-tests.md) |
-| `multiset_partitions` (§10) | `BehavioralPred::AcMatch` enumeration | [13 §1](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md) |
-| `collect_bounded(search_bound)` (§4, §7.3) | the resource meter; tier T3 boundary | `LT01` (§13), [05 §6](../../../../docs/architecture/symbolic-predicates/05-algebra-pyramid-and-decidability.md) |
+| `TheoryAlgebra<T> : BooleanAlgebra` (§7) | makes a registered theory a reusable guard algebra → `SymbolicAutomaton`, minterms, determinization | [13 §2](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [02](../../../../docs/architecture/semantic-predicates/02-effective-boolean-algebra.md) |
+| `evaluate_quantified*` → `TriState` (§8) | quantified-guard verdict, three-valued | [13 §3](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [06 §2.3.1](../../../../docs/architecture/semantic-predicates/06-guard-syntax-and-extensions.md) |
+| `TriState` ↔ `Sat3`; `into_safe_bool` (§8.3) | reject-safe collapse feeding the flip gate | [13 §5](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md), [05](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md), [12](../../../../docs/architecture/semantic-predicates/12-heyting-behavioral-logic.md) |
+| joint-search combination (§9) | Nelson–Oppen base-case EBA | `TheoryCombination.v`, [10 §2.1](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md) |
+| `multiset_partitions` (§10) | `BehavioralPred::AcMatch` enumeration | [13 §1](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md) |
+| `collect_bounded(search_bound)` (§4, §7.3) | the resource meter; tier T3 boundary | `LT01` (§13), [05 §6](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md) |
 
 ---
 
@@ -1246,12 +1246,12 @@ budget-limited `Unknown`.
 
 **Companion documents (this repository):**
 
-- [13 — The Constraint-Theory Engine: LogicT Under the Substrate](../../../../docs/architecture/symbolic-predicates/13-constraint-theory-engine.md)
+- [13 — The Constraint-Theory Engine: LogicT Under the Substrate](../../../../docs/architecture/semantic-predicates/13-constraint-theory-engine.md)
   — integration narrative and the four figures.
-- [10 — Formal Verification and Tests](../../../../docs/architecture/symbolic-predicates/10-formal-verification-and-tests.md)
+- [10 — Formal Verification and Tests](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md)
   — the proof matrix, including `TheoryCombination.v`.
-- [02 — Effective Boolean Algebra](../../../../docs/architecture/symbolic-predicates/02-effective-boolean-algebra.md)
-  and [05 — Algebra Pyramid and Decidability](../../../../docs/architecture/symbolic-predicates/05-algebra-pyramid-and-decidability.md)
+- [02 — Effective Boolean Algebra](../../../../docs/architecture/semantic-predicates/02-effective-boolean-algebra.md)
+  and [05 — Algebra Pyramid and Decidability](../../../../docs/architecture/semantic-predicates/05-algebra-pyramid-and-decidability.md)
   — the abstract algebra and the `Sat3`/tier frame this engine populates.
 - [`LT01` — `logict-search-bound-exceeded`](../../diagnostics/logict/LT01.md)
   — the bounded-search diagnostic.

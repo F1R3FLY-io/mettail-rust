@@ -137,7 +137,7 @@ verified `Closed under the global context` AND fenced against `Axiom` /
 authoritative, source-keyed proof ledger for this substrate (every theorem name
 read out of the `.v` files, with the runtime-oracle layer and reproduction
 commands) is the new suite's
-[10 — Formal Verification and Tests](../../../../docs/architecture/symbolic-predicates/10-formal-verification-and-tests.md).
+[10 — Formal Verification and Tests](../../../../docs/architecture/semantic-predicates/10-formal-verification-and-tests.md).
 
 | Obligation | Source | Status |
 |------------|--------|--------|

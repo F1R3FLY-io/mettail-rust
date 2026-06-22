@@ -3,9 +3,9 @@
 > **Authoritative reference & live-vs-spec status.** For exactly which parts of
 > this `guards { }` specification parse and are wired today versus which are
 > proposed sublanguage, the parser-grounded reference is
-> [06 — Guard Syntax and Extensions](../architecture/symbolic-predicates/06-guard-syntax-and-extensions.md)
+> [06 — Guard Syntax and Extensions](../architecture/semantic-predicates/06-guard-syntax-and-extensions.md)
 > in the semantic-predicate suite
-> ([`docs/architecture/symbolic-predicates/`](../architecture/symbolic-predicates/README.md)).
+> ([`docs/architecture/semantic-predicates/`](../architecture/semantic-predicates/README.md)).
 > Note also that guard evaluation is now **classify-only at compile time** (the
 > prattail EBA `𝔅` / SFA / SFT / Heyting tower emits coverage evidence and a
 > quality tag) plus **host-routed enforcement at run time** (RSpace structural

@@ -1,6 +1,6 @@
 # The AnyAlgebra Substrate — generalizing symbolic predicates over all data types
 
-> For the end-to-end architecture of how this substrate classifies guards at compile time and how the surviving guard is enforced at run time, see the authoritative suite [`docs/architecture/symbolic-predicates/`](../../../../docs/architecture/symbolic-predicates/README.md).
+> For the end-to-end architecture of how this substrate classifies guards at compile time and how the surviving guard is enforced at run time, see the authoritative suite [`docs/architecture/semantic-predicates/`](../../../../docs/architecture/semantic-predicates/README.md).
 
 **Status:** IMPLEMENTED (2026-06-15). This document records the design of the
 symbolic-predicate generalization so it can be reconstructed from scratch. Every

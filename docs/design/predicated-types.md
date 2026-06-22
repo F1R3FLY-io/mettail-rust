@@ -16,14 +16,14 @@
 > the algebra.
 >
 > The authoritative, parser-grounded reference is the suite
-> [`docs/architecture/symbolic-predicates/`](../architecture/symbolic-predicates/README.md).
+> [`docs/architecture/semantic-predicates/`](../architecture/semantic-predicates/README.md).
 > In particular:
-> [06 — Guard Syntax and Extensions](../architecture/symbolic-predicates/06-guard-syntax-and-extensions.md)
+> [06 — Guard Syntax and Extensions](../architecture/semantic-predicates/06-guard-syntax-and-extensions.md)
 > (what guard syntax parses today vs. proposed, including the `where` clause),
-> [07 — Language-to-Rholang Integration](../architecture/symbolic-predicates/07-language-to-rholang-integration.md)
+> [07 — Language-to-Rholang Integration](../architecture/semantic-predicates/07-language-to-rholang-integration.md)
 > (compile-time classification and the fail-closed flip gate that replaces the
 > Comm-rule evaluation story), and
-> [08 — Runtime COMM Enforcement](../architecture/symbolic-predicates/08-runtime-comm-enforcement.md)
+> [08 — Runtime COMM Enforcement](../architecture/semantic-predicates/08-runtime-comm-enforcement.md)
 > (how the surviving predicate is enforced at run time).
 
 ---
@@ -3926,9 +3926,9 @@ These variants require the Collection variant classification for proper matching
 
 > **Superseded:** the Ascent-rewrite-rule evaluation model below is replaced by
 > compile-time classification — see
-> [07 — Language-to-Rholang Integration](../architecture/symbolic-predicates/07-language-to-rholang-integration.md)
+> [07 — Language-to-Rholang Integration](../architecture/semantic-predicates/07-language-to-rholang-integration.md)
 > for how the guarded Comm obligation is now classified and gated, and
-> [08 — Runtime COMM Enforcement](../architecture/symbolic-predicates/08-runtime-comm-enforcement.md)
+> [08 — Runtime COMM Enforcement](../architecture/semantic-predicates/08-runtime-comm-enforcement.md)
 > for how the surviving rule fires at run time (host structural matching, a
 > `where` boolean guard, or a host-routed `RhoNativeJoin`).
 
@@ -4659,9 +4659,9 @@ guards involve theory-specific predicates.
 > **Superseded:** behavioral guards are no longer evaluated as Ascent relation
 > JOIN clauses. They are classified at compile time by the Heyting-strengthened
 > algebra tower — see
-> [12 — Heyting Behavioral Logic](../architecture/symbolic-predicates/12-heyting-behavioral-logic.md) —
+> [12 — Heyting Behavioral Logic](../architecture/semantic-predicates/12-heyting-behavioral-logic.md) —
 > and enforced at run time by the host per
-> [08 — Runtime COMM Enforcement](../architecture/symbolic-predicates/08-runtime-comm-enforcement.md).
+> [08 — Runtime COMM Enforcement](../architecture/semantic-predicates/08-runtime-comm-enforcement.md).
 
 ### Motivation
 
