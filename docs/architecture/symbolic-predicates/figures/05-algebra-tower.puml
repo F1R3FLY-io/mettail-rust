@@ -1,0 +1,71 @@
+@startuml
+title The algebra tower: trait refinement and the strength order
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam class {
+  BorderColor #1F2937
+  FontColor #111827
+  AttributeFontColor #111827
+}
+
+interface "RejectSafeAlgebra\n(weakest)" as RSA #FEF3C7 {
+  + and(a, b)
+  + or(a, b)
+  + pseudo_complement(a)
+  + is_satisfiable_3v(a) → Sat3
+  .. laws ..
+  SAT-soundness
+  double-negation-soundness
+  -- no involutive complement --
+  -- no excluded middle --
+}
+
+interface "HeytingAlgebra\n(middle)" as HA #FEF3C7 {
+  + implies(a, b)   (→, right adjoint of ∧)
+  + regularize(a)   (¬¬)
+  .. laws ..
+  intuitionistic implication
+  ¬¬a = a only on regular elements
+}
+
+interface "BooleanAlgebra\n(strongest, classical)" as BA #DBEAFE {
+  + not(a)   (involutive, ¬¬a = a)
+  + is_satisfiable(a)   (2-valued)
+  .. laws ..
+  full Boolean algebra
+  excluded middle
+}
+
+class "Classical<A>" as CL #DBEAFE {
+  wraps A : BooleanAlgebra
+  --
+  pseudo_complement = not
+  regularize        = id
+  is_satisfiable_3v ∈ {Sat, Unsat}
+  implies           = ¬a ∨ b
+}
+
+' refinement: stronger refines weaker (strength order)
+HA  --|> RSA : refines (adds →, ¬¬)
+BA  --|> HA  : refines (involutive ¬, 2-valued sat)
+
+' Classical lifts a BooleanAlgebra UP into the tower
+CL ..> BA  : lifts a BooleanAlgebra
+CL ..> RSA : delegates into reject-safe / Heyting tiers
+
+note bottom of RSA
+  A semi-decidable algebra implements HeytingAlgebra DIRECTLY and
+  does NOT implement BooleanAlgebra — so SFA complement / determinize /
+  equivalence are statically unavailable on it (Property 4.1; a
+  `compile_fail` doctest turns the safety property into a checked artifact).
+end note
+
+legend right
+|= Color |= Tier |
+|<#FEF3C7> | semi-decidable tier (reject-safe / Heyting — the caution color) |
+|<#DBEAFE> | classical (decidable) Boolean algebra |
+endlegend
+@enduml

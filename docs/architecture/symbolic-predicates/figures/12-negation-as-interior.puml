@@ -1,0 +1,39 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title Intuitionistic negation as interior: the boundary is the indeterminate region
+
+' ── A topology schematic: the space X with U, its boundary ∂U, and ¬U ─────
+' Laid out left-to-right inside X to avoid overlapping regions.
+rectangle "space X" as X {
+  rectangle "U — observable property\n(semi-decidable)" as U #FEF3C7
+  rectangle "∂U — boundary\n= Sat3::DontKnow\n(U ∨ ¬U ≠ X here)" as B #FDE68A
+  rectangle "¬U = int(X ∖ U)\nrefutable region (regular)" as NU #DCFCE7
+
+  U -[hidden]right- B
+  B -[hidden]right- NU
+}
+
+note bottom of B
+  `¬¬U = int(cl(U))`; `U` is regular ⟺ `U = int(cl(U))`
+  (regular-open). Excluded middle fails exactly on the boundary.
+end note
+
+legend right
+|= Color |= Region |
+|<#FEF3C7> | `U` — observable / semi-decidable property (open set) |
+|<#FDE68A> | `∂U` — boundary: the indeterminate `Sat3::DontKnow` zone |
+|<#DCFCE7> | `¬U` — refutable region (regular, classical) |
+endlegend
+@enduml

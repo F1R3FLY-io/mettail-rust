@@ -1,0 +1,44 @@
+@startuml
+title OSLF composition: the logic axis and the resource axis converge on one COMM verdict
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+
+|#DCFCE7|Logic axis|
+start
+:guard φ\n(predicate algebra); <<#BBF7D0>>
+:guard-satisfied?\n(structural ∧ behavioral); <<#BBF7D0>>
+
+|#E0E7FF|Resource axis|
+:demand Δ, supply Σ, margin\n(OSLF); <<#E0E7FF>>
+:is_funded = Δ + margin ≤ Σ?; <<#E0E7FF>>
+
+|#FCE7F3|COMM verdict|
+:COMM fires ⟺\nguard-satisfied ∧ funded; <<#FBCFE8>>
+stop
+
+note right
+  Two DISTINCT effective theories that COMPOSE at the
+  guarded-COMM boundary — not one fused theorem, but a
+  conjunction of two independently-proven verdicts at one
+  point. Both proven in the same zero-admission rho_bridge
+  tree (RhoGuardedCommSoundness.v · MettaOslfLawsConformance.v).
+  reject-underfunded ≈ reject-safe: neither grants on absence
+  of evidence.
+end note
+
+legend right
+|= Lane / color |= Axis |
+|<#DCFCE7> Logic axis | the predicate algebra — is the COMM enabled? |
+|<#E0E7FF> Resource axis | OSLF funding — is the rewrite affordable? |
+|<#FCE7F3> COMM verdict | both axes converge: guard-satisfied ∧ funded |
+endlegend
+@enduml

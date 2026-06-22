@@ -122,6 +122,37 @@ remain in M-RHO.*, below.
 | Simulation report boundary | `SimulationReportBoundary.v` + `mettail_simulation::{runner,coverage,trace}` | **proven model + Rust tests**: Ascent-shaped reference reports preserve their explicit normal-form-reachable Boolean; complete Dovetail reports with at least one extracted root satisfy `NormalFormReachable` as terminal rewrite-result evidence; rootless complete Dovetail reports, `BoundedByCycleCut` Dovetail reports, Rho runtime observations, and unsupported report shapes do not satisfy normal-form reachability. Dovetail reports remain `TraceOutcome::RuntimeReport` rather than fabricated Ascent BFS paths, and Rho observations remain `TraceOutcome::RuntimeObservations`. The report-aware coverage extractor records rewrite rule firings only from trace rewrite operations and records runtime-report/observation steps as constructor coverage without inventing rule firings |
 | Generated operational runtime tests | `macros/src/gen/test_gen/*` (the `operational_tests/` generator was retired in P6) + `mettail_testkit::{runtime_report,program}` | **Rust-checked generator boundary**: the legacy operational-test reference-evidence generator (`operational_tests/`, which routed parsed terms through the retained `run_ascent_oracle_report` helper) was retired with the Ascent backend in P6; the helper remains available in `mettail_testkit` for hand-authored reference oracles. Application-level `ProgramTestSuite` and production wrappers continue to evaluate through `Language::run_default_backend_report` and therefore fail closed unless a concrete Dovetail/Rho runtime default is installed. Type-preservation uses semantic backend outputs rather than channel-summary diagnostics, and algebraic concrete/proptest checks compare backend-output overlaps. Application-level `ProgramTestSuite::expect_terminates` treats complete Dovetail report-shaped outputs and observation-shaped runtime outputs as terminal backend evidence while rejecting `BoundedByCycleCut` as non-exhaustive. Identity-law generation records whether the identity element is the left or right argument and emits property-based checks for that side instead of a smoke-only placeholder |
 
+## F. Semantic-predicate symbolic-algebra obligations — `formal/rocq/{symbolic_algebra,sft,presburger,predicate_dispatch}/`
+
+The semantic-predicate substrate (the effective Boolean algebra `𝔅` / SFA / SFT
+/ Heyting tower that classifies every guard obligation at compile time) carries
+its own zero-admission Rocq suite, distinct from the parser (sections A–D) and
+the Dovetail/Rho evidence (section E). The `symbolic_algebra/theories` and
+`sft/theories` trees are both in the zero-admission gate's `DEFAULT_ROOTS`
+(`formal/scripts/check_rocq_zero_admission.py`), so every theorem below is
+verified `Closed under the global context` AND fenced against `Axiom` /
+`Conjecture` / `Parameter` / `Admitted.` / `admit.` by
+`make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-critical-zero-admission`;
+`presburger` and `predicate_dispatch` pass their own capped targets. The
+authoritative, source-keyed proof ledger for this substrate (every theorem name
+read out of the `.v` files, with the runtime-oracle layer and reproduction
+commands) is the new suite's
+[10 — Formal Verification and Tests](../../../../docs/architecture/symbolic-predicates/10-formal-verification-and-tests.md).
+
+| Obligation | Source | Status |
+|------------|--------|--------|
+| Effective Boolean algebra laws (the guard carrier `𝔅`) | `EffectiveBooleanAlgebra.v` (rocq-symbolic-algebra, zero-admission) — build `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-symbolic-algebra` | **proven**: the EBA carrier satisfies the Boolean laws (`∧`, `∨`, `¬`, `⊤`, `⊥`) with decidable denotation, the algebraic substrate every guard predicate is an element of |
+| Product / Sum / Collection / Tree EBA closure | `ProductAlgebraClosure.v`, `SumAlgebraClosure.v`, `CollectionAlgebraClosure.v`, `TreeAlgebraClosure.v` (rocq-symbolic-algebra, zero-admission) | **proven**: the EBA structure is closed under product (`×`), sum (`+`), collection, and tree formation — so a guard over composite/structured data is itself an EBA element decided by the same laws |
+| Theory combination (Nelson–Oppen-style composition) | `TheoryCombination.v` (rocq-symbolic-algebra, zero-admission) | **proven**: combining two decidable guard theories yields a decidable combined theory; the substrate may compose constraint theories without losing decidability |
+| Heyting-strengthened guard logic | `HeytingAlgebra.v` (rocq-symbolic-algebra, zero-admission) | **proven**: the intuitionistic strengthening (`→`, relative pseudo-complement) over the EBA tower used by the behavioral/modal guard layer; basis for `12-heyting-behavioral-logic.md` |
+| Decidability-tier certificate | `GuardTierCertificate.v` (rocq-symbolic-algebra, zero-admission) | **proven**: each guard obligation carries a tier certificate `t` linking its decidability tier to the quality tag emitted at classification time, the evidence the fail-closed flip gate consumes |
+| Behavioral-negation soundness | `BehavioralNegation.v` (rocq-symbolic-algebra, zero-admission) | **proven**: negation of a behavioral predicate is sound under the tier semantics (reject-safe where full decidability is unavailable), so a negated guard never over-admits |
+| Output-term algebra (SFT codomain) | `OutputTermAlgebra.v` (rocq-sft, zero-admission) — build `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-sft` | **proven**: the output-term algebra the symbolic finite transducer writes into, the codomain making SFT/STFT composition well-defined |
+| SFT / STFT composition closure | `SftComposition.v`, `StftComposition.v` (rocq-sft, zero-admission) | **proven**: symbolic (tree) transducers are closed under composition (`∘`); a pipeline of guard-shaping transducers collapses to a single verified transducer |
+| SFT / STFT functionality | `SftFunctionality.v`, `StftFunctionality.v` (rocq-sft, zero-admission) | **proven**: the transducers are functional (single-valued) where required, so classification is deterministic on a given input term |
+| Presburger guard theory as an EBA | `PresburgerBooleanAlgebra.v` (rocq-presburger, zero-admission) — build `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-presburger` | **proven**: the Presburger-arithmetic constraint theory instances the EBA interface, so linear-integer guards are decided by the same substrate (Parikh-style obligations) |
+| Predicate-dispatch completeness | `DispatchCompleteness.v` (rocq-predicate-dispatch, zero-admission) — build `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-predicate-dispatch` | **proven**: compile-time predicate dispatch is complete — every classified guard obligation is routed to a handler (no obligation is silently unrouted), the classify-only invariant the run-time enforcement layer relies on |
+
 ---
 
 *Update protocol: when a phase lands, flip its row(s) to `proven`/`modeled-CE`, link the

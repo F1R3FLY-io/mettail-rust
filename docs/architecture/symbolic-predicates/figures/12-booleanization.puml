@@ -1,0 +1,50 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam componentStyle rectangle
+skinparam package {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title The Booleanization: regular elements are the Boolean core inside the Heyting algebra
+
+' ── Outer Heyting algebra (amber) containing the regular Boolean core ────
+package "Heyting algebra H" as H #FEF3C7 {
+
+  ' non-regular elements live in H but OUTSIDE H_reg
+  component "M\n(`¬¬M = ⊤ ≠ M`)" as M #FEF3C7
+  component "φ with boundary\n(`¬¬φ > φ`)" as Phi #FEF3C7
+
+  ' the Boolean core: the fixed points of ¬¬
+  package "H_reg = { a : ¬¬a = a }\n(a Boolean algebra)" as Hreg #DCFCE7 {
+    component "⊥" as Bot #DCFCE7
+    component "⊤" as Top #DCFCE7
+    component "¬φ" as NegPhi #DCFCE7
+  }
+}
+
+' regularization is the ¬¬ closure operator mapping H into its Boolean core
+M   -[#4F46E5,thickness=2]-> Top    : ¬¬  (regularization /\nclosure operator)
+Phi -[#4F46E5,thickness=2]-> NegPhi : ¬¬  (regularize)
+
+note bottom of Hreg
+  Regular elements form a **Boolean algebra** under `(∧, ⊔, ¬)`
+  with `⊔ = ¬(¬a ∧ ¬b)`; excluded middle `a ⊔ ¬a = ⊤` holds
+  there (`excluded_middle_reg`). `Classical<A>` is the
+  all-regular case (`regularize = id`).
+end note
+
+legend right
+|= Color |= Region |
+|<#FEF3C7> | Heyting algebra H (non-regular elements live here) |
+|<#DCFCE7> | `H_reg` — the regular Boolean core (`¬¬a = a`) |
+|<#E0E7FF> | `¬¬` regularization (the closure operator) |
+endlegend
+@enduml

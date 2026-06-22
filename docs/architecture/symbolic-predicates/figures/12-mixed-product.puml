@@ -1,0 +1,41 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam componentStyle rectangle
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title Structural (Boolean) × behavioral (Heyting) → RejectSafeProduct
+
+' ── Two input legs feeding the asymmetric product ────────────────────────
+component "Structural leg S\nClassical<A> — classical EBA\ninvolutive ¬, every element regular" as S #DBEAFE
+component "Behavioral leg B\nBehavioralAlgebra — Heyting\nreject-safe ¬, Sat3::DontKnow" as B #FEF3C7
+
+component "RejectSafeProduct<S,B>\nRejectSafeAlgebra ONLY" as P #FEF3C7
+
+S -down-> P : structural factor
+B -down-> P : behavioral factor
+
+note bottom of P #E0E7FF
+  asymmetric De Morgan:
+  `¬(a ∧ b) = (¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)`
+  — `¬a` exact (structural), `¬b` reject-safe (behavioral).
+  NOT a BooleanAlgebra (compile_fail doctest);
+  `mixed_negation_soundness` proves it never fires falsely.
+end note
+
+legend right
+|= Color |= Tier |
+|<#DBEAFE> | structural leg — classical Boolean (every element regular) |
+|<#FEF3C7> | behavioral leg / product — Heyting, reject-safe (caution) |
+|<#E0E7FF> | the soundness obligation discharged in Coq |
+endlegend
+@enduml

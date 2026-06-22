@@ -1,0 +1,54 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title Bisimulation invariance: a behavioral predicate cannot distinguish bisimilar processes
+
+' ── Two bisimilar LTS side by side: process P (left) and its bisimilar copy
+' Q (right) — e.g. two copies of `a.b`. States colored amber = behavioral.
+' NOTE on structure: a PlantUML STATE diagram admits only DIRECTED edges
+' (`->`), so the symmetric bisimilarity relation `∼` is drawn as a single
+' dashed amber arrow and labelled as the symmetric relation it denotes
+' (the largest bisimulation); the spanning note hangs off a state (the
+' state engine rejects free `note .. state` links and non-directional edges).
+state "P0  (process P)" as P0 #FEF3C7
+state "P1" as P1 #FEF3C7
+state "P2" as P2 #FEF3C7
+
+state "Q0  (process Q ∼ P)" as Q0 #FEF3C7
+state "Q1" as Q1 #FEF3C7
+state "Q2" as Q2 #FEF3C7
+
+' the two LTS, each a `step`-chain running downward
+P0 -down-> P1 : step
+P1 -down-> P2 : step
+Q0 -down-> Q1 : step
+Q1 -down-> Q2 : step
+
+' the bisimilarity witness between the two roots (dashed amber; ∼ is symmetric)
+P0 -[#B45309,dashed]-> Q0 : ∼ (bisimilar, symmetric)
+
+note bottom of P2
+  `P0 ∼ Q0` ⇒ they satisfy the SAME behavioral predicates:
+  `evaluate(AG ¬bad, P0) = evaluate(AG ¬bad, Q0)`  (Theorem 4.2).
+  A behavioral guard is a property of behavior, not representation
+  — well-defined on the quotient `S / ∼`.
+  (Hennessy–Milner: bisimilar ⟺ same modal formulas.)
+end note
+
+legend right
+|= Color / mark |= Meaning |
+|<#FEF3C7> | behavioral state (a process in the LTS) |
+| ∼ | bisimilarity — the largest bisimulation (a greatest fixed point); symmetric |
+endlegend
+@enduml

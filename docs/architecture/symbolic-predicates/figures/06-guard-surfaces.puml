@@ -1,0 +1,55 @@
+@startuml
+title The four guard surfaces and what each builds
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+' ── The surfaces a language author writes (left) ────────────────────────
+rectangle "Guard surfaces in `language!`" as Surf #DBEAFE {
+  component "`guards { }` block\n(parse_guards)" as G #BFDBFE
+  component "`?guard:Guard` slot\n(parse_term_param)" as Slot #BFDBFE
+  component "`where`-clause sublanguage\n(predicate_pratt.rs)" as Where #BFDBFE
+  component "`logic { relation }` block\n(parse_logic)" as Logic #BFDBFE
+  component "`#[tier(...)]` directive\n(parse_tier_directive)" as Tier #BFDBFE
+}
+
+' ── What each surface builds (right) ────────────────────────────────────
+rectangle "What each builds" as Built #DCFCE7 {
+  component "GuardConfig\n(channels / theories / connectives)" as GC #BBF7D0
+  component "TermParam::GuardBody\n+ per-instance BehavioralPred" as TP #BBF7D0
+  component "BehavioralPred\n(RelationQuery / Quantified /\nAnd / Or / Not / Implies)" as BP #BBF7D0
+  component "external relations\n(LogicBlock)" as Rel #BBF7D0
+  component "TierDirective\n(tier, bound, force)" as TD #BBF7D0
+}
+
+G    --> GC : builds
+Slot --> TP : builds
+Where --> BP : builds
+Logic --> Rel : builds
+Tier --> TD : builds
+
+note bottom of Where
+  The `where`-clause text is parsed by prattail's PredicateParser;
+  `where` is NOT a reserved keyword — it is a literal sitting before
+  the `?guard:Guard` slot, which lowers to a `GuardExpression` parser
+  item and switches into the predicate sublanguage. Any literal could
+  precede the slot.
+end note
+
+legend right
+|= Color |= Side |
+|<#DBEAFE> | guard surface (what the author writes) |
+|<#DCFCE7> | the obligation / config it builds |
+endlegend
+@enduml

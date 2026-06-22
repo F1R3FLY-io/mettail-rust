@@ -1,0 +1,67 @@
+@startuml
+title The closure family: every data type as an algebra instance
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+component "AnyAlgebra\n(single closed-enum carrier — one Predicate/Domain type)" as Any #DCFCE7
+
+' ── Leaves: scalar algebras ─────────────────────────────────────────────
+rectangle "Leaves (scalar EBAs)" as Leaves #DBEAFE {
+  component "Int"     as Int    #BFDBFE
+  component "Bool"    as Bool   #BFDBFE
+  component "Char"    as Char   #BFDBFE
+  component "BigInt"  as BigInt #BFDBFE
+  component "BigRat"  as BigRat #BFDBFE
+  component "Fixed"   as Fixed  #BFDBFE
+  component "Float"   as Float  #BFDBFE
+  component "Str"     as Str    #BFDBFE
+}
+
+' ── Combinators: each is itself an algebra over sub-algebras ─────────────
+rectangle "Combinators (each itself an algebra)" as Comb #DCFCE7 {
+  component "Product<A>\n(NaryProductAlgebra)" as Product #BBF7D0
+  component "Sum<A>\n(SumAlgebra)"             as Sum     #BBF7D0
+  component "Bag<A>\n(BagAlgebra)"             as Bag     #BBF7D0
+  component "Map<K,V>\n(MapAlgebra)"           as Map     #BBF7D0
+  component "List<A>\n(RegexAlgebra)"          as List    #BBF7D0
+  component "Tree<A>\n(TreeAlgebra)"           as Tree    #BBF7D0
+}
+
+Any --> Leaves : unifies
+Any --> Comb : unifies
+
+' combinators compose sub-algebras
+Product ..> Any : sub-algebras
+Sum ..> Any : summands
+Bag ..> Any : element algebra
+Map ..> Any : key × value
+List ..> Any : element algebra
+Tree ..> Any : payload + children (recursive)
+
+note bottom of Comb
+  Each closure is ITSELF a BooleanAlgebra / reject-safe algebra
+  ⇒ the SFA/SFT code and the algebra-agnostic proofs are reused
+  UNCHANGED. Generalizing "over all data types" = completing the
+  family of instances + closing it under type constructors,
+  not rewriting the automata. First-order pattern matching
+  is subsumed: a pattern lowers to a `TreePred<AnyAlgebra>`.
+end note
+
+legend right
+|= Color |= Group |
+|<#DBEAFE> | scalar leaf algebra |
+|<#DCFCE7> | algebra carrier / combinator (itself an algebra) |
+endlegend
+@enduml

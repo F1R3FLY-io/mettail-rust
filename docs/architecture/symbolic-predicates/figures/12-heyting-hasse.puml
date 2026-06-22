@@ -1,0 +1,45 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam object {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title A non-Boolean Heyting algebra: the chain `⊥ < M < ⊤` where `¬¬M ≠ M`
+
+' ── The 3-element chain Heyting algebra (the real `Chain3` model) ─────────
+' Hasse diagram: nodes stacked bottom-to-top, covers drawn as plain `--`
+' edges (no arrowheads). Order grows upward: ⊥ ≤ M ≤ ⊤.
+object "⊤  (top)" as Top #DCFCE7
+object "M  (middle)" as Mid #FEF3C7
+object "⊥  (bottom)" as Bot #DCFCE7
+
+' covering relations of the chain (drawn bottom-to-top)
+Bot -- Mid
+Mid -- Top
+
+note right of Mid
+  **M is the non-regular boundary element**
+  (the `Sat3::DontKnow` avatar)
+  ----
+  `¬M = (M → ⊥) = ⊥`   (since `M ≰ ⊥`)
+  `¬¬M = ¬⊥ = ⊤ ≠ M`   (double negation overshoots)
+  excluded middle fails:
+  `M ∨ ¬M = M ∨ ⊥ = M ≠ ⊤`
+end note
+
+note left of Top
+  `⊥` and `⊤` are **regular**
+  (`¬¬⊥ = ⊥`, `¬¬⊤ = ⊤`)
+  — classical reasoning is sound here.
+end note
+
+legend right
+|= Color |= Meaning |
+|<#DCFCE7> | regular element (`¬¬a = a`): recovered-classical |
+|<#FEF3C7> | non-regular boundary element (Heyting-only) |
+endlegend
+@enduml

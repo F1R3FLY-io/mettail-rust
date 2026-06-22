@@ -108,11 +108,20 @@ Ascent production rewrite backend; it does not make the active WPDA
 parser/recognizer legacy, and it retains Ascent only as a reference/oracle path
 for differential evidence during rollout.
 
-Together, the two suites explain how MeTTaIL source snippets are parsed into
-typed terms, how Dovetail supplies substrate-neutral rewrite semantics, how the
-Rho backend lowers rewrite networks into normalized Rholang AST and RSpace
-dataflow, and how F1r3node's Rho machine schedules enabled rewrites in
-parallel.
+The *theory-of-guards* layer — the semantic-predicate substrate that decides which
+guarded rewrites and communications a generated language may perform — is documented
+in a third suite,
+[architecture/symbolic-predicates/README.md](architecture/symbolic-predicates/README.md).
+That suite covers the effective Boolean algebras, symbolic finite automata and
+transducers, the Heyting algebra tower for behavioral constraints, and the
+end-to-end path from a `language!` guard through classification and the fail-closed
+flip gate to run-time enforcement.
+
+Together, the three suites explain how MeTTaIL source snippets are parsed into
+typed terms, how the semantic-predicate substrate classifies their guards, how
+Dovetail supplies substrate-neutral rewrite semantics, how the Rho backend lowers
+rewrite networks into normalized Rholang AST and RSpace dataflow, and how
+F1r3node's Rho machine schedules enabled rewrites in parallel.
 
 ---
 

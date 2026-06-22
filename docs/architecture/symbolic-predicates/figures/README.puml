@@ -1,0 +1,70 @@
+@startuml
+title Semantic-predicate symbolic-algebra substrate — component view in context
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+' ── Upstream: the language specification ────────────────────────────────
+rectangle "Upstream" as Up #DBEAFE {
+  component "`language!` spec\n(guards{} / ?guard:Guard /\nlogic{} / #[tier(..)])" as Spec #BFDBFE
+  component "MeTTaIL macro\n(prattail_bridge)" as Macro #BFDBFE
+}
+
+' ── The prattail substrate (the subject of this suite) ──────────────────
+rectangle "prattail substrate\n(theory of guards — compile time, classify-only)" as Sub #DCFCE7 {
+  component "EBA / BooleanAlgebra\n`symbolic.rs`" as EBA #BFDBFE
+  component "SFA\n(predicate-labeled automata)\n`symbolic.rs`" as SFA #CCFBF1
+  component "SFT / STFT\n`sft.rs` · `sym_tree_transducer.rs`" as SFT #EDE9FE
+  component "Algebra tower\nRejectSafe / Heyting\n`algebra_tower.rs`" as Tower #FEF3C7
+}
+
+' ── Downstream classification: rholang-codegen ──────────────────────────
+rectangle "rholang-codegen\n(the integration gate)" as Codegen #DCFCE7 {
+  component "classify\n`collect_guard_obligations`" as Classify #BBF7D0
+  component "obligation / disposition\n`backend.rs`" as Disp #BBF7D0
+  component "quality\n`guard_quality.rs`" as Quality #BBF7D0
+  component "fail-closed flip gate\n`flip.rs` · `decide_rho_flip`" as Gate #BBF7D0
+}
+
+' ── Downstream backends ─────────────────────────────────────────────────
+rectangle "Backends (host runtime)" as Back #FCE7F3 {
+  component "Dovetail\n(guarded rewrite saturation)" as Dovetail #FBCFE8
+  component "Rho backend / RSpace\n(`rhoapi::Par`, COMM)" as Rho #FBCFE8
+}
+
+Spec --> Macro : declared guards
+Macro --> EBA : BehavioralPred
+EBA --> SFA : predicate-labeled edges
+EBA --> SFT : input/output algebras
+EBA --> Tower : lifted into tiers
+Tower --> Classify : reject-safe evidence
+SFA --> Classify : recognition evidence
+SFT --> Classify : transduction evidence
+Classify --> Disp : per-obligation kind
+Disp --> Quality : derive quality tag
+Quality --> Gate : coverage evidence
+Gate --> Dovetail : admit only if covered, non-Unknown
+Gate --> Rho : admit only if covered, non-Unknown
+Gate --> Spec : REFUSE (fail-closed) on Unknown
+
+legend right
+|= Color |= Area |
+|<#DBEAFE> | inputs / scalar leaves / classical (decidable) EBA |
+|<#CCFBF1> | symbolic automaton (SFA) states |
+|<#EDE9FE> | symbolic transducer (SFT / STFT) |
+|<#FEF3C7> | semi-decidable tier — reject-safe / Heyting |
+|<#DCFCE7> | guard obligation / disposition / coverage / admitted |
+|<#FCE7F3> | Rholang / RSpace / COMM / host runtime |
+endlegend
+@enduml

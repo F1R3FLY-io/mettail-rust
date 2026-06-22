@@ -1,5 +1,7 @@
 # Symbolic Tree Automata & Transducers — the structural axis
 
+> For the end-to-end architecture of how this substrate classifies guards at compile time and how the surviving guard is enforced at run time, see the authoritative suite [`docs/architecture/symbolic-predicates/`](../../../../docs/architecture/symbolic-predicates/README.md).
+
 **Status:** IMPLEMENTED (2026-06-15). Companion to
 [any-algebra-substrate.md](any-algebra-substrate.md). Records the design of the
 structural (tree) generalization of the word SFA/SFT machinery so it can be

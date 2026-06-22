@@ -1,0 +1,41 @@
+@startuml
+title SFA recognition: predicate-labeled transitions over an infinite alphabet
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+  AttributeFontColor #111827
+}
+
+[*] --> q0
+
+state "q0\ninitial" as q0 #CCFBF1
+state "q1" as q1 #CCFBF1
+state "q2\naccepting" as q2 #CCFBF1
+
+q0 --> q1 : [x > 0]
+q1 --> q2 : [x < 10]
+q1 --> q1 : [x >= 10]
+q2 --> [*]
+
+note right of q1
+  The edge fires when e ⊨ φ —
+  the EBA `evaluate(φ, e)` oracle
+  answers the membership question,
+  not a symbol table. One
+  predicate-guarded edge stands in
+  for every concrete symbol that
+  satisfies its guard, so the alphabet
+  ℤ stays finite in the machine.
+end note
+
+legend bottom
+|= Color |= Element |
+|<#CCFBF1> | symbolic automaton (SFA) state |
+| [φ] | predicate guard on a transition (decided by the EBA) |
+endlegend
+@enduml

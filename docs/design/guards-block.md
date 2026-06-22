@@ -1,5 +1,17 @@
 # The `guards { }` Block: Language-Generic Guard Configuration
 
+> **Authoritative reference & live-vs-spec status.** For exactly which parts of
+> this `guards { }` specification parse and are wired today versus which are
+> proposed sublanguage, the parser-grounded reference is
+> [06 — Guard Syntax and Extensions](../architecture/symbolic-predicates/06-guard-syntax-and-extensions.md)
+> in the semantic-predicate suite
+> ([`docs/architecture/symbolic-predicates/`](../architecture/symbolic-predicates/README.md)).
+> Note also that guard evaluation is now **classify-only at compile time** (the
+> prattail EBA `𝔅` / SFA / SFT / Heyting tower emits coverage evidence and a
+> quality tag) plus **host-routed enforcement at run time** (RSpace structural
+> matching, a Rholang `where` boolean guard, or a host-routed `RhoNativeJoin`) —
+> it is no longer the Ascent / Datalog fixpoint model that earlier drafts assumed.
+
 > **Scope.** This document specifies the `guards { }` block of the `language!`
 > macro — the configuration layer that lets each MeTTaIL-defined language
 > declare its guard sublanguage explicitly: built-in predicates, logical

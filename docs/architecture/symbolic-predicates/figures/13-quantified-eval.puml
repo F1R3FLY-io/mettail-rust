@@ -1,0 +1,53 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title Quantified-predicate evaluation to a three-valued verdict
+
+' ── Ingestion: a where-clause becomes a QuantifiedFormula, then is evaluated ──
+state "WhereClause\n`∀x ∈ dom. φ`" as WhereClause #DBEAFE
+state "QuantifiedFormula" as QuantifiedFormula #DBEAFE
+state "Eval\n`evaluate_quantified[_with_theory]`" as Eval #DBEAFE
+
+[*] --> WhereClause : `∀x ∈ dom. φ`
+WhereClause --> QuantifiedFormula : `try_to_quantified_formula`
+QuantifiedFormula --> Eval : `evaluate_quantified[_with_theory]`
+
+' ── Three verdict outcomes from Eval ──
+state "Sat" as Sat #DBEAFE
+state "Unsat" as Unsat #DCFCE7
+state "Bounded\n`collect_bounded(min(limit, bound))`" as Bounded #FEF3C7
+state "DontKnow" as DontKnow #FEF3C7
+state "Reject" as Reject #FEF3C7
+
+Eval --> Sat   : domain finite, all/any decides
+Eval --> Unsat
+Eval --> Bounded : `Bounded` domain → `collect_bounded(min(limit, bound))`
+
+Bounded --> Sat      : witness found
+Bounded --> DontKnow : budget exhausted, `had_unknown`
+
+DontKnow --> Reject : `TriState::into_safe_bool`  (Unknown → false)
+
+note bottom of Reject #FEF3C7
+  `TriState {True, False, Unknown}` is the in-crate twin of
+  `Sat3`; `Unknown → false` is the safe-fail (reject-safe).
+end note
+
+legend right
+|= Color |= Verdict tier |
+|<#DBEAFE> | decidable path / `Sat` (blue) |
+|<#DCFCE7> | `Unsat` — definitely false (green) |
+|<#FEF3C7> | bounded search / `DontKnow` / `Reject` — safe-fail (amber) |
+endlegend
+@enduml

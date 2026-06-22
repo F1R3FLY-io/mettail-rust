@@ -1,0 +1,52 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam componentStyle rectangle
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam interface {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title The bridge: a ConstraintTheory becomes a BooleanAlgebra the automata reuse
+
+' ── Left→right dataflow: registration → theory → adapter → BooleanAlgebra → consumers ──
+component "theories { name = T for [Cat] }\n(TheoryRegistration)" as Reg #DBEAFE
+component "ConstraintTheory T\npropagate · label · witness · evaluate" as Theory #DBEAFE
+component "TheoryAlgebra<T> { search_bound }\n(the adapter)" as Adapter #DCFCE7
+interface "BooleanAlgebra\nis_satisfiable = witness().is_some()" as BA #DCFCE7
+component "SymbolicAutomaton · minterms · determinize · lint" as Consumers #CCFBF1
+
+Reg     -right-> Theory   : lowers to
+Theory  -right-> Adapter  : wrapped by
+Adapter -right-> BA       : impl
+BA      -right-> Consumers : reused by
+
+note bottom of Adapter
+  `collect_constraints`:
+  `And` → `fair_conjoin`,  `Or` → `interleave`,
+  `Not` → De Morgan / negation-as-failure;
+  then `collect_bounded(search_bound)`.
+end note
+
+' ── Formal counterpart (dashed) ──
+component "TheoryCombination.v\ncombined_eba_laws" as Formal #E0E7FF
+Adapter ..> Formal : formal counterpart
+
+legend right
+|= Color |= Role |
+|<#DBEAFE> | classical / decidable: registration + `ConstraintTheory` |
+|<#DCFCE7> | adapter + the `BooleanAlgebra` it provides |
+|<#CCFBF1> | SFA consumers that reuse the algebra (teal) |
+|<#E0E7FF> | formal counterpart discharged in Coq (indigo) |
+endlegend
+@enduml

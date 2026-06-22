@@ -1,5 +1,31 @@
 # Predicated Types: Guarded Communication in MeTTaIL
 
+> **Historical design-of-record — guard-evaluation framing superseded.**
+> This document is the original design narrative for predicated types and is
+> preserved as-is for its motivation, derivations, and architectural history.
+> Its account of *how a guard is evaluated* — framed throughout in terms of
+> Ascent / Datalog fixpoint queries (notably **§6 The Guarded Comm Rule**,
+> **§8 Behavioral Predicates**, and the surface-syntax sections that read
+> `where` as Datalog relation queries) — is **superseded**. Ascent was retired
+> in the P6 milestone. Guard evaluation is now a two-phase model: the
+> classify-only **prattail semantic-predicate substrate** (the EBA `𝔅` / SFA /
+> SFT / Heyting algebra tower) runs **at compile time**, emitting coverage
+> evidence and a quality tag per guard obligation; the surviving guard is then
+> enforced **at run time by the host** — RSpace structural matching, a Rholang
+> `where` boolean guard, or a host-routed `RhoNativeJoin` — never by re-running
+> the algebra.
+>
+> The authoritative, parser-grounded reference is the suite
+> [`docs/architecture/symbolic-predicates/`](../architecture/symbolic-predicates/README.md).
+> In particular:
+> [06 — Guard Syntax and Extensions](../architecture/symbolic-predicates/06-guard-syntax-and-extensions.md)
+> (what guard syntax parses today vs. proposed, including the `where` clause),
+> [07 — Language-to-Rholang Integration](../architecture/symbolic-predicates/07-language-to-rholang-integration.md)
+> (compile-time classification and the fail-closed flip gate that replaces the
+> Comm-rule evaluation story), and
+> [08 — Runtime COMM Enforcement](../architecture/symbolic-predicates/08-runtime-comm-enforcement.md)
+> (how the surviving predicate is enforced at run time).
+
 ---
 
 ## Part I: Motivation and Core Design
@@ -3898,6 +3924,14 @@ These variants require the Collection variant classification for proper matching
 
 ## 6. The Guarded Comm Rule
 
+> **Superseded:** the Ascent-rewrite-rule evaluation model below is replaced by
+> compile-time classification — see
+> [07 — Language-to-Rholang Integration](../architecture/symbolic-predicates/07-language-to-rholang-integration.md)
+> for how the guarded Comm obligation is now classified and gated, and
+> [08 — Runtime COMM Enforcement](../architecture/symbolic-predicates/08-runtime-comm-enforcement.md)
+> for how the surviving rule fires at run time (host structural matching, a
+> `where` boolean guard, or a host-routed `RhoNativeJoin`).
+
 ### Auto-Generation
 
 When the language defines a `PGuardedInput` constructor, the macro
@@ -4621,6 +4655,13 @@ guards involve theory-specific predicates.
 ---
 
 ## 8. Behavioral Predicates
+
+> **Superseded:** behavioral guards are no longer evaluated as Ascent relation
+> JOIN clauses. They are classified at compile time by the Heyting-strengthened
+> algebra tower — see
+> [12 — Heyting Behavioral Logic](../architecture/symbolic-predicates/12-heyting-behavioral-logic.md) —
+> and enforced at run time by the host per
+> [08 — Runtime COMM Enforcement](../architecture/symbolic-predicates/08-runtime-comm-enforcement.md).
 
 ### Motivation
 

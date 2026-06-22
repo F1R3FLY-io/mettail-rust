@@ -1,0 +1,78 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+  AttributeFontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title LogicT fair search: `interleave` reaches a witness where unfair `mplus` diverges
+
+' ══════════════════════════════════════════════════════════════════════════════
+' Panel A — unfair mplus (depth-first): descends the infinite left branch forever
+' ══════════════════════════════════════════════════════════════════════════════
+state "Panel A — unfair `mplus` (depth-first)" as A #FEF3C7 {
+  state "root\n`a.mplus(b)`" as A_root #FEFEFE
+
+  state "l₁" as A_l1 #FEF3C7
+  state "l₂" as A_l2 #FEF3C7
+  state "l₃" as A_l3 #FEF3C7
+  state "… (infinite)" as A_linf #FEF3C7
+
+  state "r₁  (starved)" as A_r1 #E5E7EB
+
+  A_root --> A_l1  : left first
+  A_l1   --> A_l2
+  A_l2   --> A_l3
+  A_l3   --> A_linf : descends forever
+  A_root --> A_r1  : right (never reached)
+
+  note bottom of A_linf #FEF3C7
+    `mplus` appends `b`'s branches AFTER all of `a`'s;
+    it descends the infinite left branch forever —
+    the witness in `r₁` is never reached → **`DontKnow`**.
+  end note
+}
+
+' ══════════════════════════════════════════════════════════════════════════════
+' Panel B — fair interleave: round-robin via the VecDeque reaches the witness
+' ══════════════════════════════════════════════════════════════════════════════
+state "Panel B — fair `interleave`" as B #DCFCE7 {
+  state "root\n`a.interleave(b)`" as B_root #DCFCE7
+
+  state "a₁" as B_a1 #FEF3C7
+  state "a₂" as B_a2 #FEF3C7
+  state "a₃ …" as B_a3 #FEF3C7
+
+  state "r₁  ★ witness" as B_r1 #DBEAFE
+
+  B_root --> B_a1 : 1·  `a₁`
+  B_root --> B_r1 : 2·  `b₁` = `r₁`
+  B_a1   --> B_a2 : 3·  `a₂`
+  B_a2   --> B_a3 : 4·  `b₂` …  (round-robin)
+
+  note bottom of B_r1 #DCFCE7
+    visit order `a₁, b₁, a₂, b₂, …` (round-robin) via the
+    `VecDeque`: `msplit` pops the front, suspended branches
+    are pushed to the back → bounded budget finds the
+    witness `r₁` → **`Sat`**.
+  end note
+}
+
+A -[hidden]right-> B
+
+legend right
+|= Color |= Meaning |
+|<#FEF3C7> | divergent / still-being-searched branch (amber) |
+|<#E5E7EB> | starved branch — never reached under `mplus` |
+|<#DBEAFE> | found witness — finite, reached under fair search (blue) |
+|<#DCFCE7> | the fair queue / `Sat` verdict (the `VecDeque` round-robin) |
+endlegend
+@enduml

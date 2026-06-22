@@ -1,0 +1,56 @@
+@startuml
+title language! guard → classified obligation → fail-closed flip decision
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam sequence {
+  ParticipantBorderColor #1F2937
+  ParticipantFontColor #111827
+  LifeLineBorderColor #9CA3AF
+  ArrowFontColor #111827
+}
+
+participant "`language!`\nauthor" as Author #DBEAFE
+participant "MeTTaIL\nmacro" as Macro #DBEAFE
+participant "prattail\nPredicateParser" as Parser #DBEAFE
+participant "substrate\n(EBA / SFT / tower)" as Sub #DCFCE7
+participant "rholang-codegen" as Codegen #DCFCE7
+participant "flip gate" as Gate #DCFCE7
+
+Author -> Macro : guards{} / ?guard:Guard / logic{}
+activate Macro
+Macro -> Parser : GuardExpression item
+activate Parser
+Parser -> Sub : BehavioralPred
+activate Sub
+Sub -> Codegen : obligations
+deactivate Sub
+activate Codegen
+Codegen -> Codegen : disposition + quality\n(classify-only)
+Codegen -> Gate : coverage evidence
+deactivate Codegen
+activate Gate
+
+alt covered, non-Unknown quality
+  Gate --> Author : ADMIT (lower to Rho backend)
+else any Unknown quality
+  Gate --> Author : REFUSE (fail-closed)
+end
+deactivate Gate
+deactivate Parser
+deactivate Macro
+
+note over Sub, Codegen
+  The substrate runs at COMPILE time and is classify-only —
+  it emits evidence + a quality tag per obligation, never an
+  EBA/SFA/SFT structure into the generated Rholang.
+end note
+
+legend bottom
+|= Color |= Participant role |
+|<#DBEAFE> | author / macro / parser input side |
+|<#DCFCE7> | classification → coverage → flip gate |
+endlegend
+@enduml

@@ -1,0 +1,56 @@
+@startuml
+title Runtime COMM enforcement: where each predicate class is gated
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam sequence {
+  ParticipantBorderColor #1F2937
+  ParticipantFontColor #111827
+  LifeLineBorderColor #9CA3AF
+  ArrowFontColor #111827
+}
+
+participant "Process" as P #FCE7F3
+participant "RSpace\n(tuple space)" as RS #FCE7F3
+participant "native join\nhandler" as NJ #E0E7FF
+participant "continuation" as K #FCE7F3
+
+P -> RS : for(x <- c where φ) meets c!(v)
+activate RS
+RS -> RS : structural pattern match
+
+alt structural guard
+  RS -> RS : RSpace decides (spatial match)
+else where boolean (source path)
+  RS -> RS : evaluate `where` before commit
+else behavioral / EBA / SFT
+  RS -> NJ : consult host relation / decide
+  activate NJ
+  NJ --> RS : permit or refuse
+  deactivate NJ
+end
+
+alt guard holds
+  RS -> K : commit — consume input, spawn body
+  activate K
+  deactivate K
+else guard fails
+  RS -> RS : REST — leave datum, no consume,\nno emit (guard atomicity)
+end
+deactivate RS
+
+note over RS, NJ
+  The EBA/SFT is NOT re-evaluated at run time — it was classified
+  at compile time and the flip gate already admitted it. The host
+  gates the COMM; the algebra never runs in the hot path. A failed
+  guard consumes nothing and emits nothing (failed_guard_no_commit).
+end note
+
+legend bottom
+|= Color |= Actor |
+|<#FCE7F3> | process / RSpace / continuation (host runtime) |
+|<#E0E7FF> | native join handler (formal-evidence-backed gate) |
+endlegend
+@enduml

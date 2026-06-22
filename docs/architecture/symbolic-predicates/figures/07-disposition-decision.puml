@@ -1,0 +1,47 @@
+@startuml
+title Obligation → disposition → quality → flip verdict
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+  BackgroundColor #DCFCE7
+}
+
+start
+:obligation kind?;
+
+if (kind?) then (StructuralPattern)
+  :DovetailCoreStructural;
+elseif (kind?) then (TheoryRegistration)
+  :EffectiveBooleanAlgebra;
+elseif (kind?) then (BehavioralPredicate)
+  :EffectiveBooleanAlgebra\n(reject-safe);
+else (channel / join)
+  :RhoNativeJoin;
+endif
+
+:derive quality\n(T1/T2 → Exact,\nT3 → Bounded,\nreject-safe → RejectSafeApprox,\nRhoNativeJoin → RuntimeObservation,\nnone → Unknown);
+
+if (any quality Unknown?) then (yes)
+  :BLOCK flip (fail-closed);
+  stop
+else (no)
+  :ADMIT;
+  stop
+endif
+
+legend right
+|= Color |= Stage meaning |
+|<#DBEAFE> | obligation input (decidable / structural) |
+|<#DCFCE7> | disposition / quality / ADMIT verdict |
+|<#FEF3C7> | reject-safe (semi-decidable) leg |
+|<#FCE7F3> | RhoNativeJoin (host runtime observation) |
+|<#FEE2E2> | Unknown ⇒ BLOCK (fail-closed) |
+endlegend
+@enduml

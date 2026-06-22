@@ -1,0 +1,37 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam object {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+title The adjunction `(a ∧ —) ⊣ (a → —)` defines Heyting implication
+
+' ── The Galois adjunction: meet (left adjoint) ⊣ implication (right adjoint)
+object "(a ∧ —)\nmeet — LEFT adjoint" as Meet #FEF3C7
+object "(a → —)\nHeyting implication — RIGHT adjoint" as Imp #FEF3C7
+
+' left-adjoint-to, drawn without an arrowhead to read as the relation ⊣
+Meet -right- Imp : ⊣  (left-adjoint-to)
+
+note bottom of Meet #E0E7FF
+  characterizing biconditional:
+  `c ∧ a ≤ b  ⟺  c ≤ (a → b)`   (`himp_adj`)
+  ----
+  counit = modus ponens:
+  `a ∧ (a → b) ≤ b`   (`imp_counit`)
+end note
+
+legend right
+|= Color |= Meaning |
+|<#FEF3C7> | Heyting functor (the meet/implication adjoint pair) |
+|<#E0E7FF> | the mechanized adjunction laws (`HeytingAlgebra.v`) |
+endlegend
+@enduml
