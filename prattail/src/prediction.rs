@@ -286,9 +286,8 @@ pub fn compute_first_sets(rules: &[RuleInfo], categories: &[String]) -> HashMap<
 /// Lightweight input for FOLLOW set computation. Send+Sync.
 ///
 /// Captures only the two fields that `compute_follow_sets` needs from each
-/// `RuleSpec`: the category and the syntax pattern. This allows FOLLOW set
-/// computation to run on a rayon worker thread without touching the `!Send`
-/// `rust_code: Option<TokenStream>` field on `RuleSpec`.
+/// `RuleSpec`: the category and the syntax pattern, decoupled from the
+/// `!Send` `rust_code: Option<TokenStream>` field on `RuleSpec`.
 #[derive(Debug, Clone)]
 pub struct FollowSetInput {
     /// Category this rule belongs to.

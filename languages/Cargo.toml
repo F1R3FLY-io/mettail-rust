@@ -98,9 +98,9 @@ indexmap = { workspace = true }
 # Optional: exposed via the `strategies` feature for public proptest strategies.
 proptest = { version = "1", optional = true }
 
-# Phase F.13 H7 (2026-05-20): optional mimalloc allocator gated by
-# `mimalloc-alloc` feature. Off by default. Trampoline_tests opts in
-# when run with `--features mimalloc-alloc`.
+# Phase F.13 H7 (2026-05-20): optional mimalloc allocator gated by the
+# `mimalloc` feature. Off by default. Trampoline_tests opts in
+# when run with `--features mimalloc`.
 mimalloc = { version = "0.1", default-features = false, optional = true }
 
 # Required by generated simulation CLI binaries.

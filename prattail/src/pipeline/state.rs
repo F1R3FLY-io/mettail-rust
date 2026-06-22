@@ -70,7 +70,7 @@ pub struct ParserBundle {
 // Pipeline state machine
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Pipeline state machine for parallel code generation.
+/// Pipeline state machine for code generation.
 ///
 /// Each state holds the data needed for the next transition.
 // Compile-time state machine with 3 total moves — never stored in collections.
@@ -155,11 +155,11 @@ pub(crate) fn pipeline_diagnostic(
 // Entry point
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Run the full pipeline: extract → generate (parallel) → finalize.
+/// Run the full pipeline: extract → generate → finalize.
 ///
-/// This is the main entry point for parallel code generation. It:
+/// This is the main entry point for code generation. It:
 /// 1. Extracts Send+Sync bundles from `&LanguageSpec` on the current thread
-/// 2. Runs lexer and parser codegen in parallel via `rayon::join`
+/// 2. Runs lexer then parser codegen sequentially
 /// 3. Concatenates results and parses into a single `TokenStream`
 pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
     run_pipeline_with_analysis(spec).0

@@ -43,12 +43,6 @@
 //! - Bartzis, C. & Bultan, T. (2003). "Efficient symbolic representations for
 //!   arithmetic constraints in verification." International Journal of Foundations
 //!   of Computer Science, 14(4), 605–624.
-//!
-//! ## Feature Gates
-//!
-//! - This module: `#[cfg(feature = "presburger")]`
-//! - `PresburgerAlgebra` (BooleanAlgebra impl): additionally requires `symbolic-automata`
-//! - `PresburgerTheory` (ConstraintTheory impl): `logict` is a dependency of `presburger`
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -1308,9 +1302,8 @@ impl PresburgerStore {
 /// `LogicStream::empty()` because Presburger arithmetic is decidable — propagation
 /// alone determines satisfiability.
 ///
-/// When the `symbolic-automata` feature is also enabled, `TheoryAlgebra<PresburgerTheory>`
-/// provides a BooleanAlgebra implementation that can be cross-validated against
-/// the direct `PresburgerAlgebra` fast path.
+/// `TheoryAlgebra<PresburgerTheory>` also provides a BooleanAlgebra implementation
+/// that can be cross-validated against the direct `PresburgerAlgebra` fast path.
 #[derive(Clone, Debug)]
 pub struct PresburgerTheory {
     /// Bit width for bounded integer representation.
@@ -1559,10 +1552,9 @@ pub fn extract_numeric_guard(
 /// 3. **Subsumption** — within the same category, one guard's satisfying set
 ///    is a strict subset of another's.
 ///
-/// Satisfiability is checked with the NFA-based Büchi construction (always
-/// available) via [`is_satisfiable_nfa`].  When the `symbolic-automata` feature
-/// is also enabled, the same checks could alternatively use `PresburgerAlgebra`,
-/// but the NFA path is used here for broad availability.
+/// Satisfiability is checked with the NFA-based Büchi construction via
+/// [`is_satisfiable_nfa`]. The same checks could alternatively use
+/// `PresburgerAlgebra`, but the NFA path is used here.
 ///
 /// # Arguments
 ///

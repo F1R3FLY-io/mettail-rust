@@ -1,7 +1,7 @@
 use super::*;
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Generate phase (parallel via rayon::join)
+// Generate phase
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Generate lexer code from the lexer bundle, returning the variant map
