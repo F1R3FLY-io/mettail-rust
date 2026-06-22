@@ -125,9 +125,6 @@ pub enum Optimization {
     // unreachable Frame_Cat variants — but Frame_Cat is gone with trampoline.rs
     // (Stage 10.6); Walker uses WPDS stack symbols (rule_idx, position), not
     // named frame variants. The optimization is structurally subsumed.
-    /// GT01: Green thread fork/join cost analysis via alternating automaton.
-    /// Determines whether parallel or serial execution is optimal for channel operations.
-    GreenThreadForkJoin,
 
     // ── Codegen Optimization Catalog ─────────────────────────────────────────
     /// ART01: Hash-consing for recursive term types (Rc/Arc + interning).
@@ -240,7 +237,6 @@ impl fmt::Display for Optimization {
             Self::PredicateDispatch => write!(f, "PD01:PredicateDispatch"),
             Self::RefinementTypeCheck => write!(f, "RT01:RefinementTypeCheck"),
             Self::EnvironmentTrimming => write!(f, "CEK01:EnvironmentTrimming"),
-            Self::GreenThreadForkJoin => write!(f, "GT01:GreenThreadForkJoin"),
             Self::HashConsing => write!(f, "ART01:HashConsing"),
             Self::IncrementalDelta => write!(f, "ART02:IncrementalDelta"),
             Self::RelationIndexing => write!(f, "ART03:RelationIndexing"),
@@ -422,8 +418,6 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("ParallelAnalysis") => Ok(Self::ParallelAnalysis),
             s if s.eq_ignore_ascii_case("CachedLints") => Ok(Self::CachedLints),
             // "CEK02" / "CekTracedParser" — REMOVED in Stage 6 Phase F.2.
-            "GT01" => Ok(Self::GreenThreadForkJoin),
-            s if s.eq_ignore_ascii_case("GreenThreadForkJoin") => Ok(Self::GreenThreadForkJoin),
             // Display format: "A1:LeftFactoring"
             s if s.contains(':') => s
                 .split_once(':')
@@ -1319,15 +1313,6 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // has no consumer. Removed from the candidates list to keep the cost-
     // benefit catalog reachable.
 
-    // GT01: Green thread fork/join cost analysis
-    candidates.push(OptimizationCandidate::new(
-        Optimization::GreenThreadForkJoin,
-        0.35, // good benefit (parallelism exploitation)
-        0.25, // moderate cost (6-phase verification pipeline)
-        profile.category_count >= 2,
-        format!("category_count={} (threshold: >=2)", profile.category_count,),
-    ));
-
     // Sort by score (lexicographic: speedup first, then compile_cost)
     candidates.sort_by(|a, b| a.score.cmp(&b.score));
 
@@ -2136,10 +2121,9 @@ impl Optimization {
             Self::PredicateDispatch => OptimizationStatus::Diagnostic,
             Self::RefinementTypeCheck => OptimizationStatus::Diagnostic,
 
-            // CEK machine / green thread infrastructure
+            // CEK machine infrastructure
             Self::EnvironmentTrimming => OptimizationStatus::Auto, // CEK01: dead capture elimination
             // CEK02 (CekTracedParser) — REMOVED in Stage 6 Phase F.2.
-            Self::GreenThreadForkJoin => OptimizationStatus::Diagnostic, // GT01: fork/join cost analysis
         }
     }
 }
@@ -2452,7 +2436,8 @@ mod tests {
         let all = evaluate_optimizations(&profile);
         // Stage 6 Phase F.2 (2026-04-24): removed CEK02:CekTracedParser (was 72 → 71).
         // Stage 10.7 (2026-05-05): removed F1/F2/F3/H1/CEK03 (71 → 66).
-        assert_eq!(all.len(), 66, "should evaluate all 66 optimization candidates");
+        // 2026-06-22: removed GT01:GreenThreadForkJoin with the green-thread runtime (66 → 65).
+        assert_eq!(all.len(), 65, "should evaluate all 65 optimization candidates");
     }
 
     #[test]
@@ -3533,15 +3518,13 @@ mod tests {
 
         // Verify all short codes parse to unique variants
         // Stage 10.7 (2026-05-05): F1, F2, F3, H1, CEK03 removed.
-        let mut all_short_codes: Vec<&str> = vec![
+        let all_short_codes: Vec<&str> = vec![
             "A1", "A2", "A4", "A5", "B1", "B2", "B3", "G1", "G25", "T01", "V01", "S01", "S03",
             "N01", "CEK01", "ART01", "ART02", "ART03", "ART04", "ART05", "ART06", "BCG01", "BCG02",
             "BCG03", "BCG04", "BCG05", "BCG06", "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",
             "BP01", "BP02", "BP03", "BP04", "BP05", "BP06", "CD01", "CD02", "CD03", "CD04", "CD05",
             "DB01", "DB02", "DB03", "DB04",
         ];
-        // Feature-gated short codes. Stage 6 Phase F.2 removed CEK02 (CekTracedParser).
-        all_short_codes.push("GT01");
         let parsed_variants: HashSet<Optimization> = all_short_codes
             .iter()
             .map(|code| {

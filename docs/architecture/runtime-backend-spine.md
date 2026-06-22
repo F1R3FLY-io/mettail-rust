@@ -167,7 +167,6 @@ Both lanes are runtime-backend paths. Neither replaces the parser.
 | Rho backend | RhoNet planning, normalized `rhoapi::Par` AST generation, explicit rejection of uncovered rules | Rholang text reparsing, custom Rho machine implementation |
 | F1r3node/RhoRuntime/RSpace | Rholang AST execution, COMM, joins, scheduling, replay, checkpoints, cost/funding | MeTTaIL language definition or Dovetail proof construction |
 | Ascent path | reference/oracle evidence during rollout | production rewrite execution after Dovetail/Rho gates pass |
-| CESK runtime backend | legacy runtime backend path | final target runtime backend after the Rho gate is satisfied |
 
 The main dependency rule is:
 

@@ -959,8 +959,8 @@ pub struct WpdaTraceEntry {
 /// event. Determines whether the walker continues, snapshots, halts, or
 /// awaits external resumption.
 ///
-/// Mirrors `CekControl` from the surveyed `cek.rs` API and adds the `Pause`
-/// variant promised by `docs/design/made/rholang-target/design.md` §13.1.
+/// Adds the `Pause` variant promised by
+/// `docs/design/made/rholang-target/design.md` §13.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WpdaControl {
     /// Proceed to the next transition.

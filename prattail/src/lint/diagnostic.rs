@@ -98,10 +98,6 @@ define_diagnostic_ids! {
     G36 => "G36", G37 => "G37", G38 => "G38",
     G39 => "G39", G40 => "G40", G41 => "G41", G42 => "G42",
 
-    // ── Grammar type (GT) ──
-    GT01 => "GT01", GT02 => "GT02", GT03 => "GT03",
-    GT04 => "GT04", GT05 => "GT05", GT06 => "GT06",
-
     // ── Infrastructure (I) ──
     I01 => "I01", I02 => "I02", I03 => "I03", I04 => "I04",
     I05 => "I05", I06 => "I06", I07 => "I07", I08 => "I08", I09 => "I09",

@@ -257,8 +257,7 @@ fn syntax_item_to_node(item: &SyntaxItemSpec) -> RailroadNode {
 /// Annotate railroad diagrams with hit counts from a rule_hits map.
 ///
 /// Maps each `(rule_label, count)` pair to all diagrams' hit_counts.
-/// Phase 11 (F.1) decoupled this from `crate::cek::TraceCollector`; callers
-/// can now pass `&trace.rule_hits` (or any compatible map) directly.
+/// Callers pass `&trace.rule_hits` (or any compatible map) directly.
 pub fn annotate_diagrams(
     diagrams: &mut HashMap<String, CategoryDiagram>,
     rule_hits: &HashMap<String, usize>,
@@ -485,8 +484,7 @@ mod tests {
         let spec = make_simple_spec();
         let mut diagrams = generate_railroad_diagrams(&spec);
 
-        // Phase 11 (F.1): annotate_diagrams now takes &HashMap<String, usize>
-        // directly, decoupling from crate::cek::TraceCollector.
+        // annotate_diagrams takes &HashMap<String, usize> directly.
         let mut rule_hits: HashMap<String, usize> = HashMap::new();
         rule_hits.insert("InfixRHS".to_string(), 10);
         rule_hits.insert("RD_Lit_0".to_string(), 5);

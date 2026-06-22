@@ -216,10 +216,6 @@ jobs:
       # production `.unwrap()` makes this step exit non-zero on its own.
       - name: Prattail clippy (enforces deny(clippy::unwrap_used) on the production path)
         run: cargo clippy -j1 -p prattail --all-targets
-      # cek.rs / channel.rs are parked behind `green-threads` (Phase 2); compile
-      # them here so the parked speculative code cannot rot silently.
-      - name: Parked-feature rot check (green-threads → cek/channel)
-        run: cargo check -j1 -p prattail --features green-threads
 
   doc:
     name: Documentation

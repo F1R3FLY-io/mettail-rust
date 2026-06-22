@@ -208,11 +208,6 @@ pub mod sppf_realize;
 // DELETED. Zero in-tree consumers; parity tests had become tautological
 // post-Stage-10b's parse_preserving_vars Walker rewrite.
 
-/// Phase 10 (F.0): shared parser/evaluator control directives. Hosts
-/// `CekControl` so the evaluator (`cek_eval`) survives Stage 6 Phase E.4
-/// when parser-side `cek.rs` types are deleted.
-pub mod control;
-
 /// Phase 6: inline sub-language parsers (predicates) used by the WPDS
 /// walker for slots that don't fit the main grammar's state machine.
 pub mod parser;
@@ -222,26 +217,6 @@ pub mod parser;
 /// prattail → runtime cycle. Runtime re-exports this module's types for
 /// backward compatibility.
 pub mod behavioral_pred;
-
-// `cek` (reactive CEK-machine parser infrastructure) and `channel` (green-thread
-// MPMC/join-pattern infrastructure) are PARKED behind off-by-default features as of
-// 2026-06-21 (production-readiness pass). Liveness verified at this commit: no
-// checked-in code references `mettail_prattail::cek::*` (the traced-parser codegen
-// that emitted it was removed; only doc-comments remain), and `channel`'s sole
-// consumer `pipeline::analyze_green_thread_safety` is itself uncalled. The code is
-// NOT deleted — it stays compilable under `--features green-threads` (which also
-// enables `cek-runtime` plus the cek/channel-only `dashmap`/`crossbeam-*`/`num_cpus`
-// deps), honoring `channel.rs`'s own documented gating intent.
-
-/// CEK machine architecture: reactive state machine, trace entries,
-/// incremental session, environment infrastructure.
-#[cfg(feature = "cek-runtime")]
-pub mod cek;
-
-/// Channel infrastructure: lock-free MPMC queues, channel maps,
-/// join patterns, channel specifications from `channels {}` block.
-#[cfg(feature = "green-threads")]
-pub mod channel;
 
 /// Railroad diagram generation from grammar specifications.
 pub mod railroad;

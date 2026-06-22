@@ -4,8 +4,8 @@ PraTTaIL's parsing pipeline is structurally isomorphic to a **CEK machine** (Fel
 
 > **Note**: This document covers the **parsing CEK** machine. The parsing CEK is intentionally
 > *not* extended to CESK — parsing is purely functional (no mutable state, no store needed).
-> For the **evaluation CESK** machine (with store, GC, mutation), see
-> [`cesk-store.md`](cesk-store.md) and [`../design/cesk-machine.md`](../design/cesk-machine.md).
+> The evaluation-side CESK machine was retired in P6; evaluation is now Dovetail
+> (e-graph saturation) + the Rholang VM.
 
 ## 1. Component Mapping
 
@@ -124,104 +124,6 @@ Frame_Cat::UnaryPrefix_Neg { saved_bp }
 ```
 
 The correctness of this defunctionalization is proved in `formal/rocq/trampoline/theories/Defunctionalization.v`.
-
-## 7. Concurrency Extension
-
-The single-threaded CEK machine extends to concurrent evaluation through green
-threads (`prattail/src/green_thread.rs`) and channels (`prattail/src/channel.rs`).
-Each green thread carries its own CEK triple; the scheduler mediates interleaved
-execution over a shared channel map.
-
-### Component Mapping
-
-| CEK Component | Green Thread Field | Type | Notes |
-|---------------|-------------------|------|-------|
-| **C** (Control) | `GreenThread.state` | `CekThreadState` | Current term under evaluation; thread state subsumes phase |
-| **E** (Environment) | `GreenThread.environment` | `im::HashMap<String, im::HashMap<String, String>>` | Persistent; O(1) structural-sharing clone on FORK |
-| **K** (Kontinuation) | `GreenThread.continuation` | `im::Vector<String>` | Persistent stack; O(log n) push/pop, O(1) clone |
-
-A **process configuration** is a triple `Sigma = (Pi, Gamma, S)` where `Pi` is
-the thread pool, `Gamma` is the channel map, and `S` is the scheduler. See
-`prattail/docs/theory/green-thread-semantics.md` Definition 3 for the full
-formal definition.
-
-### Concurrent Transition Rules
-
-Rules 11--14 extend the 10 single-threaded CEK rules with process-algebraic
-primitives from the pi-calculus. Each rule operates on `Sigma = (Pi, Gamma, S)`.
-
-#### Rule 11: FORK
-
-```
-                   [C, E, K] in Pi[tid]        C = PPar(P, Q)
-----------------------------------------------------------------------
-  Pi' = Pi[tid -> Forked({id_P, id_Q})]
-        U {id_P -> (id_P, P, E, [])}
-        U {id_Q -> (id_Q, Q, E, [])}
-  S'.rq = S.rq U {(pri, age_P) -> id_P, (pri, age_Q) -> id_Q}
-```
-
-The parent forks into two child threads, each inheriting the environment `E`
-via O(1) persistent clone (`im::HashMap::clone`). Both children start with
-fresh empty continuation stacks.
-
-#### Rule 12: SEND
-
-```
-       [Send(x, v), E, K] in Pi[tid]        Gamma[E(x)] = ch
-----------------------------------------------------------------------
-  ch.queue' = ch.queue ++ [v]
-  Pi' = Pi[tid -> (tid, (), E, K)]
-```
-
-Message `v` is enqueued on channel `ch` (lock-free via crossbeam-channel).
-The thread continues with unit `()`. If `ch.waiter_count > 0`, the scheduler
-wakes suspended threads (Rule S3 in green-thread-semantics.md).
-
-#### Rule 13: RECEIVE
-
-```
-       [Recv(x, body), E, K] in Pi[tid]        Gamma[E(x)] = ch
-----------------------------------------------------------------------
-  Case ch.queue != []:
-    v = head(ch.queue),  ch.queue' = tail(ch.queue)
-    E' = E[x -> v]
-    Pi' = Pi[tid -> (tid, body, E', K)]
-
-  Case ch.queue = []:
-    Pi' = Pi[tid -> Suspended({E(x)})]
-```
-
-Non-blocking dequeue via `Channel::try_recv()`. On empty channel, the thread
-suspends until a SEND arrives. Join patterns (`for (@x <- a; @y <- b) { ... }`)
-suspend on the full set `{a, b}` and wake only when all channels have messages.
-
-#### Rule 14: NEW
-
-```
-              [New(x, body), E, K] in Pi[tid]
-----------------------------------------------------------------------
-  id_ch = Gamma.fresh_id()
-  Gamma' = Gamma U {id_ch -> Channel::new(id_ch, x, capacity)}
-  E' = E[x -> id_ch]
-  Pi' = Pi[tid -> (tid, body, E', K)]
-```
-
-A fresh channel is allocated with a unique ID (monotonic `AtomicU64`), registered
-in the channel map, and bound to `x` in the thread's environment.
-
-### Correspondence to Single-Threaded CEK
-
-Within any single green thread, the 10 standard CEK transition rules (Section 2)
-apply unchanged. The concurrency rules 11--14 interact only with the global
-`Sigma` configuration, not with the per-thread `(C, E, K)` stepping. This
-separation ensures that the CEK ↔ WPDS correspondence (Section 3) and the
-defunctionalization (Section 5) remain valid per-thread.
-
-See `prattail/docs/theory/green-thread-semantics.md` for full formal
-definitions, correspondence theorems, and Petri net abstraction. See
-`prattail/src/channel.rs` for the channel implementation and
-`prattail/src/green_thread.rs` for the green thread data structures.
 
 ## 8. References
 
