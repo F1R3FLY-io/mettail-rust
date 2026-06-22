@@ -36,3 +36,10 @@ theories/GuardTierClassificationSound.v
 # EffectiveBooleanAlgebra (sat_false_iff_empty + decides_implies), and
 # AnyAlgebraProjectionSound (wrapper_sat_faithful at A := tree_eba).
 theories/SymTreeWiringSound.v
+# OSLF substrate Phase 3 `.1`: behavioral decidability-classifier wiring soundness
+# (BehavioralFormula::decidability_tier). The classifier routes a guard to the
+# exact relational runtime (tier ≤ T2) IFF the guard is non-modal (has an exact
+# decision procedure), so a semi-decidable modal guard is never mis-routed to the
+# relational-only evaluator. Self-contained (models the modal-vs-relational shape
+# only).
+theories/BehavioralTierClassificationSound.v

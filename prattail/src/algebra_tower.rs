@@ -31,7 +31,7 @@
 //! [`Classical`], whose impls delegate to the classical operations
 //! (`pseudo_complement = not`, `regularize = id`, `is_satisfiable_3v` only ever
 //! `Sat`/`Unsat`, `implies = ¬a ∨ b`). A genuinely semi-decidable algebra (e.g.
-//! the forthcoming `BehavioralAlgebra`) implements [`HeytingAlgebra`] **directly
+//! [`BehavioralAlgebra`](crate::behavioral_algebra)) implements [`HeytingAlgebra`] **directly
 //! and does not implement [`BooleanAlgebra`]** — so any operation bounded on
 //! `BooleanAlgebra` (every SFA complement/determinize/equivalence) is statically
 //! unavailable on it. That is the load-bearing safety property.

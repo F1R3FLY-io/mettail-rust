@@ -387,11 +387,14 @@ fn generate_variant_from_term_context(
                 //
                 // The field is passive runtime data used for shape
                 // dispatch, display, and hash-consing — not for
-                // runtime evaluation. Behavioral predicates are
-                // evaluated via direct Ascent JOIN clauses emitted
-                // by the macro at compile time (see
-                // `compile_guard_to_ascent_clauses` and §8 of
-                // `docs/design/predicated-types.md`).
+                // runtime evaluation. At run time the predicate is
+                // enforced host-side at COMM (RSpace matching, a
+                // Rholang `where` guard, or a `RhoNativeJoin`) for
+                // Rho-backed languages, or evaluated by
+                // `mettail_runtime::evaluate_pred_with_bindings` for
+                // WPDA refinement guards (§8 of
+                // `docs/design/predicated-types.md`). The legacy
+                // Ascent JOIN-clause lowering was retired in P6.
                 fields.push(quote! {
                     mettail_runtime::BehavioralPred
                 });

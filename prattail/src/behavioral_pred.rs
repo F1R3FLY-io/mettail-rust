@@ -13,21 +13,26 @@
 //!
 //! ## Role at runtime
 //!
-//! `BehavioralPred` is a **passive data type** — no `evaluate()` method
-//! and no thread-local snapshot. The thread-local fact snapshot and
-//! `evaluate_pred_with_bindings` live in `runtime/src/pred_eval.rs`,
-//! using these types via re-export.
+//! `BehavioralPred` is a **passive carrier type** — no `evaluate()` method
+//! and no thread-local snapshot of its own. The thread-local fact snapshot and
+//! `evaluate_pred_with_bindings` live in `runtime/src/behavioral_pred.rs`
+//! (the runtime crate re-exports these types).
 //!
-//! ## Semantics deferred to Ascent
+//! ## How the fragments are evaluated (post-P6)
 //!
-//! - `RelationQuery` — lowered to an Ascent join clause `rel(args)`.
-//! - `Quantified { ForAll | Exists, ... }` — lowered via
-//!   `prattail::logict::QuantifiedFormula` + `evaluate_quantified`.
-//! - `AcMatch` — lowered to specialized Ascent code using
-//!   `prattail::logict::multiset_partitions`.
-//! - `And`, `Or`, `Not`, `Implies` — Boolean rewrites to DNF + one
-//!   Ascent rule per clause.
-//! - `Top` — identity predicate; "no join clause".
+//! For **WPDA refinement guards** (`{x:Sort | pred}`), `wpda_codegen::refinement`
+//! lowers the predicate to a call into the runtime evaluator:
+//! - `RelationQuery` — `evaluate_pred_with_bindings` against the fact snapshot.
+//! - `Quantified { ForAll | Exists, ... }` — `prattail::logict::QuantifiedFormula`
+//!   + `evaluate_quantified`.
+//! - `AcMatch` — `prattail::logict::multiset_partitions` (a structural/spatial
+//!   match; in the OSLF split this is the *structural* leg).
+//! - `And`, `Or`, `Not`, `Implies`, `Top` — Boolean combination over the above.
+//!
+//! For **Rho-backed guarded COMM**, the predicate is instead enforced host-side
+//! at COMM time (RSpace structural matching, a Rholang `where` boolean guard, or
+//! a host-routed `RhoNativeJoin`); the compile-time substrate classifies only.
+//! (The legacy Ascent Datalog join-clause lowering was retired in P6.)
 
 use moniker::{BoundTerm, Var};
 use std::fmt;

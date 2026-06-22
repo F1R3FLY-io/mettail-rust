@@ -104,10 +104,12 @@ pub mod visitor;
 // Runtime behavioral predicate AST for source-level predicated types.
 // Phase 2A of the predicated-types implementation plan.
 //
-// This is a passive data type — the design specifies that all relation
-// lookups happen via direct Ascent JOIN clauses emitted by the macro
-// at compile time. See `docs/design/predicated-types.md` §8 and
-// `mettail-macros::logic::rules::compile_guard_to_ascent_clauses`.
+// This is a passive carrier type. At run time its relation lookups are
+// evaluated by `evaluate_pred_with_bindings` against the thread-local fact
+// snapshot (WPDA refinement guards), or enforced host-side at COMM for
+// Rho-backed guarded languages (RSpace matching, a Rholang `where` guard, or a
+// `RhoNativeJoin`). See `docs/design/predicated-types.md` §8. (The legacy
+// Ascent Datalog JOIN-clause lowering was retired in P6.)
 pub mod behavioral_pred;
 pub use behavioral_pred::{
     clear_pred_fact_snapshot, evaluate_pred_with_bindings, set_pred_fact_snapshot, BehavioralPred,

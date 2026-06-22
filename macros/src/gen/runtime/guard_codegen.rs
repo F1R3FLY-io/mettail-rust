@@ -14,17 +14,24 @@
 //!
 //! This module is called from the predicated types pipeline (Stage 5) when
 //! `TermParam::GuardBody` constructors exist in the language definition.
-//! The generated guard functions are included in the `TokenStream` alongside
-//! the Ascent struct and Comm rules.
+//! The emitted `TriState` type is included in the `TokenStream` alongside the
+//! generated runtime — the Dovetail saturation engine and, for host-routed
+//! languages, the Rho-native COMM backend. (The legacy Ascent Datalog runtime
+//! backend was retired in P6.)
 //!
-//! ## Guard Evaluation Paths
+//! ## Guard Evaluation Paths (post-P6)
 //!
-//! **Primary path (inline):** For T2 guards with simple `RelationQuery`, the
-//! guard is compiled to a direct Ascent join clause in the Comm rule body.
-//! This uses Ascent's native indexing and is the most efficient path.
+//! **Host-routed path (Rho-backed COMM):** For a guarded COMM rule in a
+//! Rho-backed language, the surviving predicate is enforced at run time by the
+//! host — RSpace structural matching, a Rholang `where` boolean guard, or a
+//! host-routed `RhoNativeJoin`. The compile-time substrate (EBA/SFT) classifies
+//! only and is never re-evaluated at run time (see
+//! `docs/architecture/semantic-predicates/08-runtime-comm-enforcement.md`).
 //!
-//! **Standalone path:** Each guard also gets a standalone `__guard_N()` function
-//! for testing, external callers, and the selectivity/overlap analysis pipeline.
+//! **Refinement path (WPDA):** A refinement-type guard `{x:Sort | pred}` is
+//! lowered by `wpda_codegen::refinement` to a call to
+//! `mettail_runtime::evaluate_pred_with_bindings` against the thread-local fact
+//! snapshot.
 //!
 //! ## AWA Strategy (documentation only)
 //!
@@ -111,15 +118,16 @@ pub fn generate_tristate_type() -> TokenStream {
 /// - Per-guard evaluation functions (one per `GuardBody` constructor)
 /// - Guard tier classification metadata
 pub fn generate_guard_codegen(language: &LanguageDef) -> TokenStream {
-    // Phase 3D correction (2026-04-08): this function no longer emits
-    // per-guard evaluation wrapper functions. Under the corrected
-    // design, behavioral predicates are evaluated via direct Ascent
-    // JOIN clauses inside the guarded Comm rule body (see
-    // `compile_guard_to_ascent_clauses` in `macros/src/logic/rules.rs`
-    // and §8.2/§8.4 of `docs/design/predicated-types.md`). Per-instance
-    // predicates carried on the generated enum variant are used only
-    // for shape dispatch, display, and hash-consing — not runtime
-    // evaluation.
+    // This function no longer emits per-guard evaluation wrapper functions.
+    // Post-P6, behavioral predicates are enforced at run time by the
+    // host-routed COMM path (RSpace structural matching, a Rholang `where`
+    // boolean guard, or a host-routed `RhoNativeJoin`) for Rho-backed
+    // languages, or lowered to `mettail_runtime::evaluate_pred_with_bindings`
+    // for WPDA refinement guards (see `wpda_codegen::refinement` and §8 of
+    // `docs/design/predicated-types.md`). The legacy Ascent Datalog JOIN-clause
+    // lowering was retired in P6. Per-instance predicates carried on the
+    // generated enum variant are used only for shape dispatch, display, and
+    // hash-consing — not runtime evaluation.
     //
     // We keep the `TriState` type emission for backward compatibility
     // with any external consumers that may reference it, but no

@@ -1,6 +1,6 @@
 //! `BehavioralAlgebra` — an effective algebra of **behavioral** predicates over
-//! the dynamics of terms (relational/Datalog facts now; modal and temporal
-//! fragments added in later steps).
+//! the dynamics of terms: a relational/Datalog fragment plus a modal/temporal
+//! (μ-calculus) fragment over a labeled transition system.
 //!
 //! Behavioral predicates are only *snapshot-relative*: a relation's absence from
 //! the current fact base is not a proof of absence (more facts may be derived).
@@ -13,12 +13,12 @@
 //! returning [`Sat3::Sat`]/[`Sat3::Unsat`]; only an exceeded search budget
 //! yields [`Sat3::DontKnow`].
 //!
-//! This module (M2.2a) provides the relational fragment: `Relation` atoms,
-//! `forall`/`exists` quantifiers, and boolean combination, decided against a
-//! [`FactBase`] over the active domain. The modal (`Diamond`/`Box`/`Mu`/`Nu`)
-//! and temporal fragments — which use the [`HostTerm`] LTS — extend the
-//! [`BehavioralFormula`] enum and the `evaluate`/`is_satisfiable_3v` dispatch in
-//! subsequent steps.
+//! This module provides both fragments. The **relational** fragment — `Relation`
+//! atoms, `forall`/`exists` quantifiers, and boolean combination — is decided
+//! against a [`FactBase`] over the active domain. The **modal/temporal**
+//! fragment (`Diamond`/`BoxAll`/`Mu`/`Nu`, with the CTL operators derived below)
+//! uses the [`HostTerm`] LTS and is model-checked by `denote`; the
+//! `evaluate`/`is_satisfiable_3v` dispatch routes between them via `has_modal`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -253,6 +253,39 @@ impl BehavioralFormula {
             BehavioralFormula::Top
             | BehavioralFormula::Bot
             | BehavioralFormula::Relation { .. } => false,
+        }
+    }
+
+    /// Classify this behavioral predicate into a decidability tier — the
+    /// `algebra_tower`-backed behavioral classifier (OSLF Phase 3).
+    ///
+    /// The tier is derived from the formula *shape*, not from evaluating it:
+    /// - `Top`/`Bot` are ground constants ⇒ compile-time decidable (`T1`).
+    /// - Any modal/temporal operator (`Diamond`/`BoxAll`/`Mu`/`Nu`/`Atom`/
+    ///   `FixVar`, anywhere in the formula) makes satisfiability only
+    ///   *semi-decidable*: [`BehavioralAlgebra::is_satisfiable_3v`] returns
+    ///   [`Sat3::DontKnow`] for a modal formula (the *model-checking* direction
+    ///   against a given term is exact, but the *type* is only reject-safe) ⇒
+    ///   semi-decidable (`T3`).
+    /// - Otherwise the formula is purely **relational** — decided closed-world
+    ///   over the fact snapshot ⇒ runtime-decidable (`T2`): decidable once the
+    ///   relation snapshot is populated, reject-safe under stratified negation.
+    ///
+    /// This is a **sound over-approximation**: it never under-reports a tier (a
+    /// modal guard is never classified below `T3`), and — the load-bearing
+    /// property — anything it classifies at `≤ T2` is non-modal, hence handled
+    /// completely by the relational runtime evaluator
+    /// (`evaluate_pred_with_bindings`). It never routes a modal guard to the
+    /// relational-only path. Proven in
+    /// `formal/rocq/symbolic_algebra/theories/BehavioralTierClassificationSound.v`.
+    pub fn decidability_tier(&self) -> crate::symbolic::DecidabilityTier {
+        use crate::symbolic::DecidabilityTier;
+        match self {
+            BehavioralFormula::Top | BehavioralFormula::Bot => {
+                DecidabilityTier::CompileTimeDecidable
+            },
+            _ if self.has_modal() => DecidabilityTier::SemiDecidable,
+            _ => DecidabilityTier::RuntimeDecidable,
         }
     }
 }
@@ -1064,5 +1097,61 @@ mod tests {
         assert!(alg.evaluate(&ax(BehavioralFormula::Bot), &s2()));
         // EX (¬done) from state 0 — successor (state 1) is ¬done.
         assert!(alg.evaluate(&ex(BehavioralFormula::Not(Box::new(done()))), &s0()));
+    }
+
+    // ── decidability_tier: the algebra_tower-backed behavioral classifier ──────
+    use crate::symbolic::DecidabilityTier;
+
+    #[test]
+    fn decidability_tier_ground_is_t1() {
+        assert_eq!(BehavioralFormula::Top.decidability_tier(), DecidabilityTier::CompileTimeDecidable);
+        assert_eq!(BehavioralFormula::Bot.decidability_tier(), DecidabilityTier::CompileTimeDecidable);
+    }
+
+    #[test]
+    fn decidability_tier_relational_is_t2() {
+        // A purely relational guard is runtime-decidable (closed-world over the
+        // snapshot once populated).
+        let rel = BehavioralFormula::Relation { name: "halts".into(), args: vec![var("x")] };
+        assert_eq!(rel.decidability_tier(), DecidabilityTier::RuntimeDecidable);
+        // ∀/∃ + boolean combination over relational atoms stays T2.
+        let quant = BehavioralFormula::Forall {
+            var: "y".into(),
+            domain: QDomain::Active,
+            body: Box::new(BehavioralFormula::Or(
+                Box::new(BehavioralFormula::Not(Box::new(rel.clone()))),
+                Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("y")] }),
+            )),
+        };
+        assert_eq!(quant.decidability_tier(), DecidabilityTier::RuntimeDecidable);
+    }
+
+    #[test]
+    fn decidability_tier_modal_is_t3() {
+        // A modal/temporal guard is only semi-decidable (is_satisfiable_3v ⇒
+        // DontKnow), so it must be classified T3 — never routed to the
+        // relational-only runtime evaluator.
+        let modal = BehavioralFormula::Diamond(
+            ActionPattern::Named("step".into()),
+            Box::new(BehavioralFormula::Atom("done".into())),
+        );
+        assert_eq!(modal.decidability_tier(), DecidabilityTier::SemiDecidable);
+        let fixpoint = ef(BehavioralFormula::Atom("done".into()));
+        assert_eq!(fixpoint.decidability_tier(), DecidabilityTier::SemiDecidable);
+    }
+
+    #[test]
+    fn decidability_tier_mixed_modal_is_t3() {
+        // A guard mixing a relational atom with a modal one is semi-decidable
+        // (the modal subformula dominates) — the load-bearing case for the
+        // mixed structural×behavioral guard rail.
+        let mixed = BehavioralFormula::And(
+            Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("x")] }),
+            Box::new(BehavioralFormula::Diamond(
+                ActionPattern::Any,
+                Box::new(BehavioralFormula::Atom("done".into())),
+            )),
+        );
+        assert_eq!(mixed.decidability_tier(), DecidabilityTier::SemiDecidable);
     }
 }
