@@ -7,11 +7,11 @@ runtime assumptions into the rewrite core.
 
 ## What Dovetail Replaces
 
-Dovetail replaces the production use of the Ascent-generated rewrite execution
-path. Ascent is valuable only as a temporary reference/oracle during rollout.
-The WPDA parser remains active and upstream. The CESK runtime backend is the
-runtime backend path being replaced and removed from live production code at
-campaign completion.
+Dovetail replaced the production use of the Ascent-generated rewrite execution
+path. The generated Ascent engine was retired in P6; only the fail-closed
+`Language::run_ascent` differential-oracle hook survives as a reference oracle.
+The WPDA parser remains active and upstream. The CESK runtime backend path was
+also retired in P6, replaced by Dovetail plus Rho-native execution.
 
 The value handed to downstream consumers is a Dovetail report: a structured
 artifact that preserves exact roots, derivation structure, and extraction

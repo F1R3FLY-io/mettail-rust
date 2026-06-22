@@ -158,8 +158,8 @@ but the typed rule is `Str × Str → Str`, so the generated AST body must be
 Generated languages do not need to depend on `rholang-runtime` to become
 Rho-default. `RhoRuntimeBackedLanguage<L, F>` lives in the Rho runtime crate and
 wraps an existing generated `Language`: `L` still owns parsing, environments,
-and type inference, while transition-only explicit Ascent
-oracle execution remains outside the wrapped production value. `F` maps a typed
+and type inference, while the fail-closed `run_ascent` differential-oracle hook
+remains outside the wrapped production value. `F` maps a typed
 generated term into a dynamic `rhoapi::Par` call or direct observation request.
 The wrapper checks language identity before it can advertise `RhoMachine`.
 Generated `LanguageMetadata` now exposes a stable compiler-facing fingerprint
@@ -706,10 +706,10 @@ Rust flip-gate evidence:
 - `default_backend_plan_rejects_stale_disposition_claims`
 - `default_backend_plan_rejects_duplicate_dispositions`
 
-The CESK runtime backend is transition-only. After a language flip, Rho becomes
+The CESK runtime backend was retired in P6. After a language flip, Rho becomes
 that language's default runtime backend; the active WPDA parser/recognizer
-remains upstream. At campaign completion, Ascent/CESK runtime paths are deleted
-from the live production tree rather than retained as dormant legacy code.
+remains upstream. The Ascent and CESK runtime paths were deleted from the live
+production tree in P6 rather than retained as dormant legacy code.
 
 The current production `Language` trait surface has already removed the old
 CEK decomposition hook. Generated `language!` implementations no longer emit
@@ -811,7 +811,7 @@ The Rho-vs-Ascent differential oracle (and the `oracle-ascent` feature it depend
 on) was **retired with the legacy Ascent backend** in the P6 finalization — the
 Ascent reference no longer exists in the live tree, so there is no differential
 gate to run. A flipped language is now gated directly against the live backends:
-the `mettail-rho-{codegen,adapter,runtime}` and `dovetail-runtime` test
+the `rholang-{codegen,adapter,runtime}` and `dovetail-runtime` test
 suites, the COMM/guard oracles above, and — for fold-bearing languages — the
 in-engine native-fold reduction tests (`languages/tests/rhocalc_dovetail_fold.rs`,
 see Dovetail [12 - Native-Fold Reduction](../dovetail/12-native-fold-reduction.md)).

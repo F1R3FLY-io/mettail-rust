@@ -683,13 +683,15 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
 // GATE: untouched-share = 1 - (in_extracted / added_total) ≥ 50% AND
 //       saturation ≥ 20% of eval wall-time  →  recommend DV-1; else record the non-goal.
 //
-// CORPUS CAVEAT (recorded in findings.md): the rhocalc eval corpus does NOT route
-// through dovetail today — `mettail-rho-runtime` runs f1r3node's RhoRuntime
-// directly (run.rs) and the `dovetail` reference in its lib.rs is a doc comment;
-// dovetail is M-E.0 (inert), no live caller. So this probe measures the LARGEST
-// EXISTING dovetail workload: a saturate→extract arithmetic-rewrite system that
-// mirrors the equality-saturation shape the flip would create. The
-// corpus-representativeness caveat carries to the flip epic.
+// CORPUS CAVEAT (recorded in findings.md, pre-P6 framing): when this DV-0 probe was
+// written the rhocalc eval corpus did NOT route through dovetail — `rholang-runtime`
+// runs f1r3node's RhoRuntime directly (run.rs). Post-P6, dovetail is the live
+// general-purpose backend (via the `languages` `dovetail-codegen` default feature);
+// rhocalc process terms still execute on the host RhoRuntime while dovetail reduces
+// the in-engine folds. So this probe still measures the LARGEST representative
+// dovetail workload: a saturate→extract arithmetic-rewrite system that mirrors the
+// equality-saturation shape the flip created. The corpus-representativeness caveat
+// carries to the flip epic.
 #[cfg(test)]
 mod dv0_probe {
     use std::collections::HashSet;

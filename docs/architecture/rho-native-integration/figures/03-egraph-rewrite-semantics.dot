@@ -1,0 +1,105 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  Dovetail rewrite semantics ON the e-graph, drawn as an e-graph.
+//
+//  egg convention (Willsey et al., POPL 2021, doi:10.1145/3434304):
+//    • an e-CLASS is a DASHED rounded box  — a set of provably-equal terms;
+//    • an e-NODE  is a SOLID box inside it — one operator + child e-CLASS refs;
+//    • a child edge points from an e-node INTO the e-class of its argument.
+//
+//  This figure makes two facts from `03-dovetail-rewrite-semantics.md` visual,
+//  using rhocalc's signature reduction — COMM:
+//
+//    redex  t = par⟦ for(x ← c).P , c!(Q) ⟧      ⤳   contractum  u = P{Q ∕ x}
+//
+//  (1) ContentKey vs EClassId.  When the directed rewrite t ⤳ u fires, equality
+//      saturation MERGES the redex class and the contractum class into ONE
+//      e-class q★ (one `EClassId`).  Both e-nodes SURVIVE with their DISTINCT
+//      exact `ContentKey`s (k_t ≠ k_u) — nothing is pruned — so a downstream
+//      report or differential oracle can still tell the two term records apart.
+//  (2) Equivalence-respecting rewrite.  Because t and u now share q★, ANY rule
+//      that fires on the contractum (u ⤳ r) is, for free, a rewrite of the redex
+//      too:  Eq(t,u) ∧ Rw(u,r) ⇒ Rw(t,r).
+//
+//  Render: dot -Tsvg 03-egraph-rewrite-semantics.dot -o 03-egraph-rewrite-semantics.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph EGraphRewriteSemantics {
+    compound = true;              // allow edges to terminate on a cluster boundary
+    rankdir  = TB;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 17;
+    label = "Rewrite semantics on the e-graph: a COMM step merges the redex and contractum into one e-class (one EClassId), both ContentKeys survive, and equivalence-respecting closure carries any later rewrite back to the redex";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3];
+
+    // ───────────────── the merged equivalence class q★ (green) ─────────────────
+    subgraph cluster_star {
+        label = "q★ = {redex, contractum}   ◄ one EClassId · two distinct ContentKeys, both alive";
+        labeljust = "l"; fontsize = 13; fontcolor = "#14532D";
+        style = "dashed,rounded"; color = "#16A34A"; bgcolor = "#DCFCE7"; penwidth = 1.8; margin = 16;
+
+        // the redex e-node: a parallel (par) bag of a receive and a send (amber AC-bag).
+        redex [label="par⟦ ●, ● ⟧\n(redex)   ContentKey k_t", fillcolor="#FFFBEB", color="#D97706"];
+        // the contractum e-node: the substituted body (violet constructor).
+        contractum [label="P{ Q ∕ x }\n(contractum)   ContentKey k_u", fillcolor="#F5F3FF", color="#7C3AED"];
+    }
+
+    // ───────────────── the two matched members of the redex bag ─────────────────
+    subgraph cluster_recv {
+        label = "q_recv"; labeljust = "l"; fontsize = 12; fontcolor = "#5B21B6";
+        style = "dashed,rounded"; color = "#7C3AED"; bgcolor = "#EDE9FE"; margin = 10;
+        e_recv [label="for(x ← ● ).P", fillcolor="#F5F3FF"];
+    }
+    subgraph cluster_send {
+        label = "q_send"; labeljust = "l"; fontsize = 12; fontcolor = "#5B21B6";
+        style = "dashed,rounded"; color = "#7C3AED"; bgcolor = "#EDE9FE"; margin = 10;
+        e_send [label="● !( Q )", fillcolor="#F5F3FF"];
+    }
+
+    // ───────────────── the channel leaf shared by recv and send ─────────────────
+    subgraph cluster_c {
+        label = "q_c"; style = "dashed,rounded"; color = "#2563EB"; bgcolor = "#DBEAFE";
+        e_c [label="c", fillcolor="#EFF6FF"];
+    }
+
+    // ───────────────── the later reduct of the contractum ─────────────────
+    subgraph cluster_r {
+        label = "q_r"; labeljust = "l"; fontsize = 12; fontcolor = "#5B21B6";
+        style = "dashed,rounded"; color = "#7C3AED"; bgcolor = "#EDE9FE"; margin = 10;
+        e_r [label="r   (a further normal form)", fillcolor="#F5F3FF"];
+    }
+
+    // redex bag → its two members
+    redex -> e_recv [lhead=cluster_recv, label=" member"];
+    redex -> e_send [lhead=cluster_send, label=" member"];
+
+    // recv and send share the SAME channel c (the join key) — red accent.
+    e_recv -> e_c [lhead=cluster_c, label=" c", color="#B91C1C", penwidth=1.6];
+    e_send -> e_c [lhead=cluster_c, label=" c", color="#B91C1C", penwidth=1.6];
+
+    // the COMM rewrite that merged redex and contractum into q★.
+    redex -> contractum [label="  COMM fires:  record  t ≈ u  (prune nothing)  ",
+                         color="#16A34A", penwidth=2.2, fontcolor="#14532D"];
+
+    // a later directed rewrite ON the contractum…
+    contractum -> e_r [lhead=cluster_r, label="  u ⤳ r  ", color="#7C3AED", penwidth=1.6];
+
+    // …is, for free, a rewrite of the redex too (equivalence-respecting closure).
+    redex -> e_r [lhead=cluster_r, style=dashed, color="#DC2626", penwidth=2.0,
+                  label="  derived:  t ⤳ r  \l  (Eq(t,u) ∧ Rw(u,r) ⇒ Rw(t,r))  \l",
+                  fontcolor="#991B1B"];
+
+    // ───────────────────────────── legend ─────────────────────────────
+    subgraph cluster_legend {
+        label = "legend"; fontsize = 12; style = "rounded"; color = "#CBD5E1"; margin = 10;
+        node [shape=box, style="filled,rounded", fontsize=11, width=2.3];
+        L_leaf  [label="channel / leaf class",            fillcolor="#DBEAFE", color="#2563EB"];
+        L_cons  [label="process constructor class",        fillcolor="#EDE9FE", color="#7C3AED"];
+        L_ac    [label="AC op-bag (par) e-node",            fillcolor="#FEF3C7", color="#D97706"];
+        L_merge [label="rewrite-merged class (q★)",         fillcolor="#DCFCE7", color="#16A34A"];
+        L_leaf -> L_cons -> L_ac -> L_merge [style=invis];
+    }
+}

@@ -123,7 +123,76 @@ if (( path_errors != 0 )); then
   fail "referenced local path check failed"
 fi
 
+# ── Extended coverage: design-derivation and design-of-record subtrees ────────
+# The ambient-binder/ derivation record and the docs/design/dovetail-engine/
+# plans are design HISTORY, not the published forward-looking spec. They receive
+# the STRUCTURAL checks (stray tool-output tags, fenced-block balance,
+# math-in-backticks, link integrity) so real defects cannot rot there. The clean
+# ambient-binder/ ledgers additionally pass the draft/proof-hole marker ban; the
+# design-engine plans are exempt from that ban only because they legitimately
+# discuss proof obligations ("zero-Axiom", "one Admitted.") and historical
+# milestone language as part of the record.
+ambient_files=()
+design_engine_files=()
+[[ -d "$script_dir/ambient-binder" ]] && ambient_files+=("$script_dir"/ambient-binder/*.md)
+design_engine_dir="$repo_root/docs/design/dovetail-engine"
+[[ -d "$design_engine_dir" ]] && design_engine_files+=("$design_engine_dir"/*.md)
+extended_files=("${ambient_files[@]}" "${design_engine_files[@]}")
+
+if (( ${#extended_files[@]} > 0 )); then
+  printf 'checking extended subtrees (%s files)...\n' "${#extended_files[@]}"
+
+  # stray tool-output tags — a hard defect in any genre
+  if rg -n -e '</content>' -e '</invoke>' -e '<parameter name=' "${extended_files[@]}"; then
+    fail "stray tool-output tag found in an extended subtree"
+  fi
+
+  # draft/proof-hole markers — applied to the clean ambient-binder/ ledgers only
+  if (( ${#ambient_files[@]} > 0 )); then
+    if rg -n '\b(TODO|FIXME|TBD|placeholder|stub|hack|not implemented|unimplemented)\b|Axiom|Admitted\.' "${ambient_files[@]}"; then
+      fail "draft/proof-hole marker found in ambient-binder/"
+    fi
+  fi
+
+  # fenced-block balance
+  for file in "${extended_files[@]}"; do
+    fence_count="$(rg -c '^```' "$file" || true)"
+    fence_count="${fence_count:-0}"
+    if (( fence_count % 2 != 0 )); then
+      fail "unbalanced fenced code block in $file"
+    fi
+  done
+
+  # math-symbol literal formatting
+  awk '
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /[⊆⇒∀∃≈→∧∨∪∖∈≡⊗⊕]|0̄|1̄|ᵢ|₀/ && $0 !~ /`/ {
+      print FILENAME ":" FNR ":" $0
+      bad = 1
+    }
+    END { exit bad ? 1 : 0 }
+  ' "${extended_files[@]}" || fail "math symbol outside code literal in an extended subtree"
+
+  # relative Markdown links resolve
+  ext_link_errors=0
+  while IFS=: read -r file line match; do
+    target="$(printf '%s' "$match" | sed -E 's/.*\]\(([^)#]+)(#[^)]+)?\).*/\1/')"
+    case "$target" in
+      http*) continue ;;
+      /*) path="$target" ;;
+      *) path="$(dirname -- "$file")/$target" ;;
+    esac
+    if [[ ! -e "$path" ]]; then
+      printf 'missing %s:%s -> %s (%s)\n' "$file" "$line" "$target" "$path" >&2
+      ext_link_errors=1
+    fi
+  done < <(rg -n -o '\[[^]]+\]\([^)]*\.(md|puml|dot|svg)[^)]*\)' "${extended_files[@]}")
+  if (( ext_link_errors != 0 )); then
+    fail "extended subtree Markdown link check failed"
+  fi
+fi
+
 printf 'checking whitespace with git diff --check...\n'
-git -C "$repo_root" diff --check -- docs/architecture/dovetail docs/README.md docs/architecture.md
+git -C "$repo_root" diff --check -- docs/architecture/dovetail docs/README.md docs/architecture.md docs/design/dovetail-engine
 
 printf 'dovetail documentation validation passed.\n'

@@ -24,7 +24,7 @@ These are already *fenced behind features and fail-closed by default* (proven by
   legacy runtime backend (plan + doc-07:716-721). Keep.
 - **The Dovetail/Rho production path** (the replacement) — untouched.
 
-## DECISION REQUIRED — the differential-oracle (`rho_vs_ascent`)
+## Decision that was required (RESOLVED → P6-full) — the differential-oracle (`rho_vs_ascent`)
 
 `rho_vs_ascent` (Calculator's differential, just hardened in P5b/B4 to run real-vs-real)
 **depends on `oracle-ascent`** — it runs `CalculatorLanguage::run_ascent` as the reference.
@@ -75,7 +75,7 @@ default is Dovetail/Rho, proven by `RuntimeBackendDispatch.v`.)
 - `runtime` / generated `Language::run_ascent` trait surface (already fail-closed by default).
 - After removal Calculator's flip is still proven by the end-to-end RhoRuntime tests + `OracleQuotientEquivalence.v` + the COMM/guard oracles; only the *live* Ascent differential is gone.
 
-## Status: PREPPED — awaiting explicit scope + approval
+## Original pre-execution status (for the record): PREPPED — awaited explicit scope + approval
 
 P6 is now staged to the brink: the surface is mapped, the scope fork is exact, the post-removal
 gate sweep is defined. **One destructive step remains — the deletion itself — and it is NOT taken

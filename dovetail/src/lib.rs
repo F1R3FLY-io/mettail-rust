@@ -1,13 +1,13 @@
 //! # Dovetail — substrate-agnostic GSLT reduction engine core
 //!
 //! `dovetail` is the standalone, extractable core for MeTTaIL rewrite
-//! semantics used by the CESK runtime-backend replacement path: a generic-`W`
-//! weighted tree automaton (WTA) over a runtime e-graph treated as a
-//! deterministic finite tree automaton (DFTA), with N-best / set-valued exact
-//! lazy best-first extraction. The active WPDA parser/recognizer remains
-//! upstream of this crate. Ascent is legacy for production rewrite execution
-//! and is transition-only; git history is the archive after the Dovetail/Rho
-//! runtime path replaces it.
+//! semantics. It replaced the CESK runtime-backend rewrite path (retired in
+//! P6): a generic-`W` weighted tree automaton (WTA) over a runtime e-graph
+//! treated as a deterministic finite tree automaton (DFTA), with N-best /
+//! set-valued exact lazy best-first extraction. The active WPDA
+//! parser/recognizer remains upstream of this crate. The generated Ascent
+//! engine was retired in P6; only the fail-closed `Language::run_ascent`
+//! differential-oracle hook survives, and git history is the archive.
 //!
 //! Design of record:
 //! `docs/design/dovetail-engine/dovetail-core-implementation-plan.md`.
@@ -26,10 +26,14 @@
 //!
 //! ## Status
 //!
-//! Milestone **M-E.0 (inert)** is implemented: the core engine and formal
-//! obligations are present, the crate remains gated off by default
-//! (`default = []`), and nothing in the existing workspace build path depends on
-//! it. See the implementation plan for the increment sequence.
+//! Installed and live (post-P6). Dovetail is the general-purpose production
+//! rewrite backend: the `languages` crate enables it through the default
+//! `dovetail-codegen` feature, and the generated `dovetail_report_for`
+//! associated fn drives [`rules::saturate_with_native`] for every flipped
+//! language. This crate keeps an empty `default = []` on purpose — it carries
+//! no optional features of its own, so the production flip is feature-wired
+//! from `languages`, not from here. See the implementation plan for the
+//! increment sequence and `docs/architecture/dovetail/` for the suite.
 
 pub mod egraph;
 pub mod extract;

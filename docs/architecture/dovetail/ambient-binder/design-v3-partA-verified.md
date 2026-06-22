@@ -51,7 +51,7 @@ loop: T1 = binder_congruence_normal_form(T)        // float new's out, AC-normal
       re-wrap each S'∈S'set under P* via Scope::new (re-close, capture-safe)
       T2 = canonical binder-NF of {new P*.S'}; if term_eq(T2,T) break else T=T2
 ```
-AC reduction can re-expose new's (OpenRule surfaces nested new; In/OutRule move ambients) ⇒ re-float.
+AC reduction can re-expose new's (OpenRule surfaces nested new; In/OutRule move ambients) `⇒` re-float.
 Bounded by max_iters/max_nodes (`EGraphConfig`) + new max_float_rounds ⇒ `BoundedByCycleCut` if not
 converged (NOT `Complete` — honest; thread real `ExtractionCompleteness` through the seam, replacing the
 hardcoded `Complete` at `lib.rs:204`). Mandates: ambiguity preserved (alt-map + AcApp every-selection +
@@ -89,13 +89,13 @@ Honest `report_complete_iff_both_converge` + `binder_nf_idempotent` (true-fixpoi
 0. Empirical pin + negative oracle (run_ascent captures, moniker ref does not) — Rocq Thm 1; valuable today.
 1. NativeHandler InNew/Out/Open/Amb + NewComm float (no AC) — Rocq Thm 1,2,4; capture witnesses don't capture.
 2. Compose float↔AC fixpoint + honest completeness — Rocq Thm 3 + idempotent/complete; re-float converges;
-   non-terminating term ⇒ BoundedByCycleCut; ambiguity ≥2 roots across seam.
+   non-terminating term `⇒` BoundedByCycleCut; ambiguity ≥2 roots across seam.
 3. Disposition gate + rhocalc pin + flip `ambient_dovetail_flip.rs` expect_err→expect — Rocq Thm 5.
 4. Differential oracle on NON-capturing corpus + clear var-cache once.
 
-## H. Biggest threat: float↔AC fixpoint non-confluent/non-deterministic ⇒ ill-defined NF ⇒ exact_key
+## H. Biggest threat: float↔AC fixpoint non-confluent/non-deterministic `⇒` ill-defined NF `⇒` exact_key
 determinism (lib.rs:179-181 dedup, WPDA seed) breaks. Mitigation: stable structural `Scope` `Ord` (not
-unique_id) ⇒ run-stable order (pin: twice ⇒ byte-identical root keys); full-float-before-AC + full-AC-
+unique_id) `⇒` run-stable order (pin: twice `⇒` byte-identical root keys); full-float-before-AC + full-AC-
 before-float (no sub-step interleave); e-graph confluent-by-congruence + deterministic extraction under
 uniform weight; honest BoundedByCycleCut on divergence; Rocq `binder_nf_idempotent`. Secondary: ScopeExtrusion
 multiset full-union is_fresh (reverse-blocks test); freshened unique_id never leaks into exact_key (re-close

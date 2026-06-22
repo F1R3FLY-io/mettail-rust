@@ -7,11 +7,11 @@ and the Rho machine fit together.
 For Dovetail's standalone rewrite-engine architecture, see
 [../dovetail/README.md](../dovetail/README.md).
 
-Scope note: this integration is a replacement path for the CESK runtime backend.
-It is not a replacement for the active WPDA parser/recognizer. Ascent is legacy
-for production rewrite execution and may be used only as reference/oracle
-evidence during rollout; campaign completion removes Ascent/CESK runtime paths
-from the live production tree.
+Scope note: this integration replaced the CESK runtime backend (retired in P6).
+It is not a replacement for the active WPDA parser/recognizer. The generated
+Ascent rewrite engine was also retired in P6; only the fail-closed
+`Language::run_ascent` differential-oracle hook survives, and
+`selected_default_runtime_backend` never selects it.
 
 The theoretical background is the Rho calculus
 ([RHO-2005](references.md#rho-2005)), mobile-process calculi

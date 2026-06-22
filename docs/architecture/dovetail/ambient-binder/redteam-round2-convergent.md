@@ -20,7 +20,7 @@ and the binding constraints for v3.
 3. **Over-generation onto rhocalc.** `rhocalc.rs:862 Extrude` is the SAME multi-binder scope-extrusion
    with freshness, dispositioned to HOST RSpace (`RhoNativeJoin`; `ambient_dovetail_flip.rs:13-16`,
    `guard_quality.rs:131`). The GENERIC `premise_supported(Freshness)=>true` + Lambda/MultiLambda flip
-   is NOT language-conditioned ⇒ wrongly lowers rhocalc's Extrude in-engine. Silent (no test calls
+   is NOT language-conditioned `⇒` wrongly lowers rhocalc's Extrude in-engine. Silent (no test calls
    `RhoCalcLanguage::dovetail_report_for`). Breaches the disposition-first invariant (P3/P5a).
 4. **`free_fv_leaves` ≠ moniker `free_vars`.** It folds the UNION over e-class alternatives (nothing is
    pruned), a superset of any single term's free vars. Safe only as `⊇` with a FULL-union walk; the
@@ -29,7 +29,7 @@ and the binding constraints for v3.
 5. **The differential oracle is blind to binder equations.** `run_ascent` emits NO ScopeExtrusion/NewComm
    rule for Ambient (the `unbind`+`multi_substitute` generator is rho-COMM-HARDCODED, `rules.rs:2391-2403`;
    the eqrel SKIPS binders+collections, `equations.rs:271-283`). So there is no reference normal form to
-   diff against; the Rocq model also omits the AcApp re-homing ⇒ the formal check is blind too.
+   diff against; the Rocq model also omits the AcApp re-homing `⇒` the formal check is blind too.
 6. **`RewriteRule{guards}` breaks ~30 struct literals** across `dovetail/src` + `dovetail/tests`
    (no smart constructor; `rules.rs:148-153`).
 
@@ -54,7 +54,7 @@ because `unbind`/`Scope::new` recompute coordinates LOCALLY (never sharing leave
 
 "Dovetail lowers a family in-engine IFF its matching is ambiguous AND no host layer preserves it;
 otherwise it is dispositioned." The binder equations are DETERMINISTIC congruences (the extruded/commuted
-form is unique up to alpha) ⇒ NOT ambiguous ⇒ they were NEVER supposed to go in-engine. They are a
+form is unique up to alpha) `⇒` NOT ambiguous `⇒` they were NEVER supposed to go in-engine. They are a
 **NativeHandler disposition**: a moniker-based native computation (`unbind`/`free_vars`/`Scope::new`),
 capture-safe by construction, with LOCAL coordinate recomputation. Only the genuinely-ambiguous AC
 reduction (InRule/OutRule/OpenRule — which rearrange the soup, not binders) stays in-engine (P4, DONE).
@@ -95,7 +95,7 @@ reduction (InRule/OutRule/OpenRule — which rearrange the soup, not binders) st
 - `languages/src/ambient.rs:30-35` — the six equations (all depth/coordinate-changing) + `:37-53` the AC
   rewrite rules (InRule/OutRule/OpenRule — in-engine, done) + congruence rules ParCong/NewCong/AmbCong.
 - `macros/src/logic/rules.rs:2391-2403` — binder-equation reference generator, rho-COMM-HARDCODED
-  (POutput/NQuote/PPar bag) ⇒ does NOT emit Ambient ScopeExtrusion/NewComm.
+  (POutput/NQuote/PPar bag) `⇒` does NOT emit Ambient ScopeExtrusion/NewComm.
 - `macros/src/logic/rules.rs:959-990` — `generate_freshness_clause` (moniker `free_vars`, the real ref).
 - `macros/src/logic/equations.rs:271-283` — eqrel skips binders + collections.
 - `dovetail/src/egraph.rs` — no analysis framework; `add`/`rebuild`/`canonical_class_key` binder-blind.

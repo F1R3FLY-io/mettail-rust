@@ -35,11 +35,12 @@ and never:
 
 ## Scope Boundary
 
-This design replaces only the CESK runtime backend path after a language passes
-its flip gate. The active WPDA parser/recognizer remains the parser front end,
-and the Ascent production rewrite backend is legacy. Ascent/CESK are
-reference/oracle transition machinery only; campaign completion removes them
-from the live production runtime tree.
+This design replaced the CESK runtime backend path (retired in P6); a language
+adopts the Rho default backend after passing its flip gate. The active WPDA
+parser/recognizer remains the parser front end. The generated Ascent rewrite
+engine was retired in P6; only the fail-closed `Language::run_ascent`
+differential-oracle hook survives, and `selected_default_runtime_backend`
+never selects it.
 
 ## Why This Design
 
@@ -102,7 +103,7 @@ That means:
 | Question | Answer |
 |---|---|
 | Does this create a custom Rho machine in MeTTaIL? | No. It reuses F1r3node's Rholang interpreter and RSpace. |
-| Does the Rho path replace the CESK runtime backend immediately? | Not immediately. During the transition, languages flip only after checkable coverage, artifact-validation, and deadlock gates pass, with proof/oracle results tracked as verification evidence. At campaign completion, Dovetail/Rho replaces the live Ascent/CESK runtime path; git history is the archive. WPDA parsing remains active. |
+| Did the Rho path replace the CESK runtime backend all at once? | No — per language. The CESK and generated-Ascent runtime paths were retired in P6 (git history is the archive); a language adopts the Rho default backend only after its checkable-coverage, artifact-validation, and deadlock gates pass, with proof/oracle results tracked as verification evidence. WPDA parsing remains active. |
 | Does RSpace scheduling change semantics? | It must not. Scheduler order is quotiented away; semantic alternatives are represented as data. |
 | Can snippets modeled by MeTTaIL run on F1r3node? | Yes, after MeTTaIL/WPDA parsing and after the language's Rho lowering fragment satisfies its gates. |
 | Where is the detailed design? | Start with [End-to-End Architecture](02-end-to-end-architecture.md), [Rho-Native Dataflow Lowering](04-rho-native-dataflow-lowering.md), and [Correctness and Coverage](06-correctness-and-coverage.md). |

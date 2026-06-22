@@ -263,6 +263,56 @@ if (( online != 0 )); then
   fi
 fi
 
+# ── Extended coverage: proposals/ (design proposals + execution records) ──────
+# The proposals/ subdirectory holds staged-plan and execution records that
+# faithfully quote historical states ("temporary [patch]", "staged", "stub the
+# emitter") as part of the record, so it receives the STRUCTURAL checks (stray
+# tool-output tags, fenced-block balance, math-in-backticks, link integrity) but
+# NOT the draft/proof-hole marker ban that the forward-looking suite docs carry.
+proposals_files=()
+[[ -d "$script_dir/proposals" ]] && proposals_files+=("$script_dir"/proposals/*.md)
+if (( ${#proposals_files[@]} > 0 )); then
+  printf 'checking proposals subtree (%s files)...\n' "${#proposals_files[@]}"
+
+  if rg -n -e '</content>' -e '</invoke>' -e '<parameter name=' "${proposals_files[@]}"; then
+    fail "stray tool-output tag found in proposals/"
+  fi
+
+  for file in "${proposals_files[@]}"; do
+    fence_count="$(rg -c '^```' "$file" || true)"
+    fence_count="${fence_count:-0}"
+    if (( fence_count % 2 != 0 )); then
+      fail "unbalanced fenced code block in $file"
+    fi
+  done
+
+  awk '
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /[μΔρσ⊆⇒∀∃≈→∧∨∪∖∈≡⊗⊕]|0̄|₀|ᵢ|ᴰ|ᴿ/ && $0 !~ /`/ {
+      print FILENAME ":" FNR ":" $0
+      bad = 1
+    }
+    END { exit bad ? 1 : 0 }
+  ' "${proposals_files[@]}" || fail "math symbol outside code literal in proposals/"
+
+  prop_link_errors=0
+  while IFS=: read -r file line match; do
+    target="$(printf '%s' "$match" | sed -E 's/.*\]\(([^)#]+)(#[^)]+)?\).*/\1/')"
+    case "$target" in
+      http*) continue ;;
+      /*) path="$target" ;;
+      *) path="$(dirname -- "$file")/$target" ;;
+    esac
+    if [[ ! -e "$path" ]]; then
+      printf 'missing %s:%s -> %s (%s)\n' "$file" "$line" "$target" "$path" >&2
+      prop_link_errors=1
+    fi
+  done < <(rg -n -o '\[[^]]+\]\([^)]*\.(md|puml|dot|svg)[^)]*\)' "${proposals_files[@]}")
+  if (( prop_link_errors != 0 )); then
+    fail "proposals Markdown link check failed"
+  fi
+fi
+
 printf 'checking whitespace with git diff --check...\n'
 git -C "$repo_root" diff --check -- README.md docs/README.md docs/architecture.md docs/architecture/rho-native-integration
 

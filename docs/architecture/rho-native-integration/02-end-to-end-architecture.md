@@ -31,10 +31,10 @@ Readiness is discovered by RSpace communication.
 
 This move is deliberately downstream of parsing. The active WPDA
 parser/recognizer still produces the typed terms consumed by Dovetail, and
-Ascent is legacy for production rewrite execution. Its role during rollout is
-differential reference/oracle evidence while Dovetail/Rho becomes the production
-rewrite path; campaign completion removes that runtime path from the live
-production tree.
+Dovetail/Rho is the production rewrite path. The generated Ascent engine was
+retired in P6 (`9d889894`/`c9cea652`); only the fail-closed
+`Language::run_ascent` differential-oracle hook survives, and
+`selected_default_runtime_backend` never selects it.
 
 This follows the tuple-space idea that communication can be mediated through a
 shared space ([LINDA-1985](references.md#linda-1985)), the process-calculus view
@@ -225,7 +225,7 @@ After dispatch, the selected backend determines the final lane:
 |---|---|---|
 | `RuntimeBackend::Dovetail` | `typed Proc AST + LanguageMetadata → SatReport → DovetailRunReport → RuntimeDovetailRunReport` | report-shaped `RuntimeBackendOutput::Dovetail` |
 | `RuntimeBackend::RhoMachine` | `complete DovetailRunReport → RhoNet plan → rhoapi::Par → RhoRuntime → RSpace observations` | observation-shaped `RuntimeBackendReport` |
-| `RuntimeBackend::Ascent` | generated legacy relation execution | explicit reference-oracle output only; not a generated production default |
+| `RuntimeBackend::Ascent` | fail-closed `run_ascent` differential-oracle hook (the generated Ascent engine was retired in P6) | reference-oracle output only; never returned by `selected_default_runtime_backend` |
 
 This dispatch trace is intentionally high-level. It names the shape-changing
 boundaries without requiring the reader to learn every generated Rust type
@@ -382,7 +382,7 @@ MeTTaIL-owned reducer, tuple space, matcher, or replay engine.
 | Mode | Description | Used for |
 |---|---|---|
 | Local Dovetail | Dovetail saturates and extracts inside MeTTaIL. | Formal reference, tests, non-Rho deployments. |
-| Rho differential | Both Dovetail/Ascent and Rho run; result sets are compared. | M-RHO rollout safety. |
+| Rho differential (real-vs-real) | The validated Rho-default backend plan runs on a live RhoRuntime; observed values are checked against the language's defined semantics (the Rho-vs-Ascent oracle was retired with the Ascent backend in P6). | M-RHO rollout safety. |
 | Rho default | Rho is the selected runtime backend for a language in place of the CESK runtime backend. | M-RHO.4 after checkable coverage, artifact-validation, and deadlock gates pass; formal proof/oracle results are tracked as verification evidence, not runtime fields. |
 
 ## Pedagogical Example: Communication
@@ -513,5 +513,5 @@ The practical result is:
 
 `source snippet → native Rho machine execution`
 
-with MeTTaIL and Dovetail still available as the formal reference and
-differential oracle during rollout.
+with MeTTaIL and Dovetail still available as the formal reference semantics for
+differential checks.

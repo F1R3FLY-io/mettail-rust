@@ -31,9 +31,9 @@ strictly decreases Φ ≥ 0; NewComm decreases the run-key and is fixpoint at th
 
 ## CRITICAL correctness detail (biggest risk): freshened-vs-original binder
 `is_fresh(Binder(x'), N)` with x' from `unbind` ALWAYS returns true (x' is brand-new, can't be in N) ⇒
-silently DISABLES the guard ⇒ re-introduces capture (run_ascent's exact bug). MUST gate on
+silently DISABLES the guard `⇒` re-introduces capture (run_ascent's exact bug). MUST gate on
 `is_fresh(s.unsafe_pattern(), N/residual)` (ORIGINAL binder). Test 4 (FIX-B blocked: `open(x, new(x, 0))`
-same source name → NO float) is the required catch; Rocq T1' makes it machine-checked.
+same source name `→` NO float) is the required catch; Rocq T1' makes it machine-checked.
 
 ## Wiring
 - `macros/src/gen/runtime/language.rs:3651-3664`: replace the non-native `else { quote!{} }` with a
@@ -66,7 +66,7 @@ moniker-faithful `open`/`close` (close incr scope-offset under EBind, mirroring 
 4. FIX-B BLOCKED: `open(x,new(x,0))` (same source name) → try_direct_eval None (no float); contrast
    `open(a,new(x,0))` → floats. + ScopeExtrusion blocked symmetric case.
 5. Gold-moniker-reference equality over ~8-term corpus (each equation; hand-written `moniker_ref_float`).
-6. rhocalc handler NOT emitted (try_direct_eval None for a rhocalc new/extrude term); determinism (twice ⇒
+6. rhocalc handler NOT emitted (try_direct_eval None for a rhocalc new/extrude term); determinism (twice `⇒`
    identical exact_key).
 
 ## Critical files

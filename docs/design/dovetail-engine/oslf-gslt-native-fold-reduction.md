@@ -1,6 +1,11 @@
 # Dovetail as the Foundational OSLF/GSLT Rewrite Engine — Native Fold Reduction
 
-**Status:** design + staged implementation (2026-06-17).
+**Status:** implemented and shipped — native-fold reduction is live in the
+typed-`L` path (`saturate_with_native` plus the generated `dovetail_report_for`).
+See the architecture view
+[`docs/architecture/dovetail/12-native-fold-reduction.md`](../../architecture/dovetail/12-native-fold-reduction.md).
+(Originally authored 2026-06-17 as design + staged implementation; this document
+is retained as the design-of-record.)
 **Branch:** `feature/wfst-architecture`.
 **Supersedes:** the recursive-`try_direct_eval` fold approach (red-teamed + rejected) and the
 reify-map Dovetail variant (red-teamed + rejected as unsound). See §8.

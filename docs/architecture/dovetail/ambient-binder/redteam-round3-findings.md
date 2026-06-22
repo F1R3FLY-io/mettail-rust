@@ -11,7 +11,7 @@
 - moniker `unbind`(freshen+open)→move→`Scope::new`(re-close, `close_term` increments depth through nested
   scopes, `bound/mod.rs:32-35,43-52`) does NOT capture (z→`Bound{1,0}`). So the moniker handler is the
   trustworthy reference; the differential-vs-run_ascent oracle is valid ONLY on the non-capturing corpus +
-  a negative pin documenting the disagreement. ⇒ v3's disposition-first architecture is SOUND.
+  a negative pin documenting the disagreement. `⇒` v3's disposition-first architecture is SOUND.
 
 ## Composition REFUTED (5 holes, all with concrete fixes). Root cause of #3/#4a/#5-idempotence = ONE defect.
 
@@ -32,7 +32,7 @@ BODY (already alpha-canonical: bound=BoundVar de-Bruijn, free=stable ids) + bind
 binder's FreeVar identity, across (c) `semantic_hash` PNew arm [generated/macro], (d) e-graph binder label
 [generated/macro], (a) `Scope::cmp`/Ord + `OrdVar::cmp` [runtime binding.rs]. This ALIGNS identity with
 moniker `term_eq` (which already ignores binder names) — a genuine correctness fix, partly pre-existing.
-Only Ambient exercises binder hashing today (Calculator has no binders; rhocalc routes binders to host) ⇒
+Only Ambient exercises binder hashing today (Calculator has no binders; rhocalc routes binders to host) `⇒`
 no regression risk to flipped langs.
 
 ### #1 — InNew/OutNew/OpenNew/AmbNew under-guarded (`x # P` only, missing `x # N`)

@@ -11,7 +11,7 @@ The target state is:
 | Current role | Production role |
 |---|---|
 | Ascent production rewrite execution | Dovetail production rewrite execution |
-| Ascent differential evidence | retained oracle evidence during rollout |
+| Ascent differential evidence | fail-closed `run_ascent` oracle hook (the generated engine was retired in P6) |
 | CESK runtime backend execution | Rho machine execution on F1r3node |
 | WPDA parser/recognizer | retained source-to-typed-term frontend |
 | Rholang source strings as executable artifacts | direct `rhoapi::Par` AST artifacts |
@@ -53,7 +53,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | `rholang-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
 | `rholang-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `rholang-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
-| Ascent/CESK path | oracle and regression baseline during transition | removed from the live production runtime path once the Dovetail/Rho gates and replacement tests are complete; git history remains the archive |
+| Ascent/CESK path | former oracle and regression baseline | retired from the live production runtime path in P6 once the Dovetail/Rho gates and replacement tests passed; git history remains the archive |
 | CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `runtime` CEK/CESK re-exports have been removed from the production runtime API; prattail/testkit CESK evaluator, store, GC, and green-thread scheduler modules require explicit `legacy-cesk-runtime` opt-in features | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook, and default prattail/testkit APIs expose no legacy CESK runtime surface |
 | WPDA parser | active parser/recognizer | retained; runtime-backend work must not weaken parser guarantees |
 
@@ -435,7 +435,7 @@ Steps:
 | guarded join correctness | failed guards release data and valid joins can commit afterward |
 | extraction completeness honesty | complete reports and cycle-bounded reports are distinguishable at the API and proof boundary |
 | runtime report shape honesty | Dovetail outputs are Dovetail-report-shaped, Rho outputs are observation-shaped and backed by Rho runtime artifacts, Ascent outputs remain Ascent-shaped, and public non-Ascent runtime reports enter only through checked constructors |
-| oracle agreement | during transition, Rho observations match reference/oracle observations for the language corpus selected for rollout; completion removes the old runtime backend from the live production path |
+| oracle agreement | Rho observations match the language's defined semantics for the rollout corpus (the Rho-vs-Ascent oracle was retired with the Ascent backend in P6); the old runtime backend was removed from the live production path |
 | memory bound | capped tests and stress workloads stay within the agreed RSS envelope |
 | backend selection | default runtime backend fails closed unless checkable coverage, artifact-validation, and deadlock gates pass; formal proof/oracle results are tracked as verification evidence and documentation, not runtime gate fields |
 

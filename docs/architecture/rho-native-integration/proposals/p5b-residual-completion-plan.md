@@ -1,7 +1,15 @@
 # P5b Residual Completion Plan (survey + design)
 
-Status: working plan. Produced by a code-grounded survey (2026-06-16) after CAMP-0
-verified the M-RHO bridge green against the now-building f1r3node-rust. The four P5b
+> **Status (reconciled post-P6):** executed. All four P5b target languages were
+> flipped (Calculator, RhoCalc, Ambient, GuardedRho), and P6 then retired the
+> Ascent/CESK paths. Two artifacts this 2026-06-16 survey references as live were
+> subsequently removed in P6 and now read as historical: the `rho_vs_ascent.rs`
+> differential test (deleted with the `oracle-ascent` feature, `c9cea652`) and the
+> temporary `rholang_parser` `[patch]` under **R-patch** (resolved). Retained as
+> the survey-of-record.
+
+Original survey status (2026-06-16): working plan. Produced by a code-grounded survey
+after CAMP-0 verified the M-RHO bridge green against the now-building f1r3node-rust. The four P5b
 target languages are **Calculator, RhoCalc, Ambient, GuardedRho** (MiniRho is a doc
 example, not a generated language; lambda/led_test/class2*/optsmoke are not Rho-flip
 targets).
@@ -32,7 +40,7 @@ targets).
     These are not Rholang-computable and not structural patterns, so they cannot be encoded in
     a `ReceiveBind` pattern, nor evaluated in a desugared `Par` body.
   - Therefore lowering `PGuardedInput` to a plain `rhoapi` `Receive` would have to DROP the
-    guard ⇒ consume-on-false ⇒ semantically UNSOUND (a guarded receive that ignores its
+    guard `⇒` consume-on-false `⇒` semantically UNSOUND (a guarded receive that ignores its
     guard). That is exactly the "hack/pragmatic decision" the mandate forbids.
   - Hence the guarded receive is *semantically* a host-routed `RhoNativeJoin` / external-relation
     disposition — which the guard-quality seam already classifies (`RejectSafeApprox`,
@@ -42,7 +50,7 @@ targets).
   - **Completion:** GuardedRho's flip is COMPLETE — it plans end-to-end through the gate
     (`guarded_rho_rho_backend.rs`, all qualities non-`Unknown`) and its guarded-receive
     semantics execute on the host RSpace (`rho_guard_oracle`). The behavioral guard being
-    host-routed is a gate working as designed, not a deferral. Doc-07 cell → ✅ host-routed.
+    host-routed is a gate working as designed, not a deferral. Doc-07 cell `→` ✅ host-routed.
   - (A generated-AST wrapper could lower GuardedRho's *guard-free* structural fragment
     — `POutput`/`PPar`/`NQuote`/`PDrop`/`CastInt` — like RhoCalc, but that fragment excludes
     the language's defining `PGuardedInput`, so it adds no real coverage. Not built.)

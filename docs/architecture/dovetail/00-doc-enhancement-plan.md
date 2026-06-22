@@ -1,8 +1,12 @@
 # Documentation Enhancement Plan — Dovetail & Rho-Native Integration
 
-Status: in progress. This is the working plan for bringing both architecture-doc suites
-(`docs/architecture/dovetail/`, `docs/architecture/rho-native-integration/`) to a pedagogical,
-diagram-rich, citation-verified standard. Derived from a full code-grounded survey (2026-06-16).
+Status: **COMPLETE** (the 2026-06-16 enhancement pass). This was the working plan for bringing both
+architecture-doc suites (`docs/architecture/dovetail/`, `docs/architecture/rho-native-integration/`)
+to a pedagogical, diagram-rich, citation-verified standard. Derived from a full code-grounded survey
+(2026-06-16). All five phases below were completed. Docs `11`/`12`, the native-fold figure, and a
+follow-up accuracy-and-diagram review (2026-06-22) postdate this plan; it is retained as the record
+of that pass. The "headline gap" and "staleness" sections below describe what that pass found and
+fixed — they are historical, not current gaps.
 
 ## Progress log
 
@@ -32,15 +36,15 @@ diagram-rich, citation-verified standard. Derived from a full code-grounded surv
   lifecycle redraw. Optional future: richer README component actors; an end-to-end
   `MeTTaIL→Dovetail→Rho` actor sequence in the rho suite.
 
-## The headline gap
-The **Ambient binder NativeHandler (Inc 0–4), FIX-A alpha-canonical keys, the in-engine AC matcher,
-and the float→AC composition** are fully implemented (`macros/src/gen/runtime/binder_congruence.rs`,
+## The headline gap (RESOLVED in this pass)
+At the time of the survey, the **Ambient binder NativeHandler (Inc 0–4), FIX-A alpha-canonical keys,
+the in-engine AC matcher, and the float→AC composition** were fully implemented (`macros/src/gen/runtime/binder_congruence.rs`,
 `macros/src/gen/runtime/dovetail_report.rs`, `dovetail/src/rules.rs` `AcApp`,
 `dovetail/formal/rocq/theories/Lowering/AmbientBinderHandler.v`) but documented **nowhere** in the
 26 published docs. Several docs are stale (see below).
 
-## Load-bearing staleness to FIX (Phase 1)
-1. **Ambient "fails closed" is now FLIPPED** — `dovetail_report.rs` floats `new`s then AC-reduces.
+## Load-bearing staleness that was fixed (Phase 1)
+1. **Ambient "fails closed" was FLIPPED** — `dovetail_report.rs` floats `new`s then AC-reduces.
 2. **`Pattern`/`RewriteRule` shapes are WRONG** in `01`/`04`: the real `Pattern` has a third variant
    `AcApp { op, fixed, rest }`; the real `RewriteRule` is `{ lhs, rhs, label }` — there is NO
    `guard`/`evidence` field, and the "guarded instantiation" pseudocode describes machinery that does

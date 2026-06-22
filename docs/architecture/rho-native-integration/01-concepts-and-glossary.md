@@ -18,9 +18,9 @@ is used formally elsewhere.
 | RhoRuntime | The F1r3node runtime entry point used by MeTTaIL bridge tests and generated backends. Generated MeTTaIL artifacts are normalized `rhoapi::Par` values injected directly with an explicit budget; source-text evaluation is retained only for hand-authored regression oracles. |
 | RSpace | The tuple-space engine used by Rholang communication. It stores data, waiting continuations, joins, checkpoints, and replay logs. |
 | Rho backend | The MeTTaIL bridge that lowers Dovetail rewrite semantics into Rho-native Rholang/RSpace programs. |
-| CESK runtime backend | The existing MeTTaIL evaluator backend organized around control, environment, store, and continuation state. The Rho-native path replaces this runtime backend; WPDA parsing is not part of that replacement. |
+| CESK runtime backend | The former MeTTaIL evaluator backend organized around control, environment, store, and continuation state. The Dovetail + Rho-native path replaced this runtime backend (retired in P6); WPDA parsing was not part of that replacement. |
 | WPDA parser/recognizer | The active weighted-pushdown-automaton parser and recognizer path. It remains upstream of runtime backend selection and is not made legacy by the Rho-native design. |
-| Ascent reference/oracle path | The generated Ascent/Datalog rewrite path used temporarily for differential testing and reference evidence during Rho rollout. Ascent is legacy for production rewrite execution and is removed from the live production runtime tree at campaign completion. |
+| Ascent reference/oracle path | The generated Ascent/Datalog rewrite engine, retired in P6 (`9d889894`/`c9cea652`). Only the fail-closed `Language::run_ascent` hook survives, providing differential reference evidence; `selected_default_runtime_backend` never selects `RuntimeBackend::Ascent`. |
 | RhoNet | A small intermediate calculus introduced by this design. RhoNet contains only contracts, facts, joins, guards, private names, and observation. It is easier to prove correct than full generated Rholang AST. |
 
 ## Language and Rewrite Terms

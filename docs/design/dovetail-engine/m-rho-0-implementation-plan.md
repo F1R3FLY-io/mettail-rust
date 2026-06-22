@@ -1,4 +1,11 @@
-# M-RHO.0 (INERT) — Implementation Design
+# M-RHO.0 — Implementation Design (Rho-bridge bring-up)
+
+> **Status (reconciled post-P6):** shipped. M-RHO.0 began as the *inert* milestone
+> — the three Rho-bridge crates present but carrying no live caller — and that
+> framing is retained below as the design-of-record. The bridge is now live: the
+> renamed `rholang-codegen` / `rholang-runtime` / `rholang-adapter` crates drive
+> the production Rho lane, and the generated Ascent differential oracle was retired
+> in P6. Read the original "(INERT)" phrasing as historical milestone language.
 
 > Grounded against f1r3node-rust `@ feature/cost-accounted-rho` and mettail-rust
 > `@ feature/wfst-architecture` (2026-06-09, via a Plan agent over pgmcp). This is
@@ -15,7 +22,7 @@ Base verified; three corrections that reshape the plan text (none block .0):
    (`resource_logic.rs:221-270`), and the 4 conformance laws
    (`law_sound`/`law_reject_underfunded`/`law_supply_monotone`/`law_decidable`,
    `resource_logic.rs:137-200`) are **private `#[cfg(test)] fn`s** — not
-   cross-crate importable. ⇒ the adapter cannot literally call the host's laws;
+   cross-crate importable. `⇒` the adapter cannot literally call the host's laws;
    it **re-hosts** a faithful transcription (decision **B1-a**, below).
 2. **The differential-oracle baseline is `lang.run_ascent(term)?.normal_forms()`**
    (`languages/tests/gen_calculator_op.rs:228+`) — there is no separate `eval`
@@ -97,7 +104,7 @@ substrate-isolated, capped Rocq target).
   active blocker for the CESK runtime-backend replacement path.
 - **B2 (resolved for .0):** core crates `publish=false` ⇒ cross-repo `path` deps,
   declared `optional` + pulled only by `engine`; default build f1r3node-free.
-- **B3 (not a .0 blocker):** the Reified-RSpace seam (Scala→Rust PRs) blocks
+- **B3 (not a .0 blocker):** the Reified-RSpace seam (Scala`→`Rust PRs) blocks
   M-RHO post-.0 only; .0 canonicalizes `Term→Par` for funding analysis + (optional)
   runs a string through `RhoRuntime::evaluate` — no reified spaces.
 - **B4 (hygiene):** `CAUntypedLambda.v` cites a `cost-decoration/src/main.rs`
@@ -175,7 +182,7 @@ only building the bridge crates (or `--workspace`) does.
   `MettaOslfLawsConformance.v` (the 4 laws over the modelled `is_funded`), both
   `Print Assumptions`-clean; `rocq-rho-bridge` green.
 - **M-RHO.0.3 — SHIPPED** (`9478e791`): `rholang-codegen::lower_language_def`
-  (operand-type-gated; supported scalar ops → normalized Rholang AST contracts;
+  (operand-type-gated; supported scalar ops `→` normalized Rholang AST contracts;
   all else recorded rejected) + AST-shape tests for contract count, operand-first
   return-channel-last ABI, and de Bruijn binding order;
   `RhoLoweringTotalOrRejects.v` (total/sound/disjoint/count, zero-admission).
@@ -190,8 +197,8 @@ only building the bridge crates (or `--workspace`) does.
   or raw-`Par` helper aliases. `RUST_MIN_STACK` proved unnecessary for these
   shallow reductions (the speculative global config edit was reverted).
 - **★ M-RHO.0 COMPLETE end-to-end** (tip `7629c828`, AST-first updated
-  2026-06-13): LanguageDef → lowered normalized Rholang AST → direct f1r3node
-  injection → differentially equals Ascent. Full ungated integration; 7
+  2026-06-13): LanguageDef `→` lowered normalized Rholang AST `→` direct f1r3node
+  injection `→` differentially equals Ascent. Full ungated integration; 7
   zero-admission `rocq-rho-bridge` proofs. **Next: M-RHO.1** (rhocalc native fast
   path, `Comm`→RSpace COMM) and later per-language CESK runtime-backend flip
   gates. Parser FV remains a separate active-parser track, not part of this

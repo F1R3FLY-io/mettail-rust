@@ -1,12 +1,21 @@
 # Dovetail-Core — Implementation Plan (design of record)
 
+> **Status (reconciled post-P6):** implemented and installed. `dovetail` is now the
+> live general-purpose production rewrite backend — the `languages` crate enables it
+> through the default `dovetail-codegen` feature, and the generated `dovetail_report_for`
+> drives `saturate_with_native`. The "engine OFF default / M-E.0 inert" milestone language
+> and the `prattail 4350/0` gate figures below are the *original* increment-sequencing
+> notes (2026-06-09) and are retained as the design-of-record; the per-suite test
+> baselines have since shifted. See `docs/architecture/dovetail/` for the current suite.
+>
 > Engine-primary foundation. `dovetail` = the standalone, substrate-agnostic, extractable
-> core for MeTTaIL rewrite semantics on the CESK runtime-backend replacement path
-> (generic-`W` WTA over a runtime e-graph = DFTA, with N-best/set-valued
-> demand-driven best-first enumeration extraction). The active WPDA
-> parser/recognizer remains upstream. Ascent is legacy for production rewrite
-> execution and remains only as a reference/oracle path. Designed by a Plan agent against
-> the live codebase (2026-06-09). Tracked: pgmcp `dovetail-core-standalone-wta-egraph-crate`
+> core for MeTTaIL rewrite semantics; it replaced the CESK runtime-backend rewrite path
+> (retired in P6) — a generic-`W` WTA over a runtime e-graph = DFTA, with N-best/set-valued
+> demand-driven best-first enumeration extraction. The active WPDA
+> parser/recognizer remains upstream. The generated Ascent engine was retired in P6;
+> only the fail-closed `Language::run_ascent` differential-oracle hook survives. Designed
+> by a Plan agent against the live codebase (2026-06-09). Tracked: pgmcp
+> `dovetail-core-standalone-wta-egraph-crate`
 > (#279) under epic `dovetail-gslt-reduction-engine-f1r3node-target` (#278); session task #15.
 
 ## Governing invariant — extraction completeness (NO missed results)
@@ -114,7 +123,7 @@ explicit through `ExtractionCompleteness`.
 Tuplespace trait `TupleSpace<C,P,A,K>` + `Match<P,A>` seam (in-mem default only; the future
 Reified-RSpace mapping inner=PriorityQueue/outer=PathMap/seam=Match is a documented seam, no
 reified-rspace dep). Engine `default = []`; added to workspace `members` but nothing in the
-existing build path depends on it ⇒ mandatory dependency set unchanged.
+existing build path depends on it `⇒` mandatory dependency set unchanged.
 
 ## 3. Increments (each: adds / tested / gate = `cargo check --workspace` green + prattail 4350/0 + op-suite ≤217 + relevant `rocq-*` zero-admission)
 
@@ -140,7 +149,7 @@ existing build path depends on it ⇒ mandatory dependency set unchanged.
 - **Quick wins:** Inc 1 (mechanical move; 1 coupling point), Inc 2 (key), Inc 4 (WTA view), Inc 8 (trait).
 - **Moderate:** Inc 3 (payload-generic exact-keyed e-graph), Inc 7 (driver).
 - **Research-grade boundary:** full cyclic k>=2 enumeration remains bounded-by-design and surfaced by `had_cycle_cut`; cyclic inside weights and acyclic/bounded extraction correctness are proven.
-- **Out of scope here:** any f1r3node/RSpace binding; the Reified-RSpace concrete impl; per-language CESK runtime-backend flips to Rho default (M-RHO.4 / task #20); the prattail-egraph→dovetail convergence (Inc 9).
+- **Out of scope here:** any f1r3node/RSpace binding; the Reified-RSpace concrete impl; per-language CESK runtime-backend flips to Rho default (M-RHO.4 / task #20); the prattail-egraph`→`dovetail convergence (Inc 9).
 
 ## 6. Critical files
 Create: `rigail/src/{lib,traits,weights,closure}.rs`; `dovetail/src/{lib,key}.rs`,

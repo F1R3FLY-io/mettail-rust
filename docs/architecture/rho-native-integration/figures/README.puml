@@ -35,7 +35,7 @@ rectangle "Rho compile-time bridge\n`rholang-codegen`" as B #FEF3C7 {
 
 rectangle "Rho runtime binding\n(MeTTaIL side)" as R #FBCFE8 {
   component "RhoBackend seam +\ninstallers · `rholang-runtime`" as Seam #FBCFE8
-  component "Differential oracle\nvs Ascent · `rholang-runtime`" as Oracle #FBCFE8
+  component "Differential oracle\n(real-vs-real) · `rholang-runtime`" as Oracle #FBCFE8
   component "Direct Dovetail path\n`dovetail-runtime`" as DirectPath #FBCFE8
   component "OSLF cost / funding\n`rholang-adapter`" as Cost #FBCFE8
 }

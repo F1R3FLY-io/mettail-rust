@@ -273,5 +273,3 @@ distinct `comp` lists AND distinct canonical keys downstream.
 - `theories/Lowering/CollectionAcLowering.vo` compiles; `rocq-dovetail` +
   `rocq-critical-zero-admission` green (the authoritative no-admit gate).
 - Existing Ambient tests still pass (`gen_ambient_rewrite`, `ambient_tests`).
-</content>
-</invoke>

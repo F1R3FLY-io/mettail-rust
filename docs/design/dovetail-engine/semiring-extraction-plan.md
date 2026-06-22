@@ -1,5 +1,11 @@
 # rigail extraction plan (Increment 1)
 
+> **Status (reconciled post-P6):** executed. The `rigail` crate exists and owns the
+> weight algebra (semirings, weights, Newton-SCC solving); the `prattail` re-export
+> facade landed. The `prattail-lib + rigail-lib == 4350/0` gate figure below is the
+> *original* (2026-06-09) acceptance target — the per-suite baselines have since
+> shifted (prattail-lib is now ~3766) — and is retained as the design-of-record.
+>
 > Plan-agent design (2026-06-09). Extract the weight algebra from
 > `prattail/src/automata/semiring.rs` (6502 lines) + `lex_weight.rs` (905) into a
 > NEW lower crate `rigail`; `prattail` re-exports it (single source of

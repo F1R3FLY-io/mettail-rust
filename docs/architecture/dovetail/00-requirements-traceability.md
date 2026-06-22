@@ -22,9 +22,9 @@ reports. The boundary is:
 
 The Dovetail suite may name the direct Dovetail runtime adapter and the
 Rho-native consumer, but Dovetail itself remains substrate-neutral. The active
-WPDA parser stays upstream. Ascent/CESK may be used as temporary
-reference/oracle machinery during rollout, but campaign completion removes
-those runtime paths from the live production tree; git history is the archive.
+WPDA parser stays upstream. The generated Ascent engine and the CESK runtime
+path were retired in P6; only the fail-closed `Language::run_ascent`
+differential-oracle hook survives. Git history is the archive.
 The production `Language` trait no longer exposes the historical
 `decompose_into_cek` hook, and generated `language!` implementations no longer
 emit CEK decomposition methods.

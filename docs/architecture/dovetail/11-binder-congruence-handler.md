@@ -382,3 +382,4 @@ make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-dovetail \
 - [Data Model and Exact Keys](03-data-model-and-exact-keys.md) — the three e-graph keys and the FIX-A α-canonical binder key.
 - [Rules and Saturation](04-rules-and-saturation.md) — `AcApp` matching, the `rest`-complement, upstream guard discharge.
 - [Runtime-Facing Reports](10-runtime-facing-reports.md) — the `DovetailRunReport` this handler ultimately produces.
+- [`ambient-binder/`](ambient-binder/README.md) — the design-derivation record (v3→v4 convergence and the three adversarial red-team rounds) behind this handler. That subdirectory is the *historical* derivation; this document is the authoritative description of the shipped mechanism.

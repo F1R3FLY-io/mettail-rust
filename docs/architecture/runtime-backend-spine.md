@@ -166,7 +166,7 @@ Both lanes are runtime-backend paths. Neither replaces the parser.
 | direct Dovetail adapter | projection of complete checked reports into `runtime` report-shaped output | Rho lowering or RSpace observation |
 | Rho backend | RhoNet planning, normalized `rhoapi::Par` AST generation, explicit rejection of uncovered rules | Rholang text reparsing, custom Rho machine implementation |
 | F1r3node/RhoRuntime/RSpace | Rholang AST execution, COMM, joins, scheduling, replay, checkpoints, cost/funding | MeTTaIL language definition or Dovetail proof construction |
-| Ascent path | reference/oracle evidence during rollout | production rewrite execution after Dovetail/Rho gates pass |
+| Ascent path | fail-closed `run_ascent` differential-oracle evidence | production rewrite execution — the generated Ascent engine was retired in P6; Dovetail/Rho owns this |
 
 The main dependency rule is:
 

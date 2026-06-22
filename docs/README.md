@@ -36,6 +36,8 @@ machine backend:
 - **`architecture/dovetail/08-engineering-handoff.md`** - Maintenance guide for future agents and implementers
 - **`architecture/dovetail/09-worked-example.md`** - End-to-end example from rewrite rules to checked extraction
 - **`architecture/dovetail/10-runtime-facing-reports.md`** - What Dovetail reports are, why a rewrite engine needs them, and how consumers must handle them
+- **`architecture/dovetail/11-binder-congruence-handler.md`** - How Dovetail evaluates Ambient's binders capture-safely in-engine (float-then-AC-reduce)
+- **`architecture/dovetail/12-native-fold-reduction.md`** - How Dovetail reduces a language's `fold` rules (native-computed RHS) in-engine via the typed-`L` op-enum
 
 ---
 

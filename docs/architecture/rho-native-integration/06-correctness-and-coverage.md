@@ -14,7 +14,7 @@ ideas from the π-calculus and Rho calculus literature
 [RHO-2005](references.md#rho-2005),
 [LYBECH-2022](references.md#lybech-2022)), plus repository-local Rocq proof
 artifacts ([DOVETAIL-FORMAL](references.md#dovetail-formal),
-[METTAIL-RUNTIME-FORMAL](references.md#runtime-formal),
+[METTAIL-RUNTIME-FORMAL](references.md#mettail-runtime-formal),
 [RHO-BRIDGE-FORMAL](references.md#rho-bridge-formal)).
 
 All symbols used here are defined in
@@ -31,9 +31,9 @@ observable rewrite semantics when replacing the CESK runtime backend. The claim
 is not:
 
 - a replacement for the active WPDA parser/recognizer;
-- removal of the Ascent reference/oracle path before Dovetail/Rho has
-  fully subsumed the required behavior; completion removes it from the live
-  production runtime tree;
+- removal of the fail-closed `run_ascent` differential-oracle hook (it is
+  retained; the generated Ascent rewrite engine was retired in P6 after
+  Dovetail/Rho subsumed the production rewrite path);
 - full abstraction for all Rholang contexts;
 - strong bisimulation across thunk/force boundaries, because the proved
   call-by-need contract is weak observation equivalence;
@@ -230,7 +230,7 @@ other. Suppression occurs only when a key is already present, in which case the
 service must verify observational equality or report a contract violation.
 
 Mechanized support:
-[METTAIL-RUNTIME-FORMAL](references.md#runtime-formal) includes
+[METTAIL-RUNTIME-FORMAL](references.md#mettail-runtime-formal) includes
 `ExactReachabilityDedup.v`, whose `legacy_seed_expands_all_exact_keys`,
 `exact_successor_preserved`, and `legacy_collision_keeps_both` theorems prove
 that older id-only seed ids expand to all exact-key representatives and exact-key
@@ -483,6 +483,25 @@ Mechanized support:
 `current_lowered_scalar_artifact_is_ast_not_source_text`, and
 `planned_current_execution_never_uses_source_text` theorems encode this
 boundary.
+
+## Security and Safety Model
+
+The backend's security posture is a consequence of the correctness theorems
+above plus three structural disciplines. They are gathered here so an architect
+can see the whole safety story as a unit; each property names where it is
+established and proven.
+
+| Property | Guarantee | Established / proven in |
+|---|---|---|
+| Name-capability confinement | Generated internal channels are unforgeable through source-level names: `internal_channel ∉ free_names(user_program)` and `sentinel_channel ∉ image(ground_source_name)`, so a lowered contract cannot be addressed, intercepted, or spoofed by a user program. | [04 — Name and Capability Discipline](04-rho-native-dataflow-lowering.md#name-and-capability-discipline); `RhoGroundingAndNames.v`, `RhoAstSendBoundary.v` |
+| Capture-safety | Binder lowering freshens every floated `new`, so substitution can never capture a free name; the legacy `run_ascent` path was capture-**un**safe by contrast. | [Dovetail 11 — Binder-Congruence Handler](../dovetail/11-binder-congruence-handler.md); `AmbientBinderHandler.v` |
+| One-way bridge (non-escalation) | The crate dependency is strictly `MeTTaIL → F1r3node`; F1r3node never depends back, so a generated artifact cannot reach into or mutate host internals beyond the published `RhoRuntime` injection surface. | [07 — Verification and Rollout](07-verification-and-rollout.md); `BridgeInertness.v` |
+| Schedule independence | RSpace COMM scheduling order is quotiented away: disjoint-channel firings commute, so an adversarial scheduler cannot change the observable result set. | [Theorem 8: Parallel Permutation Independence](#theorem-8-parallel-permutation-independence); `RhoCommScheduleFamily.v` |
+
+Together these mean the only authority a lowered program exercises is the
+authority its source rule already carried: it computes on its own private
+channels, under its own guards, with capture-safe binders, on a host it cannot
+escalate into, and with a result that does not depend on scheduling order.
 
 ## Boundary Non-Claims
 

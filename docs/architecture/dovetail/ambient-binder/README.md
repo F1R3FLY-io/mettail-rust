@@ -1,6 +1,6 @@
 # Ambient Binder + Freshness Lowering for the Dovetail Flip — Converged Design (v4)
 
-**Status:** design CONVERGED via plan→red-team iteration (v1→v4, 3+ adversarial rounds);
+**Status:** design CONVERGED via plan`→`red-team iteration (v1`→`v4, 3+ adversarial rounds);
 implementation **COMPLETE** (Inc 0–4, committed). Branch `feature/wfst-architecture`. Part of P5b (Ambient flip).
 
 > **Read this as the design-derivation record** — how the design was reached,
@@ -44,16 +44,16 @@ Three design iterations were adversarially refuted before convergence:
   e-class-analysis framework (which `dovetail` does not have). Capture witness:
   `new^w.{new^x.P, w[0]}` → ScopeExtrusion → `w`'s `db::0.0` leaf re-homed under `new^x` (now denotes `x`)
   ⇒ bound-variable capture; the freshness guard `x # rest` PASSES so offers no protection.
-- **STRONGER finding:** ALL SIX equations are depth/coordinate-changing (NewComm swaps binders ⇒ body
+- **STRONGER finding:** ALL SIX equations are depth/coordinate-changing (NewComm swaps binders `⇒` body
   `db::0↔db::1`; ScopeExtrusion moves `rest`; the four prefix equations move the name `N` under `new^x` —
   witness `new^z.in(z,new^x.0)` captures `z`). So none can be a sound in-engine rewrite over shared leaves.
 - This matches the campaign's **disposition-first decision rule**: in-engine iff *ambiguous AND host-less*;
-  the binder equations are DETERMINISTIC congruences ⇒ they are a **NativeHandler** disposition, not
+  the binder equations are DETERMINISTIC congruences `⇒` they are a **NativeHandler** disposition, not
   in-engine. Only the genuinely-ambiguous AC reduction stays in-engine (P4).
 
 ## 3. The verified architecture (v3 Part A — VERIFIED airtight)
 
-**Binder congruences → a moniker-based NativeHandler** using moniker's capture-safe primitives:
+**Binder congruences `→` a moniker-based NativeHandler** using moniker's capture-safe primitives:
 `Scope::unbind` (freshens the binder to a new `FreeVar`, opens the body) → structural move on the OPEN term
 → `Scope::new` (re-closes, recomputing de-Bruijn coordinates LOCALLY via `close_term`'s depth increment).
 This never shares leaves across binder contexts, so it cannot capture.

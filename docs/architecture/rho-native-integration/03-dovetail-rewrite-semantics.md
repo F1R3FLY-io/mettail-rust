@@ -100,6 +100,25 @@ Rewriting is closed over equivalence:
 This rule is why equation identity and rewrite reachability cannot be treated
 as unrelated subsystems.
 
+The whole story is easiest to see *on the e-graph itself*, using rhocalc's
+signature reduction — COMM. The directed rewrite `t ⤳ u` (a receive meeting a
+send on a shared channel) merges the redex and contractum into one e-class
+(one `EClassId`) while keeping both exact `ContentKey`s — nothing is pruned —
+and equivalence-respecting closure then carries any later rewrite of `u` back
+to `t`:
+
+![Rewrite semantics drawn on the e-graph: a COMM step merges the redex and contractum into one e-class, both ContentKeys survive, and equivalence-respecting closure carries a later rewrite back to the redex](figures/03-egraph-rewrite-semantics.svg)
+
+Graphviz source:
+[figures/03-egraph-rewrite-semantics.dot](figures/03-egraph-rewrite-semantics.dot).
+The drawing uses the [egg convention](https://doi.org/10.1145/3434304) (dashed
+box = e-class, solid box = e-node, edge = child-class reference), matching the
+e-graph figures in the [Dovetail suite](../dovetail/03-data-model-and-exact-keys.md).
+It makes the `ContentKey`-versus-`EClassId` table above concrete: the redex and
+contractum are two distinct e-nodes (`k_t ≠ k_u`) that share the green merged
+class `q★`, so a report or differential oracle can still distinguish the term
+records even though rule matching now treats them as one.
+
 ### 5. Congruence Rules
 
 If a child rewrites, a parent may rewrite at the child position:

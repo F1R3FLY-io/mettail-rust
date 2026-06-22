@@ -1,11 +1,11 @@
 # V4 — Ambient Binder + Freshness (CONVERGED: sound, alpha-canonical, bounded-honest, disposition-first)
 
-> Lineage: v1 (in-engine de-Bruijn) REFUTED → v2 (db/fv split + guard) REFUTED → v3 (moniker native
-> handler) Part A VERIFIED, composition REFUTED → v4 = v3 + five round-3 fixes.
+> Lineage: v1 (in-engine de-Bruijn) REFUTED `→` v2 (db/fv split + guard) REFUTED `→` v3 (moniker native
+> handler) Part A VERIFIED, composition REFUTED `→` v4 = v3 + five round-3 fixes.
 > Sources: `/tmp/b0/ambient-binder-redteam-round{1,2-convergent,3-findings}.md`, `…design-v3.md`.
 
 ## 0. Architecture (CONVERGED, Part A verified airtight)
-Ambient's six binder equations are DETERMINISTIC congruences ⇒ by the campaign's disposition-first rule
+Ambient's six binder equations are DETERMINISTIC congruences `⇒` by the campaign's disposition-first rule
 (in-engine iff ambiguous AND host-less) they are NOT in-engine — they are a **moniker-based NativeHandler**
 disposition. The handler uses moniker's capture-safe primitives (`unbind` freshen+open → structural move →
 `Scope::new` re-close, which recomputes de-Bruijn coordinates LOCALLY). The genuinely-ambiguous AC
@@ -31,7 +31,7 @@ alpha-canonical) + binder ARITY, EXCLUDING the binder's `FreeVar` identity:
 - (a) `Scope::cmp`/Ord + `OrdVar::cmp` (runtime `binding.rs:230-252,411-421`): compare the de-Bruijn body
   (+ arity), not the binder's FreeVar hash. Makes the NewComm float-prefix sort run-stable.
 WHY SAFE: aligns identity with moniker `term_eq` (which already ignores binder names); only Ambient
-exercises binder hashing today (Calculator: no binders; rhocalc: binders→host) ⇒ no flipped-lang
+exercises binder hashing today (Calculator: no binders; rhocalc: binders`→`host) `⇒` no flipped-lang
 regression. This is a genuine correctness fix (binder hashing currently OVER-distinguishes alpha-variants).
 RUST: bound occurrences stay de-Bruijn (`BoundVar`, name-free); free occurrences keep stable ids; the only
 transient id was the binder's, now excluded ⇒ `exact_key` is run-stable AND alpha-canonical.
@@ -44,6 +44,15 @@ genuinely does not apply). More correct than the equation/`run_ascent`; capturin
 negative-pin bucket.
 
 ### FIX-C — bounded-honest composition (closes #2)
+
+> **Superseded by the shipped implementation.** During implementation the bounded
+> `float↔AC` loop below collapsed to a single float-once pass: floating `new`
+> binders to a canonical prefix is idempotent, so a second round is never needed.
+> The shipped, capture-safe mechanism is documented in
+> [`11-binder-congruence-handler.md`](../11-binder-congruence-handler.md) and proven
+> in `AmbientBinderHandler.v`. The loop is retained here as the design-derivation
+> record (see the [sub-suite README](README.md), which also notes this collapse).
+
 The float↔AC loop is BOUNDED and HONEST, not a claimed-perfect fixpoint:
 ```
 T := input
@@ -83,7 +92,7 @@ around `body` (with FIX-B `x' # N` check for prefix equations) → `Scope::new(B
 - ScopeExtrusion: float the member `new^x` over the rest-bag, iff `rest.iter().all(|m| is_fresh(x', m))`
   (FULL-union multiset scan, no representative shortcut).
 - NewComm: order the floated `new`-prefix by the FIX-A alpha-canonical `Scope` Ord (run-stable).
-Termination of the float alone: each float strictly reduces Σ(new depth); O(n²); canonical sort ⇒ unique NF.
+Termination of the float alone: each float strictly reduces Σ(new depth); O(n²); canonical sort `⇒` unique NF.
 Witnesses do NOT capture: `new^z.in(z,new^x.0)` (re-close → z=`Bound{1,0}`); `new(x, x[0])` (FIX-B blocks
 AmbNew since `x ∈ fn(N)`).
 
@@ -128,7 +137,7 @@ Imports Stdlib + `Requirements.MeTTaILRewriteCoverage` only (NO `RhocalcAstLower
   float↔AC loop; thread `RuntimeDovetailCompleteness` through the seam. Rocq T6 + `binder_nf_idempotent`.
   Tests: `{open(n,0)|n[0]}` reduces; an OpenRule that re-exposes a `new` re-floats and converges; a
   non-terminating term ⇒ `BoundedByCycleCut` (NOT `Complete`); a truncated inner AC ⇒ `BoundedByCycleCut`;
-  ambiguity ≥2 roots across the seam; determinism (twice ⇒ identical root sets).
+  ambiguity ≥2 roots across the seam; determinism (twice `⇒` identical root sets).
 - **Inc 3 — Disposition gate + rhocalc pin + flip the gate test.** Rocq T5. `rhocalc_dovetail_report_stays_
   host_routed_for_extrude`; flip `ambient_dovetail_flip.rs` `expect_err`→`expect`.
 - **Inc 4 — Differential oracle on the NON-capturing corpus** (gated `ambient+dovetail-codegen+oracle-
