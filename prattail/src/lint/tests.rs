@@ -102,6 +102,9 @@ struct CtxBuilder {
     lattice_result_data: Option<crate::lattice_theory::LatticeAnalysis>,
     // ── Refinement type analysis result fields ──
     refinement_analysis_data: Option<crate::pipeline::RefinementAnalysisResult>,
+    // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
+    #[cfg(feature = "oslf-hindley-milner")]
+    hindley_result_data: Option<crate::hindley_milner::HmInferenceAnalysis>,
 }
 
 impl CtxBuilder {
@@ -171,6 +174,9 @@ impl CtxBuilder {
             lattice_result_data: None,
             // ── Refinement type analysis result fields ──
             refinement_analysis_data: None,
+            // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
+            #[cfg(feature = "oslf-hindley-milner")]
+            hindley_result_data: None,
         }
     }
 
@@ -240,6 +246,9 @@ impl CtxBuilder {
             lattice_result: self.lattice_result_data.as_ref(),
             // ── Refinement type analysis results ──
             refinement_analysis: self.refinement_analysis_data.as_ref(),
+            // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
+            #[cfg(feature = "oslf-hindley-milner")]
+            hindley_result: self.hindley_result_data.as_ref(),
         }
     }
 }

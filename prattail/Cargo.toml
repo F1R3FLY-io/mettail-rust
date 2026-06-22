@@ -121,6 +121,30 @@ oslf-transducer = ["sym-tree-structural"]
 ## phases use, so it implies `any-algebra-carrier`. OFF BY DEFAULT; the default
 ## build is byte-for-byte unchanged.
 oslf-letprop = ["any-algebra-carrier"]
+## OSLF substrate, Phase 6 `.0`→`.1` (2026-06-22): make the SHIPPED-but-dead
+## `hindley_milner` module a LIVE, base-sort-consistency analysis pass. When
+## enabled, `hindley_milner::analyze_from_bundle` builds, for each grammar rule,
+## the constructor's principal arrow type
+## `HmType::Arrow(field_sort_1, …Arrow(field_sort_n, result))` from its
+## `SyntaxItemSpec` fields and CHECKS that the inferred result sort `unify`s with
+## the rule's declared category — recording a `sort_mismatch` iff unification
+## fails. It uses ONLY `HmType::{Mono,Arrow}` + the existing `unify`/`apply`: NO
+## `HmTerm`/`infer`/`Abs`/`App`, NO fresh type variables (the global
+## `fresh_type_var` counter is a determinism hazard the base-sort pass never
+## touches). The verdicts are surfaced in the `#[cfg]`-gated
+## `HmInferenceAnalysis::sort_mismatches` field and routed into the pipeline at an
+## unconditional `h_hindley` spawn (HM applies to ALL grammars — no dispatch
+## gate, mirroring the refinement-sync block). A sort-mismatch lint (`HM01`) fires
+## one Note per mismatch. Because every constructor field sort is read from the
+## SAME `SyntaxItemSpec` that names the rule's category, the inferred result sort
+## ALWAYS unifies on real grammars ⇒ this path is fully INERT (empty
+## `sort_mismatches`) — proven by the parity arm of
+## `prattail/tests/hindley_inference_snapshot.rs`, while the positive arm exercises
+## a hand-built bundle with a deliberate sort clash. The carrier needs the
+## `any_algebra` scalar-sort plumbing the sibling OSLF phases use, so it implies
+## `any-algebra-carrier`. OFF BY DEFAULT; the default build is byte-for-byte
+## unchanged.
+oslf-hindley-milner = ["any-algebra-carrier"]
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []

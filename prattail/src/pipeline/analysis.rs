@@ -101,6 +101,13 @@ pub(crate) struct MathAnalysisResults {
     /// `None` (and the field absent) when `oslf-bisimulation` is off.
     #[cfg(feature = "oslf-bisimulation")]
     pub bisimulation_result: Option<crate::bisimulation::BisimulationAnalysis>,
+    /// OSLF Phase-6 `.1`: Hindley-Milner base-sort consistency over the grammar's
+    /// constructor arrow types, computed by
+    /// [`crate::hindley_milner::analyze_from_bundle`]. Feeds the HM01 lint only
+    /// (no codegen seam). `None` (and the field absent) when `oslf-hindley-milner`
+    /// is off; on every well-formed grammar its `sort_mismatches` is empty (inert).
+    #[cfg(feature = "oslf-hindley-milner")]
+    pub hindley_result: Option<crate::hindley_milner::HmInferenceAnalysis>,
     pub ltl_results: Option<Vec<crate::ltl::LtlCheckResult>>,
     pub provenance_result: Option<crate::provenance::ProvenanceAnalysis>,
     pub cra_result: Option<crate::cra::CraAnalysis>,
@@ -387,6 +394,14 @@ pub(crate) fn run_math_analyses_parallel(
             }
             Some(crate::bisimulation::analyze_from_bundle(all_syntax, categories))
         });
+        // OSLF Phase-6 `.1`: Hindley-Milner base-sort consistency. UNCONDITIONAL
+        // within the cfg — HM applies to ALL grammars (no `dispatch_plan` gate),
+        // mirroring the unconditional refinement-sync block rather than the
+        // dispatch-gated automata spawns. Inert on every well-formed grammar
+        // (empty `sort_mismatches`).
+        #[cfg(feature = "oslf-hindley-milner")]
+        let h_hindley =
+            s.spawn(|| Some(crate::hindley_milner::analyze_from_bundle(all_syntax, categories)));
 
         // Phase 8: Constraint theory analyses
         let h_presburger = s.spawn(|| {
@@ -454,6 +469,10 @@ pub(crate) fn run_math_analyses_parallel(
             bisimulation_result: h_bisimulation
                 .join()
                 .expect("DB03: bisimulation analysis thread panicked"),
+            #[cfg(feature = "oslf-hindley-milner")]
+            hindley_result: h_hindley
+                .join()
+                .expect("DB03: Hindley-Milner analysis thread panicked"),
             ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
             provenance_result: h_provenance
                 .join()
@@ -641,6 +660,14 @@ pub(crate) fn run_math_analyses_sequential(
         } else {
             None
         },
+        // OSLF Phase-6 `.1`: UNCONDITIONAL (no `eligible`/dispatch gate) — HM
+        // applies to ALL grammars, mirroring the unconditional refinement-sync
+        // block below rather than the eligibility-gated automata passes above.
+        #[cfg(feature = "oslf-hindley-milner")]
+        hindley_result: Some(crate::hindley_milner::analyze_from_bundle(
+            &bundle.all_syntax,
+            &bundle.categories,
+        )),
         ltl_results: if eligible {
             wpds_analysis.map(|wa| crate::ltl::check_from_bundle(wa))
         } else {

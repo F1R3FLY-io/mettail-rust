@@ -7239,6 +7239,50 @@ pub(crate) fn lint_lp01_dead_behavioral_type(
     }
 }
 
+/// HM01: Surface OSLF Phase 6 `.1` base-sort inconsistencies as HM-notes.
+///
+/// A grammar rule whose constructor's inferred result sort disagrees with its
+/// declared category (a field references a category that cannot `unify` with its
+/// use) is a base-sort inconsistency.
+/// [`analyze_from_bundle`](crate::hindley_milner::analyze_from_bundle) records
+/// each such `(rule_label, reason)` in
+/// [`HmInferenceAnalysis::sort_mismatches`](crate::hindley_milner::HmInferenceAnalysis);
+/// this lint emits one informational note per finding. Mirrors the RT07
+/// transducer dead-cast / LP01 dead-behavioral-type surfacing pattern exactly.
+///
+/// On every well-formed grammar `sort_mismatches` is EMPTY (every field category
+/// is declared ⇒ the inferred and declared constructor arrows unify), so this
+/// lint is inert and fires nothing.
+///
+/// Severity: Note (informational — a base-sort inconsistency in the grammar).
+#[cfg(feature = "oslf-hindley-milner")]
+pub(crate) fn lint_hm01_sort_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.hindley_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (label, reason) in &result.sort_mismatches {
+        diagnostics.push(LintDiagnostic {
+            id: DiagnosticId::HM01,
+            name: "sort-mismatch",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: Some(label.clone()),
+            message: format!(
+                "HM-note: constructor `{label}` inferred sort disagrees with its \
+                 declaration ({reason})"
+            ),
+            hint: Some(
+                "a constructor field references a category that cannot unify with its \
+                 declared use; correct the field's category or the rule's declared sort"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CEK Machine Lints
 // ══════════════════════════════════════════════════════════════════════════════

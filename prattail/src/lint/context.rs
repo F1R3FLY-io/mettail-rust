@@ -137,6 +137,13 @@ pub struct LintContext<'a> {
     // ── Refinement type analysis results ─────────────────────────────────
     /// Refinement type analysis (satisfiability, subtyping, decidability).
     pub refinement_analysis: Option<&'a crate::pipeline::RefinementAnalysisResult>,
+
+    // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──────────
+    /// HM constructor-arrow base-sort consistency result; the HM01 lint reads
+    /// its `sort_mismatches`. Feature-gated (the field is absent when
+    /// `oslf-hindley-milner` is off), so the default `LintContext` is unchanged.
+    #[cfg(feature = "oslf-hindley-milner")]
+    pub hindley_result: Option<&'a crate::hindley_milner::HmInferenceAnalysis>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -593,6 +600,9 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         // OSLF Phase-4 `.1`: transducer dead-cast RT-notes (feature-gated).
         #[cfg(feature = "oslf-transducer")]
         lint_rt07_dead_cast(ctx, &mut diagnostics);
+        // OSLF Phase-6 `.1`: Hindley-Milner base-sort mismatch notes (feature-gated).
+        #[cfg(feature = "oslf-hindley-milner")]
+        lint_hm01_sort_mismatch(ctx, &mut diagnostics);
     }
 
     // ── CEK machine lints ──

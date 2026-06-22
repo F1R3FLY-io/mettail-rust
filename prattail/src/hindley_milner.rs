@@ -412,6 +412,230 @@ impl TypeSystem for HindleyMilnerTypeSystem {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Pipeline bridge (OSLF substrate, Phase 6 — base-sort consistency over the
+// grammar's constructor arrow types; live when `oslf-hindley-milner` is on)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// This is the live wire for the SHIPPED-but-otherwise-dead `hindley_milner`
+// module. It does NOT use the term language (`HmTerm`/`infer`/`Abs`/`App`) — the
+// grammar's term language is `SyntaxItemSpec`, not lambda calculus, and there is
+// no `SyntaxItemSpec → HmTerm` producer. Instead it performs a **base-sort
+// consistency** analysis directly over `HmType` arrows: each grammar rule's
+// constructor is read as a principal arrow type
+// `Arrow(field_sort_1, …Arrow(field_sort_n, Mono(result_category)))`, and the
+// inferred result sort is checked against the rule's declared category by
+// `unify`. It touches ONLY `HmType::{Mono, Arrow}` plus the existing
+// `unify`/`apply`; it NEVER calls `fresh_type_var` (the global `FRESH_COUNTER`
+// is a cross-call determinism hazard — every type produced here is fresh-var-
+// free, so the analysis is order-independent and deterministic).
+//
+// Because every constructor field sort is read from the SAME `SyntaxItemSpec`
+// that names the rule's declared category, the inferred result sort always
+// unifies on any well-formed grammar (whose referenced categories are all
+// declared — the parser guarantees this) ⇒ `sort_mismatches` is empty and the
+// pass is fully INERT on every current grammar.
+
+/// Pipeline-level Hindley-Milner base-sort consistency result.
+///
+/// Shaped to feed the lint layer only (HM01) — it is NOT routed into codegen,
+/// so it never extends `AdvancedAnalysisBundle` nor touches a codegen seam.
+#[cfg(feature = "oslf-hindley-milner")]
+#[derive(Debug, Clone)]
+pub struct HmInferenceAnalysis {
+    /// Each constructor's principal arrow type, as `(rule_label, rendered_arrow)`
+    /// (e.g. `("AddInt", "Int → Int → Int")`), in `all_syntax` order. Populated
+    /// for every rule whose inferred result sort agrees with its declared
+    /// category (the inert case — all rules on a well-formed grammar).
+    pub inferred_constructor_types: Vec<(String, String)>,
+    /// Constructors whose inferred result sort disagrees with their declaration,
+    /// as `(rule_label, reason)`. Empty on every well-formed grammar (a field's
+    /// category is always declared ⇒ the field/result arrow unifies). A non-empty
+    /// entry is a genuine base-sort inconsistency surfaced as the HM01 lint.
+    pub sort_mismatches: Vec<(String, String)>,
+}
+
+/// Render an [`HmType`] to a compact, deterministic arrow notation
+/// (`a → b → c`, right-associated, parenthesizing nested arrow domains). Used
+/// only to populate the human-readable `inferred_constructor_types` /
+/// `sort_mismatches` strings — never parsed back.
+#[cfg(feature = "oslf-hindley-milner")]
+fn render_hm_type(ty: &HmType) -> String {
+    match ty {
+        HmType::Var(v) => v.clone(),
+        HmType::Mono(m) => m.clone(),
+        HmType::Arrow(a, b) => {
+            // Parenthesize an arrow in domain position so the right-associated
+            // reading is unambiguous; atoms and codomains stay bare.
+            let left = match a.as_ref() {
+                HmType::Arrow(..) => format!("({})", render_hm_type(a)),
+                other => render_hm_type(other),
+            };
+            format!("{left} → {}", render_hm_type(b))
+        },
+        HmType::Forall(vars, body) => {
+            format!("∀{}. {}", vars.join(" "), render_hm_type(body))
+        },
+    }
+}
+
+/// Collect the **field sorts** of a rule body, left-to-right, descending into
+/// the structural wrappers exactly as the sibling structural collectors do
+/// (`Optional`/`Sep`/`Map`/`Zip`).
+///
+/// `NonTerminal` / `Binder` / `Collection` (element category) each contribute a
+/// monomorphic field sort `Mono(category)`; `Terminal`, `IdentCapture`, and
+/// `BinderCollection` contribute none (they carry no sub-sort). Mirrors
+/// [`crate::bisimulation::collect_nonterminal_targets`] so the arrow's domains
+/// track the same notion of "structural child sort" the rest of the substrate
+/// uses.
+#[cfg(feature = "oslf-hindley-milner")]
+fn collect_field_sorts(items: &[crate::SyntaxItemSpec], out: &mut Vec<HmType>) {
+    use crate::SyntaxItemSpec as Item;
+    for item in items {
+        match item {
+            Item::NonTerminal { category, .. } => out.push(HmType::Mono(category.clone())),
+            Item::Binder { category, .. } => out.push(HmType::Mono(category.clone())),
+            Item::Collection { element_category, .. } => {
+                out.push(HmType::Mono(element_category.clone()))
+            },
+            Item::Optional { inner } => collect_field_sorts(inner, out),
+            Item::Sep { body, .. } => {
+                collect_field_sorts(std::slice::from_ref(body.as_ref()), out)
+            },
+            Item::Map { body_items } => collect_field_sorts(body_items, out),
+            Item::Zip { body, .. } => {
+                collect_field_sorts(std::slice::from_ref(body.as_ref()), out)
+            },
+            // Terminal, IdentCapture, BinderCollection — no field sort.
+            _ => {},
+        }
+    }
+}
+
+/// Build a rule constructor's **principal arrow type** from its body fields:
+/// `Arrow(field_sort_1, …Arrow(field_sort_n, Mono(result_category)))`. A
+/// nullary constructor (no field sorts) is just `Mono(result_category)`.
+///
+/// `canonicalize_field` rewrites each field's *domain* sort before it is folded
+/// into the arrow: on the inferred side it is the identity; on the declared
+/// (expected) side it maps a field category to itself iff that category is
+/// declared, else to a distinguished sentinel `Mono("⊥undeclared:<name>")` that
+/// cannot unify with the bare `Mono(<name>)` produced on the inferred side. The
+/// result/codomain (`Mono(result_category)`) is never canonicalized — it is the
+/// declared category by construction.
+///
+/// Uses ONLY `HmType::{Mono, Arrow}`; introduces NO fresh type variables.
+#[cfg(feature = "oslf-hindley-milner")]
+fn infer_constructor_arrow(
+    result_category: &str,
+    field_sorts: &[HmType],
+    canonicalize_field: &impl Fn(&HmType) -> HmType,
+) -> HmType {
+    // Fold right-to-left so the leftmost field becomes the outermost domain:
+    // f1 → (f2 → (… → result)). Preallocation is implicit (the fold reuses the
+    // single accumulator), and the result sort seeds the fold.
+    let mut acc = HmType::Mono(result_category.to_string());
+    for field in field_sorts.iter().rev() {
+        acc = HmType::Arrow(Box::new(canonicalize_field(field)), Box::new(acc));
+    }
+    acc
+}
+
+/// Analyze grammar rules for **base-sort consistency** of their constructor
+/// arrow types.
+///
+/// For each rule `(label, category, items)`:
+///   1. collect the field sorts (`Mono(child_category)` per structural child);
+///   2. build the inferred arrow `Arrow(f1, …Arrow(fn, Mono(category)))`
+///      (identity canonicalization) and the declared arrow (field categories
+///      canonicalized against the declared-category set, result `Mono(category)`);
+///   3. `unify` the two arrows. The codomain leg of that unification IS "the
+///      inferred result sort `unify`d with the declared `rule.category`" (both
+///      `Mono(category)` ⇒ trivially Ok); the domain legs additionally certify
+///      that every field references a *declared* category. On `Ok`, the
+///      `apply`-resolved arrow is rendered into `inferred_constructor_types`; on
+///      `Err`, a `(label, reason)` is pushed to `sort_mismatches`.
+///
+/// On every well-formed grammar each field category is declared, so the
+/// canonicalization is the identity, the arrows are equal, `unify` succeeds, and
+/// `sort_mismatches` is empty — the pass is inert. A field referencing an
+/// undeclared category (or otherwise inconsistent use) yields exactly one
+/// mismatch with a `unify`-derived reason.
+///
+/// Uses ONLY `HmType::{Mono, Arrow}` + the existing [`unify`]/[`Substitution::apply`];
+/// NO `HmTerm`, NO [`infer`], NO [`fresh_type_var`].
+///
+/// # Arguments
+///
+/// * `all_syntax` — `(rule_label, category, items)` triples from the parser
+///   bundle (the same slice [`crate::bisimulation::analyze_from_bundle`] consumes).
+/// * `categories` — the grammar's [`CategoryInfo`](crate::pipeline::CategoryInfo)
+///   list; declared category names seed the field-consistency canonicalization.
+#[cfg(feature = "oslf-hindley-milner")]
+pub fn analyze_from_bundle(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> HmInferenceAnalysis {
+    // Declared-category set: a field whose category is in this set is consistent
+    // (the inferred and declared arrows agree on that domain); one outside it is
+    // a base-sort inconsistency. The parser guarantees every referenced category
+    // is declared, so on real grammars this set covers all field categories.
+    let declared: std::collections::HashSet<&str> =
+        categories.iter().map(|c| c.name.as_str()).collect();
+
+    // Identity canonicalization for the inferred side: a field's sort is taken
+    // verbatim.
+    let identity = |t: &HmType| -> HmType { t.clone() };
+    // Declared-side canonicalization: a `Mono(cat)` field stays `Mono(cat)` iff
+    // `cat` is declared, else becomes a sentinel that cannot unify with the bare
+    // `Mono(cat)` the inferred side produced. Non-`Mono` field sorts (none are
+    // produced here, but be total) pass through unchanged.
+    let against_declared = |t: &HmType| -> HmType {
+        match t {
+            HmType::Mono(cat) if !declared.contains(cat.as_str()) => {
+                HmType::Mono(format!("⊥undeclared:{cat}"))
+            },
+            other => other.clone(),
+        }
+    };
+
+    let mut inferred_constructor_types: Vec<(String, String)> = Vec::with_capacity(all_syntax.len());
+    let mut sort_mismatches: Vec<(String, String)> = Vec::new();
+
+    for (label, category, items) in all_syntax {
+        let mut field_sorts: Vec<HmType> = Vec::new();
+        collect_field_sorts(items, &mut field_sorts);
+
+        let inferred_arrow = infer_constructor_arrow(category, &field_sorts, &identity);
+        let declared_arrow = infer_constructor_arrow(category, &field_sorts, &against_declared);
+
+        // The codomain leg of this unification is exactly "the inferred result
+        // sort unified with the declared category" (`Mono(category)` on both
+        // sides ⇒ Ok); the domain legs certify each field's category is declared.
+        match unify(&inferred_arrow, &declared_arrow) {
+            Ok(subst) => {
+                // Resolve the arrow under the (empty, on success) substitution and
+                // record the constructor's principal type for evidence.
+                let resolved = subst.apply(&inferred_arrow);
+                inferred_constructor_types.push((label.clone(), render_hm_type(&resolved)));
+            },
+            Err(err) => {
+                sort_mismatches.push((
+                    label.clone(),
+                    format!(
+                        "inferred constructor type {} disagrees with its declaration: {}",
+                        render_hm_type(&inferred_arrow),
+                        err
+                    ),
+                ));
+            },
+        }
+    }
+
+    HmInferenceAnalysis { inferred_constructor_types, sort_mismatches }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

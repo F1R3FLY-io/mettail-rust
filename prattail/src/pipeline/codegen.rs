@@ -1334,6 +1334,11 @@ fn generate_parser_code(
     // default build neither binds nor moves this field.
     #[cfg(feature = "oslf-bisimulation")]
     let bisimulation_result = math_results.bisimulation_result;
+    // OSLF Phase-6 `.1`: Hindley-Milner base-sort consistency result threaded
+    // into the lint `LintContext` (HM01 only — never codegen). Feature-gated so
+    // the default build neither binds nor moves this field.
+    #[cfg(feature = "oslf-hindley-milner")]
+    let hindley_result = math_results.hindley_result;
     let ltl_results = math_results.ltl_results;
     let provenance_result = math_results.provenance_result;
     let cra_result = math_results.cra_result;
@@ -1543,6 +1548,9 @@ fn generate_parser_code(
             lattice_result: lattice_result.as_ref(),
             // ── Refinement type analysis results ──
             refinement_analysis: refinement_analysis.as_ref(),
+            // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
+            #[cfg(feature = "oslf-hindley-milner")]
+            hindley_result: hindley_result.as_ref(),
         };
 
         // DB04: Use cached lint results when the optimization gate is enabled.

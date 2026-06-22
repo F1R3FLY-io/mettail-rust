@@ -34,3 +34,8 @@ theories/LetpropPataWiringSound.v
 # normal-form derivation in `trace_to_ltl_steps`). Self-contained; the LTL
 # decision itself rests on BuchiWpdsProduct.v.
 theories/TraceLtlCheckSound.v
+# OSLF substrate Phase 6: hindley_milner base-sort consistency wiring soundness
+# (constructor-as-arrow inference agrees with the declaration; base-sort unify is
+# exact equality; the HM01 mismatch lint fires only on genuinely-differing sorts).
+# Self-contained over the Mono/Arrow restriction of UnificationSoundness.v.
+theories/HindleyMilnerWiringSound.v

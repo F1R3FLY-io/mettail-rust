@@ -98,6 +98,13 @@ define_diagnostic_ids! {
     G36 => "G36", G37 => "G37", G38 => "G38",
     G39 => "G39", G40 => "G40", G41 => "G41", G42 => "G42",
 
+    // ── Hindley-Milner base-sort consistency (HM) — OSLF Phase 6 `.1` ──
+    // HM01: a constructor's inferred result sort disagrees with its declared
+    // category (a base-sort inconsistency — a field references a category that
+    // cannot unify with its use). Emitted only when `oslf-hindley-milner` is on;
+    // the variant is always defined so the ID table stays total.
+    HM01 => "HM01",
+
     // ── Infrastructure (I) ──
     I01 => "I01", I02 => "I02", I03 => "I03", I04 => "I04",
     I05 => "I05", I06 => "I06", I07 => "I07", I08 => "I08", I09 => "I09",
