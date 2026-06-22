@@ -1,37 +1,42 @@
 //! OSLF Phase 5 — a CUSTOM TEST-ONLY letprop language, end-to-end.
 //!
-//! The *official* letprop surface syntax is undecided (a tracked follow-up). For
-//! integration testing, this defines a small, self-contained letprop
-//! semantic-predicate syntax + a recursive-descent parser into the prattail
-//! [`RecursivePredicate`], then drives it through the live decision wired in
-//! Phase 5 (`parity_tree::decide_recursive_predicate`):
+//! The *official* letprop surface syntax is undecided (a tracked follow-up). This
+//! test exercises the **proposed** syntax from
+//! `docs/design/predicated-types.md` §"Recursive Predicates (letprop)":
+//!
+//! ```text
+//!   letprop safe(x) = base(x) ∨ (step(x) ∧ safe(x))
+//! ```
+//!
+//! i.e. `letprop NAME "(" params ")" "=" body`, where the body is built from
+//! relation atoms `R(args)`, the connectives `∨` / `∧` / `¬` / `⇒`, and recursive
+//! self-references `NAME(args)`. A test-scoped recursive-descent parser turns that
+//! surface into the prattail [`RecursivePredicate`] and drives it through the live
+//! Phase-5 decision (`parity_tree::decide_recursive_predicate`):
 //!
 //!   source string → parse → RecursivePredicate → μ/ν → PATA → emptiness verdict
 //!
-//! This proves the downstream pipeline is **ready** for whatever official surface
-//! is later chosen: the official parser only has to produce the SAME
-//! `RecursivePredicate`, and everything below (lowering, PATA, decision, the
-//! `LetpropPataWiringSound.v` soundness) applies unchanged. It is TEST-ONLY, so
-//! production `ast/` and the grammar are untouched (no parser drift).
+//! This pins the `surface → RecursivePredicate` contract the official syntax must
+//! satisfy: the official parser only has to produce the SAME `RecursivePredicate`,
+//! and everything below (lowering, PATA, decision, `LetpropPataWiringSound.v`)
+//! applies unchanged. It is TEST-ONLY, so production `ast/` is untouched.
 //!
-//! Test grammar (one definition per call):
-//! ```text
-//!   letprop  ::= "letprop" NAME "(" params? ")" "=" expr
-//!   expr     ::= implies
-//!   implies  ::= or ( "=>" or )*          (right-associative)
-//!   or       ::= and ( "|" and )*
-//!   and      ::= not ( "&" not )*
-//!   not      ::= "~" not | atom
-//!   atom     ::= "true" | "false" | NAME "(" args? ")" | "(" expr ")"
-//! ```
-//! An applied name equal to the enclosing predicate name becomes a
-//! [`LetPropExpr::Recursive`]; any other becomes a [`LetPropExpr::Atom`].
+//! ⚠ GAP for the official-surface phase (task #26): the proposed syntax also
+//! admits a quantified form — `letprop halt x = forall(x', ¬rewrites_to(x, x'))`
+//! (predicated-types.md:5784) — but `LetPropExpr` has **no** `Forall`/`Exists`
+//! variant, so that fragment is not yet representable. This test exercises only
+//! the connective + recursive fragment that `LetPropExpr` supports today; the
+//! official surface will need `LetPropExpr` extended with quantifiers (or the
+//! quantifiers lowered separately) to cover the `halt`-style proposal.
+//!
+//! The lenient tokenizer accepts the proposed Unicode connectives (`∨`/`∧`/`¬`/`⇒`)
+//! as well as their ASCII spellings (`|`/`&`/`~`/`=>`), and `'` in identifiers.
 #![cfg(feature = "oslf-letprop")]
 
 use mettail_prattail::letprop::{LetPropExpr, RecursivePredicate};
 use mettail_prattail::parity_tree::decide_recursive_predicate;
 
-// ── Tokenizer ───────────────────────────────────────────────────────────────
+// ── Tokenizer (char-based: the proposed connectives are multi-byte Unicode) ───
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Tok {
@@ -40,18 +45,18 @@ enum Tok {
     RParen,
     Comma,
     Eq,
-    Arrow, // =>
-    Or,    // |
-    And,   // &
-    Not,   // ~
+    Arrow, // ⇒ / =>
+    Or,    // ∨ / |
+    And,   // ∧ / &
+    Not,   // ¬ / ~
 }
 
 fn tokenize(src: &str) -> Vec<Tok> {
-    let mut toks = Vec::with_capacity(src.len() / 2 + 1);
-    let bytes = src.as_bytes();
+    let chars: Vec<char> = src.chars().collect();
+    let mut toks = Vec::with_capacity(chars.len() / 2 + 1);
     let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
+    while i < chars.len() {
+        let c = chars[i];
         match c {
             c if c.is_whitespace() => i += 1,
             '(' => {
@@ -66,20 +71,24 @@ fn tokenize(src: &str) -> Vec<Tok> {
                 toks.push(Tok::Comma);
                 i += 1;
             },
-            '|' => {
+            '∨' | '|' => {
                 toks.push(Tok::Or);
                 i += 1;
             },
-            '&' => {
+            '∧' | '&' => {
                 toks.push(Tok::And);
                 i += 1;
             },
-            '~' => {
+            '¬' | '~' => {
                 toks.push(Tok::Not);
                 i += 1;
             },
+            '⇒' => {
+                toks.push(Tok::Arrow);
+                i += 1;
+            },
             '=' => {
-                if i + 1 < bytes.len() && bytes[i + 1] as char == '>' {
+                if i + 1 < chars.len() && chars[i + 1] == '>' {
                     toks.push(Tok::Arrow);
                     i += 2;
                 } else {
@@ -87,14 +96,14 @@ fn tokenize(src: &str) -> Vec<Tok> {
                     i += 1;
                 }
             },
-            c if c.is_alphanumeric() || c == '_' => {
+            c if c.is_alphanumeric() || c == '_' || c == '\'' => {
                 let start = i;
-                while i < bytes.len()
-                    && ((bytes[i] as char).is_alphanumeric() || bytes[i] as char == '_')
+                while i < chars.len()
+                    && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '\'')
                 {
                     i += 1;
                 }
-                toks.push(Tok::Ident(src[start..i].to_string()));
+                toks.push(Tok::Ident(chars[start..i].iter().collect()));
             },
             other => panic!("letprop test lexer: unexpected character {other:?}"),
         }
@@ -223,10 +232,10 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Parse one `letprop NAME(params) = body` definition into a [`RecursivePredicate`].
+/// Parse one `letprop NAME(params) = body` definition (the proposed
+/// `predicated-types.md` surface) into a [`RecursivePredicate`].
 fn parse_letprop(src: &str) -> RecursivePredicate {
     let toks = tokenize(src);
-    // `letprop` NAME `(` params `)` `=` expr
     let mut p = Parser { toks: &toks, pos: 0, self_name: String::new() };
     let kw = p.ident();
     assert_eq!(kw, "letprop", "letprop test parser: definitions must start with `letprop`");
@@ -245,9 +254,9 @@ fn parse_letprop(src: &str) -> RecursivePredicate {
 
 #[test]
 fn parser_produces_the_expected_recursive_predicate() {
-    // The CONTRACT the official surface must satisfy: this exact source parses to
-    // this exact RecursivePredicate (the input to the proven downstream).
-    let rp = parse_letprop("letprop reachable(x) = edge(x) | reachable(x)");
+    // The CONTRACT the official surface must satisfy: this exact proposed source
+    // parses to this exact RecursivePredicate (the input to the proven downstream).
+    let rp = parse_letprop("letprop reachable(x) = edge(x) ∨ reachable(x)");
     assert_eq!(
         rp,
         RecursivePredicate {
@@ -268,7 +277,7 @@ fn parser_produces_the_expected_recursive_predicate() {
 fn reachable_is_satisfiable_end_to_end() {
     // μX. edge(x) ∨ X — a least fixpoint WITH a base case (`edge`): the PATA is
     // non-empty, so the behavioral type is satisfiable.
-    let rp = parse_letprop("letprop reachable(x) = edge(x) | reachable(x)");
+    let rp = parse_letprop("letprop reachable(x) = edge(x) ∨ reachable(x)");
     assert!(
         decide_recursive_predicate(&rp),
         "reachable has a base case (edge) — its PATA must be non-empty (satisfiable)"
@@ -288,10 +297,10 @@ fn spin_is_unsatisfiable_end_to_end() {
 
 #[test]
 fn nested_connectives_and_precedence_parse_and_decide() {
-    // Exercises precedence (`~` > `&` > `|` > `=>`), parens, and a guarded
-    // recursion `terminates(x) = done(x) | (step(x) & terminates(x))`.
-    let rp = parse_letprop("letprop terminates(x) = done(x) | ( step(x) & terminates(x) )");
-    // `|` binds looser than `&`, so the body is Or(done, And(step, Recursive)).
+    // The proposed `safe(x) = base(x) ∨ (step(x) ∧ safe(x))` shape: exercises
+    // precedence (`¬` > `∧` > `∨` > `⇒`), parens, and a guarded recursion.
+    let rp = parse_letprop("letprop terminates(x) = done(x) ∨ ( step(x) ∧ terminates(x) )");
+    // `∨` binds looser than `∧`, so the body is Or(done, And(step, Recursive)).
     assert_eq!(
         rp.body,
         LetPropExpr::Or(
@@ -310,4 +319,14 @@ fn nested_connectives_and_precedence_parse_and_decide() {
     );
     // It has a base case (`done`), so it is satisfiable.
     assert!(decide_recursive_predicate(&rp));
+}
+
+#[test]
+fn ascii_connectives_are_accepted_too() {
+    // The tokenizer is lenient: the ASCII spellings parse to the same AST as the
+    // proposed Unicode connectives (so the test does not depend on the final
+    // glyph choice the official surface will fix).
+    let unicode = parse_letprop("letprop reachable(x) = edge(x) ∨ reachable(x)");
+    let ascii = parse_letprop("letprop reachable(x) = edge(x) | reachable(x)");
+    assert_eq!(unicode, ascii);
 }
