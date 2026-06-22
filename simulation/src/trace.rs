@@ -75,6 +75,23 @@ pub enum TraceOutcome {
         invariant: String,
         message: String,
     },
+    /// An LTL temporal property was violated by the execution trace.
+    ///
+    /// Surfaced post-hoc (after the trace is fully built) by
+    /// [`crate::runner::SimulationRunner`] when the configured
+    /// `ltl_properties` are checked against the trace via
+    /// [`crate::temporal::check_trace_ltl`]. Mirrors `InvariantViolation`:
+    /// `step` is the violating trace step (0-based, clamped to the trace
+    /// length), `formula` is the offending LTL formula string, and `message`
+    /// carries the human-readable counterexample (prefix/lasso) from the
+    /// model checker. This outcome is only ever produced when the user opts
+    /// in by populating `SimulationConfig::ltl_properties`; the default-empty
+    /// configuration never reaches this arm.
+    LtlViolation {
+        step: usize,
+        formula: String,
+        message: String,
+    },
     /// An error occurred (parse failure, Ascent failure, etc.).
     Error { message: String },
 }
@@ -161,6 +178,14 @@ fn outcome_to_json_fields(outcome: &TraceOutcome) -> String {
                 "\"kind\":\"InvariantViolation\",\"step\":{},\"invariant\":\"{}\",\"message\":\"{}\"",
                 step,
                 json_escape(invariant),
+                json_escape(message),
+            )
+        },
+        TraceOutcome::LtlViolation { step, formula, message } => {
+            format!(
+                "\"kind\":\"LtlViolation\",\"step\":{},\"formula\":\"{}\",\"message\":\"{}\"",
+                step,
+                json_escape(formula),
                 json_escape(message),
             )
         },
@@ -511,6 +536,15 @@ fn parse_outcome_from_line(line: &str) -> Result<TraceOutcome, String> {
             let message = extract_json_string(line, "message")
                 .ok_or_else(|| "Missing 'message' in InvariantViolation outcome".to_string())?;
             Ok(TraceOutcome::InvariantViolation { step, invariant, message })
+        },
+        "LtlViolation" => {
+            let step = extract_json_usize(line, "step")
+                .ok_or_else(|| "Missing 'step' in LtlViolation outcome".to_string())?;
+            let formula = extract_json_string(line, "formula")
+                .ok_or_else(|| "Missing 'formula' in LtlViolation outcome".to_string())?;
+            let message = extract_json_string(line, "message")
+                .ok_or_else(|| "Missing 'message' in LtlViolation outcome".to_string())?;
+            Ok(TraceOutcome::LtlViolation { step, formula, message })
         },
         "Error" => {
             let message = extract_json_string(line, "message")

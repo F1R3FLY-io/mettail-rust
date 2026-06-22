@@ -35,6 +35,7 @@
 //! 3. The product automaton L(system) ∩ L(¬φ) is computed.
 //! 4. If the product is non-empty, the property is violated.
 
+use crate::trace::{ExecutionTrace, TraceOutcome};
 use mettail_prattail::buchi::BuchiAutomaton;
 use mettail_prattail::ltl::{self, LtlProperty};
 
@@ -285,16 +286,157 @@ pub fn check_trace_ltl(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Runner adaptor: ExecutionTrace → LTL step sequence
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// The default term-display length bound used by [`default_propositions`] for
+/// the `bounded_size` atom. Chosen generously so `G(bounded_size)` holds for
+/// ordinary terms; users wanting a tighter bound construct their own
+/// [`TermSizeBounded`] proposition set.
+pub const DEFAULT_TERM_SIZE_BOUND: usize = 4096;
+
+/// Project an [`ExecutionTrace`] into the `(term_display, is_normal_form)`
+/// step sequence consumed by [`check_trace_ltl`].
+///
+/// Each [`crate::trace::TraceEntry`] contributes one step whose label is its
+/// `term_display`. The `ExecutionTrace` records no per-step normal-form flag —
+/// normal-form status lives only in the terminal [`TraceOutcome::NormalForm`]
+/// outcome — so the flag is *derived*: a step is in normal form iff the trace's
+/// outcome is `NormalForm` **and** the step is the final one. Intermediate
+/// steps are therefore never normal-form, and a trace whose outcome is anything
+/// other than `NormalForm` (step-limit, runtime report, invariant violation,
+/// error, …) yields no normal-form step at all — which is exactly what makes a
+/// liveness property like `F(normal_form)` fail for a non-converging run.
+///
+/// The returned vector is preallocated to the trace's step count. An empty
+/// trace yields an empty step sequence (which `check_trace_ltl` treats as
+/// vacuously satisfied).
+pub fn trace_to_ltl_steps(trace: &ExecutionTrace) -> Vec<(String, bool)> {
+    let terminal_normal_form = matches!(trace.outcome, TraceOutcome::NormalForm { .. });
+    let last_index = trace.steps.len().saturating_sub(1);
+    let mut steps = Vec::with_capacity(trace.steps.len());
+    for (idx, entry) in trace.steps.iter().enumerate() {
+        let is_normal_form = terminal_normal_form && idx == last_index;
+        steps.push((entry.term_display.clone(), is_normal_form));
+    }
+    steps
+}
+
+/// The default atomic-proposition set wired into LTL trace checking by the
+/// [`crate::runner::SimulationRunner`].
+///
+/// Provides exactly the shipped propositions needed for the canonical
+/// termination/safety formulas:
+///
+/// - [`IsNormalForm`] (atom `normal_form`) — supports `F(normal_form)`
+///   ("eventually reaches a normal form") and `G(!normal_form)` style queries.
+/// - [`TermSizeBounded`] (atom `bounded_size`, bound [`DEFAULT_TERM_SIZE_BOUND`])
+///   — supports `G(bounded_size)` ("term display never blows up").
+/// - [`ContainsSubstring`] (atom `contains`, empty pattern) — present so the
+///   `contains` atom resolves; an empty pattern is contained by every string,
+///   so it acts as a `true` literal unless the user supplies their own pattern
+///   via a custom proposition set.
+///
+/// Callers wanting different bounds or patterns build their own
+/// `Vec<Box<dyn AtomicProposition>>` and call [`check_trace_ltl`] directly.
+pub fn default_propositions() -> Vec<Box<dyn AtomicProposition>> {
+    vec![
+        Box::new(IsNormalForm),
+        Box::new(TermSizeBounded { bound: DEFAULT_TERM_SIZE_BOUND }),
+        Box::new(ContainsSubstring { pattern: String::new() }),
+    ]
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trace::{ExecutionTrace, TraceEntry, TraceOutcome};
 
     /// Helper: create standard propositions for testing.
     fn standard_propositions() -> Vec<Box<dyn AtomicProposition>> {
         vec![Box::new(IsNormalForm), Box::new(TermSizeBounded { bound: 100 })]
+    }
+
+    /// Build a minimal trace with the given step displays and outcome.
+    fn trace_with(steps: &[&str], outcome: TraceOutcome) -> ExecutionTrace {
+        ExecutionTrace {
+            seed: "deterministic".to_string(),
+            language: "Mock".to_string(),
+            steps: steps
+                .iter()
+                .enumerate()
+                .map(|(i, d)| TraceEntry {
+                    step_index: i,
+                    term_display: (*d).to_string(),
+                    operation: "parse".to_string(),
+                    metrics: None,
+                })
+                .collect(),
+            outcome,
+            morphology: None,
+        }
+    }
+
+    #[test]
+    fn trace_to_ltl_steps_marks_only_final_step_normal_form() {
+        let trace = trace_with(
+            &["(AddInt 3 5)", "8"],
+            TraceOutcome::NormalForm { term: "8".to_string(), steps: 2 },
+        );
+        let steps = trace_to_ltl_steps(&trace);
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0], ("(AddInt 3 5)".to_string(), false));
+        assert_eq!(steps[1], ("8".to_string(), true));
+    }
+
+    #[test]
+    fn trace_to_ltl_steps_non_normal_form_outcome_has_no_nf_step() {
+        let trace = trace_with(
+            &["a", "b", "c"],
+            TraceOutcome::StepLimitReached { final_term: "c".to_string() },
+        );
+        let steps = trace_to_ltl_steps(&trace);
+        assert_eq!(steps.len(), 3);
+        assert!(steps.iter().all(|(_, is_nf)| !is_nf));
+    }
+
+    #[test]
+    fn trace_to_ltl_steps_empty_trace_is_empty() {
+        let trace =
+            trace_with(&[], TraceOutcome::NormalForm { term: "x".to_string(), steps: 0 });
+        assert!(trace_to_ltl_steps(&trace).is_empty());
+    }
+
+    #[test]
+    fn default_propositions_resolve_canonical_atoms() {
+        let props = default_propositions();
+        // F(normal_form) is satisfied for a converging trace.
+        let converging = trace_with(
+            &["(AddInt 3 5)", "8"],
+            TraceOutcome::NormalForm { term: "8".to_string(), steps: 2 },
+        );
+        let steps = trace_to_ltl_steps(&converging);
+        assert!(matches!(
+            check_trace_ltl(&steps, "F(normal_form)", &props),
+            LtlCheckResult::Satisfied
+        ));
+        // F(normal_form) is violated for a non-converging trace.
+        let stuck =
+            trace_with(&["a", "b"], TraceOutcome::StepLimitReached { final_term: "b".to_string() });
+        let stuck_steps = trace_to_ltl_steps(&stuck);
+        assert!(matches!(
+            check_trace_ltl(&stuck_steps, "F(normal_form)", &props),
+            LtlCheckResult::Violated { .. }
+        ));
+        // G(bounded_size) holds for short terms under the generous default bound.
+        assert!(matches!(
+            check_trace_ltl(&steps, "G(bounded_size)", &props),
+            LtlCheckResult::Satisfied
+        ));
     }
 
     #[test]

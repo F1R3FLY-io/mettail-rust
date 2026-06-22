@@ -20,6 +20,7 @@ use crate::invariant::{Invariant, InvariantState};
 use crate::morphology::{MorphologyTracker, TermMetrics};
 use crate::results::{CampaignResults, RuleCoverage, SimulationFailure};
 use crate::step::SimOperation;
+use crate::temporal::{self, LtlCheckResult};
 use crate::trace::{ExecutionTrace, TraceEntry, TraceOutcome};
 
 use mettail_runtime::{Language, RuntimeBackendOutput, RuntimeDovetailRunReport};
@@ -51,7 +52,18 @@ pub struct SimulationConfig {
     pub seed: Option<[u8; 32]>,
     /// Invariants to check at each step.
     pub invariants: Vec<Box<dyn Invariant>>,
-    /// LTL property formulas to check (reserved for future integration).
+    /// LTL property formulas checked post-hoc against each run's execution
+    /// trace.
+    ///
+    /// When non-empty, [`SimulationRunner::run_to_normal_form`] evaluates every
+    /// formula against the assembled trace via
+    /// [`crate::temporal::check_trace_ltl`] (over
+    /// [`crate::temporal::trace_to_ltl_steps`], using
+    /// [`crate::temporal::default_propositions`]) **after** the trace is built —
+    /// never inside the rewrite loop, so determinism is preserved. The first
+    /// `Violated` formula surfaces as a [`TraceOutcome::LtlViolation`] failure
+    /// (and is mirrored into `CampaignResults::ltl_violations`). Defaults to
+    /// empty, in which case no LTL check runs and run outcomes are unchanged.
     pub ltl_properties: Vec<String>,
     /// Whether to track term morphology metrics.
     pub track_morphology: bool,
@@ -537,7 +549,7 @@ impl<'a> SimulationRunner<'a> {
                     }
                 }
 
-                return Ok(trace);
+                return self.finalize_with_ltl(trace, input);
             },
             RuntimeBackendOutput::Dovetail(dovetail_report) => {
                 let summary = dovetail_report_summary(&dovetail_report);
@@ -613,7 +625,7 @@ impl<'a> SimulationRunner<'a> {
                     }
                 }
 
-                return Ok(trace);
+                return self.finalize_with_ltl(trace, input);
             },
             _ => {
                 let trace = ExecutionTrace {
@@ -885,6 +897,69 @@ impl<'a> SimulationRunner<'a> {
         if let TraceOutputFormat::Jsonl { ref path } = self.config.trace_output {
             if let Err(e) = crate::trace::write_trace_jsonl(&trace, path) {
                 eprintln!("Warning: failed to write JSONL trace: {}", e);
+            }
+        }
+
+        self.finalize_with_ltl(trace, input)
+    }
+
+    /// Post-hoc LTL temporal-property checking over a fully-built trace.
+    ///
+    /// This is the surface half of the OSLF Phase 5 temporal wire: after a
+    /// trace has been assembled (and any JSONL written), the configured
+    /// `ltl_properties` are checked against it via
+    /// [`temporal::check_trace_ltl`] over the adaptor
+    /// [`temporal::trace_to_ltl_steps`], using [`temporal::default_propositions`].
+    ///
+    /// ## Determinism
+    ///
+    /// The check runs **strictly post-trace** — the trace (and therefore the
+    /// rewrite sequence and every recorded outcome) is already final and is
+    /// never re-derived here. No rewrite-loop state is touched, so enabling
+    /// `ltl_properties` cannot perturb the deterministic reduction.
+    ///
+    /// ## Inert-by-default invariant
+    ///
+    /// When `ltl_properties` is empty (the default), this returns the trace
+    /// **unchanged** with no work performed, so the default campaign outcome
+    /// is byte-identical to the pre-wire behavior. Only a non-empty
+    /// `ltl_properties` triggers evaluation; the first `Violated` formula is
+    /// surfaced as a [`TraceOutcome::LtlViolation`] failure (mirroring the
+    /// `InvariantViolation` failure path). `ParseError` and `Satisfied`
+    /// results do not fail the run (a malformed user formula must not
+    /// masquerade as a property violation).
+    fn finalize_with_ltl(
+        &self,
+        trace: ExecutionTrace,
+        input: &str,
+    ) -> Result<ExecutionTrace, SimulationFailure> {
+        if self.config.ltl_properties.is_empty() {
+            return Ok(trace);
+        }
+
+        let steps = temporal::trace_to_ltl_steps(&trace);
+        let propositions = temporal::default_propositions();
+        for formula in &self.config.ltl_properties {
+            if let LtlCheckResult::Violated { step, message } =
+                temporal::check_trace_ltl(&steps, formula, &propositions)
+            {
+                let violation = ExecutionTrace {
+                    seed: trace.seed.clone(),
+                    language: trace.language.clone(),
+                    steps: trace.steps.clone(),
+                    outcome: TraceOutcome::LtlViolation {
+                        step,
+                        formula: formula.clone(),
+                        message: message.clone(),
+                    },
+                    morphology: trace.morphology.clone(),
+                };
+                return Err(SimulationFailure {
+                    seed: trace.seed.clone(),
+                    input: input.to_string(),
+                    trace: violation,
+                    error: format!("LTL property '{}' violated: {}", formula, message),
+                });
             }
         }
 

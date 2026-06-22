@@ -5,7 +5,7 @@
 //! with their input, seed, trace, and error message for reproducibility.
 
 use crate::morphology::MorphologySummary;
-use crate::trace::ExecutionTrace;
+use crate::trace::{ExecutionTrace, TraceOutcome};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -24,6 +24,18 @@ pub struct CampaignResults {
     pub coverage: RuleCoverage,
     /// Aggregate morphology summary across all cases (if tracking was enabled).
     pub aggregate_morphology: Option<MorphologySummary>,
+    /// LTL temporal-property violations surfaced during the campaign, as
+    /// `(formula, message)` pairs.
+    ///
+    /// Populated by [`CampaignResults::record_failure`] whenever a recorded
+    /// failure's trace outcome is [`TraceOutcome::LtlViolation`] — i.e. the
+    /// runner checked the configured `SimulationConfig::ltl_properties`
+    /// against an execution trace and the model checker reported a
+    /// counterexample. This is a dedicated, directly-assertable surface that
+    /// complements the full [`SimulationFailure`] entry in `failures`. With
+    /// the default-empty `ltl_properties`, no LTL check runs and this vector
+    /// stays empty, preserving byte-identical campaign outcomes.
+    pub ltl_violations: Vec<(String, String)>,
 }
 
 impl CampaignResults {
@@ -36,6 +48,7 @@ impl CampaignResults {
             failures: Vec::new(),
             coverage: RuleCoverage::new(),
             aggregate_morphology: None,
+            ltl_violations: Vec::new(),
         }
     }
 
@@ -46,9 +59,18 @@ impl CampaignResults {
     }
 
     /// Record a failed case.
+    ///
+    /// If the failure's trace outcome is a [`TraceOutcome::LtlViolation`], its
+    /// `(formula, message)` is also mirrored into [`Self::ltl_violations`] so
+    /// LTL counterexamples have a dedicated, directly-assertable surface in
+    /// addition to the full failure record.
     pub fn record_failure(&mut self, failure: SimulationFailure) {
         self.total_cases += 1;
         self.failed += 1;
+        if let TraceOutcome::LtlViolation { formula, message, .. } = &failure.trace.outcome {
+            self.ltl_violations
+                .push((formula.clone(), message.clone()));
+        }
         self.failures.push(failure);
     }
 
