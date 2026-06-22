@@ -298,9 +298,9 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
-    // Per-variant arms for iterative Hash/PartialEq/Clone on the wrapper
-    // enum. These delegate to each inner category's already-iterative PDA
-    // impl (from iterative_hash.rs / iterative_cmp.rs / iterative_clone.rs).
+    // Per-variant arms for iterative Hash/PartialEq on the wrapper enum.
+    // These delegate to each inner category's already-iterative PDA impl
+    // (from iterative_hash.rs / iterative_cmp.rs). Clone is derived (Arc).
     // For the `Ambiguous(Vec<Self>)` variant, we iterate the alts with an
     // explicit work stack — no compiler-generated recursion through nested
     // Ambiguous trees. Per the stack-safety mandate.

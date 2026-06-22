@@ -58,7 +58,7 @@ use syn::Ident;
 
 // =============================================================================
 // Variant Kind — Unified representation of AST variants (shared with
-// iterative_clone.rs, iterative_cmp.rs, etc. via `pub(crate)`)
+// iterative_cmp.rs, iterative_hash.rs, etc. via `pub(crate)`)
 // =============================================================================
 
 /// Represents a variant of an AST enum for substitution purposes.
@@ -817,12 +817,12 @@ fn generate_visit_variant_arm(
     }
 }
 
-/// Literal arm: just wrap the cloned literal value. Mirrors iterative_clone's
-/// literal handling. Native literals (i32/String/etc.) may be Copy or Clone.
+/// Literal arm: just wrap the cloned literal value. Native literals
+/// (i32/String/etc.) may be Copy or Clone.
 fn generate_literal_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) -> TokenStream {
     let wrap = format_ident!("Wrap{}", cat);
 
-    // Match the iterative_clone behavior: clone for non-Copy, copy for Copy.
+    // Clone for non-Copy, copy for Copy.
     // Conservative: just clone — works for both.
     let lit_expr = language
         .types
@@ -1402,7 +1402,7 @@ fn generate_multi_binder_visit_arm(
 }
 
 /// Emit (alloc_stmts, push_stmts, assemble_field_refs) for a Binder's
-/// pre-scope fields. Mirrors iterative_clone's approach.
+/// pre-scope fields.
 fn emit_pre_field_visit_alloc(
     pre_scope_fields: &[FieldInfo],
     field_names: &[Ident],
@@ -1556,8 +1556,8 @@ fn generate_assemble_arm_for_variant(cat: &Ident, variant: &VariantKind) -> Opti
 /// **Frame-size fix (PDA stack-safety, second tier):** wraps the body in a
 /// local `#[inline(never)]` inner fn so per-variant locals (`field_N`,
 /// `Box::new(...)`, collection builders) live in the helper's frame instead
-/// of `subst_iterative`'s. See `iterative_clone.rs::generate_regular_assemble_arm`
-/// for the same idiom.
+/// of `subst_iterative`'s. (The same `#[inline(never)]` peel idiom is shared
+/// with the sibling iterative term-ops.)
 fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let wrap = format_ident!("Wrap{}", cat);
@@ -1789,8 +1789,8 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
 }
 
 /// Collection variant Assemble: reconstruct a single-collection constructor.
-/// See `iterative_clone.rs::generate_collection_assemble_arm` for the
-/// per-arm `#[inline(never)]` peel rationale.
+/// (Per-arm `#[inline(never)]` peel rationale — shared with the sibling
+/// iterative term-ops.)
 fn generate_collection_assemble_arm(
     cat: &Ident,
     label: &Ident,
@@ -2318,7 +2318,7 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
 }
 
 // =============================================================================
-// Variant Collection (UNCHANGED — shared with iterative_clone.rs and others)
+// Variant Collection (UNCHANGED — shared with the sibling iterative term-ops)
 // =============================================================================
 
 /// Collect all variants for a category from grammar rules and auto-generated variants

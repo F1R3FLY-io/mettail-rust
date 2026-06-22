@@ -134,18 +134,6 @@ pub mod token_id;
 /// ingest path at step_fanout. See
 /// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
 pub mod tomita_frontier;
-/// Phase F.13 chain_10000 Exp 8 Substage 1 (2026-05-26): canonical-order
-/// path-tree interning arena for SET semantics + walker-global LRU cache
-/// for O(1) `contains()`. Designed to replace
-/// `BranchCursor::visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>`
-/// (the dominant remaining per-cursor allocator post-E3/E6, projected
-/// ~7 GB live peak at chain_10000). Generic over `T: Copy + Ord + Hash`;
-/// concrete type alias `VisitedDispatchArena = VisitedSetArena<
-/// PackedDispatchConfig>` will be shared between `visited_dispatch_id`
-/// and `visited_recovery_id` field swaps in Substage 2 + 3. See ledger.
-/// Substage 2 REJECTED per Welch falsifier (commit 365039e); standalone
-/// module retained for reference / future workloads.
-pub mod visited_set_arena;
 /// Phase F.13 walker statistics counters (gated by `walker-stats` feature).
 pub mod walker_stats;
 // Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
@@ -160,13 +148,11 @@ pub mod walker_stats;
 pub mod wfst;
 
 pub mod compose;
-pub mod composition_optimize;
 pub mod composition_verify;
 pub mod cost_benefit;
 pub mod decision_tree;
 pub mod lattice;
 pub mod lint;
-pub mod prefix_trie;
 pub mod recovery;
 /// Stage 3.20 / L12 (Commit C, 2026-05-06): WPDS-edge-driven recovery dispatch.
 /// `emit_recovery_fork` constructs lex-min-ranked Fork branches at every
@@ -231,10 +217,6 @@ pub mod earley;
 // Tarjan path expression algorithm + interprocedural extension
 // (Kincaid, Cyphert, Breck & Reps, 2019).
 pub mod algebraic;
-
-// ── Newton's method for semiring fixpoints (always-on — generic over any
-// StarSemiring) ─────────────────────────────────────────────────────────────
-pub mod newton;
 
 // ── Forward-backward analysis (always-on — generic over any semiring) ──────
 // The core algorithm is semiring-generic and used by A4 (BooleanWeight).

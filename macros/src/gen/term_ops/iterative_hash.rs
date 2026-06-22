@@ -124,7 +124,8 @@ fn generate_hash_task_enum(language: &LanguageDef) -> TokenStream {
 /// Generate the `hash_iterative` function that processes the work stack.
 ///
 /// **Frame-size fix (PDA stack-safety):** Per-cat helpers keep individual
-/// stack frames small (see `iterative_clone.rs` for the same rationale).
+/// stack frames small (the same stack-safety rationale shared across the
+/// iterative term-ops).
 fn generate_hash_engine(language: &LanguageDef) -> TokenStream {
     let helper_fns: Vec<TokenStream> = language
         .types

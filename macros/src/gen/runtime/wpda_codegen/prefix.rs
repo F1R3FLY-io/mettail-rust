@@ -1214,52 +1214,6 @@ pub fn emit_prefix_arms_for_category(
 // projection sharing a `(pat, guard)` key with a Pass-1 atomic was dead
 // code via Rust's first-match-wins.
 
-/// Stage 1.1: emit a single prefix arm for a cross-cat prefix unary rule.
-#[allow(dead_code)]
-fn emit_cross_cat_prefix_unary_arm(
-    category_src_idx: u16,
-    rule_idx: u16,
-    trigger: &str,
-    source_cat_name: &str,
-    explicit_prefix_precedence: Option<u8>,
-    language: &LanguageDef,
-) -> TokenStream {
-    let categories = super::collect_category_names_with_literals(language);
-    let source_src_idx = categories
-        .iter()
-        .position(|c| c == source_cat_name)
-        .map(|i| i as u16)
-        .unwrap_or(0);
-    let bp_table = super::infix::build_bp_table(language);
-    let operand_bp = compute_prefix_bp(source_cat_name, explicit_prefix_precedence, &bp_table);
-    quote! {
-        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-            if __kw == #trigger && state_cat_src_idx == #category_src_idx => {
-            // Consume trigger, push Return marker, delegate to source.
-            return WpdaStepAction::ConsumeAndPush {
-                symbol: StackSymbolV2::rule_at(
-                    #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                ).with_kind_return(),
-                weight: lex_w(
-                    0.0, #category_src_idx, #rule_idx,
-                ),
-                // Cross-cat prefix-unary is still a unary-prefix operator:
-                // parse the source operand at the source category's computed
-                // prefix floor so trailing lower-precedence infix remains
-                // outside the operand instead of being absorbed by delegation.
-                new_state: WpdaState::CrossCatDelegate {
-                    source_src_idx: #source_src_idx,
-                    inner_cur_bp: #operand_bp,
-                },
-                // Phase F.8: cross-cat prefix-unary IS a unary-prefix
-                // trigger — emit TriggerTerminal so the wrapping rule's
-                // Symbol is distinct from the operand's Symbol.
-                trigger_mode: mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-            };
-        }
-    }
-}
-
 /// Emit prefix-dispatch arms for an atomic rule. Returns one or more arms.
 ///
 /// Rust match arms allow only one `if` guard per arm. Most atomic shapes
@@ -1287,10 +1241,9 @@ struct PrefixArmDescriptor {
     category_src_idx: u16,
 }
 
-/// Stage 3.16 invariant (Cluster 2, Mechanism γ, 2026-05-05) — extracted
-/// pattern/guard pairs for an atomic shape. Replaces the eager TokenStream
-/// emission in `emit_atomic_arms` so the caller can bucket by (pat, guard)
-/// before emitting either a singleton arm or a Fork.
+/// Stage 3.16 invariant (Cluster 2, Mechanism γ, 2026-05-05) — extracts
+/// pattern/guard pairs for an atomic shape, so the caller can bucket by
+/// (pat, guard) before emitting either a singleton arm or a Fork.
 fn atomic_arm_descriptors(
     category_src_idx: u16,
     rule_idx: u16,
@@ -1691,88 +1644,6 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
             };
         }
     }
-}
-
-#[allow(dead_code)]
-fn emit_atomic_arms(category_src_idx: u16, rule_idx: u16, shape: &AtomicShape) -> Vec<TokenStream> {
-    let pattern_guards: Vec<(TokenStream, Option<TokenStream>)> = match shape {
-        AtomicShape::LiteralInteger => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)]
-        },
-        AtomicShape::LiteralBoolean => vec![(
-            quote! {
-                Some(mettail_prattail::automata::TokenKind::True)
-                | Some(mettail_prattail::automata::TokenKind::False)
-                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-            },
-            None,
-        )],
-        AtomicShape::LiteralString => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
-        },
-        AtomicShape::LiteralFloat => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)]
-        },
-        AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
-            let nk = NativeKind::from_syn_type(native_type);
-            // emit_atomic_arms is invoked exclusively from
-            // emit_prefix_arms_for_category for the rule's HOME category, so
-            // pass `EmissionContext::HomeCategory`. CanonicalBigInt picks up
-            // the bare-Integer arm here so unsuffixed integers in BigInt's
-            // own PrefixDispatch resolve directly to BigInt's NumLit.
-            literal_patterned_pattern_and_guard_for_kind(
-                cat_name,
-                *family,
-                Some(&nk),
-                EmissionContext::HomeCategory,
-            )
-        },
-        AtomicShape::TerminalKeyword { terminal_text, .. } => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-            Some(quote! { __kw == #terminal_text }),
-        )],
-        AtomicShape::VarRule { .. } => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)]
-        },
-        // Stage 1.1: cross-cat shapes emit their own arms via
-        // emit_cross_cat_projection_arms / emit_cross_cat_prefix_unary_arm.
-        AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
-            return Vec::new()
-        },
-        // M6c.6.4.b (2026-05-14): PrefixOperator does not emit an
-        // atomic-arm descriptor — same-cat unary prefix rules are
-        // handled by the standard prefix-trigger arm (BinderRule
-        // entry), NOT by atomic-literal dispatch. The lex-Fork at
-        // PrefixDispatch separately consults `lex_alt_rules_for_prefix`
-        // to bind `Fixed(trigger)` as a Fork branch for the same rule
-        // when multi-LENGTH lex ambiguity is present.
-        AtomicShape::PrefixOperator { .. } => return Vec::new(),
-        AtomicShape::NonAtomic => return Vec::new(),
-    };
-    pattern_guards
-        .into_iter()
-        .map(|(token_pattern, extra_guard)| {
-            let guard = match extra_guard {
-                Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
-                None => quote! { state_cat_src_idx == #category_src_idx },
-            };
-            quote! {
-                #token_pattern if #guard => {
-                    return WpdaStepAction::ConsumeAndPush {
-                        symbol: StackSymbolV2::rule_at(
-                            #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                        ).with_kind_return(),
-                        weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                        new_state: WpdaState::Unwinding,
-                        // Phase F.8: atomic literal patterned arm — token
-                        // is the action arg (CaptureForBuilder), so the
-                        // Pop(Return) action consumes it as ActionArg::Token.
-                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::CaptureForBuilder,
-                    };
-                }
-            }
-        })
-        .collect()
 }
 
 /// For a `LiteralPatterned` shape, return the `(pattern, extra_guard)` pair.

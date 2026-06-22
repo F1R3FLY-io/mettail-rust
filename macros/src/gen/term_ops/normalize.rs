@@ -1473,8 +1473,8 @@ fn generate_assemble_arm(
 /// **Frame-size fix (PDA stack-safety, second tier):** wraps the body in a
 /// local `#[inline(never)]` inner fn so per-variant locals (`field_N`,
 /// `Box::new(...)`, `reconstructed`, `folded`) live in the helper's frame
-/// instead of `normalize_iterative`'s. See
-/// `iterative_clone.rs::generate_regular_assemble_arm` for the same idiom.
+/// instead of `normalize_iterative`'s. (The same `#[inline(never)]` peel
+/// idiom is shared with the sibling iterative term-ops.)
 fn generate_regular_assemble_arm(
     cat: &Ident,
     label: &Ident,
@@ -1736,8 +1736,8 @@ fn generate_collection_assemble_arm(
     let wrap = format_ident!("Wrap{}", cat);
     let elem_wrap = format_ident!("Wrap{}", element_cat);
 
-    // See `iterative_clone.rs::generate_collection_assemble_arm` for the
-    // per-arm `#[inline(never)]` peel rationale.
+    // Per-arm `#[inline(never)]` peel rationale — shared with the sibling
+    // iterative term-ops.
     match coll_type {
         CollectionType::HashBag | CollectionType::HashMap => {
             let helper_name = format_ident!("insert_into_{}", label.to_string().to_lowercase());

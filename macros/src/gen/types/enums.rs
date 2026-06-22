@@ -181,10 +181,10 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         // at the Arc boundary, never descending the subtree). This collapses
         // the former O(N²) deep-clone (`into_term` cloned the whole accumulated
         // subtree at every chain step; heaptrack: 96% of peak heap at
-        // chain_1000) to O(N) sharing. The old iterative work-stack clone in
-        // gen/term_ops/iterative_clone.rs existed solely to avoid stack
+        // chain_1000) to O(N) sharing. The old iterative work-stack clone
+        // (gen/term_ops/iterative_clone.rs) existed solely to avoid stack
         // overflow on deep `Box` chains — obsolete now that Arc::clone does not
-        // recurse; its generation is disabled in gen/mod.rs.
+        // recurse; that module was removed (2026-06-22).
         // NOTE: PartialEq, Eq, PartialOrd, Ord, Hash are NOT derived — they are manually
         // implemented via iterative work-stacks in gen/term_ops/iterative_cmp.rs and
         // gen/term_ops/iterative_hash.rs to avoid stack overflow on deeply nested terms
