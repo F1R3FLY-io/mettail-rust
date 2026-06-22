@@ -35,14 +35,19 @@
 //!   `T`"); and **binder freshness** (a binder field `^x. body` carries an
 //!   implicit freshness obligation on `x`). None of these is decided by a scalar
 //!   algebra: each references the rewrite / reduction relation (or
-//!   α-equivalence), so it is modeled as a relational atom
-//!   [`PredicateExpr::Relation`] and classified by [`classify_decidability`],
-//!   landing at **runtime-decidable (T2)** — decidable once the relation is
-//!   populated, but not at compile time.
+//!   α-equivalence), so it is modeled as a relational behavioral predicate
+//!   [`BehavioralFormula::Relation`] and classified by the `algebra_tower`-backed
+//!   [`BehavioralFormula::decidability_tier`], landing at **runtime-decidable
+//!   (T2)** — decidable once the relation is populated, but not at compile time.
 //!
-//! (Tightening behavioral tiering with the `algebra_tower`-backed modal/μ-calculus
-//! classifier is Phase 3; this phase types the structural/behavioral *split* and
-//! gives behavioral guards their true runtime tier.)
+//! (OSLF Phase 3 wired this: behavioral guards now route through the
+//! `algebra_tower`-backed [`BehavioralFormula::decidability_tier`], which lands
+//! relational guards at T2 — every current behavioral guard, as here — and
+//! modal/temporal guards (once Phase 5's surface syntax lands them) at
+//! semi-decidable T3, never below. The routing soundness — anything classified
+//! `≤ T2` is non-modal, hence handled completely by the relational runtime
+//! evaluator — is proven in
+//! `formal/rocq/symbolic_algebra/theories/BehavioralTierClassificationSound.v`.)
 //!
 //! The final summary folds both kinds into one `T1/T2/T3/T4` tally (the
 //! `worst_tier` is the weakest tier present — `tier_max` in the certificate
@@ -51,9 +56,8 @@
 //! congruence rules surfaces those obligations at **T2**.
 
 use mettail_prattail::any_algebra::{AnyPred, Sort, SortRegistry, SortedGuard};
-use mettail_prattail::symbolic::{
-    classify_decidability, classify_decidability_sorted, DecidabilityTier, PredicateExpr,
-};
+use mettail_prattail::behavioral_algebra::{Arg, BehavioralFormula};
+use mettail_prattail::symbolic::{classify_decidability_sorted, DecidabilityTier};
 use mettail_runtime::LanguageMetadata;
 
 /// Result of guard decidability analysis on a language.
@@ -163,8 +167,9 @@ fn field_category_sort(field_ty: &str, native_by_category: &[(&str, Option<&str>
 ///   that the scalar registry never holds, so the classifier's fallback fires
 ///   and likewise returns T1.
 /// - **Behavioral (a, b, d)** — rewrite freshness conditions, congruence
-///   premises, and binder freshness become relational atoms
-///   [`PredicateExpr::Relation`] tiered by [`classify_decidability`] (⇒ T2).
+///   premises, and binder freshness become relational behavioral predicates
+///   [`BehavioralFormula::Relation`] tiered by the `algebra_tower`-backed
+///   [`BehavioralFormula::decidability_tier`] (⇒ T2).
 ///
 /// # Arguments
 /// * `metadata` -- static language metadata providing rewrite and term definitions
@@ -212,20 +217,20 @@ pub fn check_guard_decidability(metadata: &dyn LanguageMetadata) -> GuardResult 
     // relation → a relational atom, runtime-decidable (T2).
     for rw in rewrites {
         for &condition in rw.conditions {
-            let expr = PredicateExpr::Relation {
+            let formula = BehavioralFormula::Relation {
                 name: "fresh".to_string(),
-                args: vec![condition.to_string()],
+                args: vec![Arg::Var(condition.to_string())],
             };
-            tally(classify_decidability(&expr));
+            tally(formula.decidability_tier());
         }
 
         // ── Behavioral (b): congruence premise `(S, T)` = "if S ~> T" ────────
         if let Some((premise_lhs, premise_rhs)) = rw.premise {
-            let expr = PredicateExpr::Relation {
+            let formula = BehavioralFormula::Relation {
                 name: "rewrites".to_string(),
-                args: vec![premise_lhs.to_string(), premise_rhs.to_string()],
+                args: vec![Arg::Var(premise_lhs.to_string()), Arg::Var(premise_rhs.to_string())],
             };
-            tally(classify_decidability(&expr));
+            tally(formula.decidability_tier());
         }
     }
 
@@ -235,11 +240,11 @@ pub fn check_guard_decidability(metadata: &dyn LanguageMetadata) -> GuardResult 
             if field.is_binder {
                 // Behavioral (d): a binder field carries an implicit freshness
                 // obligation on the bound variable → relational atom, T2.
-                let expr = PredicateExpr::Relation {
+                let formula = BehavioralFormula::Relation {
                     name: "fresh_binder".to_string(),
-                    args: vec![field.name.to_string()],
+                    args: vec![Arg::Var(field.name.to_string())],
                 };
-                tally(classify_decidability(&expr));
+                tally(formula.decidability_tier());
                 continue;
             }
 

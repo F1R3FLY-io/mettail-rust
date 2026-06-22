@@ -1361,6 +1361,36 @@ mod tests {
         );
     }
 
+    /// The mixed-guard coverage ASYMMETRY (the load-bearing `RejectSafeProduct`
+    /// invariant) as a focused unit property: each leg of a mixed
+    /// structural×behavioral guard is covered by its own native disposition, but
+    /// NOT by the other leg's mechanism. The reject-safe behavioral leg can never
+    /// be silently discharged by the classical structural disposition, nor
+    /// vice-versa — the type-level asymmetry of `RejectSafeProduct<S, B>`
+    /// projected onto the coverage matrix. (The integration tests exercise this
+    /// implicitly via `guarded_scalar_with_structural_guard`; this locks it
+    /// directly, including the negative cases.)
+    #[test]
+    fn mixed_guard_coverage_is_asymmetric() {
+        use RhoGuardDispositionKind::{
+            DovetailCoreStructural, EffectiveBooleanAlgebra, NativeHandler, RhoNativeJoin,
+        };
+        use RhoGuardObligationKind::{BehavioralPredicate, StructuralPattern};
+
+        // Each leg is covered by its own native disposition…
+        assert!(guard_disposition_covers(StructuralPattern, DovetailCoreStructural));
+        assert!(guard_disposition_covers(BehavioralPredicate, EffectiveBooleanAlgebra));
+        // …but NOT by the other leg's classical / reject-safe mechanism.
+        assert!(!guard_disposition_covers(StructuralPattern, EffectiveBooleanAlgebra));
+        assert!(!guard_disposition_covers(BehavioralPredicate, DovetailCoreStructural));
+        // The host-routed join and native handler cover BOTH legs (the GuardedRho
+        // host path discharges the whole mixed guard at COMM time).
+        for disposition in [RhoNativeJoin, NativeHandler] {
+            assert!(guard_disposition_covers(StructuralPattern, disposition));
+            assert!(guard_disposition_covers(BehavioralPredicate, disposition));
+        }
+    }
+
     #[test]
     fn default_backend_plan_blocks_uncovered_guard_obligations() {
         let err = plan_rho_default_backend(
