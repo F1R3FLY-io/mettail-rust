@@ -22,3 +22,7 @@ theories/RegisterEquivalence.v
 theories/MultisetSemiringLaws.v
 theories/AwaPolynomialEvaluation.v
 theories/TwoWayCrossingSequence.v
+# OSLF substrate Phase 4 `.1`: bisimulation-wiring soundness. Depends on
+# RegisterEquivalence.v (reuses its is_bisimulation / bisimilar) — a certified
+# partition relates only bisimilar states, so N06-ISO category dedup is sound.
+theories/BisimulationWiringSound.v

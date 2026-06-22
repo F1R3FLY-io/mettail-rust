@@ -17,3 +17,8 @@ theories/SftFunctionality.v
 theories/OutputTermAlgebra.v
 theories/StftComposition.v
 theories/StftFunctionality.v
+# OSLF substrate Phase 4 `.1`: transducer-wiring soundness. Mirrors
+# StftComposition's ft_compose model and adds the DOMAIN-level theorem backward
+# typing needs (pre-image of a composed cast factors through the intermediate
+# domain).
+theories/StftWiringSound.v

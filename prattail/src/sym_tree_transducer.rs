@@ -262,6 +262,225 @@ where
         .collect()
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Pipeline bridge (OSLF substrate, Phase 4 `.0`-inert)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Pipeline-level cast-transduction analysis result.
+///
+/// Two diagnostics derived from realizing each grammar cast `r : src → tgt` as a
+/// [`SymbolicTreeTransducer`] over the grammar's ranked alphabet:
+///   - `non_total_casts` — `(src, tgt)` for each cast whose transduction is **not
+///     total** (some well-formed term over the alphabet has no image), via
+///     [`SymbolicTreeTransducer::is_total`];
+///   - `dead_casts` — the rule label of each cast whose pre-image
+///     ([`SymbolicTreeTransducer::domain_sta`]) **intersected with** the Phase-2
+///     `structural_types::category_automaton` of `src` is empty (no source term is
+///     cast-reachable).
+#[cfg(feature = "oslf-transducer")]
+#[derive(Debug, Clone, Default)]
+pub struct TransducerAnalysis {
+    /// `(source_category, target_category)` for each non-total cast.
+    pub non_total_casts: Vec<(String, String)>,
+    /// Rule labels of casts with an empty (dead) pre-image over the source
+    /// category.
+    pub dead_casts: Vec<String>,
+}
+
+/// Analyze a grammar's cast / refinement rules via bottom-up symbolic tree
+/// transduction.
+///
+/// For each cast rule `r : src → tgt` (classified from its body by
+/// [`crate::classify::classify_rule`], the single source of truth for
+/// `is_cast` / `cast_source_category`), a [`SymbolicTreeTransducer`] over the
+/// grammar's ranked alphabet (reusing the Phase-2
+/// [`structural_types::ranked_alphabet`](crate::structural_types::ranked_alphabet)
+/// / [`structural_types::build_tree_algebra`](crate::structural_types::build_tree_algebra)
+/// builders) is constructed whose **domain is the source category's term
+/// language** and whose output is the cast image. Then:
+///   - [`is_total`](SymbolicTreeTransducer::is_total) decides whether every
+///     well-formed term has an image; a non-total cast records `(src, tgt)`;
+///   - the pre-image [`domain_sta`](SymbolicTreeTransducer::domain_sta) is
+///     intersected with the Phase-2
+///     [`structural_types::category_automaton`](crate::structural_types::category_automaton)
+///     of `src`; an empty intersection records the rule label in `dead_casts`.
+///
+/// `refinement_types` supplies the declared refinement bases so a *refinement*
+/// downcast (a cast whose owning category is a refinement type over `src`) is
+/// recognized; ordinary casts are analyzed too. This is the `.0`-inert
+/// entrypoint — no live caller yet; the agreement gate
+/// (`prattail/tests/transducer_preimage_snapshot.rs`) proves the transducer
+/// pre-image accept-set agrees, category-for-category, with the Phase-2 source
+/// `category_automaton`.
+///
+/// # Arguments
+///
+/// * `all_syntax` — `(rule_label, category, items)` triples from the parser
+///   bundle.
+/// * `categories` — the grammar's [`CategoryInfo`](crate::pipeline::CategoryInfo)
+///   list (declaration order preserved for the output).
+/// * `refinement_types` — declared refinement types (`name → base_category`),
+///   used to recognize refinement downcasts.
+#[cfg(feature = "oslf-transducer")]
+pub fn analyze_from_bundle(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+    refinement_types: &[crate::RefinementTypeSpec],
+) -> TransducerAnalysis {
+    use crate::any_algebra::AnyAlgebra;
+    use crate::structural_types::{build_tree_algebra, category_automaton, ranked_alphabet};
+    use crate::sym_tree::SymbolicTreeAutomaton;
+
+    // Refinement types referenced only for documentation parity with
+    // `collect_refinement_downcast_rule_labels`; every cast (refinement or
+    // ordinary) is analyzed, so the base map need not gate the scan. It is
+    // consulted to keep the entrypoint symmetric with the `.1` refinement path.
+    let _refinement_bases: std::collections::HashMap<&str, &str> = refinement_types
+        .iter()
+        .map(|r| (r.name.as_str(), r.base_category.as_str()))
+        .collect();
+
+    let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
+    let alpha = ranked_alphabet(all_syntax, categories);
+    let elem = build_tree_algebra(&alpha);
+
+    // Preallocate to the (over-)bound of one cast per rule.
+    let mut non_total_casts: Vec<(String, String)> = Vec::with_capacity(all_syntax.len());
+    let mut dead_casts: Vec<String> = Vec::with_capacity(all_syntax.len());
+
+    for (label, category, items) in all_syntax {
+        // Classify the rule from its structure (the single source of truth).
+        let classification = crate::classify::classify_rule(items, category, &category_names);
+        let src = match (classification.is_cast, classification.cast_source_category.as_deref()) {
+            (true, Some(src)) => src,
+            // Not a cast rule — nothing to transduce.
+            _ => continue,
+        };
+
+        // Build the cast transducer over the ranked alphabet. Its domain is the
+        // source category's term language; its image is the `tgt` cast term.
+        let transducer = build_cast_transducer(label, src, &alpha, &elem);
+
+        // Totality: does every well-formed term over the alphabet have an image?
+        if !transducer.is_total() {
+            non_total_casts.push((src.to_string(), category.clone()));
+        }
+
+        // Cast-reachability: pre-image ∩ source-category automaton. An empty
+        // intersection means no source term is cast-reachable ⇒ a dead cast.
+        let preimage: SymbolicTreeAutomaton<AnyAlgebra> = transducer.domain_sta();
+        let source_auto = category_automaton(src, &alpha, &elem);
+        if preimage.intersect(&source_auto).is_empty() {
+            dead_casts.push(label.clone());
+        }
+    }
+
+    TransducerAnalysis { non_total_casts, dead_casts }
+}
+
+/// The transducer **pre-image** automaton for a single cast rule `r : src → tgt`
+/// — i.e. [`SymbolicTreeTransducer::domain_sta`] of the cast transducer built
+/// over the grammar's ranked alphabet — or `None` when `r` (identified by
+/// `cast_label`) is not a cast rule.
+///
+/// Exposed (`pub`) so the agreement gate
+/// (`prattail/tests/transducer_preimage_snapshot.rs`) can compare the pre-image's
+/// accepted language, category-for-category, against the Phase-2
+/// [`structural_types::category_automaton`](crate::structural_types::category_automaton)
+/// of `src` — the agreement is only meaningful if the test sees the *same*
+/// pre-image the analysis derived. At `.1` the dispatch consumes this directly.
+#[cfg(feature = "oslf-transducer")]
+pub fn cast_preimage_automaton(
+    cast_label: &str,
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> Option<crate::sym_tree::SymbolicTreeAutomaton<crate::any_algebra::AnyAlgebra>> {
+    use crate::structural_types::{build_tree_algebra, ranked_alphabet};
+
+    let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
+    let alpha = ranked_alphabet(all_syntax, categories);
+    let elem = build_tree_algebra(&alpha);
+
+    for (label, category, items) in all_syntax {
+        if label != cast_label {
+            continue;
+        }
+        let classification = crate::classify::classify_rule(items, category, &category_names);
+        return match (classification.is_cast, classification.cast_source_category.as_deref()) {
+            (true, Some(src)) => Some(build_cast_transducer(label, src, &alpha, &elem).domain_sta()),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Build the [`SymbolicTreeTransducer`] realizing a cast `r : src → tgt` over the
+/// grammar's ranked alphabet.
+///
+/// The transducer's **input domain** mirrors
+/// [`structural_types::category_automaton`](crate::structural_types::category_automaton)
+/// of `src` transition-for-transition (so its
+/// [`domain_sta`](SymbolicTreeTransducer::domain_sta) accepts *exactly* the
+/// source category's terms — the property the agreement gate checks), and the
+/// `src`-accepting state's transitions additionally emit the cast image. Output
+/// builders are immaterial to `domain_sta` / `is_total` / the pre-image (those
+/// drop outputs), so each rule carries a structure-preserving identity builder;
+/// the cast image is a single-child `tgt` wrapper at the accepting state.
+///
+/// Reuses the Phase-2 ranked alphabet rather than re-deriving tree-automaton
+/// machinery, per the `.0`-inert contract.
+#[cfg(feature = "oslf-transducer")]
+fn build_cast_transducer(
+    cast_label: &str,
+    src_cat: &str,
+    alpha: &crate::structural_types::RankedAlphabet,
+    elem: &crate::any_algebra::AnyAlgebra,
+) -> SymbolicTreeTransducer<crate::any_algebra::AnyAlgebra, crate::any_algebra::AnyAlgebra> {
+    use crate::structural_types::category_automaton;
+
+    // Mirror the source category automaton's states/transitions. `domain_sta`
+    // reconstructs precisely these (constructor / payload_guard / child_states /
+    // target), so the transducer's domain equals `category_automaton(src)`.
+    let source_auto = category_automaton(src_cat, alpha, elem);
+
+    let mut t = SymbolicTreeTransducer::new(elem.clone(), elem.clone());
+    t.num_states = source_auto.num_states;
+    t.arities = source_auto.arities.clone();
+    t.accepting = source_auto.accepting.clone();
+
+    for trans in &source_auto.transitions {
+        let arity = trans.child_states.len();
+        // Identity-shaped output: re-emit the same constructor with the same
+        // payload disposition (`Const`-free: a structural node when no guard, a
+        // mapped payload when guarded) over the transduced children in order.
+        let payload = match &trans.payload_guard {
+            None => PayloadOut::Structural,
+            Some(_) => PayloadOut::Map(std::sync::Arc::new(|d: &crate::any_algebra::AnyDomain| {
+                d.clone()
+            })),
+        };
+        t.add_rule(TransducerRule {
+            constructor: trans.constructor.clone(),
+            payload_guard: trans.payload_guard.clone(),
+            child_states: trans.child_states.clone(),
+            target: trans.target,
+            output: OutputBuilder::Build {
+                constructor: trans.constructor.clone(),
+                payload,
+                children: (0..arity).collect(),
+            },
+        });
+    }
+
+    // The cast image: the cast constructor `cast_label` wraps a single source
+    // term (arity 1). Registering it keeps the output alphabet well-formed
+    // without affecting the (input-side) domain automaton that `domain_sta`
+    // reconstructs.
+    t.register(cast_label.to_string(), 1);
+
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -67,6 +67,39 @@ any-algebra-carrier = ["dep:mettail-ast"]
 ## only). Requires the `any-algebra-carrier` scalar-sort resolution, so it
 ## implies that feature. OFF BY DEFAULT; the default build is unchanged.
 sym-tree-structural = ["any-algebra-carrier"]
+## OSLF substrate, Phase 4 `.0`-inert (2026-06-22): expose the SHIPPED-but-dead
+## `bisimulation` LTS partition-refinement engine as a pipeline entrypoint
+## (`bisimulation::analyze_from_bundle`) that builds ONE `Lts` over a grammar's
+## categories-as-states (each rule's nonterminal references = labeled
+## transitions; the action is the regularized minterm class of the rule label,
+## decided on the regular Boolean core — `DontKnow` action classes are dropped,
+## never split on, per the `¬¬φ ∖ φ` invariant), runs `Lts::bisimulation`,
+## certifies the partition with `Lts::is_bisimulation`, and returns a
+## `BisimulationAnalysis` shaped IDENTICALLY to `alternating::AlternatingAnalysis`
+## (`non_bisimilar_pairs`) so it is a drop-in at `.1`. The agreement gate
+## (`prattail/tests/bisimulation_agreement_snapshot.rs`) proves it produces the
+## SAME category-pair partition as `alternating::analyze_from_bundle`. `.0`-inert:
+## always compiled, no live caller — the live flip (routing AWA bisimulation
+## dispatch through this engine) is `.1`. The carrier needs the `AnyAlgebra`
+## guard-predicate algebra for the minterm action classes, so it implies
+## `any-algebra-carrier`. OFF BY DEFAULT; the default build is unchanged.
+oslf-bisimulation = ["any-algebra-carrier"]
+## OSLF substrate, Phase 4 `.0`-inert (2026-06-22): expose the SHIPPED-but-dead
+## `sym_tree_transducer` bottom-up symbolic tree transducer as a pipeline
+## entrypoint (`sym_tree_transducer::analyze_from_bundle`) that, for each
+## cast/refinement rule `r : src → tgt`, builds a `SymbolicTreeTransducer`
+## realizing the cast substitution over the grammar's ranked alphabet, computes
+## the pre-image `domain_sta()`, decides cast totality via `is_total()`, and
+## intersects the pre-image with the Phase-2
+## `structural_types::category_automaton` of `src` to decide cast-reachability —
+## producing a `TransducerAnalysis` (`non_total_casts`, `dead_casts`). It reuses
+## the Phase-2 ranked-alphabet/tree-algebra builders, so it implies
+## `sym-tree-structural`. The agreement gate
+## (`prattail/tests/transducer_preimage_snapshot.rs`) proves the transducer
+## pre-image accept-set agrees, category-for-category, with the Phase-2 source
+## `category_automaton`. `.0`-inert: always compiled, no live caller — the live
+## flip is `.1`. OFF BY DEFAULT; the default build is unchanged.
+oslf-transducer = ["sym-tree-structural"]
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []

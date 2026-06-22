@@ -151,6 +151,246 @@ impl Lts {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Pipeline bridge (OSLF substrate, Phase 4 `.0`-inert)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Pipeline-level bisimulation analysis result.
+///
+/// Shaped **identically** to [`alternating::AlternatingAnalysis`](crate::alternating::AlternatingAnalysis)'s
+/// `non_bisimilar_pairs` so this is a drop-in replacement for the alternating
+/// bisimulation pass at `.1` (the live flip). The agreement gate
+/// (`prattail/tests/bisimulation_agreement_snapshot.rs`) proves the two passes
+/// produce the *same* category-pair partition over the corpus fixtures.
+#[cfg(feature = "oslf-bisimulation")]
+#[derive(Debug, Clone)]
+pub struct BisimulationAnalysis {
+    /// Pairs of categories found non-bisimilar (different bisimulation blocks),
+    /// in the same declaration-order pair enumeration `alternating` uses.
+    pub non_bisimilar_pairs: Vec<(String, String)>,
+}
+
+/// Analyze grammar categories for bisimulation equivalence by partition
+/// refinement over a single behavioral [`Lts`].
+///
+/// This is the [`crate::bisimulation`] counterpart to
+/// [`alternating::analyze_from_bundle`](crate::alternating::analyze_from_bundle):
+/// it consumes the *same* grammar-bundle inputs (`all_syntax` + `categories`)
+/// and returns the *same* `non_bisimilar_pairs` partition, but computes it by the
+/// Kanellakis–Smolka / Paige–Tarjan refinement of [`Lts::bisimulation`] over one
+/// LTS rather than by the pairwise alternating game.
+///
+/// # The LTS
+///
+/// One state per category (each category = a state), indexed by a sorted category
+/// list (stable across runs, mirroring `structural_types::category_automaton`),
+/// plus a single absorbing `⊥` leaf state. For each grammar rule
+/// `(label, cat, items)`:
+///   - the rule label is mapped to its **regularized minterm action class** — a
+///     stable id derived from the label, decided on the regular Boolean core
+///     ([`Sat3::Sat`]/[`Sat3::Unsat`]) by the structural guard analysis
+///     ([`crate::symbolic::analyze_from_bundle`]). An action whose class is
+///     `Sat3::DontKnow` (the semi-decidable `¬¬φ ∖ φ` boundary region) is
+///     **dropped** — the engine never splits on it (the module-header invariant);
+///   - for each **nonterminal reference** target category `t` in `items`, a
+///     transition `cat --[class]--> t` is emitted; a rule with no nonterminal
+///     reference emits `cat --[class]--> ⊥`, so its label action stays observable.
+///
+/// The action *set* out of a category state is therefore exactly that category's
+/// decidable rule-label-class set — the same discriminator the alternating game
+/// uses at the root (a rule belongs to exactly one category, so distinct
+/// categories with distinct rule labels are split on the first refinement step,
+/// while structurally identical categories merge).
+///
+/// # Soundness certification
+///
+/// The returned partition is **certified** at runtime: after [`Lts::bisimulation`]
+/// the result is checked by [`Lts::is_bisimulation`] via `assert!`, so a partition
+/// that is not actually a bisimulation aborts rather than silently mis-reporting.
+///
+/// # Arguments
+///
+/// * `all_syntax` — `(rule_label, category, items)` triples from the parser
+///   bundle (the same slice `alternating::analyze_from_bundle` consumes).
+/// * `categories` — the grammar's [`CategoryInfo`](crate::pipeline::CategoryInfo)
+///   list (declaration order is preserved for the output pair enumeration).
+#[cfg(feature = "oslf-bisimulation")]
+pub fn analyze_from_bundle(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    categories: &[crate::pipeline::CategoryInfo],
+) -> BisimulationAnalysis {
+    use crate::algebra_tower::Sat3;
+
+    if categories.is_empty() {
+        return BisimulationAnalysis { non_bisimilar_pairs: Vec::new() };
+    }
+
+    // ── State indexing ──────────────────────────────────────────────────────
+    // One state per category (stable, sorted — same discipline as
+    // `category_automaton`), plus a single absorbing `⊥` leaf whose state id is
+    // the last index. A category state holds color 0; `⊥` holds color 1, so a
+    // category never merges with the leaf.
+    let mut cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+    cat_names.sort_unstable();
+    cat_names.dedup();
+    let num_cats = cat_names.len();
+    let bottom = num_cats; // the `⊥` leaf state id
+    let num_states = num_cats + 1;
+
+    let state_of: BTreeMap<&str, usize> =
+        cat_names.iter().enumerate().map(|(i, &c)| (c, i)).collect();
+
+    // ── Regularized minterm action classes (the `¬¬` regular core) ───────────
+    // Each rule label is decided on the regular Boolean core by the structural
+    // guard analysis: a satisfiable guard is `Sat`, a provably-unsatisfiable one
+    // is `Unsat` (both decidable ⇒ kept); there is no semi-decidable
+    // `DontKnow` at this compile-time layer, but the boundary rule is enforced
+    // so a future behavioral action source cannot leak a `DontKnow` split.
+    let symbolic = crate::symbolic::analyze_from_bundle(all_syntax, categories);
+    let unsat_labels: std::collections::HashSet<&str> = symbolic
+        .unsatisfiable_rule_labels
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    // The structural guard is classical at this compile-time layer, so every
+    // rule label is decidable: `Unsat` iff the analysis flagged it dead (a
+    // provably-empty guard), else `Sat`. A genuinely semi-decidable behavioral
+    // action source would instead yield `Sat3::DontKnow`, which the action loop
+    // below drops (the `¬¬φ ∖ φ` boundary — never split on it).
+    let class_of = |label: &str| -> Sat3 {
+        match unsat_labels.contains(label) {
+            true => Sat3::Unsat,
+            false => Sat3::Sat,
+        }
+    };
+
+    // A stable, label-determined class id: the index of the label in the sorted
+    // dedup of all *decidable* rule labels. Label-determined (not
+    // category-determined) so two categories sharing a rule label receive the
+    // same action class and can merge — exactly the alternating criterion.
+    let mut decidable_labels: Vec<&str> = Vec::with_capacity(all_syntax.len());
+    for (label, _, _) in all_syntax {
+        match class_of(label) {
+            Sat3::Sat | Sat3::Unsat => decidable_labels.push(label.as_str()),
+            Sat3::DontKnow => {},
+        }
+    }
+    decidable_labels.sort_unstable();
+    decidable_labels.dedup();
+    let class_id_of: BTreeMap<&str, Action> = decidable_labels
+        .iter()
+        .enumerate()
+        .map(|(i, &l)| (l, i as Action))
+        .collect();
+
+    // ── Build the LTS ───────────────────────────────────────────────────────
+    // Preallocate: at most one transition per (rule × nonterminal reference),
+    // and one per nonterminal-free rule.
+    let mut transitions: Vec<(usize, Action, usize)> = Vec::with_capacity(all_syntax.len());
+    for (label, cat, items) in all_syntax {
+        // Drop any action whose class is not decidable on the regular core.
+        let action = match class_of(label) {
+            Sat3::Sat | Sat3::Unsat => match class_id_of.get(label.as_str()) {
+                Some(&a) => a,
+                None => continue,
+            },
+            Sat3::DontKnow => continue,
+        };
+        let from = match state_of.get(cat.as_str()) {
+            Some(&s) => s,
+            // A rule whose owning category is not declared cannot place an
+            // observable action on any category state — skip it.
+            None => continue,
+        };
+        // Each nonterminal reference target is a labeled transition. A rule with
+        // no nonterminal reference still emits its label action, to `⊥`.
+        let mut child_targets: Vec<&str> = Vec::new();
+        collect_nonterminal_targets(items, &mut child_targets);
+        if child_targets.is_empty() {
+            transitions.push((from, action, bottom));
+        } else {
+            for tgt in child_targets {
+                let to = state_of.get(tgt).copied().unwrap_or(bottom);
+                transitions.push((from, action, to));
+            }
+        }
+    }
+
+    let lts = Lts::new(num_states, transitions);
+
+    // ── Refine + certify ────────────────────────────────────────────────────
+    // Category states share color 0; the `⊥` leaf is color 1 (so a category
+    // never merges with the absorbing leaf — the leaf models "no further
+    // structure", not "another category").
+    let mut colors = vec![0usize; num_states];
+    colors[bottom] = 1;
+    let block = lts.bisimulation(&colors);
+    assert!(
+        lts.is_bisimulation(&block, &colors),
+        "bisimulation partition refinement produced a non-bisimulation \
+         (the soundness checker is the runtime guard for `analyze_from_bundle`)"
+    );
+
+    // ── Derive non-bisimilar pairs (declaration order, like `alternating`) ───
+    // Two categories are a non-bisimilar pair iff they land in different blocks.
+    // Enumerate pairs in `categories` declaration order so the output matches
+    // `alternating::analyze_from_bundle`'s pair ordering (a true drop-in).
+    let decl_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+    let mut non_bisimilar_pairs: Vec<(String, String)> = Vec::new();
+    for i in 0..decl_names.len() {
+        for j in (i + 1)..decl_names.len() {
+            let (ni, nj) = (decl_names[i], decl_names[j]);
+            // A category absent from the sorted index (impossible — it was built
+            // from the same list) would be treated as its own singleton; guard
+            // defensively rather than panic.
+            let (bi, bj) = match (state_of.get(ni), state_of.get(nj)) {
+                (Some(&a), Some(&b)) => (block[a], block[b]),
+                _ => continue,
+            };
+            if bi != bj {
+                non_bisimilar_pairs.push((ni.to_string(), nj.to_string()));
+            }
+        }
+    }
+
+    BisimulationAnalysis { non_bisimilar_pairs }
+}
+
+/// Collect the **nonterminal reference** target categories of a rule body, in
+/// left-to-right order, descending into the nesting wrappers exactly as the
+/// structural-child collectors do (`Optional`/`Sep`/`Map`/`Zip`).
+///
+/// `NonTerminal` / `Binder` / `Collection` (element category) contribute a
+/// target category; `Terminal`, `IdentCapture`, and `BinderCollection`
+/// contribute none. Mirrors
+/// `structural_types::collect_structural_child_categories` so the LTS edges track
+/// the same notion of "structural child" the rest of the substrate uses.
+#[cfg(feature = "oslf-bisimulation")]
+fn collect_nonterminal_targets<'a>(
+    items: &'a [crate::SyntaxItemSpec],
+    out: &mut Vec<&'a str>,
+) {
+    use crate::SyntaxItemSpec as Item;
+    for item in items {
+        match item {
+            Item::NonTerminal { category, .. } => out.push(category.as_str()),
+            Item::Binder { category, .. } => out.push(category.as_str()),
+            Item::Collection { element_category, .. } => out.push(element_category.as_str()),
+            Item::Optional { inner } => collect_nonterminal_targets(inner, out),
+            Item::Sep { body, .. } => {
+                collect_nonterminal_targets(std::slice::from_ref(body.as_ref()), out)
+            },
+            Item::Map { body_items } => collect_nonterminal_targets(body_items, out),
+            Item::Zip { body, .. } => {
+                collect_nonterminal_targets(std::slice::from_ref(body.as_ref()), out)
+            },
+            // Terminal, IdentCapture, BinderCollection — no nonterminal target.
+            _ => {},
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
