@@ -340,7 +340,7 @@ connectives and quantifiers for free. The design principles:
 
 ### 3.1 P1 — Natural bounded quantifier — ⊳
 
-`Algebra:` `logict::QuantifiedFormula` · `Proof:` [13 — Constraint-Theory Engine, §3](13-constraint-theory-engine.md) · `Builds:`
+`Algebra:` `logict::QuantifiedFormula` · `Proof:` [13 — Constraint-Theory Engine, §3](13-constraint-theory-engine.md) · `Modeled:` [14 — Quantification](14-quantification.md) · `Builds:`
 `Quantified` · closes gap G1.
 
 `forall(y, nodes, body)` reads awkwardly where the mathematics is `∀y ∈ nodes. φ`.

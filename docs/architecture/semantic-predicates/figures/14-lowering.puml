@@ -1,0 +1,37 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam componentStyle rectangle
+skinparam NoteBackgroundColor #FEFEFE
+skinparam NoteBorderColor #9CA3AF
+
+title Lowering a quantified guard, and the four domain shapes
+
+rectangle "source guard\n∀y ∈ nodes. φ" as SRC #FEF3C7
+component "AST BehavioralPred::Quantified\ndomain: Option<Ident>, bound: Option<usize>" as AST #DBEAFE
+component "try_to_quantified_formula\n(Some d, Some b) → Bounded{d, b}\n(Some d, None) → Relation(d)\n(None, _) → Relation(var)" as LOW #E0E7FF
+component "logict QuantifiedFormula::forall / exists\nQuantifiedDomain::{Relation, Bounded}" as LT #DBEAFE
+component "evaluate_quantified → TriState → Sat3" as EVAL #FEF3C7
+
+SRC -right-> AST
+AST -right-> LOW
+LOW -right-> LT
+LT -right-> EVAL
+
+note bottom of LOW
+  **Four domain shapes**
+  AST:      Option<Ident> + bound
+  logict:   Relation  |  Bounded{relation, limit}
+  runtime:  Named  |  Bounded(n)  |  Enumerated
+  modal QDomain: Values | RelationColumn | Active | Bounded
+end note
+
+legend right
+  |= Color |= Meaning |
+  |<#FEF3C7>   | semi-decidable surface (T3) |
+  |<#DBEAFE>   | exact / decidable form (T1/T2) |
+  |<#E0E7FF>   | formal / host lowering |
+endlegend
+
+@enduml

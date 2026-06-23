@@ -56,7 +56,8 @@ For implementers:
 9. [OSLF Composition](09-oslf-composition.md)
 10. [Heyting Behavioral Logic](12-heyting-behavioral-logic.md)
 11. [Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md)
-12. [Worked Example](11-worked-example.md)
+12. [Quantification](14-quantification.md)
+13. [Worked Example](11-worked-example.md)
 
 For reviewers checking claims:
 
@@ -102,6 +103,7 @@ Use these questions while reading:
 | [11 - Worked Example](11-worked-example.md) | How does GuardedRho's `halts`/`safe` guard travel end-to-end to a host-routed join? |
 | [12 - Heyting Behavioral Logic](12-heyting-behavioral-logic.md) | Why is intuitionistic / Heyting logic the correct home for semi-decidable behavioral guards, how does bisimulation make them well-defined, and how does it complete Boolean and align with OSLF? |
 | [13 - Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md) | How does the backtracking logic monad evaluate quantified predicates, adapt a domain solver into an effective Boolean algebra, and combine theories? |
+| [14 - Quantification](14-quantification.md) | How are `∃`/`∀` modeled — the three realizations (relational enumeration, modal `⋂`/`⋃`, bounded EBA occupancy atom), the `∀≡¬∃¬` duality, the domain model and lowering, and when is a quantifier exactly decidable versus semi-decidable? |
 | [References](references.md) | Which papers, DOIs, source files, and proofs support the suite? |
 
 ## Architecture at a Glance
@@ -123,6 +125,7 @@ each concept and *naming the actors* after the real components:
 | SFT / STFT transduction | **transducer state diagram** (input-predicate `/` output-term edges) + composition pipeline | a transducer edge carries both a guard and an output; composition is a left-to-right pipeline |
 | algebra tower | **class/inheritance diagram** + a **Hasse lattice** | the tower is a trait refinement; the strength order is a lattice |
 | closure family | **component tree** | each closure constructor is itself an algebra over sub-algebras |
+| quantification | **side-by-side component diagram** (three realizations) + a **De Morgan square** + a **lowering dataflow** + a **domain-to-tier mapping** | `∀`/`∃` is modeled three ways; the duality is a square; lowering is a hop-by-hop dataflow; decidability is a mapping from domain form to tier |
 | end-to-end integration | **sequence diagram** with actors = `language!` author · macro · prattail `PredicateParser` · substrate · Rho backend · flip gate | the integration is a temporal handoff across named components |
 | runtime COMM enforcement | **sequence diagram** (process · RSpace · native-join handler · continuation) | enforcement is a runtime interaction; the figure shows *where* each predicate class is gated |
 | OSLF composition | **two-lane activity diagram** (logic axis and resource axis converging on a guarded COMM) | two independent decisions converge on one COMM-fires verdict |

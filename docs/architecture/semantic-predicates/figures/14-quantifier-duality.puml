@@ -1,0 +1,37 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam NoteBackgroundColor #FEFEFE
+skinparam NoteBorderColor #9CA3AF
+
+title The quantifier duality: ∀ and ∃ are De Morgan duals over a finite domain
+
+object "∀x ∈ D. φ" as FA #DBEAFE
+object "∃x ∈ D. φ" as EX #DBEAFE
+object "¬∃x ∈ D. ¬φ" as NEN #DCFCE7
+object "¬∀x ∈ D. ¬φ" as NAN #DCFCE7
+
+FA -- NEN : "≡ (Prop 5.1)"
+EX -- NAN : "≡"
+FA .. EX : "dual"
+NEN .. NAN : "dual"
+
+note as N
+  finite closed-world domain D; holds two-valued,
+  three-valued (Kleene De Morgan), and on state-sets
+  (set De Morgan: ¬⋃ = ⋂¬,  ¬⋂ = ⋃¬).
+  Mechanized as the Rust tests **gnot_equivalence_***
+  (not a Coq lemma).
+end note
+
+NEN .. N
+NAN .. N
+
+legend right
+  |= Color |= Meaning |
+  |<#DBEAFE>   | primitive quantifier (T1/T2) |
+  |<#DCFCE7>   | recovered-classical dual (¬-of-dual) |
+endlegend
+
+@enduml

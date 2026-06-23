@@ -91,7 +91,10 @@ speed, distinct from the bridge.
 ## 3. Quantified-predicate evaluation
 
 A `∀x ∈ dom. φ` or `∃x ∈ dom. φ` guard ([06 §2.3.1](06-guard-syntax-and-extensions.md))
-is where the engine most visibly meets the predicate substrate.
+is where the engine most visibly meets the predicate substrate. The full treatment of
+how `∀`/`∃` are modeled — the three realizations, the `∀≡¬∃¬` duality, the domain model,
+and decidability — is [14 — Quantification](14-quantification.md); this section is the
+LogicT engine's evaluation path.
 
 ![A quantified guard, evaluated to a three-valued verdict](figures/13-quantified-eval.svg)
 

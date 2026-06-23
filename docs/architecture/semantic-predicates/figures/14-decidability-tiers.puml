@@ -1,0 +1,39 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam componentStyle rectangle
+skinparam NoteBackgroundColor #FEFEFE
+skinparam NoteBorderColor #9CA3AF
+
+title Quantifier decidability: when ∃/∀ is exact versus semi-decidable
+
+rectangle "finite relation / active domain" as REL #DBEAFE
+rectangle "collection occupancy atom\n(any_elem / all)" as OCC #DCFCE7
+rectangle "Presburger ∃ (NFA projection)" as PRES #DCFCE7
+rectangle "bounded-truncated relation R[≤ N]" as BND #FEF3C7
+rectangle "modal body (Diamond / Box / Mu / Nu)" as MOD #FEF3C7
+
+rectangle "EXACT: T1 / T2\n(Sat / Unsat)" as EXACT #DCFCE7
+rectangle "SEMI-DECIDABLE: T3\n(DontKnow)" as SEMI #FEF3C7
+
+REL  -right-> EXACT
+OCC  -right-> EXACT
+PRES -right-> EXACT
+BND  -right-> SEMI
+MOD  -right-> SEMI : "satisfiability DontKnow;\nmodel-checking a concrete\nterm is exact"
+
+REL -[hidden]down- OCC
+OCC -[hidden]down- PRES
+PRES -[hidden]down- BND
+BND -[hidden]down- MOD
+EXACT -[hidden]down- SEMI
+
+legend right
+  |= Color |= Meaning |
+  |<#DBEAFE>   | exact / decidable input (T1/T2) |
+  |<#DCFCE7>   | exact EBA-atom / exact tier (T1/T2) |
+  |<#FEF3C7>   | semi-decidable input / tier (T3) |
+endlegend
+
+@enduml

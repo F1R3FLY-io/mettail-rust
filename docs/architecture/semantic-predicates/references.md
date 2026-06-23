@@ -156,6 +156,19 @@ Programming.* Scheme and Functional Programming Workshop, 2013. The minimal
 relational-programming core in the lineage of the constraint-theory search. (No
 resolvable DOI; cited by venue.)
 
+## Relational databases and quantification
+
+Grounds the closed-world / active-domain semantics of relational quantifiers
+([14 — Quantification](14-quantification.md)).
+
+### abiteboul-hull-vianu-1995
+
+S. Abiteboul, R. Hull, and V. Vianu. *Foundations of Databases.* Addison-Wesley, 1995
+(ISBN 0-201-53771-0). The active-domain (closed-world) semantics of relational
+calculus — the finite universe of constants over which a safe / domain-independent
+quantifier ranges — that makes a relational `∀`/`∃` decidable. Freely available at
+[webdam.inria.fr/Alice](http://webdam.inria.fr/Alice/).
+
 ## Repository-local source files
 
 The substrate (the `prattail` crate):

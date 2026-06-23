@@ -1,0 +1,46 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam componentStyle rectangle
+skinparam NoteBackgroundColor #FEFEFE
+skinparam NoteBorderColor #9CA3AF
+
+title Three realizations of quantification
+
+package "A. Relational / LogicT enumeration" #FEF3C7 {
+  component "evaluate_quantified / _with_theory\n∀ folds all, ∃ folds any\nover Datalog relation tuples\n2-valued bool / 3-valued TriState" as A
+  note bottom of A
+    finite relation: **EXACT** (T1/T2)
+    bounded-truncated: DontKnow (T3)
+  end note
+}
+
+package "B. Modal / behavioral denotation" #CCFBF1 {
+  component "denote over the LTS state-set lattice\n∀ = ⋂ intersection of body state-sets\n∃ = ⋃ union of body state-sets" as B
+  note bottom of B
+    relational fast path: **exact**
+    modal body: DontKnow (T3)
+  end note
+}
+
+package "C. Bounded ∃/∀ as an EBA atom" #DCFCE7 {
+  component "collection any_elem = Count ≥ 1  (∃)\nall = Count(¬p) = 0  (∀)\nPresburger ∃ via NFA projection" as C
+  note bottom of C
+    **EXACT** and total (T1/T2)
+    no enumeration, no DontKnow
+  end note
+}
+
+A -[hidden]right- B
+B -[hidden]right- C
+
+legend right
+  |= Color |= Meaning |
+  |<#DBEAFE>   | exact / decidable (T1/T2) |
+  |<#DCFCE7>   | exact EBA-atom (T1/T2) |
+  |<#FEF3C7>   | semi-decidable / DontKnow (T3) |
+  |<#CCFBF1>   | modal / LTS denotation |
+endlegend
+
+@enduml
