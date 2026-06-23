@@ -2,14 +2,12 @@ use anyhow::Result;
 use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendCapability};
 use std::collections::HashMap;
 
-// Import generated language implementations directly
-#[cfg(feature = "bundled-languages")]
-use mettail_languages::ambient::AmbientLanguage;
-#[cfg(feature = "bundled-languages")]
+// Raw generated language implementations are registered only on the Dovetail-only fallback build
+// (no f1r3node) — there RhoCalc/Calculator, whose production default is the Rho machine, register
+// raw. On the default `rho-languages` build every language is wrapped via `crate::rho_backends`.
+#[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
 use mettail_languages::calculator::CalculatorLanguage;
-#[cfg(feature = "bundled-languages")]
-use mettail_languages::lambda::LambdaLanguage;
-#[cfg(feature = "bundled-languages")]
+#[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
 use mettail_languages::rhocalc::RhoCalcLanguage;
 
 /// Registry of available languages
@@ -78,20 +76,30 @@ impl Default for LanguageRegistry {
     }
 }
 
-/// Build the default registry with all available languages
+/// Build the default registry with all available languages, each wrapped in its checked production
+/// runtime backend so `exec` works (a raw `language!` value advertises no default backend).
 pub fn build_registry() -> Result<LanguageRegistry> {
-    #[cfg(feature = "bundled-languages")]
+    // Default build: every bundled language wrapped in its production backend (Dovetail for
+    // Lambda/Ambient; two-stage Dovetail+Rholang for RhoCalc/Calculator).
+    #[cfg(feature = "rho-languages")]
     {
         let mut registry = LanguageRegistry::new();
+        registry.register(crate::rho_backends::lambda_backed()?);
+        registry.register(crate::rho_backends::ambient_backed()?);
+        registry.register(crate::rho_backends::rhocalc_backed()?);
+        registry.register(crate::rho_backends::calculator_backed()?);
+        Ok(registry)
+    }
 
-        // Register raw auto-generated language implementations. These entries
-        // are parse/introspection substrates; Dovetail/Rho production defaults
-        // must be installed by checked wrapper values.
-        registry.register(Box::new(AmbientLanguage));
+    // Dovetail-only build (no f1r3node): Lambda/Ambient still get the generic Dovetail backend;
+    // RhoCalc/Calculator (whose production default is the Rho machine) register raw.
+    #[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
+    {
+        let mut registry = LanguageRegistry::new();
+        registry.register(crate::rho_backends::lambda_backed()?);
+        registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(Box::new(CalculatorLanguage));
-        registry.register(Box::new(LambdaLanguage));
         registry.register(Box::new(RhoCalcLanguage));
-
         Ok(registry)
     }
 

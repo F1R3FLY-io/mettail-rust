@@ -7,8 +7,17 @@ edition = "2021"
 name = "mettail_repl"
 
 [features]
-default = ["bundled-languages"]
-bundled-languages = ["dep:mettail-languages"]
+default = ["rho-languages"]
+bundled-languages = ["dep:mettail-languages", "dep:mettail-dovetail-runtime"]
+# Install the production runtime backends so `exec` works: Lambda/Ambient → Dovetail (generic
+# `dovetail_backed`); RhoCalc → two-stage Dovetail+Rholang; Calculator → two-stage Dovetail+Rholang
+# (E3 fold-dataflow). Pulls f1r3node (via rholang-runtime); a Dovetail-only build can opt out by
+# building `--no-default-features --features bundled-languages` (Lambda/Ambient still get Dovetail).
+rho-languages = [
+    "bundled-languages",
+    "dep:mettail-rholang-runtime",
+    "dep:mettail-rholang-codegen",
+]
 
 [[bin]]
 name = "mettail"
@@ -21,6 +30,11 @@ mettail-runtime = { package = "runtime", path = "../runtime" }
 mettail-languages = { package = "languages", path = "../languages", optional = true }
 mettail-macros = { package = "macros", path = "../macros" }
 mettail-query = { package = "query", path = "../query" }
+
+# Production runtime backends for `exec` (behind `rho-languages` / `bundled-languages`).
+mettail-dovetail-runtime = { package = "dovetail-runtime", path = "../dovetail-runtime", optional = true }
+mettail-rholang-runtime = { package = "rholang-runtime", path = "../rholang-runtime", optional = true }
+mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen", optional = true }
 
 moniker = {workspace = true}
 

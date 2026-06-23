@@ -38,6 +38,10 @@ rhocalc-runtime = [
     "dep:mettail-languages",
     "dep:syn",
     "mettail-languages/rhocalc",
+    # The two-stage Dovetail+Rho RhoCalc wrapper (`dovetail_rho_backed_rhocalc`) needs the generated
+    # `RhoCalcLanguage::dovetail_report_for` / `dovetail_normal_term` (E2), which are emitted only
+    # under the language crate's `dovetail-codegen` feature.
+    "mettail-languages/dovetail-codegen",
 ]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.

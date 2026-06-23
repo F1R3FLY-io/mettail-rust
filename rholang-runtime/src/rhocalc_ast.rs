@@ -12,8 +12,13 @@ use mettail_languages::rhocalc::{
     Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
 use mettail_runtime::{
-    Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar, Term, TermType,
-    Var, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
+    Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
+    RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
+};
+use mettail_rholang_codegen::{
+    lower_language_def, plan_rho_default_backend, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoRejectedRuleDisposition,
+    RhoRejectedRuleDispositionKind,
 };
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
@@ -292,6 +297,118 @@ pub fn rho_runtime_backed_rhocalc_values(
         Box::new(move |term| rhocalc_observe_values_invocation(term, out_channel.clone()));
     let invocation = rhocalc_invocation_stage(mapper)?;
     crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
+}
+
+/// Coverage requirements routing every rejected rule through the verified native-handler boundary
+/// (RhoCalc executes every process via the AST-first [`lower_rhocalc_term`] mapper). Labels are
+/// de-duplicated because the same label can recur across categories and `RhoCoverageEvidence`
+/// forbids duplicate dispositions. (Mirrors the `rho_rhocalc_ast` test helper, promoted for the
+/// production wrapper builder.)
+fn rho_native_handler_requirements(
+    def: &mettail_ast::language::LanguageDef,
+) -> RhoDefaultBackendRequirements {
+    let lowering = lower_language_def(def);
+    let dispositions: Vec<RhoRejectedRuleDisposition> = lowering
+        .rejected
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .map(|label| {
+            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
+        })
+        .collect();
+    RhoDefaultBackendRequirements {
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+    }
+}
+
+/// Build the RhoCalc [`crate::backend::PlannedRhoBackend`] from the REAL reconstructed RhoCalc
+/// augmented `LanguageDef` ([`rhocalc_ast_runtime_def`]) — so its fingerprint equals the generated
+/// `RhoCalcLanguage` identity and the wrapper installs on the real RhoCalc.
+pub fn rhocalc_planned_rho_backend() -> Result<crate::backend::PlannedRhoBackend, String> {
+    let def = rhocalc_ast_runtime_def();
+    let plan = plan_rho_default_backend(&def, rho_native_handler_requirements(&def))
+        .map_err(|err| format!("RhoCalc Rho-default backend planning failed: {err:?}"))?;
+    Ok(crate::backend::PlannedRhoBackend::from_plan(plan))
+}
+
+/// Bounds for the RhoCalc Dovetail D-stage (mirror the generated `dovetail_compiler_stage`).
+const RHOCALC_DOVETAIL_MAX_ITERS: usize = 64;
+const RHOCALC_DOVETAIL_MAX_NODES: usize = 1_000_000;
+
+/// The Dovetail D-stage report producer for RhoCalc (the bare fn
+/// [`crate::backend::install_dovetail_rho_runtime_backend`] wraps): saturate the term to a runtime
+/// report — native folds reduce; COMM/`new` stay host-routed (non-fatal).
+fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+    RhoCalcLanguage::dovetail_report_for(
+        term,
+        RHOCALC_DOVETAIL_MAX_ITERS,
+        RHOCALC_DOVETAIL_MAX_NODES,
+    )
+}
+
+/// Two-stage Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of RhoCalc.
+///
+/// One-way pipeline (no bidirectional bridge; see
+/// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **D-stage**
+/// Dovetail-saturates the whole term (native folds reduce; COMM/`new` stay host-routed); the
+/// **F-stage** takes the fold-normal term ([`RhoCalcLanguage::dovetail_normal_term`], extension E2),
+/// lowers it to a normalized `Par`, and routes by SHAPE — a term carrying a send/receive/`new` (a
+/// COMM term, e.g. `@("OUT")!(int(1+2,8))` whose embedded fold already reduced to `@("OUT")!(3)`)
+/// runs on the real Rho machine and observes `out_channel`; a pure value/fold (no COMM) defers to
+/// the already-built Dovetail report. Arithmetic reduces in Dovetail; COMM fires on Rholang.
+pub fn dovetail_rho_backed_rhocalc(
+    out_channel: impl Into<String>,
+) -> Result<Box<dyn Language>, String> {
+    let out_channel = out_channel.into();
+    let backend = rhocalc_planned_rho_backend()?;
+    let invocation = move |term: &dyn Term,
+                           _report: &RuntimeDovetailRunReport|
+          -> Result<crate::backend::RhoBackendInvocation, String> {
+        // Lower the ORIGINAL term first: the AST mapper handles COMM (send/receive/`new`) directly
+        // and reduces `int(..)`-cast embedded folds via `try_eval` (so `@("OUT")!(int(1+2,8))`
+        // lowers to `@("OUT")!(3)`). ONLY if the original cannot lower (an un-reduced Proc-level
+        // fold) do we fold-normalize via Dovetail (E2) and lower that. A stuck term — e.g. a
+        // pure-COMM term whose receive does not reduce in Dovetail, where `dovetail_normal_term`
+        // errors "stuck term" — defers to its Dovetail report instead of failing. (Calling
+        // `dovetail_normal_term` unconditionally is WRONG for exactly that pure-COMM case.)
+        let call = match lower_rhocalc_term(term) {
+            Ok(par) => par,
+            Err(_) => match RhoCalcLanguage::dovetail_normal_term(
+                term,
+                RHOCALC_DOVETAIL_MAX_ITERS,
+                RHOCALC_DOVETAIL_MAX_NODES,
+            ) {
+                Ok(normal) => match lower_rhocalc_term(normal.as_ref()) {
+                    Ok(par) => par,
+                    Err(_) => {
+                        return Ok(crate::backend::RhoBackendInvocation::DeferToDovetailReport)
+                    },
+                },
+                Err(_) => return Ok(crate::backend::RhoBackendInvocation::DeferToDovetailReport),
+            },
+        };
+        if call.sends.is_empty() && call.receives.is_empty() && call.news.is_empty() {
+            // No COMM/`new` (a pure value/fold): nothing to run on the Rho machine — the Dovetail
+            // report is the result.
+            Ok(crate::backend::RhoBackendInvocation::DeferToDovetailReport)
+        } else {
+            Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveRuntimeValues {
+                call,
+                out_channel: out_channel.clone(),
+            })
+        }
+    };
+    let language = crate::backend::install_dovetail_rho_runtime_backend(
+        RhocalcAstRuntimeLanguage,
+        backend,
+        rhocalc_dovetail_report,
+        invocation,
+    )
+    .map_err(|err| format!("RhoCalc Dovetail+Rho backend install failed: {err:?}"))?;
+    Ok(Box::new(language))
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.
