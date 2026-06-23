@@ -94,6 +94,10 @@ speed, distinct from the bridge.
 
 ### 2.1 The Z3/SMT backend — a `ConstraintTheory` that deliberately stops there
 
+![The SMT leg stops at Sat3: a semi-decidable oracle never reaches BooleanAlgebra](figures/13-smt-sat3-leg.svg)
+
+PlantUML source: [figures/13-smt-sat3-leg.puml](figures/13-smt-sat3-leg.puml).
+
 The payoff above has **one deliberate exception**. `Z3Theory`
 (`prattail/src/logict_smt.rs`, feature `smt`, default-off — it dynamically links
 the system `libz3`) is a `ConstraintTheory` over `bool`, linear integer
@@ -139,6 +143,75 @@ is unsatisfiable — `Unsat ⇒ entailment holds`, `Sat ⇒ it does not`, and
 build computes the same judgement without Z3). `GuardTierCertificate` classifies a
 Z3-decided guard at tier `T3`, degrading to `T4` on an `unknown`
 ([05 §6](05-algebra-pyramid-and-decidability.md)).
+
+The two disciplines above are each a theorem, not a slogan. To state them, fix the
+backend's shape.
+
+**The backend, defined.** `Z3Theory { timeout_ms }` implements `ConstraintTheory` with
+`Constraint = SmtConstraint` — a solver-context-free constraint AST over Booleans, linear
+integer arithmetic, and fixed-width bit-vectors — and `Store = SmtStore { asserts, status }`
+carrying a three-valued `status: Sat3`. `propagate` asserts the new constraint and solves,
+returning `None` **only** on a proven `Unsat`; both a `Sat` and an `unknown` answer return
+`Some(store)`, recording `Sat3::Sat` or `Sat3::DontKnow`. `witness` produces a model only on
+`Sat3::Sat`; `label` is empty, because propagation is the entire oracle. The only sanctioned
+entry points are `is_satisfiable_3v(theory, c) -> Sat3` and
+`checked_witness(theory, c) -> Option<SmtModel>`.
+
+**Proposition (Z3 must not become a `TheoryAlgebra`).** Routing `Z3Theory` through the §2
+bridge — whose satisfiability test is the two-valued `witness(...).is_some()` — would report
+a *false* `Unsat` for a possibly-satisfiable guard; the unique sound exposure is the
+three-valued surface that keeps a Z3 `unknown` as `Sat3::DontKnow`.
+
+*Proof.* The bridge computes `is_satisfiable(p) = witness(p).is_some()`. A Z3 `unknown`
+yields no model, so `witness(p) = None`, so the bridge returns `is_satisfiable(p) = false`
+— it declares `p` unsatisfiable although `p` may be satisfiable. The classical SFA consumers
+the bridge feeds — complement, determinization, and language equivalence — are sound only
+over a *total* Boolean algebra (decidable, with an involutive complement and excluded
+middle), so a spurious `Unsat` propagates into a fabricated classical verdict. The
+store-level routing is the only one that avoids this: `propagate` returns `None` *only* on a
+proven `Unsat`, so an `unknown` stays `Some(store)` with `status = DontKnow`, the
+conservative over-approximation "possibly satisfiable." The downstream collapse
+`Sat3::into_safe_bool` then maps `DontKnow` to `false` *as a refusal*, forcing the caller to
+treat the undecided guard as not-established rather than as proven-unsatisfiable. Hence
+`Z3Theory` is exposed only as a `Sat3` oracle and is never given a `BooleanAlgebra` instance
+— there is, by construction, no `impl BooleanAlgebra for Z3Theory` and no
+`TheoryAlgebra<Z3Theory>` anywhere in the tree. ∎
+
+**Proposition (certificate-checked witnesses are sound and non-fabricating).** Let
+`checked_witness(c)` return `Some m` exactly when the solver supplies a candidate model `m`
+and the independent pure evaluator re-confirms it — `eval_constraint(c, m) = true` — and
+`None` otherwise. Then: (sound) a returned witness implies `c` is satisfiable; (evaluates)
+the returned model genuinely satisfies `c`; and (no fabrication) when the solver supplies no
+candidate, no witness is invented.
+
+*Proof.* By case analysis on the candidate. If there is no candidate, `checked_witness(c)`
+reduces definitionally to `None`, so no model is ever invented — *no fabrication*. If the
+candidate is `m`, the result is `Some m` precisely when `eval_constraint(c, m) = true`; in
+that case `m` is an explicit satisfying assignment, so `∃ m. eval_constraint(c, m) = true`
+— `c` is satisfiable (*sound*) — and the returned model is that very `m` (*evaluates*). The
+two rejected cases (`eval_constraint(c, m) = false`, or no candidate) both yield `None`,
+never a believed-but-unchecked model. ∎
+
+This is mechanized zero-admission in `Z3WitnessChecked.v` — stated abstractly over the
+constraint and model types and a pure `eval` — as `checked_witness_sound`,
+`checked_witness_evaluates`, and `checked_witness_no_fabrication`
+([10 §2.1](10-formal-verification-and-tests.md)). The Rust `checked_witness` is the exact
+image: on `Sat3::Sat` it re-runs `eval_constraint(c, &m)` on the solver's model before
+believing it, and returns `None` on `Sat3::Unsat` or `Sat3::DontKnow`.
+
+**Worked example.** Consider a refinement-subtyping obligation over a mixed integer /
+bit-vector guard — `{v : Int | v ≥ 0 ∧ lowbit(v) = 0}` must entail `{v : Int | v ≥ 0}`.
+`predicate_entails` asks Z3 whether `premise ∧ ¬conclusion`, here
+`(v ≥ 0 ∧ lowbit(v) = 0) ∧ ¬(v ≥ 0)`, is unsatisfiable. No `v` is simultaneously `≥ 0` and
+`< 0`, so Z3 answers `Unsat`; the entailment holds and the subtype is admitted — and had Z3
+instead returned a `Sat` model, `checked_witness` would re-run `eval_constraint` on it before
+the engine believed the non-entailment. Now take a guard Z3 cannot settle within `timeout_ms`
+(a nonlinear bit-vector mix): Z3 returns `unknown`, which becomes `Sat3::DontKnow`;
+`predicate_entails` then declines to claim entailment (the reject-safe default — the
+non-`smt` build reaches the same judgement without Z3), and `GuardTierCertificate` tiers the
+guard `T3`, degrading to `T4` on the `unknown` ([05 §6](05-algebra-pyramid-and-decidability.md)).
+At no point is a `Sat` model trusted without the re-check, and at no point is `unknown`
+coerced to `Unsat`.
 
 ### 2.2 The shipped decidable theories
 
@@ -309,6 +382,40 @@ and subtyping treatments ([Warshall, 1962](references.md#warshall-1962);
 All three theories reach the SFA/minterm machinery of [03](03-symbolic-automata-sfa.md)
 through the `TheoryAlgebra<T>` bridge of §2; `Z3Theory` (§2.1) is the deliberate
 semi-decidable exception that never crosses the bridge and stops at `Sat3`.
+
+### 2.3 The feature-gated optional backends
+
+Z3 is not the only backend kept out of the default build. The production build links no
+solver and enables no optional dependency: every backend in this subsection is **off by
+default**, and each is held to a snapshot or agreement gate so that enabling it leaves the
+default analysis output byte-identical. They fall in two groups — the one external-dependency
+*solver* (Z3, §2.1), and the **OSLF staged analysis engines** wired behind Cargo features for
+the rollout. Each is marked as either a *genuine decision procedure* (it decides a real
+property of the grammar) or mere *routing* (it re-dispatches an engine that is already
+compiled, adding no new algebra).
+
+| Backend | Feature (default off) | External dep | Decides / provides | Live vs `.0`-inert | Soundness gate | Documented in |
+|---|---|---|---|---|---|---|
+| `Z3Theory` (SMT solver) | `smt` | `libz3` | SMT over Bool / LIA / bit-vectors, as a `Sat3` oracle | live gap-filler | re-checked witness + `Z3WitnessChecked.v` | §2.1 above |
+| `AnyAlgebra` carrier route *(routing)* | `any-algebra-carrier` | `mettail-ast` | re-routes guard analysis through the uniform recursive carrier | `.0`-inert | byte-identity snapshot | [02 §6](02-effective-boolean-algebra.md) |
+| structural tree automaton | `sym-tree-structural` | `mettail-ast` (implied) | `SymbolicTreeAutomaton` structural disjointness / subtyping | live analysis | falls back to `Overlapping`; pre-image snapshot | [03](03-symbolic-automata-sfa.md), [04](04-symbolic-transducers-sft-stft.md) |
+| symbolic tree transducer | `oslf-transducer` | `mettail-ast` (implied) | cast totality and pre-image via `SymbolicTreeTransducer` | live analysis | agreement vs the category automaton | [04](04-symbolic-transducers-sft-stft.md) |
+| bisimulation LTS | `oslf-bisimulation` | `mettail-ast` (implied) | coarsest bisimulation by partition refinement | `.0`-inert | self-certifying `is_bisimulation`; snapshot | [12 §5](12-heyting-behavioral-logic.md) |
+| letprop-to-PATA emptiness | `oslf-letprop` | `mettail-ast` (implied) | recursive-predicate emptiness via a Zielonka parity tree automaton — the modal-μ-calculus decider | live on synthetic predicates | Rocq-aligned `PataEmptiness.v`; snapshot | [15](15-mu-calculus.md) |
+| Hindley–Milner sort pass | `oslf-hindley-milner` | `mettail-ast` (implied) | base-sort consistency by unification | live analysis | parity snapshot | §2.2.2 (unification) above, [03](03-symbolic-automata-sfa.md) |
+| behavioral lowering *(routing)* | `oslf-behavioral-lowering` | `mettail-ast` (implied) | lowers the runtime carrier to a `BehavioralFormula` | `.0`-inert | proven-canonical mapping; eval-agreement | [12 §4](12-heyting-behavioral-logic.md), [14](14-quantification.md) |
+| `OrderedFieldAlgebra<i128>` | *(no feature; completeness)* | — | a bounded discrete EBA over `i128` | test-only | inherits the §5.5 exactness theorem | [02 §5.5](02-effective-boolean-algebra.md) |
+
+Two cautions complete the picture. First, the conformance capability labels — `buchi`,
+`alternating`, `vpa`, `parity-tree-automata`, `register-automata`, `probabilistic`,
+`multi-tape`, `multiset-automata`, `two-way-transducer` — are **not** algebra gates: their
+automaton engines compile unconditionally, and the flags only assert test-suite capability.
+Second, `any-algebra-carrier` and `oslf-behavioral-lowering` introduce no new algebra — they
+re-route or lower an algebra that already exists (`AnyAlgebra`, `BehavioralFormula`), which is
+why they are `.0`-inert and snapshot-gated. The genuine optional decision machinery is the Z3
+solver (§2.1), the symbolic tree automaton / transducer / PATA-emptiness / bisimulation /
+Hindley–Milner engines, and the `i128` completeness algebra; everything else optional is
+debug, bench, or capability-label scaffolding.
 
 ## 3. Quantified-predicate evaluation
 

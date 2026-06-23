@@ -497,6 +497,17 @@ carrier for fixed-point decimals, whose value is `unscaled / 10^places`), `Order
 (a total order over `f64` via `total_cmp`), and `i128` (discrete, bounded machine
 integer). The universe is the whole of `P`, unbounded in both directions.
 
+**The `i128` instance — completeness, not wired.** Of these four point types, `BigInt`,
+`BigRational`, and `OrderedF64` back the live `AnyAlgebra` carrier — the registry's
+`BigInt`, `BigRat`, `Fixed`, and `Float` sorts each map to an `OrderedFieldAlgebra` over
+one of them ([§6](#6-the-uniform-carrier-anyalgebra)). The fourth, `i128`, is a
+genuine bounded-discrete instance provided *for completeness*: there is no `i128` arm in
+`Sort` / `AnyDomain` / `AnyPred`, so it is **not** reachable from the live carrier, and it
+is exercised only by a unit test. It is therefore one of the optional backends cataloged in
+[13 §2.3](13-constraint-theory-engine.md) — and because it satisfies Theorem 5.7 below
+through the *discrete* branch of the `witness_in` oracle, wiring it in later would need no
+new proof.
+
 **Predicate normal form.** A predicate is a normalized (sorted, disjoint,
 maximally-merged) **finite union of intervals** whose endpoints are `Bound`s — `Bound =
 NegInf | PosInf | Incl(p) | Excl(p)` — so open/closed and `±∞` endpoints are all

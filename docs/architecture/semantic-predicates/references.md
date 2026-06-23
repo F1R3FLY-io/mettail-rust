@@ -239,6 +239,19 @@ B. C. Pierce. *Types and Programming Languages.* MIT Press, 2002 (ISBN 0-262-162
 Chapter 15 (Subtyping) — the finite-lattice subtype order `LatticeTheory` realizes.
 (Textbook; cited by ISBN.)
 
+## SMT solvers (the optional Z3 backend)
+
+Grounds the optional, off-by-default SMT gap-filler ([13 §2.1](13-constraint-theory-engine.md)).
+
+### de-moura-bjorner-2008
+
+L. de Moura and N. Bjørner. *Z3: An Efficient SMT Solver.* Tools and Algorithms for
+the Construction and Analysis of Systems (TACAS) 2008, LNCS 4963, pp. 337–340. The
+satisfiability-modulo-theories solver behind the optional `Z3Theory` constraint-theory
+backend (Bool, linear integer arithmetic, fixed-width bit-vectors); a general SMT query
+is a semi-decision procedure that may answer `unknown`.
+DOI: [10.1007/978-3-540-78800-3_24](https://doi.org/10.1007/978-3-540-78800-3_24).
+
 ## Relational databases and quantification
 
 Grounds the closed-world / active-domain semantics of relational quantifiers

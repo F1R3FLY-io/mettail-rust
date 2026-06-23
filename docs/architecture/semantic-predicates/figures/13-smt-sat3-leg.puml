@@ -1,0 +1,72 @@
+@startuml
+title The SMT leg stops at Sat3: a semi-decidable oracle never reaches BooleanAlgebra
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam componentStyle rectangle
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam interface {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+' ── Top lane: the DECIDABLE theories reach BooleanAlgebra (green → indigo → blue) ──
+component "decidable ConstraintTheory\n(Presburger / Unification / Lattice)" as DEC #DCFCE7
+component "TheoryAlgebra<T>\nthe two-valued bridge:\nis_satisfiable = witness().is_some()" as BR #E0E7FF
+interface "BooleanAlgebra\n(SFA: complement, determinize, equivalence —\nneeds a TOTAL algebra)" as BA #DBEAFE
+
+DEC --> BR : decidable (Some / None)
+BR --> BA : lifts to a classical EBA
+
+' ── Bottom lane: the Z3/SMT leg forks off, exits at Sat3, and STOPS (amber) ──
+component "Z3Theory (feature smt, libz3)\nConstraintTheory over Bool / LIA / bit-vectors" as Z3 #FEF3C7
+component "is_satisfiable_3v / checked_witness\nthe three-valued surface" as S3 #FEF3C7
+rectangle "Sat3 = Sat | Unsat | DontKnow\nunknown ↦ DontKnow ↦ reject-safe false\n(into_safe_bool forces the caller to handle it)" as SAT3 #FEF3C7
+
+Z3 --> S3 : never lifted to TheoryAlgebra
+S3 --> SAT3 : exits here and STOPS
+
+' ── The FORBIDDEN unsound lift: Z3 must NOT reach BooleanAlgebra (red) ──
+Z3 ..> BA #FEE2E2 : forbidden (unknown → false Unsat)
+
+' ── Notes ──
+note bottom of SAT3
+  checked_witness re-evaluates a Sat model before believing it
+  (certificate; Z3WitnessChecked.v: checked_witness_sound,
+  checked_witness_evaluates, checked_witness_no_fabrication).
+end note
+
+note right of BA #FEE2E2
+  Z3 must NOT reach here. Routing a semi-decidable oracle through the
+  two-valued bridge would collapse unknown into a false Unsat — unsound.
+  Z3Theory implements ONLY ConstraintTheory, never BooleanAlgebra; no
+  TheoryAlgebra<Z3Theory> is ever constructed.
+end note
+
+' ── Keep the two lanes vertically separated ──
+DEC -[hidden]down- Z3
+BR  -[hidden]down- S3
+BA  -[hidden]down- SAT3
+
+legend right
+|= Color |= Meaning |
+|<#DCFCE7> | decidable theory — reaches BooleanAlgebra |
+|<#E0E7FF> | TheoryAlgebra bridge (two-valued lift) |
+|<#DBEAFE> | classical BooleanAlgebra target (TOTAL algebra) |
+|<#FEF3C7> | semi-decidable / Sat3 / DontKnow (stops here) |
+|<#FEE2E2> | the forbidden unsound lift |
+endlegend
+@enduml
