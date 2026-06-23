@@ -236,6 +236,10 @@ hands a Dovetail report to the Rho invocation mapper until the report is
 available, structurally valid, and `Complete`; `BoundedByCycleCut` and malformed
 reports fail before any Rho execution. The invocation mapper receives the
 checked `RuntimeDovetailRunReport` and constructs `rhoapi::Par` values directly.
+How a *single* term is divided between the two engines — Dovetail reduces its
+folds first, then the Rho machine performs its COMM, under the strictly one-way
+bridge and with no bidirectional callback — is detailed in
+[Term-Level Reduction Split](09-term-level-reduction-split.md).
 Rholang source text remains documentation/test-oracle annotation, not a
 generated execution artifact. In the Rust crate, hand-authored Rholang source
 helpers are compiled only with the `rholang-runtime/source-oracle` feature;

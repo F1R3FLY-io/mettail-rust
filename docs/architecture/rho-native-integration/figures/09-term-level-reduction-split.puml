@@ -1,0 +1,78 @@
+@startuml
+' Term-level reduction split: how ONE term is reduced across the Dovetail
+' rewrite engine (native folds) and the Rholang/Rho machine (COMM), under a
+' strictly one-way bridge. Colors: Dovetail = green, Rho/host = blue,
+' MeTTaIL compile glue = amber, observation = purple.
+title Term-level reduction split — one-way Dovetail-prefold -> lower -> Rho COMM
+
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam ArrowColor #37474F
+skinparam NoteBackgroundColor #FFF8E1
+skinparam NoteBorderColor #FFB300
+
+|#FFF3E0|MeTTaIL (compile-time, one-way)|
+start
+:parse term T
+(WPDA frontend);
+note right
+  T = tree of
+  COMM/structural nodes
+  (PPar, POutput, PInputs,
+   PNew, PDrop, NQuote)
+  + fold nodes
+  (Add, IntBinProc, Eq, ...)
+  + Cast* value leaves
+end note
+
+|#E8F5E9|Dovetail rewrite engine (native folds)|
+:D-stage — saturate_with_native
+reduces every fold redex;
+note right
+  saturate_with_native
+  (dovetail/src/rules.rs)
+  COMM/new are host-routed:
+  carry no fold body,
+  left intact (non-fatal)
+end note
+:report is **Complete**
+(folds converge; acyclic
+=> no cycle-cut);
+
+if (does T contain COMM?\n(POutput / PInputs / PNew / PDrop)) then (no — pure fold)
+  |#E8F5E9|Dovetail rewrite engine (native folds)|
+  :F-stage returns
+  DeferToDovetailReport;
+  |#F3E5F5|Observation|
+  :RuntimeBackendOutput::Dovetail
+  (the fold-normal value);
+  stop
+else (yes — COMM or mixed)
+  |#FFF3E0|MeTTaIL (compile-time, one-way)|
+  :F-stage takes the
+  **fold-normal** term
+  (folds already reduced,
+  COMM preserved);
+  :lower_rhocalc_term -> rhoapi::Par
+  (succeeds: folds are literals);
+  note right
+    `@("OUT")!(int(1+2,8))`
+    --(Dovetail)--> `@("OUT")!(3)`
+    --(lower)--> send(@OUT, 3)
+  end note
+  |#E3F2FD|Rholang / Rho machine (RhoRuntime + RSpace)|
+  :inject Par; run COMM
+  (rholang-runtime/src/run.rs);
+  note right
+    HostRhoMachineReuse.v:
+    host owns reduction +
+    tuple space. NO callback
+    into Dovetail/MeTTaIL
+    (BridgeInertness.v).
+  end note
+  |#F3E5F5|Observation|
+  :RuntimeBackendOutput::Observations
+  (read resting RSpace data);
+  stop
+endif
+@enduml

@@ -22,7 +22,14 @@ source string
 For the Rho-native path, the executable artifact is a normalized
 `rhoapi::Par` AST, not Rholang source text. See
 [`docs/architecture/rho-native-integration/`](../../architecture/rho-native-integration/README.md)
-for the current Dovetail/Rho runtime design.
+for the current Dovetail/Rho runtime design. In particular, how a single term is
+divided between the two production engines at run time — the Dovetail rewrite
+engine reduces its native folds, then the Rholang/Rho machine performs its COMM,
+under a strictly one-way bridge with no bidirectional callback — including a
+worked mixed COMM-with-fold trace (`@("OUT")!(int(1+2,8))`), is documented in
+[Term-Level Reduction Split](../../architecture/rho-native-integration/09-term-level-reduction-split.md).
+Stages 5–6 below (the Ascent fixpoint and `AscentResults` extraction) describe the
+**retired** Ascent reference path, kept here only as oracle documentation.
 
 ## The Six Ascent Reference Stages
 

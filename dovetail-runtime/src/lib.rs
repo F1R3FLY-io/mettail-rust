@@ -331,6 +331,28 @@ where
     }
 }
 
+/// Install a generated language as a `Dovetail`-default `Box<dyn Language>`,
+/// using its generated `dovetail_compiler_stage()` as the report producer.
+///
+/// This is the generic, substrate-neutral wrapper for languages whose
+/// production semantics reduce entirely in-engine (e.g. arithmetic folds,
+/// β-reduction, associative-commutative process rewriting). It needs no
+/// `f1r3node`/Rholang dependency. The wrapped value advertises
+/// `RuntimeBackend::Dovetail` as its default; the stage's macro-expanded
+/// `LanguageDef` fingerprint must match the wrapped language's metadata
+/// fingerprint, so a stage built for a different definition is rejected.
+pub fn dovetail_backed<L>(
+    inner: L,
+    stage: DovetailCompilerStage<
+        fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String>,
+    >,
+) -> Result<Box<dyn Language>, DovetailRuntimeBackedLanguageError>
+where
+    L: Language + 'static,
+{
+    Ok(Box::new(DovetailRuntimeBackedLanguage::new(inner, stage)?))
+}
+
 impl<L, F> Language for DovetailRuntimeBackedLanguage<L, F>
 where
     L: Language,
