@@ -22,7 +22,7 @@ q1 --> q2 : [x < 10]
 q1 --> q1 : [x >= 10]
 q2 --> [*]
 
-note right of q1
+note left of q1
   The edge fires when e ⊨ φ —
   the EBA evaluate(φ, e) oracle
   answers the membership question,

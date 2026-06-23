@@ -19,7 +19,7 @@ q0 --> q0 : [A-Z] / emit lowercase\n(Map c ↦ c+32)
 q0 --> q0 : ¬[A-Z] / emit input\n(Identity)
 q0 --> [*]
 
-note right of q0
+note left of q0
   Each edge carries a guard AND an
   output function: the guard φ
   decides WHETHER the edge fires;
