@@ -48,9 +48,9 @@ mod rho {
     use mettail_runtime::{Language, RuntimeDovetailRunReport, Term};
 
     use mettail_rholang_codegen::{
-        lower_language_def, plan_rho_default_backend, reconstruct_language_def, RhoCoverageEvidence,
-        RhoDefaultBackendRequirements, RhoFoldDataflowDisposition, RhoGuardCoverageEvidence,
-        RhoRejectedRuleDisposition, RhoRejectedRuleDispositionKind,
+        lower_language_def, plan_rho_default_backend, reconstruct_language_def,
+        RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoFoldDataflowDisposition,
+        RhoGuardCoverageEvidence, RhoRejectedRuleDisposition, RhoRejectedRuleDispositionKind,
     };
     use mettail_rholang_runtime::{
         build_fold_dataflow_invocation_from_contract, dovetail_rho_backed_rhocalc,
@@ -88,7 +88,10 @@ mod rho {
             .collect::<BTreeSet<String>>()
             .into_iter()
             .map(|label| {
-                RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
+                RhoRejectedRuleDisposition::new(
+                    label,
+                    RhoRejectedRuleDispositionKind::NativeHandler,
+                )
             })
             .collect();
         let requirements = RhoDefaultBackendRequirements {
@@ -112,13 +115,12 @@ mod rho {
         term: &dyn Term,
         report: &RuntimeDovetailRunReport,
     ) -> Result<RhoBackendInvocation, String> {
-        match CalculatorLanguage::rho_fold_dataflow_invocation_from_dovetail_to(term, report, OUT)? {
+        match CalculatorLanguage::rho_fold_dataflow_invocation_from_dovetail_to(term, report, OUT)?
+        {
             RhoFoldDataflowDisposition::Run(invocation) => {
                 Ok(build_fold_dataflow_invocation_from_contract(invocation))
             },
-            RhoFoldDataflowDisposition::Defer => {
-                Ok(RhoBackendInvocation::DeferToDovetailReport)
-            },
+            RhoFoldDataflowDisposition::Defer => Ok(RhoBackendInvocation::DeferToDovetailReport),
         }
     }
 

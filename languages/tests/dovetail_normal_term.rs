@@ -56,7 +56,11 @@ fn collection_multiplicity_is_preserved() {
         .strip_prefix('{')
         .and_then(|s| s.strip_suffix('}'))
         .unwrap_or(inner);
-    let members: Vec<&str> = body.split('|').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let members: Vec<&str> = body
+        .split('|')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     assert_eq!(
         members.len(),
         2,

@@ -11,14 +11,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use mettail_languages::rhocalc::{
     Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
-use mettail_runtime::{
-    Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
-    RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
-};
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionKind,
+};
+use mettail_runtime::{
+    Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
+    RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed,
+    WeightedSeedId,
 };
 use models::rhoapi::{Expr, Par, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;

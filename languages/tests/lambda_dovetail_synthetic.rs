@@ -22,7 +22,9 @@ const MAX_NODES: usize = 1_000_000;
 #[test]
 fn synthetic_appsubst_beta_report_is_ok() {
     let lang = AppSubstLanguage;
-    let term = lang.parse_term("ap(abs x. x, y)").expect("parse identity application");
+    let term = lang
+        .parse_term("ap(abs x. x, y)")
+        .expect("parse identity application");
     let report = AppSubstLanguage::dovetail_report_for(term.as_ref(), MAX_ITERS, MAX_NODES);
     assert!(
         report.is_ok(),

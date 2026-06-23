@@ -1,9 +1,9 @@
 pub mod examples;
 pub mod pretty;
 pub mod registry;
+pub mod repl;
 #[cfg(feature = "bundled-languages")]
 pub mod rho_backends;
-pub mod repl;
 pub mod state;
 
 pub use examples::Example;

@@ -69,9 +69,15 @@ fn gate1_dovetail_report_for_is_ok_for_beta_redex() {
     // substitution lowering)`. After E1 the substitution rewrite routes to the typed path and
     // the β native rule fires, so the report is `Ok`.
     let lang = LambdaLanguage;
-    let term = lang.parse_term("(lam x. x, y)").expect("parse identity application");
+    let term = lang
+        .parse_term("(lam x. x, y)")
+        .expect("parse identity application");
     let report = LambdaLanguage::dovetail_report_for(term.as_ref(), MAX_ITERS, MAX_NODES);
-    assert!(report.is_ok(), "dovetail_report_for must be Ok after E1, got {:?}", report.err());
+    assert!(
+        report.is_ok(),
+        "dovetail_report_for must be Ok after E1, got {:?}",
+        report.err()
+    );
 }
 
 #[test]
@@ -125,7 +131,11 @@ fn gate4_mf5_omega_terminates_without_spurious_reduction() {
     // (4a) No hang: bounded-time completion. `dovetail_report_for` converges → Ok (the e-graph
     // never diverges for a self-replicating λ-term; see module doc).
     let report = LambdaLanguage::dovetail_report_for(term.as_ref(), MAX_ITERS, MAX_NODES);
-    assert!(report.is_ok(), "Ω converges to a fixed point in the e-graph: {:?}", report.err());
+    assert!(
+        report.is_ok(),
+        "Ω converges to a fixed point in the e-graph: {:?}",
+        report.err()
+    );
 
     // (4b) No SPURIOUS reduction: the normal form is β-equal to Ω itself (a fixed point), and is
     // NOT a strictly-reduced wrong answer. The result still denotes the self-application (it

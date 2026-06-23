@@ -71,8 +71,8 @@ fn node(label: &str, operands: Vec<RhoDataflowChild>) -> RhoDataflowNode {
 async fn nested_int_expression_computes_on_rho_runtime() {
     let backend = dataflow_backend();
     let nodes = vec![
-        node("AddInt", vec![int(2), int(3)]),                                   // → @"__e3_c0" = 5
-        node("SubInt", vec![int(4), int(1)]),                                   // → @"__e3_c1" = 3
+        node("AddInt", vec![int(2), int(3)]), // → @"__e3_c0" = 5
+        node("SubInt", vec![int(4), int(1)]), // → @"__e3_c1" = 3
         node("MulInt", vec![RhoDataflowChild::Node(0), RhoDataflowChild::Node(1)]), // → @"OUT"   = 15
     ];
     let call = build_dataflow_call_par(&nodes, &RhoDataflowChild::Node(2), "OUT")
@@ -91,9 +91,9 @@ async fn nested_int_expression_computes_on_rho_runtime() {
 async fn nested_bool_rooted_expression_computes_on_rho_runtime() {
     let backend = dataflow_backend();
     let nodes = vec![
-        node("SubInt", vec![int(10), int(4)]),                                  // 6
-        node("AddInt", vec![RhoDataflowChild::Node(0), int(1)]),                // 7
-        node("EqInt", vec![RhoDataflowChild::Node(1), int(7)]),                 // true
+        node("SubInt", vec![int(10), int(4)]),                   // 6
+        node("AddInt", vec![RhoDataflowChild::Node(0), int(1)]), // 7
+        node("EqInt", vec![RhoDataflowChild::Node(1), int(7)]),  // true
     ];
     let call = build_dataflow_call_par(&nodes, &RhoDataflowChild::Node(2), "OUT")
         .expect("bool-rooted dataflow must build");
@@ -110,8 +110,8 @@ async fn nested_bool_rooted_expression_computes_on_rho_runtime() {
 async fn nested_string_expression_computes_on_rho_runtime() {
     let backend = dataflow_backend();
     let nodes = vec![
-        node("Concat", vec![string("a"), string("b")]),                         // "ab"
-        node("Concat", vec![RhoDataflowChild::Node(0), string("c")]),           // "abc"
+        node("Concat", vec![string("a"), string("b")]), // "ab"
+        node("Concat", vec![RhoDataflowChild::Node(0), string("c")]), // "abc"
     ];
     let call = build_dataflow_call_par(&nodes, &RhoDataflowChild::Node(1), "OUT")
         .expect("string dataflow must build");
@@ -119,7 +119,11 @@ async fn nested_string_expression_computes_on_rho_runtime() {
         .run_with_call_and_observe_strings(&call, "OUT")
         .await
         .unwrap_or_else(|e| panic!("\"a\"++\"b\"++\"c\" dataflow failed to run: {e}"));
-    assert_eq!(report.values, vec!["abc".to_string()], "\"a\"++\"b\"++\"c\" = abc on RhoRuntime");
+    assert_eq!(
+        report.values,
+        vec!["abc".to_string()],
+        "\"a\"++\"b\"++\"c\" = abc on RhoRuntime"
+    );
     assert_eq!(report.observed_count(), 1);
 }
 

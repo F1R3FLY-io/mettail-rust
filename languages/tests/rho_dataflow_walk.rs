@@ -17,7 +17,9 @@ use mettail_runtime::Language;
 #[test]
 fn nested_scalar_expression_classifies_as_run_with_dataflow_shape() {
     let lang = CalculatorLanguage;
-    let term = lang.parse_term("(2 + 3) * (4 - 1)").expect("parse nested calculator expression");
+    let term = lang
+        .parse_term("(2 + 3) * (4 - 1)")
+        .expect("parse nested calculator expression");
     match CalculatorLanguage::rho_fold_dataflow_invocation_to(term.as_ref(), "OUT")
         .expect("walk must not hard-error")
     {

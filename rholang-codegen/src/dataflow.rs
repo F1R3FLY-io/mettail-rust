@@ -93,7 +93,11 @@ pub enum RhoDataflowError {
     /// The root is `Node(i)` but the node list is empty, or `i` is out of range.
     RootIndexOutOfRange { root: usize, node_count: usize },
     /// A node operand references `Node(j)` with `j` out of range.
-    ChildIndexOutOfRange { node: usize, child: usize, node_count: usize },
+    ChildIndexOutOfRange {
+        node: usize,
+        child: usize,
+        node_count: usize,
+    },
     /// A node operand references `Node(j)` with `j >= i` (not strictly post-order — would deadlock,
     /// since a node may only consume channels produced by EARLIER nodes).
     NonPostOrderChild { node: usize, child: usize },
@@ -309,8 +313,14 @@ mod tests {
     #[test]
     fn nested_two_level_dataflow_par_shape() {
         let nodes = vec![
-            RhoDataflowNode { label: "AddInt".into(), operands: vec![int(2), int(3)] },
-            RhoDataflowNode { label: "SubInt".into(), operands: vec![int(4), int(1)] },
+            RhoDataflowNode {
+                label: "AddInt".into(),
+                operands: vec![int(2), int(3)],
+            },
+            RhoDataflowNode {
+                label: "SubInt".into(),
+                operands: vec![int(4), int(1)],
+            },
             RhoDataflowNode {
                 label: "MulInt".into(),
                 operands: vec![RhoDataflowChild::Node(0), RhoDataflowChild::Node(1)],
@@ -329,7 +339,11 @@ mod tests {
         assert_eq!(join.binds.len(), 2, "one ReceiveBind per node-operand");
         assert!(join.binds.iter().all(|b| b.free_count == 1), "each bind binds one value");
         assert!(join.locally_free.is_empty(), "the JOIN is closed");
-        let sources: Vec<&Par> = join.binds.iter().filter_map(|b| b.source.as_ref()).collect();
+        let sources: Vec<&Par> = join
+            .binds
+            .iter()
+            .filter_map(|b| b.source.as_ref())
+            .collect();
         assert_eq!(sources.len(), 2, "two intermediate-channel sources");
 
         // The JOIN body is the MulInt call: data = [BoundVar(1), BoundVar(0), @"OUT"].
@@ -351,8 +365,14 @@ mod tests {
     #[test]
     fn unary_over_internal_node_joins_one_channel() {
         let nodes = vec![
-            RhoDataflowNode { label: "LtInt".into(), operands: vec![int(1), int(2)] },
-            RhoDataflowNode { label: "NotBool".into(), operands: vec![RhoDataflowChild::Node(0)] },
+            RhoDataflowNode {
+                label: "LtInt".into(),
+                operands: vec![int(1), int(2)],
+            },
+            RhoDataflowNode {
+                label: "NotBool".into(),
+                operands: vec![RhoDataflowChild::Node(0)],
+            },
         ];
         let par = build_dataflow_call_par(&nodes, &RhoDataflowChild::Node(1), "OUT")
             .expect("unary-over-node must build");
@@ -365,8 +385,14 @@ mod tests {
     fn forward_child_reference_is_rejected() {
         // Node 0 referencing Node(1) is not post-order (would deadlock) → hard error.
         let nodes = vec![
-            RhoDataflowNode { label: "AddInt".into(), operands: vec![RhoDataflowChild::Node(1)] },
-            RhoDataflowNode { label: "SubInt".into(), operands: vec![int(4), int(1)] },
+            RhoDataflowNode {
+                label: "AddInt".into(),
+                operands: vec![RhoDataflowChild::Node(1)],
+            },
+            RhoDataflowNode {
+                label: "SubInt".into(),
+                operands: vec![int(4), int(1)],
+            },
         ];
         let err = build_dataflow_call_par(&nodes, &RhoDataflowChild::Node(1), "OUT")
             .expect_err("forward reference must be rejected");
@@ -382,8 +408,8 @@ mod tests {
 
     #[test]
     fn empty_out_channel_is_rejected() {
-        let err = build_dataflow_call_par(&[], &int(1), "")
-            .expect_err("empty out channel must error");
+        let err =
+            build_dataflow_call_par(&[], &int(1), "").expect_err("empty out channel must error");
         assert_eq!(err, RhoDataflowError::EmptyChannelName);
     }
 }
