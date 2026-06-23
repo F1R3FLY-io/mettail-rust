@@ -30,7 +30,7 @@
 #![cfg(feature = "oslf-letprop")]
 
 use mettail_prattail::grammar::ir::CollectionKind;
-use mettail_prattail::letprop::{LetPropExpr, RecursivePredicate};
+use mettail_prattail::letprop::{vars, LetPropExpr, RecursivePredicate};
 use mettail_prattail::parity_tree;
 use mettail_prattail::pipeline::CategoryInfo;
 use mettail_prattail::SyntaxItemSpec;
@@ -90,14 +90,12 @@ fn rule(label: &str, cat: &str, syntax: Vec<SyntaxItemSpec>) -> SyntaxRule {
 // ── `letprop` body constructors (mirror `letprop.rs`'s own unit-test helpers) ──
 
 fn rec(args: &[&str]) -> LetPropExpr {
-    LetPropExpr::Recursive {
-        args: args.iter().map(|s| s.to_string()).collect(),
-    }
+    LetPropExpr::Recursive { args: vars(args) }
 }
 fn atom(name: &str, args: &[&str]) -> LetPropExpr {
     LetPropExpr::Atom {
         relation: name.to_string(),
-        args: args.iter().map(|s| s.to_string()).collect(),
+        args: vars(args),
     }
 }
 
@@ -121,7 +119,11 @@ fn calculator_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
         rule("ProcBool", "Proc", vec![nonterm("Bool", "b")]),
         rule("ProcStr", "Proc", vec![nonterm("Str", "s")]),
         rule("AddInt", "Int", vec![nonterm("Int", "a"), term("+"), nonterm("Int", "b")]),
-        rule("FloatToInt", "Int", vec![term("int"), term("("), nonterm("Str", "a"), term(")")]),
+        rule(
+            "FloatToInt",
+            "Int",
+            vec![term("int"), term("("), nonterm("Str", "a"), term(")")],
+        ),
         rule("Fact", "Int", vec![nonterm("Int", "a"), term("!")]),
         rule("BagLit", "Bag", vec![bag_collection("xs", "Proc", "|")]),
     ];
@@ -172,7 +174,11 @@ fn ambient_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
             "Proc",
             vec![term("in("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
         ),
-        rule("PAmb", "Proc", vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")]),
+        rule(
+            "PAmb",
+            "Proc",
+            vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")],
+        ),
         rule("PNew", "Proc", vec![binder("x", "Name", false), nonterm("Proc", "p")]),
         rule("PPar", "Proc", vec![term("{"), bag_collection("ps", "Proc", "|"), term("}")]),
         rule("NVar", "Name", vec![ident("x")]),
