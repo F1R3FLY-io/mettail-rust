@@ -1,43 +1,20 @@
 //! Generality gate for macro-codegen extension **E1** (generalized substitution lowering).
 //!
-//! Defines a SYNTHETIC language `AppSubst` — a tiny binder calculus that is NOT Lambda (different
-//! constructor names `Abs`/`Ap`, different concrete syntax `abs x. b` / `ap(f, a)`) — with a binder
-//! `[T -> T]` and a rewrite whose RHS is an `(eval <binder> <arg>)` substitution. If E1's
-//! substitution detector / dispatch / progress-weights were keyed on Lambda's `Lam`/`App` names (or
-//! on `name == "Lambda"`) rather than derived from `LanguageDef`, this language would NOT β-reduce.
-//! It does — proving the mechanism is fully generalized.
+//! Exercises the `AppSubst` src fixture (`mettail_languages::appsubst`) — a tiny binder calculus
+//! that is NOT Lambda (different constructor names `Abs`/`Ap`, different concrete syntax `abs x. b`
+//! / `ap(f, a)`) with a binder `[T -> T]` and an `(eval <binder> <arg>)` substitution rewrite. If
+//! E1's substitution detector / dispatch / progress-weights were keyed on Lambda's `Lam`/`App`
+//! names (or on `name == "Lambda"`) rather than derived from `LanguageDef`, this language would NOT
+//! β-reduce. It does — proving the mechanism is fully generalized.
 //!
-//! (One `language!` per integration-test crate: each expansion emits crate-level un-namespaced PDA/
-//! lexer helpers, so a second `language!` here would collide. A cross-category `[A -> B]` binder is
-//! additionally exercised by E2's `PNew` reconstruction in `dovetail_normal_term.rs` and is sound by
-//! construction — the E1 dispatch derives `binder_var_cat`/`body_cat` independently from the binder
-//! `VariantKind`.)
-#![cfg(feature = "dovetail-codegen")]
+//! `AppSubst` is a `src` fixture (`languages/src/appsubst.rs`), not a test-local `language!`: the
+//! macro emits a crate-coupled `src/bin/simulate_<lang>.rs` for every invocation, so a test-local
+//! invocation would write a bin referencing a nonexistent `mettail_languages::appsubst` module and
+//! break `cargo build -p languages`. See the fixture's module doc.
+#![cfg(all(feature = "appsubst", feature = "dovetail-codegen"))]
 
-use mettail_macros::language;
+use mettail_languages::appsubst::AppSubstLanguage;
 use mettail_runtime::Language;
-
-language! {
-    name: AppSubst,
-
-    types {
-        T
-    },
-
-    terms {
-        Abs . ^x.body:[T -> T] |- "abs " x "." body : T;
-        Ap . f:T, a:T |- "ap" "(" f "," a ")" : T;
-    },
-
-    equations {},
-
-    rewrites {
-        Reduce . |- (Ap (Abs f) a) ~> (eval f a);
-        ApCongL . | M0 ~> M1 |- (Ap M0 N) ~> (Ap M1 N);
-        ApCongR . | N0 ~> N1 |- (Ap M N0) ~> (Ap M N1);
-        AbsCong . | S ~> T |- (Abs ^x.S) ~> (Abs ^x.T);
-    },
-}
 
 const MAX_ITERS: usize = 64;
 const MAX_NODES: usize = 1_000_000;

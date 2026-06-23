@@ -11,6 +11,8 @@
 
 #[cfg(feature = "ambient")]
 pub mod ambient;
+#[cfg(feature = "appsubst")]
+pub mod appsubst;
 #[cfg(feature = "calculator")]
 pub mod calculator;
 #[cfg(feature = "class2hashmapsmoke")]
