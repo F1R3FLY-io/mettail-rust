@@ -1,0 +1,54 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #4338CA
+  FontColor #111827
+}
+
+title Concretizing a process as an LTS, so a μ-calculus predicate can be decided against it
+
+' ══════════════════════════════════════════════════════════════════════════════
+' The concretization spine, left-to-right: a process term is given a one-step
+' successor relation (HostTerm), unfolded into a finite reachable LTS
+' (build_lts), model-checked by fixpoint iteration (denote), and the root's
+' membership in ⟦φ⟧ is the decided predicate.
+' ══════════════════════════════════════════════════════════════════════════════
+rectangle "a process term t\n(the thing to predicate)" as T #DBEAFE
+component "HostTerm\nsuccessors(t): one-step labeled edges\nlabel(t): atomic proposition" as HT #CCFBF1
+component "build_lts: BFS from t\nthe reachable LTS (S, →)\ncap MAX_REACH_STATES = 10000" as BL #CCFBF1
+component "denote: μ-calculus model check\n⟦φ⟧ ⊆ S by fixpoint iteration" as DN #FEF3C7
+rectangle "evaluate(φ, t) = (root ∈ ⟦φ⟧)\nthe predicate decided in the behavioral Heyting algebra" as EV #DCFCE7
+
+T --> HT : term to predicate
+HT --> BL : one-step relation
+BL --> DN : finite reachable LTS
+DN --> EV : root membership
+
+note bottom of BL #FEF3C7
+  truncation is reject-safe: missing edges only shrink ⟨a⟩/μ sets.
+end note
+
+note bottom of DN #E0E7FF
+  modal satisfiability is DontKnow (semi-decidable); model-checking a GIVEN
+  term is exact — the Heyting tier.
+end note
+
+legend right
+|= Color |= Stage |
+|<#DBEAFE> | the classical / exact input: a concrete process term t |
+|<#CCFBF1> | LTS / automaton construction (HostTerm + build_lts) |
+|<#FEF3C7> | μ-calculus model check by fixpoint iteration (semi-decidable family, exact on a given LTS) |
+|<#DCFCE7> | the decided predicate (root ∈ ⟦φ⟧) in the behavioral Heyting algebra |
+endlegend
+@enduml

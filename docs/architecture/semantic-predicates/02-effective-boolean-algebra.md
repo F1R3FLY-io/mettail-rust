@@ -247,6 +247,10 @@ minterm alphabet, and equivalence is a product emptiness check — both detailed
 
 ## 5. The concrete instances
 
+![The Effective-Boolean-Algebra leaf instances and their exact decision procedures](figures/02-eba-leaves.svg)
+
+PlantUML source: [figures/02-eba-leaves.puml](figures/02-eba-leaves.puml).
+
 Generalizing the framework "over all data types" is *populating the family of
 EBA instances*, because every algorithm is already written against the trait. The
 shipped instances:
@@ -360,6 +364,283 @@ identical truth-table method; their Coq names are collected in §8. Together the
 establish that the NFA-defined Presburger predicates form a Boolean algebra **purely
 automata-theoretically**, which is what lets `complement`, projection, and equivalence
 be exact over the whole algebra rather than a per-query solver verdict.
+
+### 5.2 The interval instance — `IntervalAlgebra`
+
+The bounded-integer leaf is `IntervalAlgebra` (`prattail/src/symbolic.rs`), the algebra
+the live `SortRegistry::scalars` constructor instantiates for the `Int` sort
+(`r.insert(Sort::Int, AnyAlgebra::Int(IntervalAlgebra::new(int_lo, int_hi)))` in
+`any_algebra.rs`). It is the workhorse for every bounded machine-integer width, all of
+which collapse to `Sort::Int` ([§6](#6-the-uniform-carrier-anyalgebra)).
+
+**Domain.** A configured half-open universe `U = [min_val, max_val)` of `i64` values;
+membership of any `e` outside `U` is *false* by construction (`evaluate` short-circuits
+`e < min_val ∨ e ≥ max_val` to `false` before consulting the ranges).
+
+**Predicate normal form.** A predicate is the syntax `IntervalPred = True | False |
+Range(lo, hi) | Union(ranges) | Not(inner)`; its denotation is a **finite union of
+half-open ranges** clipped to the universe. The function `normalize` maps any predicate
+to the canonical sorted, non-overlapping list of ranges `⟦φ⟧ ⊆ U`: `True ↦ [(min_val,
+max_val)]`, `False ↦ []`, a `Range(lo, hi)` is clipped to `[max(lo, min_val),
+min(hi, max_val))` (dropped if empty), a `Union` is clipped, sorted, and merged
+(`merge_ranges` coalesces overlapping or *adjacent* ranges, since `lo ≤ cur_hi`
+extends the run), and `Not(inner)` is the gap-walk complement within `U`
+(`complement_ranges`).
+
+**The operations as set operations.** With both operands normalized to range lists:
+`and` is interval **intersection** (`intersect_ranges`, the standard merge that emits
+`[max(loₐ, lo_b), min(hiₐ, hi_b))` whenever non-empty), `or` is interval **union**
+(`union_ranges`, concatenate-sort-merge), and `not` is **complement in `U`**
+(`complement_ranges`, walking the gaps between the sorted ranges from `min_val` to
+`max_val`). These compute `⟦φ⟧ ∩ ⟦ψ⟧`, `⟦φ⟧ ∪ ⟦ψ⟧`, and `U ∖ ⟦φ⟧` exactly on unions of
+half-open intervals.
+
+**Decision procedure.** `is_satisfiable(φ)` normalizes and tests the resulting list
+non-empty; `witness(φ)` returns `lo` of the first (smallest) range. Both are read
+directly off the canonical form.
+
+**Complexity.** `normalize` sorts the `k` input ranges in `O(k log k)` and merges in
+`O(k)`; `is_satisfiable` and `witness` are then `O(1)` on the normalized list. So every
+operation is linear (up to the sort) in the number of ranges, independent of `|U|`.
+
+**Lemma 5.5 (`IntervalAlgebra` is exact).** After normalization, `sat(φ) ⟺ ⟦φ⟧ ≠ ∅`,
+and when `sat(φ)` holds, `witness(φ) = lo ∈ ⟦φ⟧` where `lo` is the lower endpoint of the
+first range.
+
+*Proof.* The three range procedures realize the Boolean homomorphism of Proposition 2.2
+on unions of half-open intervals: `intersect_ranges` emits exactly the points common to
+two range lists, so it computes `∩`; `union_ranges` concatenates then merges, so it
+computes `∪`; `complement_ranges` walks the cursor from `min_val` across each range's
+upper endpoint to `max_val`, emitting precisely the uncovered sub-intervals, so it
+computes `U ∖ ·`. Normalization (clip, sort, merge) yields the unique canonical
+representative of `⟦φ⟧`, in which every listed range satisfies `lo < hi` (empty ranges
+are dropped) and distinct ranges are separated by a non-empty gap. Hence the list is
+empty **iff** `⟦φ⟧ = ∅`, which is exactly `is_satisfiable`'s test; this gives
+`sat(φ) ⟺ ⟦φ⟧ ≠ ∅`. When the list is non-empty its first range `[lo, hi)` has
+`lo < hi`, so `lo` is a member of that range and therefore `lo ∈ ⟦φ⟧`; `witness`
+returns this `lo`. `∎`
+
+### 5.3 The character-class instance — `CharClassAlgebra`
+
+`CharClassAlgebra` (`prattail/src/symbolic.rs`) is the `Char`-sort leaf
+(`r.insert(Sort::Char, AnyAlgebra::Char(CharClassAlgebra::new()))`). It is **the
+identical range engine as §5.2, transported to `u32`**: the domain is the Unicode scalar
+universe `['\0', char::MAX]`, predicates `CharClassPred = True | False | Range(lo, hi) |
+Union | Not` denote finite unions of *inclusive* character ranges `[lo, hi]`, and
+`normalize_u32` maps each inclusive `(char, char)` range to the half-open `u32` interval
+`[lo as u32, (hi as u32) + 1)` over the universe `[0, (char::MAX as u32) + 1)`. With
+that single encoding the `and`/`or`/`not` are again interval intersect / union /
+complement-in-universe (`intersect_u32_ranges`, `union_u32_ranges`,
+`complement_u32_ranges`), and `from_u32_ranges` converts each half-open `u32` result
+`[lo, hi)` back to the inclusive character pair `(lo, hi − 1)` (skipping the surrogate
+gap, which `char::from_u32` rejects). Because the half-open `u32` engine is exactly the
+one of §5.2, the exactness of **Lemma 5.5** applies verbatim: `sat(φ) ⟺ ⟦φ⟧ ≠ ∅`, and
+`witness(φ)` is the character at the lower endpoint of the first range. So
+`CharClassAlgebra` decides character classes exactly — `is_satisfiable` reports class
+emptiness and `witness` produces a concrete member character — in `O(k log k)` for `k`
+ranges.
+
+### 5.4 The propositional-test instance — `KatBooleanAlgebra`
+
+`KatBooleanAlgebra` (`prattail/src/symbolic.rs`) is the `Bool`-sort leaf
+(`r.insert(Sort::Bool, AnyAlgebra::Bool(KatBooleanAlgebra::new(bool_atoms)))`); it is the
+bridge to the Kleene-algebra-with-tests (KAT) layer, whose guard syntax is propositional.
+
+**Domain.** Over a finite atom set `{p₁, …, pₙ}` (the algebra's `atoms` field), the
+domain is the `2ⁿ` truth assignments `{0, 1}ⁿ`, represented as
+`HashMap<String, bool>`; an atom absent from an assignment reads as `false`.
+
+**Predicate normal form.** A predicate is a propositional KAT test `BooleanTest = True |
+False | Atom(name) | Not(t) | And(t, t) | Or(t, t)`; its denotation `⟦φ⟧ ⊆ {0, 1}ⁿ` is
+the set of **satisfying valuations**, evaluated atom-by-atom by `eval_test_public`.
+
+**The operations as set operations.** `and`, `or`, `not` wrap the test AST in
+`BooleanTest::And` / `Or` / `Not`; under `⟦·⟧` these are the pointwise `∩`, `∪`, and
+complement on `{0, 1}ⁿ`, because `eval_test_public` interprets the three connectives as
+`&&`, `||`, and `!` at every valuation.
+
+**Decision procedure.** `all_valuations` enumerates the `2ⁿ` assignments (bit `i` of the
+counter sets atom `i`); `is_satisfiable(φ)` returns whether *any* valuation evaluates
+the test true; `witness(φ)` returns the first such valuation. The search is exhaustive,
+hence both sound and complete.
+
+**Complexity.** `O(2ⁿ · |φ|)` time and `O(2ⁿ · n)` space to materialize the valuation
+table — exponential in the atom count, but `n` is small for the KAT bridge (typically
+under ten atoms), so the table is tiny in practice.
+
+**Lemma 5.6 (`KatBooleanAlgebra` is exact).** `sat(φ) ⟺ ∃ valuation v. v ⊨ φ`, decided
+by enumerating all `2ⁿ` valuations, and `witness(φ)` returns the first satisfying `v`.
+
+*Proof.* The domain `{0, 1}ⁿ` is finite with exactly `2ⁿ` elements, and
+`all_valuations` constructs every one of them (the counter ranges over `0 … 2ⁿ − 1`, and
+distinct counters give distinct atom-bit patterns). Evaluation `eval_test_public` is the
+exact denotational reading of the test — `True`/`False` are constants, `Atom(name)` is a
+lookup, and `Not`/`And`/`Or` are `!`/`&&`/`||` — so `v ⊨ φ ⟺ eval_test_public(φ, v) =
+true`. The predicate `is_satisfiable` is the existential over this finite, fully
+enumerated domain, so it is `true` **iff** some `v ⊨ φ`; this is both sound (a reported
+`true` exhibits a witness) and complete (no satisfying valuation is skipped). The
+returned `witness` is the first enumerated `v` with `v ⊨ φ`, which therefore lies in
+`⟦φ⟧`. `∎`
+
+### 5.5 The ordered-field instance — `OrderedFieldAlgebra<P>` (the priority leaf)
+
+`OrderedFieldAlgebra<P>` (`prattail/src/ordered_field.rs`) is the **density-aware
+generalization of §5.2 to an unbounded, point-generic universe**, and the live registry
+instantiates it for *four* scalar sorts at once — `BigInt`, `BigRat`, `Fixed`, and
+`Float` all map to it (`AnyAlgebra::BigInt(OrderedFieldAlgebra::new())`, and likewise
+`BigRat`/`Fixed`/`Float`). It is the priority leaf because it covers the
+arbitrary-precision and approximate numeric domains the calculus actually computes over.
+
+**Domain.** A totally-ordered point type `P` (the `OrderedPoint` trait), instantiated at
+`BigInt` (discrete, arbitrary precision), `BigRational` (dense exact rationals — also the
+carrier for fixed-point decimals, whose value is `unscaled / 10^places`), `OrderedF64`
+(a total order over `f64` via `total_cmp`), and `i128` (discrete, bounded machine
+integer). The universe is the whole of `P`, unbounded in both directions.
+
+**Predicate normal form.** A predicate is a normalized (sorted, disjoint,
+maximally-merged) **finite union of intervals** whose endpoints are `Bound`s — `Bound =
+NegInf | PosInf | Incl(p) | Excl(p)` — so open/closed and `±∞` endpoints are all
+representable; the empty `Vec` is `⊥` and `[(NegInf, PosInf)]` is `⊤`. The denotation
+`⟦φ⟧ ⊆ P` is the union of the points the intervals contain. Normalization
+(`from_intervals`) is **density-aware**: it drops any interval that `witness_in` reports
+empty for `P`, then merges two neighbours when they overlap **or** the gap between them
+contains no point of `P`.
+
+**The operations as set operations.** `and` is interval **intersection** (`intersect`,
+taking the later lower bound and earlier upper bound of each pair via the endpoint
+comparators `cmp_lower` / `cmp_upper`), `or` is interval **union** (`union`, concatenate
+then `from_intervals`), and `not` is **complement** (`complement`, walking the gaps with
+`flip_upper_to_lower` / `flip_lower_to_upper` to turn each covered interval's boundary
+into the adjacent gap's boundary). These realize `∩`, `∪`, and `P ∖ ·` on the
+totally-ordered line of `Bound` endpoints.
+
+**Decision procedure — the single oracle.** Every emptiness, witness, and gap question
+routes through one density-aware method, `OrderedPoint::witness_in(lo, hi)`, which
+returns a representative point of the interval `(lo, hi)` honoring the endpoints'
+inclusivities, or `None` when the interval contains no point of `P`. `is_satisfiable(φ)`
+is `first_witness(φ).is_some()`; `witness(φ)` is `first_witness(φ)`, the first
+`witness_in` success over the normalized intervals. That one method per point type is
+what makes `not` and the merge correct on **both** discrete and dense domains with
+shared code.
+
+**Complexity.** Intersection is `O(m · k)` for `m`, `k` interval counts; union and
+complement are `O((m + k) log(m + k))` (the normalizing sort dominates); each
+`witness_in` is `O(1)` arithmetic (a successor, predecessor, or midpoint) in the point
+type's own cost model (`O(1)` for `i128`/`f64`, bigint-arithmetic-bounded for
+`BigInt`/`BigRational`).
+
+**Theorem 5.7 (`OrderedFieldAlgebra<P>` is a density-aware exact EBA).** `sat(φ) ⟺
+⟦φ⟧ ≠ ∅`, `witness(φ) ∈ ⟦φ⟧`, and `witness_in` decides interval emptiness correctly for
+the density of `P`: over a **discrete** `P` (`BigInt`, `i128`) the open interval
+`(n, n+1)` is **empty**, while over a **dense** `P` (`BigRational`, `OrderedF64`) every
+non-degenerate interval is inhabited.
+
+*Proof.* The `Bound` operations realize `∩`, `∪`, and complement on the totally-ordered
+line: `cmp_lower` / `cmp_upper` order endpoints so that `intersect` keeps the larger
+lower and smaller upper bound (the meet of two intervals), `union` concatenates before
+re-normalizing (the join), and `complement` walks a cursor from `NegInf` across each
+covered interval's upper endpoint (turning it into the adjacent gap's lower bound via
+`flip_upper_to_lower`) and emits every uncovered run up to `PosInf` — the gap below the
+first interval, the gaps between consecutive intervals, and the trailing gap to `PosInf`
+— which is exactly `P ∖ ⟦φ⟧`. Emptiness is delegated to `witness_in`. For a
+**discrete** `P`,
+`witness_in` computes the effective inclusive minimum from the lower bound (`Excl(a) ↦
+a + 1`, `Incl(a) ↦ a`) and the effective inclusive maximum from the upper bound
+(`Excl(b) ↦ b − 1`, `Incl(b) ↦ b`), and returns the minimum **iff** `min ≤ max`; so the
+open interval `(n, n+1)` gives `min = n + 1` and `max = (n + 1) − 1 = n`, whence
+`min = n + 1 > n = max` forces `None` — exactly the empty successor gap. For a **dense**
+`P`, a non-empty open interval `(lo, hi)` with `lo < hi` has the strict midpoint
+`(lo + hi)/2` (rationals) or a next-representable float `lo.next_up()` strictly between
+the endpoints, so `witness_in` returns a member and the interval is inhabited. Since
+`from_intervals` drops every `witness_in`-empty interval, the normalized list is empty
+**iff** `⟦φ⟧ = ∅`, giving `sat(φ) ⟺ ⟦φ⟧ ≠ ∅`; and `first_witness` returns the first
+`witness_in` success, which lies in its interval and hence in `⟦φ⟧`. Both `sat` and
+`witness` are therefore exact, per domain density. `∎`
+
+**Worked example (density changes the answer).** The union `[1,2] ∪ [3,4]` collapses to
+`[1,4]` over `BigInt` — the gap `(2, 3)` has `witness_in(Excl(2), Excl(3)) = None`
+(`min = 3 > 2 = max`), so `from_intervals` merges the two intervals — but stays **split**
+over `BigRational`, because `witness_in(Excl(2), Excl(3))` returns the midpoint
+`5/2 = 2.5` (since `2 < 5/2 < 3`), so the gap is non-empty and the neighbours do not
+merge. The same predicate syntax denotes a single interval over the integers and two
+intervals over the rationals; the oracle, not the interval algebra, carries the density.
+
+### 5.6 The string instance — `StringAlgebra` / `RegexAlgebra<A>`
+
+`StringAlgebra` (`prattail/src/string_algebra.rs`) is the `Str`-sort leaf
+(`r.insert(Sort::Str, AnyAlgebra::Str(StringAlgebra::new()))`); it is the specialization
+`RegexAlgebra<CharClassAlgebra>` (`prattail/src/regex_sfa.rs`) with a `String` domain and
+character-oriented conveniences. The general `RegexAlgebra<A>` is the **list/sequence
+algebra over any element algebra `A`** — the same engine the collection layer uses for
+`List` ([05 §7](05-algebra-pyramid-and-decidability.md)).
+
+**Domain.** Sequences `(A::Domain)*` of elements drawn from the element algebra `A`; for
+`StringAlgebra` the elements are characters, so the domain is `String` (a sequence of
+Unicode scalars).
+
+**Predicate normal form.** A predicate is a **symbolic regular expression** over `A`:
+`RegexPred<P> = Empty | Epsilon | Elem(P) | Length(lo, hi) | Concat | Alt | Star | Inter
+| Compl`, where each character class `Elem(P)` is an element predicate `P = A::Predicate`
+(for strings, a `CharClassPred`). Its denotation `⟦φ⟧` is the regular language it
+defines. The predicate compiles — via a Thompson `ε`-NFA, `ε`-eliminated by closure — to
+a `SymbolicAutomaton<A>` (an SFA, [03](03-symbolic-automata-sfa.md)) whose transitions
+carry element predicates of `A` as guards.
+
+**The operations as set operations.** `and`, `or`, `not` build `RegexPred::Inter`,
+`Alt`, `Compl`; under compilation these are the SFA **intersection**, **union**, and
+**complement** (the `SymbolicAutomaton` closures `intersect` / `union` / `complement`),
+which realize `∩`, `∪`, and `Σ* ∖ ·` on regular languages.
+
+**Decision procedure.** `is_satisfiable(φ)` compiles `φ` and tests SFA non-emptiness
+(`!compile(…).is_empty()`), where `is_empty` is **breadth-first reachability of an
+accepting state through satisfiable guards** (a transition is traversable when its guard
+predicate is satisfiable in `A`). `witness(φ)` is `shortest_accepted`, the shortest
+accepted word, produced by the same BFS materializing one concrete element per traversed
+guard via `A::witness`. `evaluate(φ, xs)` simulates the SFA on the sequence `xs`.
+
+**Complexity.** Compilation is linear in `|φ|` for the regex operators; `Inter` and
+`Compl` invoke SFA product and determinization (worst-case exponential in the automaton
+size for complement, as for classical NFAs), after which emptiness and the
+shortest-word witness are BFS over the product automaton, linear in its states and
+transitions. Exactness holds whenever the element algebra `A` is exact.
+
+**Theorem 5.8 (`RegexAlgebra<A>` is a regular-language EBA).** Regular languages over
+`A` are closed under `∩`, `∪`, and complement, so `RegexAlgebra<A>` is an EBA; `sat(φ)
+⟺ L(φ) ≠ ∅`, decided by SFA emptiness (reachability of an accepting state by BFS), and
+`witness(φ)` is the shortest accepted word; the algebra is exact when `A` is exact.
+
+*Proof.* The Thompson construction realizes the regex operators on the `ε`-NFA: `Empty`
+and `Epsilon` are the one-state automata for `∅` and `{[]}`, `Elem(c)` is the single
+guarded edge, and `Concat`, `Alt`, `Star` are the standard `ε`-linkages; `ε`-closure
+then yields an SFA over `A`. The predicate-labeled SFA closures realize the Boolean
+operators: `Inter` compiles to the guard-conjoined SFA product `sa.intersect(&sb)`
+(computing `∩`), `Compl` compiles to the SFA `complement`, which determinizes over the
+minterm alphabet of [03 §6](03-symbolic-automata-sfa.md) and flips accepting states
+(computing `Σ* ∖ ·`), and `Alt` is the Thompson disjoint-sum of the two `ε`-NFAs, merging
+their initial and accepting sets (computing `∪`); regular languages over an effective
+Boolean algebra are closed under all three
+([D'Antoni & Veanes, 2017](references.md#dantoni-veanes-2017)).
+A language is non-empty **iff** some accepting state is reachable from an initial state
+along satisfiable guards — decidable by the breadth-first search of `is_empty`, since the
+automaton is finite and a guard is traversable exactly when satisfiable in `A`; this is
+`is_satisfiable`. The same search, recording one `A::witness` element per traversed
+guard, returns a shortest accepted word, which is a member of `L(φ)`; this is `witness`.
+Each step appeals to `A`'s own `is_satisfiable` / `witness`, so the construction is exact
+precisely when `A` is. `∎` (For the tree- and word-automaton background, see
+[tata](references.md#tata).)
+
+### 5.7 The carriers and the bridges
+
+The six §5.2–§5.6 leaves are the *scalar* and *sequence* base of the family. The
+**carriers** that close the family under the type constructors — product, sum,
+collection (bag/map/list), tree, and theory combination — are each proved to be an EBA
+in [05 §7](05-algebra-pyramid-and-decidability.md) (Theorems 7.2–7.6), so the SFA/SFT
+algorithms run over them unchanged. The two **bridges** that present a non-numeric
+analysis as a `BooleanAlgebra` — `TypeSystemAlgebra<S>` (refinement-type dispatch,
+`prattail/src/type_system/refinement.rs`) and `DispatchAlgebra` (grammar dispatch
+disambiguation, `prattail/src/predicate_dispatch/mod.rs`) — feed the same SFA machinery
+and are documented with the dispatch analysis they serve in
+[03 §8](03-symbolic-automata-sfa.md).
 
 ## 6. The uniform carrier `AnyAlgebra`
 

@@ -1,0 +1,51 @@
+@startuml
+title The shipped decidable theories, lifted to EBAs via TheoryAlgebra
+
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam interface {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+' ── The three decidable ConstraintTheory implementations ────────────────
+component "PresburgerTheory\nStore: linear ≤ atoms + NFA\nNFA non-emptiness (Bartzis–Bultan)\n(Proposition 1)" as Presburger #DCFCE7
+
+component "UnificationTheory\nStore: solved substitution\nMartelli–Montanari + occurs-check\nwitness = mgu (Theorem 2)" as Unification #DCFCE7
+
+component "LatticeTheory\nStore: edges + Warshall closure\nfinite subtype order (Prop 3)\npreorder; partial join/meet" as Lattice #FEF3C7
+
+' ── The bridge and the EBA target ───────────────────────────────────────
+component "TheoryAlgebra<T>\nthe bridge (section 2)" as Bridge #E0E7FF
+
+interface "BooleanAlgebra\nSFA, minterms, lint reuse" as BA #DBEAFE
+
+Presburger --> Bridge
+Unification --> Bridge
+Lattice --> Bridge
+Bridge --> BA : lifts theory store into an EBA
+
+note bottom of Bridge
+  exact: Some/None, never DontKnow; Z3Theory (2.1) is the deliberate
+  semi-decidable exception that stops at Sat3.
+end note
+
+legend right
+|= Color |= Group |
+|<#DCFCE7> | decidable theory (exact, regular) |
+|<#FEF3C7> | reject-safe (preorder; partial join/meet) |
+|<#E0E7FF> | bridge / formal (TheoryAlgebra) |
+|<#DBEAFE> | classical EBA target (BooleanAlgebra) |
+endlegend
+@enduml

@@ -1,0 +1,46 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam object {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #4338CA
+  FontColor #111827
+}
+
+title Modal μ-calculus syntax: the νX binder and its positive bound variable
+
+' ── The abstract syntax tree of  ag φ = νX.(φ ∧ [-]X) ───────────────────────
+' Root is the fixpoint binder; the body is a conjunction of a state
+' proposition φ and a box modality whose operand is the bound variable X.
+object "νX  (fixpoint binder)" as Binder #FEF3C7
+object "∧  (conjunction)" as And
+object "φ  (state proposition)" as Phi
+object "[-]  (box modality)" as Box
+object "X  (bound fixpoint variable)" as XVar #DCFCE7
+
+' parse-tree edges (parent --> child)
+Binder --> And
+And --> Phi
+And --> Box
+Box --> XVar
+
+' ── The binding back-edge: the leaf X refers to the enclosing νX binder ──────
+XVar ..> Binder : bound; positive occurrence (even ¬-depth) ⟹ Φ monotone (Lemma 3.3)
+
+note right of And #E0E7FF
+  a fixpoint variable ranges over state-sets (2^S),
+  a separate namespace from relational variables.
+end note
+
+legend right
+|= Color |= Role |
+|<#FEF3C7> | the νX greatest-fixpoint binder (least/greatest fixpoint head) |
+|<#DCFCE7> | the bound fixpoint variable leaf X (recurs into the binder) |
+|<#E0E7FF> | annotation / scoping law |
+endlegend
+@enduml

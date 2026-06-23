@@ -1,0 +1,54 @@
+@startuml
+title The reject-safe / Heyting implementations in the tower
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam package {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+package "RejectSafeAlgebra (weakest)" as RSA #FEF3C7 {
+
+  rectangle "RejectSafeProduct<S, B>\nasymmetric De Morgan (Theorem 6.1)" as RSProduct #FEF3C7
+  rectangle "TriAlg (test)\nUnknown = DontKnow region (Props 3.2–3.4)" as TriAlg #FEF3C7
+
+  package "HeytingAlgebra" as HA #FEF3C7 {
+
+    rectangle "BehavioralAlgebra<H>\nmodal/relational, semi-decidable (section 4)" as Behavioral #FEF3C7
+    rectangle "Chain3 (test)\nnon-Boolean witness ¬¬M = ⊤ ≠ M (Prop 2.13)" as Chain3 #FEF3C7
+
+    rectangle "Classical<A>\nlift: regularize = id, pseudo_complement = not\n(Proposition 6.4)" as Classical #DCFCE7
+
+    package "BooleanAlgebra (classical core)" as BA #DBEAFE {
+      rectangle "the 17 EBA leaves + carriers\n(Interval, OrderedField, Regex, Product, Tree, …)" as Leaves #DBEAFE
+    }
+  }
+}
+
+' Classical<A> bridges the classical core up into the Heyting layer
+Leaves --> Classical : lifts a BooleanAlgebra
+Classical --> HA : provides →, ¬¬
+
+note bottom of RSA
+  compile_fail doctest: a Heyting-only type is never a BooleanAlgebra
+  ⟹ exact complement/determinize statically unavailable.
+end note
+
+legend right
+|= Color |= Tier |
+|<#FEF3C7> | reject-safe / Heyting (semi-decidable) |
+|<#DCFCE7> | classical-lift bridge (Classical<A>) |
+|<#DBEAFE> | classical core (BooleanAlgebra) |
+endlegend
+@enduml

@@ -57,7 +57,8 @@ For implementers:
 10. [Heyting Behavioral Logic](12-heyting-behavioral-logic.md)
 11. [Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md)
 12. [Quantification](14-quantification.md)
-13. [Worked Example](11-worked-example.md)
+13. [Modal μ-Calculus](15-mu-calculus.md)
+14. [Worked Example](11-worked-example.md)
 
 For reviewers checking claims:
 
@@ -104,6 +105,7 @@ Use these questions while reading:
 | [12 - Heyting Behavioral Logic](12-heyting-behavioral-logic.md) | Why is intuitionistic / Heyting logic the correct home for semi-decidable behavioral guards, how does bisimulation make them well-defined, and how does it complete Boolean and align with OSLF? |
 | [13 - Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md) | How does the backtracking logic monad evaluate quantified predicates, adapt a domain solver into an effective Boolean algebra, and combine theories? |
 | [14 - Quantification](14-quantification.md) | How are `∃`/`∀` modeled — the three realizations (relational enumeration, modal `⋂`/`⋃`, bounded EBA occupancy atom), the `∀≡¬∃¬` duality, the domain model and lowering, and when is a quantifier exactly decidable versus semi-decidable? |
+| [15 - Modal μ-Calculus](15-mu-calculus.md) | What is the modal/temporal fixpoint logic of the behavioral Heyting algebra — its syntax, the Knaster–Tarski fixpoint semantics, how a process is concretized as an LTS to be predicated against, the model-checking algorithm, and the CTL encoding? |
 | [References](references.md) | Which papers, DOIs, source files, and proofs support the suite? |
 
 ## Architecture at a Glance
@@ -126,6 +128,8 @@ each concept and *naming the actors* after the real components:
 | algebra tower | **class/inheritance diagram** + a **Hasse lattice** | the tower is a trait refinement; the strength order is a lattice |
 | closure family | **component tree** | each closure constructor is itself an algebra over sub-algebras |
 | quantification | **side-by-side component diagram** (three realizations) + a **De Morgan square** + a **lowering dataflow** + a **domain-to-tier mapping** | `∀`/`∃` is modeled three ways; the duality is a square; lowering is a hop-by-hop dataflow; decidability is a mapping from domain form to tier |
+| modal μ-calculus | a **Hasse fixpoint-iteration** (Kleene ascent/descent) + a **CTL→μ encoding** grouping + a **syntax tree** + a **process-to-LTS dataflow** | a fixpoint converges along a chain; CTL splits into liveness-`μ` / safety-`ν`; a binder's bound variable is a tree back-edge; concretizing a process is a hop-by-hop dataflow |
+| algebra implementations | a **leaf component catalog** + a **tower containment** + a **theory-to-EBA dataflow** | each EBA leaf is a component tagged by decision procedure; the Heyting tier is a containment with the implementations placed; the decidable theories feed a bridge |
 | end-to-end integration | **sequence diagram** with actors = `language!` author · macro · prattail `PredicateParser` · substrate · Rho backend · flip gate | the integration is a temporal handoff across named components |
 | runtime COMM enforcement | **sequence diagram** (process · RSpace · native-join handler · continuation) | enforcement is a runtime interaction; the figure shows *where* each predicate class is gated |
 | OSLF composition | **two-lane activity diagram** (logic axis and resource axis converging on a guarded COMM) | two independent decisions converge on one COMM-fires verdict |

@@ -1,0 +1,62 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam object {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #4338CA
+  FontColor #111827
+}
+
+title Knaster–Tarski: μ from below (∅), ν from above (S)
+
+' ══════════════════════════════════════════════════════════════════════════════
+' LEFT CHAIN — Kleene ASCENT to the LEAST fixpoint μΦ.
+' Drawn bottom-to-top with plain -- edges (no arrowheads): the order ⊆ grows
+' UPWARD, so ∅ sits at the bottom and the limit μΦ at the top.
+' ══════════════════════════════════════════════════════════════════════════════
+object "μΦ  (least fixpoint)" as MuTop #DCFCE7
+object "…" as MuDots #FEF3C7
+object "Φ²(∅)" as Mu2 #FEF3C7
+object "Φ(∅)" as Mu1 #FEF3C7
+object "∅  (bottom)" as MuBot #FEF3C7
+
+' ascent: each application adds states; ∅ ⊆ Φ(∅) ⊆ Φ²(∅) ⊆ … ⊆ μΦ
+MuBot -- Mu1
+Mu1 -- Mu2
+Mu2 -- MuDots
+MuDots -- MuTop
+
+' ══════════════════════════════════════════════════════════════════════════════
+' RIGHT CHAIN — Kleene DESCENT to the GREATEST fixpoint νΦ.
+' Drawn top-to-bottom: S (all states) sits at the TOP and the limit νΦ at the
+' bottom, because the iterates SHRINK: S ⊇ Φ(S) ⊇ Φ²(S) ⊇ … ⊇ νΦ.
+' ══════════════════════════════════════════════════════════════════════════════
+object "S = all states  (top)" as NuTop #FEF3C7
+object "Φ(S)" as Nu1 #FEF3C7
+object "Φ²(S)" as Nu2 #FEF3C7
+object " … " as NuDots #FEF3C7
+object "νΦ  (greatest fixpoint)" as NuBot #DCFCE7
+
+' descent: each application removes states; the order ⊇ grows DOWNWARD here
+NuTop -- Nu1
+Nu1 -- Nu2
+Nu2 -- NuDots
+NuDots -- NuBot
+
+note bottom of MuBot #E0E7FF
+  monotone Φ on the finite powerset lattice (2^S, ⊆); stabilizes in ≤ |S| steps
+  (Lemma 3.7) — the for _ in 0..=states.len() loop, stop at next == cur.
+end note
+
+legend right
+|= Color |= Meaning |
+|<#FEF3C7> | still iterating (approximant; not yet a fixed point) |
+|<#DCFCE7> | fixed point reached (μΦ at the top of the ascent, νΦ at the bottom of the descent) |
+|<#E0E7FF> | law / annotation (lattice + termination) |
+endlegend
+@enduml

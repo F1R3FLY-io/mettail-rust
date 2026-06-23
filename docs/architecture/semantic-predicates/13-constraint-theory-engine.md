@@ -140,6 +140,176 @@ build computes the same judgement without Z3). `GuardTierCertificate` classifies
 Z3-decided guard at tier `T3`, degrading to `T4` on an `unknown`
 ([05 §6](05-algebra-pyramid-and-decidability.md)).
 
+### 2.2 The shipped decidable theories
+
+![The three shipped decidable theories, lifted to EBAs via the TheoryAlgebra bridge](figures/13-theory-catalog.svg)
+
+PlantUML source: [figures/13-theory-catalog.puml](figures/13-theory-catalog.puml).
+
+Where §2.1 is the one backend held *back* from the bridge, this subsection is its
+positive counterpart: the **three shipped, unconditionally compiled
+`ConstraintTheory` implementations** that *do* pass through the `TheoryAlgebra<T>`
+bridge of §2 and become full `BooleanAlgebra`s — `PresburgerTheory`,
+`UnificationTheory`, and `LatticeTheory`. All three live in the compile-time
+analysis pipeline (selected by the predicate-dispatch plan), all three are **exact**
+— each judgement is a definite `Some`/`None`, never a `DontKnow` — and all three are
+*decidable*, so each returns `LogicStream::empty()` from `label`: propagation alone
+settles satisfiability and the `search_bound` of the bridge is never consulted. That
+each becomes a `BooleanAlgebra` via `TheoryAlgebra<T>` is the bridge of §2, stated and
+proved as [05 Theorem 7.6](05-algebra-pyramid-and-decidability.md) (`combined_eba_laws`);
+the present subsection does **not** re-prove the bridge — it establishes only that each
+theory's own propagation is a *decision procedure* for its domain, which is exactly the
+decidability hypothesis the bridge consumes.
+
+#### 2.2.1 `PresburgerTheory` — linear integer arithmetic by a remainder automaton
+
+`PresburgerTheory` (`prattail/src/presburger.rs`) decides quantifier-free linear
+integer arithmetic. Its `Constraint` is a **`LinearConstraint`** — a single linear
+inequality `Σ aᵢ·xᵢ ≤ b` carried as a coefficient list `[(i, aᵢ)]` with a right-hand
+constant `b`. Its `Store` is the **conjunction** of all atoms propagated so far,
+together with a cached decision **NFA** over the alphabet `{0,1}ᵏ` (one bit per
+variable per position, read least-significant-bit-first). `propagate(store, c)`
+appends the atom `c`, raises the store's variable count `k` to cover any new index,
+and **rebuilds** the NFA as the intersection of the per-constraint automata
+(`intersect_nfa`), returning `None` exactly when that intersection recognizes the
+empty language. `witness(store)` is the **shortest accepting path** of the cached NFA,
+found by breadth-first search and decoded LSB-first into a tuple of non-negative
+integers; `is_consistent` is NFA non-emptiness; and `label` is empty.
+
+**Proposition 1 (the Presburger store decides bounded-window satisfiability).** Fix a
+bit width `w` (default `w = 16`). The store's NFA recognizes exactly the integer
+tuples in the bounded window `{0, …, 2ʷ − 1}ᵏ` that satisfy the accumulated
+conjunction `⋀ⱼ (Σᵢ aᵢⱼ·xᵢ ≤ bⱼ)`. Consequently `is_consistent(store)` holds iff the
+NFA is non-empty, and `witness(store)` decodes an accepting path into a satisfying
+tuple of that window.
+
+*Proof.* Consider first a single atom `Σᵢ aᵢ·xᵢ ≤ b`. The Bartzis–Bultan **remainder
+automaton** has states `(position, remainder)`: it begins at `(0, b)`, and on reading
+the position-`j` bit vector `(d₁, …, dₖ) ∈ {0,1}ᵏ` it moves
+`remainder ↦ ⌊(remainder − Σᵢ aᵢ·dᵢ) / 2⌋` (floored division, the carry computation),
+advancing the position by one. A run of `w` steps consumes the LSB-first binary
+encodings of `x₁, …, xₖ ∈ {0, …, 2ʷ − 1}`, and the standard place-value identity for
+the running remainder gives `remainder_after_w = b − Σᵢ aᵢ·xᵢ`; the automaton accepts
+iff this final remainder is `≥ 0`, which is precisely `Σᵢ aᵢ·xᵢ ≤ b`. So the
+single-atom NFA recognizes exactly the window tuples satisfying that atom. For the
+conjunction, NFA **intersection** recognizes the intersection of the per-atom
+languages, which is the set of tuples satisfying every atom at once — the conjunction.
+Non-emptiness is reachability of an accepting state in a finite automaton, decided by
+the breadth-first search of `is_nonempty`; when it succeeds, the BFS already records a
+shortest accepting path, whose LSB-first digit decode is a concrete window tuple, sound
+by the same place-value identity. ∎
+
+The honest caveat is that this decider is sound and complete only over the bounded
+**unsigned** window `{0, …, 2ʷ − 1}ᵏ`; it is not the unbounded decision procedure for
+`⟨ℤ, +, ≤⟩`. **Full ℤ decidability is the classical backing**: Presburger's original
+quantifier-elimination result ([Presburger, 1929](references.md#presburger-1929)) and
+the automata-theoretic method that mechanizes it
+([Büchi, 1960](references.md#buchi-1960); [Bartzis & Bultan, 2003](references.md#bartzis-bultan-2003)).
+The mechanized Boolean fragment of this theory is treated in
+[02 §5.1](02-effective-boolean-algebra.md) (`PresburgerBooleanAlgebra.v`).
+
+#### 2.2.2 `UnificationTheory` — first-order unification by Martelli–Montanari
+
+`UnificationTheory` (`prattail/src/unification.rs`) decides first-order syntactic
+unifiability. Its `Constraint` is a **`UnificationEquation`** — a term equation
+`s ≐ t` over the free first-order term algebra `Var(x) | Const(c) | App{head, args}`.
+Its `Store` holds a **solved substitution** `σ` together with a queue of
+not-yet-decomposed equations. `propagate(store, eq)` runs the **Martelli–Montanari**
+algorithm `unify` over `σ` and all queued equations plus `eq`, returning
+`Some(solved store)` on success and `None` on failure. `witness(store)` returns the
+solved substitution — the most general unifier (mgu) — once the equation queue is
+empty;
+`is_consistent` re-runs `unify` to confirm solvability; and `label` is **unconditionally
+empty** — propagation alone is the decision procedure, with no labeling search. The
+algorithm dispatches on the two oriented sides via six rules:
+
+| Rule | Trigger | Action |
+|---|---|---|
+| **delete** | `Var(x) ≐ Var(x)`, or `Const(c) ≐ Const(c)` | discard the trivial equation |
+| **decompose** | `App{f, args₁} ≐ App{f, args₂}` with `\|args₁\| = \|args₂\|` | equate corresponding arguments pairwise |
+| **eliminate** | `Var(x) ≐ t` (or oriented `t ≐ Var(x)`) with `x ∉ t` | bind `x ↦ t` and back-substitute into `σ` |
+| **conflict (head)** | `App{f, …} ≐ App{g, …}`, `f ≠ g` | fail (`None`) |
+| **conflict (arity)** | same head, `\|args₁\| ≠ \|args₂\|` | fail (`None`) |
+| **conflict (const / kind)** | `Const(a) ≐ Const(b)`, `a ≠ b`; or `Const ≐ App` | fail (`None`) |
+| **occurs-check** | `Var(x) ≐ t`, `x ∈ t`, `t ≠ Var(x)` | fail (`None`) |
+
+**Theorem 2 (`UnificationTheory` decides unifiability and returns the mgu).** For any
+finite set of equations, `propagate` yields `Some` iff the set is unifiable, and on
+success `witness` is a most general unifier — unique up to renaming of variables.
+
+*Proof.* Each rule preserves the solution set: **delete** removes an equation every
+substitution already satisfies; **decompose** rests on the freeness of the term
+algebra (`f(u̅) = f(v̅) ⟺ u̅ = v̅`); **eliminate** replaces `Var(x) ≐ t` by the binding
+`x ↦ t`, whose solutions are exactly the solutions of the original equation that also
+respect that binding. Hence the solution set is an invariant of `unify`. Termination
+follows from the well-founded measure `(number of unsolved variables, total term
+size)`, ordered lexicographically: **eliminate** strictly drops the unsolved-variable
+count (one variable becomes bound everywhere), and **decompose**/**delete** keep that
+count fixed while strictly shrinking total term size; the **conflict** and
+**occurs-check** rules halt immediately. The **occurs-check** rejects `x ≐ f(x)` and
+its nested forms, so the produced substitution is a finite acyclic map — no infinite
+rational trees. A halt via any conflict or the occurs-check witnesses that no unifier
+exists (the offending equation has empty solution set), so `None` is returned exactly
+when the set is non-unifiable. When `unify` empties the queue, the resulting `σ` is in
+solved form `{x₁ ↦ t₁, …, xₙ ↦ tₙ}` with each `xᵢ` absent from every `tⱼ`; this is the
+most general unifier, since any unifier factors through it, and the mgu is unique up to
+a renaming of variables. ∎
+
+This is exactly Robinson's unification theorem realized by the efficient
+rule-based presentation ([Robinson, 1965](references.md#robinson-1965);
+[Martelli & Montanari, 1982](references.md#martelli-montanari-1982)). There is **no
+custom-match or search branch** in this theory: `label` returns
+`LogicStream::empty()` unconditionally, so the fair search of §1 is never engaged on
+its behalf.
+
+#### 2.2.3 `LatticeTheory` — the finite subtype order by transitive closure
+
+`LatticeTheory` (`prattail/src/lattice_theory.rs`) decides a finite subtype order. Its
+`Constraint` is a **`SubtypeConstraint`** — an order edge `sub ≤ sup` over a finite
+universe of `TypeId`s. Its `Store` holds the direct edges, their
+**reflexive-transitive closure**, least-upper-bound / greatest-lower-bound caches, and
+the list of detected cycles. `propagate(store, c)` inserts the edge `c` and recomputes
+the closure by **Warshall's algorithm** in `O(n³)` over `n = |universe|`; it **always
+returns `Some`**, because a cycle `a ≤ b ≤ a` is read as a type *equivalence*, never as
+a contradiction. Accordingly `is_consistent` is always `true`; `witness` returns the
+**identity assignment** mapping each universe index to its own `TypeId`; and `label` is
+empty. Order queries are answered by `is_subtype(a, b)` against the closure, and
+`join`/`meet` against the LUB/GLB caches.
+
+**Proposition 3 (the lattice store decides the finite subtype order).** Over a finite
+universe, the store's closure is exactly the reflexive-transitive closure of the
+declared edges; `is_subtype(a, b)` holds iff `(a, b)` is in that closure; and
+`join(a, b)` / `meet(a, b)` are the least upper bound / greatest lower bound of `a` and
+`b` whenever such bounds exist in the universe.
+
+*Proof.* Warshall's algorithm computes the transitive closure of a finite binary
+relation: after seeding the closure with the direct edges and the reflexive pairs
+`(t, t)` for every `t` in the universe, the triple loop adds `(i, j)` whenever `(i, k)`
+and `(k, j)` are present for some intermediate `k`, and on termination the closure is
+closed under reflexivity and transitivity and contains no spurious pair — exactly the
+reflexive-transitive closure. Each order query `is_subtype(a, b)` is then a membership
+test `(a, b) ∈ closure` (with `a = b` short-circuiting by reflexivity), so it is decided
+by a single lookup. For `join(a, b)`, the procedure enumerates the finite set of common
+upper bounds `{ c : (a, c) ∈ closure ∧ (b, c) ∈ closure }` and selects a least element —
+one below every other common upper bound under the closure; `meet(a, b)` is the order
+dual over common lower bounds. Both are finite minimizations/maximizations, returning a
+result exactly when the corresponding bound set is non-empty and has an extremum. ∎
+
+Three honest caveats. The structure is a finite **preorder**, not a partial order:
+antisymmetry is deliberately not enforced, so a declared cycle collapses into an
+equivalence class and `is_consistent` is therefore always `true`. The `join`/`meet`
+operations are **partial** — they return `None` when no common upper/lower bound exists
+(the universe need carry no top or bottom). And the trait's store-free `evaluate`
+certifies only reflexivity (`sub = sup`), returning `false` for any non-reflexive pair
+because it has no closure in hand; the genuine order test is `is_subtype` against the
+store's closure, not `evaluate`. The construction follows the standard transitive-closure
+and subtyping treatments ([Warshall, 1962](references.md#warshall-1962);
+[Pierce, 2002](references.md#pierce-tapl-2002), ch. 15).
+
+All three theories reach the SFA/minterm machinery of [03](03-symbolic-automata-sfa.md)
+through the `TheoryAlgebra<T>` bridge of §2; `Z3Theory` (§2.1) is the deliberate
+semi-decidable exception that never crosses the bridge and stops at `Sat3`.
+
 ## 3. Quantified-predicate evaluation
 
 A `∀x ∈ dom. φ` or `∃x ∈ dom. φ` guard ([06 §2.3.1](06-guard-syntax-and-extensions.md))

@@ -449,7 +449,11 @@ from `world.term` (Definition 4.1) and computes `⟦φ⟧` by structural recursi
 `μX.φ` iterates from `∅` upward and `νX.φ` from the all-states set downward until the
 state set stabilizes — convergence is guaranteed in at most `|states| + 1` rounds
 because each operator is monotone over the finite lattice of state subsets. The
-verdict is "root index `0 ∈ ⟦φ⟧`."
+verdict is "root index `0 ∈ ⟦φ⟧`." The fixpoint metatheory this relies on — that those
+least/greatest fixpoints exist (Knaster–Tarski), that the iteration converges in
+`≤ |states| + 1` rounds, that the model check is exact, and that the CTL operators of
+Definition 4.4 mean what their names claim — is developed and proved in
+[15 — The Modal μ-Calculus](15-mu-calculus.md).
 
 **Definition 4.6 (three-valued satisfiability).** `is_satisfiable_3v(φ) → Sat3`
 returns one of `Sat`, `Unsat`, `DontKnow`. For any *modal* `φ` it returns `DontKnow`
@@ -805,6 +809,56 @@ The reading: `Reg` (T1/T2) is the exact Boolean core; `Boundary` (T3) is the
 refutable/trusted class. Combining a Boolean leg with a Heyting leg yields the weaker
 (Heyting) guarantee: *a product is exactly as classical as its **most** behavioral
 component.*
+
+### 6.2 The reject-safe / Heyting implementations catalog
+
+![The reject-safe / Heyting implementations placed in the algebra tower](figures/12-tower-implementations.svg)
+
+PlantUML source: [figures/12-tower-implementations.puml](figures/12-tower-implementations.puml).
+
+The tower is not abstract: every tier is inhabited by a concrete Rust implementation,
+all in `prattail/src/algebra_tower.rs` (the behavioral leg in
+`prattail/src/behavioral_algebra.rs`). The catalog below is the at-a-glance map. The
+**negation semantics** column names *which* complement each implementation carries —
+the single fact that determines its tier — and the **stated-and-proved in** column
+points at the result of this document that establishes it (each already proved above;
+nothing here is re-proved except the new `Classical<A>` Proposition that follows).
+
+| Implementation | File | Tier | Negation semantics | Stated-and-proved in |
+|---|---|---|---|---|
+| `Classical<A>` | `algebra_tower.rs` | `HeytingAlgebra` + `RejectSafeAlgebra` | involutive / exact: `pseudo_complement = ¬_A`, `regularize = id` | **Proposition 6.4 below** |
+| `BehavioralAlgebra<H>` | `behavioral_algebra.rs` | `HeytingAlgebra` (**not** `BooleanAlgebra`) | three-valued reject-safe: `is_satisfiable_3v` returns `DontKnow` for modal formulas | §4 (Definitions 4.1–4.7; the three concretization mechanisms of §4.2) |
+| `RejectSafeProduct<S, B>` | `algebra_tower.rs` | `RejectSafeAlgebra` only | asymmetric De Morgan `¬(a ∧ b) = (¬a ∧ ⊤) ∨ (⊤ ∧ ¬b)` | Theorem 6.1 (the `compile_fail` doctest enforces it is **not** a `BooleanAlgebra`) |
+| `Chain3` (test model) | `algebra_tower.rs` | `HeytingAlgebra`, provably not Boolean | relative pseudo-complement on the chain `⊥ < M < ⊤`; `¬¬M = ⊤ ≠ M` | Proposition 2.13 |
+| `TriAlg` (test model) | `algebra_tower.rs` | `RejectSafeAlgebra` only | three-valued; `pseudo_complement(Unknown) = Unknown` (the `Sat3::DontKnow` region) | Propositions 3.2–3.4 (its mechanized analogue is `TriModel`) |
+
+The first three are the **production** algebras (the classical leg, the behavioral leg,
+and their mixed product); the last two are **minimal test witnesses** that the
+middle and lowest tiers are genuinely larger than Boolean. The one result the catalog
+adds is the soundness of the base edge — that the classical lift sits faithfully inside
+both interfaces at once.
+
+**Proposition 6.4 (`Classical<A>` is a faithful classical lift).** For any Boolean
+algebra `A`, the lift `Classical<A>` satisfies the `HeytingAlgebra` and
+`RejectSafeAlgebra` laws with every element regular (`regularize` is the identity),
+`pseudo_complement = ¬_A` (the genuine involutive complement), `implies(a, b) = ¬a ∨ b`,
+and `is_satisfiable_3v` never returns `DontKnow`.
+
+*Proof.* In a Boolean algebra every element is regular — `¬¬a = a` (the classical
+double-negation law, §2.1 / `EffectiveBooleanAlgebra.v` `double_neg`) — so
+`regularize = id` is sound and the regular sublattice is all of `A`. The relative
+pseudo-complement `a → b = ¬a ∨ b` is the Heyting implication on a Boolean algebra (it
+satisfies the adjunction because `c ∧ a ≤ b ⟺ c ≤ ¬a ∨ b` classically), and excluded
+middle `a ∨ ¬a = ⊤` holds. Reject-safe soundness holds because the classical complement
+is reject-safe — a classical EBA satisfies the weaker reject-safe contract
+(Proposition 6.2, `eba_implies_reject_safe`). Finally `A`'s satisfiability is decidable,
+so `is_satisfiable_3v = Sat3::from_decidable(sat)` yields only `Sat` / `Unsat`, never
+`DontKnow`. `∎`
+
+The test model `TriAlg` (`algebra_tower.rs`) is the Rust mirror of the `TriModel` of
+§3.3 — a one-point reject-safe algebra whose `Unknown` realizes the `Sat3::DontKnow`
+region; it and `Chain3` are the minimal witnesses that the middle / lowest tiers are
+strictly larger than Boolean.
 
 ## 7. The OSLF affinity
 

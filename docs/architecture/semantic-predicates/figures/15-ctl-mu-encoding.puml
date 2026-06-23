@@ -1,0 +1,55 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam object {
+  BorderColor #1F2937
+  FontColor #111827
+  AttributeFontColor #111827
+}
+skinparam note {
+  BorderColor #4338CA
+  FontColor #111827
+}
+
+title CTL is sugar over the modal μ-calculus
+
+' ── Group A: the LEAST-fixpoint (μ) operators — eventualities / liveness ─────
+' Each is the smallest state-set closed under "reach now, or step toward it".
+object "least fixpoint μ — liveness" as MU #FEF3C7 {
+  ef φ = μX.(φ ∨ ⟨-⟩X)
+  af φ = μX.(φ ∨ ([-]X ∧ ⟨-⟩⊤))
+  eu(φ,ψ) = μX.(ψ ∨ (φ ∧ ⟨-⟩X))
+  au(φ,ψ) = μX.(ψ ∨ (φ ∧ [-]X ∧ ⟨-⟩⊤))
+}
+
+' ── Group B: the GREATEST-fixpoint (ν) operators — invariants / safety ──────
+' Each is the largest state-set that re-establishes φ along every (or some) path.
+object "greatest fixpoint ν — safety" as NU #DCFCE7 {
+  ag φ = νX.(φ ∧ [-]X)
+  eg φ = νX.(φ ∧ (⟨-⟩X ∨ [-]⊥))
+}
+
+' ── Group C: the modal base — one-step box / diamond, no recursion ───────────
+object "modal base" as MODAL #E0E7FF {
+  ax φ = [-]φ
+  ex φ = ⟨-⟩φ
+}
+
+' The recursive operators are built from the one-step modalities.
+MU ..> MODAL : ⟨-⟩ / [-] one-step base
+NU ..> MODAL : ⟨-⟩ / [-] one-step base
+
+note bottom of MU #4338CA
+  branching-time only; linear-time fairness GF p routes to the Büchi engine
+  (crate::buchi).
+end note
+
+legend right
+|= Color |= Fixpoint / tier |
+|<#FEF3C7> | least fixpoint μ — liveness / eventuality (semi-decidable flavour) |
+|<#DCFCE7> | greatest fixpoint ν — safety / invariant (converges from above) |
+|<#E0E7FF> | modal base — the [-] / ⟨-⟩ one-step modalities (law layer) |
+endlegend
+@enduml

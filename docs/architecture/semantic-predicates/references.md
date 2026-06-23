@@ -156,6 +156,89 @@ Programming.* Scheme and Functional Programming Workshop, 2013. The minimal
 relational-programming core in the lineage of the constraint-theory search. (No
 resolvable DOI; cited by venue.)
 
+## Temporal logic and the modal μ-calculus
+
+Ground the modal/temporal fixpoint logic of the behavioral Heyting algebra
+([15 — The Modal μ-Calculus](15-mu-calculus.md)).
+
+### kozen-1983
+
+D. Kozen. *Results on the Propositional μ-Calculus.* Theoretical Computer Science
+27(3), 1983, pp. 333–354. The propositional modal μ-calculus: syntax with least (`μX`)
+and greatest (`νX`) fixpoint binders over the modalities, its fixpoint semantics, and
+axiomatization.
+DOI: [10.1016/0304-3975(82)90125-6](https://doi.org/10.1016/0304-3975%2882%2990125-6).
+
+### tarski-1955
+
+A. Tarski. *A Lattice-Theoretical Fixpoint Theorem and Its Applications.* Pacific
+Journal of Mathematics 5(2), 1955, pp. 285–309. The Knaster–Tarski theorem: a monotone
+map on a complete lattice has a least and a greatest fixpoint — the existence guarantee
+behind `μX`/`νX`.
+DOI: [10.2140/pjm.1955.5.285](https://doi.org/10.2140/pjm.1955.5.285).
+
+### emerson-clarke-1980
+
+E. A. Emerson and E. M. Clarke. *Characterizing Correctness Properties of Parallel
+Programs Using Fixpoints.* International Colloquium on Automata, Languages and
+Programming (ICALP) 1980, LNCS 85, pp. 169–181. The fixpoint characterization of
+branching-time (CTL) temporal properties — the basis of the CTL-to-μ encoding. (The
+linear-time alternation-free model-checking refinement is E. A. Emerson and C.-L. Lei,
+*Efficient Model Checking in Fragments of the Propositional μ-Calculus,* LICS 1986,
+pp. 267–278; cited by venue.)
+DOI: [10.1007/3-540-10003-2_69](https://doi.org/10.1007/3-540-10003-2_69).
+
+### bradfield-stirling-2001
+
+J. Bradfield and C. Stirling. *Modal Logics and mu-Calculi: An Introduction.* Handbook
+of Process Algebra, Elsevier, 2001, pp. 293–330. The standard survey of the modal
+μ-calculus, its expressiveness, and model checking.
+DOI: [10.1016/b978-044482830-9/50022-9](https://doi.org/10.1016/b978-044482830-9/50022-9).
+
+## Decision procedures: arithmetic, unification, order
+
+Ground the shipped decidable constraint theories cataloged in
+[13 §2.2](13-constraint-theory-engine.md) and the leaf-algebra decision procedures
+of [02 §5](02-effective-boolean-algebra.md). (The Büchi / Bartzis–Bultan
+automata constructions for Presburger arithmetic are cited above under
+[buchi-1960](#buchi-1960) and [bartzis-bultan-2003](#bartzis-bultan-2003).)
+
+### presburger-1929
+
+M. Presburger. *Über die Vollständigkeit eines gewissen Systems der Arithmetik ganzer
+Zahlen, in welchem die Addition als einzige Operation hervortritt.* Comptes Rendus du I
+Congrès de Mathématiciens des Pays Slaves, Warsaw, 1929, pp. 92–101. The decidability of
+the first-order theory of `⟨ℤ, +, ≤⟩` — the classical backing for the `PresburgerTheory`
+decision procedure. (English translation by Stansifer, 1984; cited by venue.)
+
+### robinson-1965
+
+J. A. Robinson. *A Machine-Oriented Logic Based on the Resolution Principle.* Journal of
+the ACM 12(1), 1965, pp. 23–41. The existence and computability of the most general
+unifier of a set of term equations.
+DOI: [10.1145/321250.321253](https://doi.org/10.1145/321250.321253).
+
+### martelli-montanari-1982
+
+A. Martelli and U. Montanari. *An Efficient Unification Algorithm.* ACM Transactions on
+Programming Languages and Systems 4(2), 1982, pp. 258–282. The transformation system
+(delete / decompose / eliminate-with-occurs-check / conflict) that `UnificationTheory`
+implements.
+DOI: [10.1145/357162.357169](https://doi.org/10.1145/357162.357169).
+
+### warshall-1962
+
+S. Warshall. *A Theorem on Boolean Matrices.* Journal of the ACM 9(1), 1962, pp. 11–12.
+The `O(n³)` transitive-closure algorithm that `LatticeTheory` uses to decide the finite
+subtype order.
+DOI: [10.1145/321105.321107](https://doi.org/10.1145/321105.321107).
+
+### pierce-tapl-2002
+
+B. C. Pierce. *Types and Programming Languages.* MIT Press, 2002 (ISBN 0-262-16209-1).
+Chapter 15 (Subtyping) — the finite-lattice subtype order `LatticeTheory` realizes.
+(Textbook; cited by ISBN.)
+
 ## Relational databases and quantification
 
 Grounds the closed-world / active-domain semantics of relational quantifiers
@@ -188,6 +271,8 @@ The substrate (the `prattail` crate):
 - `prattail/src/string_algebra.rs`
 - `prattail/src/regex_sfa.rs`
 - `prattail/src/ordered_field.rs`
+- `prattail/src/unification.rs`
+- `prattail/src/lattice_theory.rs`
 - `prattail/src/logict.rs`
 - `prattail/src/logict_smt.rs`
 - `prattail/src/letprop.rs`

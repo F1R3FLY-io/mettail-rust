@@ -25,6 +25,7 @@ reading the whole suite. It also records the consistency conditions that
 | Argue why Heyting/intuitionistic logic governs behavioral constraints, how bisimulation makes them well-defined, and how it completes Boolean and aligns with OSLF | [12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md) |
 | Document the LogicT constraint-theory engine and its integration: quantified-predicate evaluation, the theory-to-EBA bridge, theory combination, and predicated-type enforcement | [13 — Constraint-Theory Engine](13-constraint-theory-engine.md) |
 | Document thoroughly and precisely how existential and universal quantification are modeled: the three realizations, the domain model, the `∀≡¬∃¬` duality, decidability, lowering, and a worked example | [14 — Quantification](14-quantification.md) |
+| Document the modal μ-calculus of the behavioral Heyting algebra: syntax, Knaster–Tarski fixpoint semantics, how a process is concretized as an LTS to be predicated against, the model-checking algorithm and its exactness, and the CTL encoding — all proved | [15 — Modal μ-Calculus](15-mu-calculus.md) |
 | Provide citations with DOIs and a repository-local artifact index | [References](references.md) |
 | Provide diagrams of the best type with the best actors per concept | `figures/` (see the diagramming policy in the [README](README.md#diagramming-choices)) |
 | Provide a one-page decision brief | [00 — Executive Brief](00-executive-brief.md) |
