@@ -94,7 +94,7 @@ fn literal_kind_matches(kind: NonTerminalKind, scalar_type: RhoScalarType) -> bo
     )
 }
 
-fn scalar_literal_variant(
+pub(crate) fn scalar_literal_variant(
     language: &LanguageDef,
     category: &str,
     scalar_type: RhoScalarType,

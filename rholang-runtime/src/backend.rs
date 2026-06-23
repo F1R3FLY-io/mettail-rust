@@ -19,8 +19,8 @@ use mettail_rholang_codegen::{
 };
 #[cfg(feature = "runtime-report")]
 use mettail_rholang_codegen::{
-    RhoAstBuildError, RhoAstLiteral, RhoAstSend, RhoScalarContractAbi, RhoScalarContractInvocation,
-    RhoScalarContractShape, RhoScalarType,
+    RhoAstBuildError, RhoAstLiteral, RhoAstSend, RhoFoldDataflowInvocation, RhoScalarContractAbi,
+    RhoScalarContractInvocation, RhoScalarContractShape, RhoScalarType,
 };
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::{
@@ -697,6 +697,29 @@ pub fn build_scalar_contract_invocation_from_contract(
     invocation: RhoScalarContractInvocation,
 ) -> Result<RhoBackendInvocation, RhoScalarInvocationError> {
     build_scalar_contract_invocation(&invocation.abi, invocation.arguments, invocation.out_channel)
+}
+
+/// Build a typed Rho backend invocation from a codegen-owned **fold-dataflow** description (E3).
+///
+/// The dynamic `call` `Par` (a nested dataflow of scalar-contract calls produced by
+/// `<Lang>::rho_fold_dataflow_invocation_to`) is already assembled and structurally validated by
+/// [`mettail_rholang_codegen::build_dataflow_call_par`]; this adapter only selects the observation
+/// shape from the root scalar type. It is the N-node generalization of
+/// [`build_scalar_contract_invocation_from_contract`] (the single-op, depth-1 case).
+#[cfg(feature = "runtime-report")]
+pub fn build_fold_dataflow_invocation_from_contract(
+    invocation: RhoFoldDataflowInvocation,
+) -> RhoBackendInvocation {
+    let RhoFoldDataflowInvocation { call, out_channel, result_type } = invocation;
+    match result_type {
+        RhoScalarType::Int => RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel },
+        RhoScalarType::Bool => {
+            RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel }
+        },
+        RhoScalarType::Str => {
+            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel }
+        },
+    }
 }
 
 #[cfg(feature = "runtime-report")]

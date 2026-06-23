@@ -14,5 +14,6 @@ pub mod metadata;
 pub mod numeric_cast_adapter;
 #[cfg(test)]
 pub mod predicate_lower;
+pub mod rho_dataflow;
 pub mod rho_invocation;
 pub mod wpda_codegen;
