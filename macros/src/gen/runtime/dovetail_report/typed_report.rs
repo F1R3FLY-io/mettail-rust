@@ -21,7 +21,10 @@ use syn::Ident;
 
 use super::op_enum::{self, op_enum_ident, op_variant_ident};
 use super::reconstruct::{self, build_fn};
-use super::{category_lowering_fn, lit, rule_block, typed_lowering};
+use super::{
+    category_lowering_fn, is_substitution_rewrite, lit, rule_block, subst_rewrite_native_lhs,
+    to_snake, typed_lowering, SubstRewrite,
+};
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 
 /// A fold rule lowered to a native rewrite + dispatcher arm.
@@ -129,6 +132,30 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
     out
 }
 
+/// (E1.3) A substitution rewrite ([`SubstRewrite`]) lowered to a native rule + dispatcher arm,
+/// carrying its assigned `op_id`. The `op_id` counter is SHARED with the folds (substitution
+/// op-ids start at `folds.len()`), so every native rule across folds ∪ substitution rules has a
+/// distinct id and its own dispatch arm.
+struct SubstRule {
+    op_id: u32,
+    rewrite: SubstRewrite,
+}
+
+/// Collect the language's substitution rewrites ([`is_substitution_rewrite`]) as native rules,
+/// assigning each an `op_id` STARTING AT `fold_count` (MF2: a shared counter across folds ∪
+/// substitution rules). Source order is preserved (stable ids).
+fn collect_substitution_rules(language: &LanguageDef, fold_count: usize) -> Vec<SubstRule> {
+    let mut out = Vec::new();
+    let mut op_id = fold_count as u32;
+    for rw in &language.rewrites {
+        if let Some(sr) = is_substitution_rewrite(language, rw) {
+            out.push(SubstRule { op_id, rewrite: sr });
+            op_id += 1;
+        }
+    }
+    out
+}
+
 /// The `mettail_runtime` native-output numeric-cast reductions (generated cast fold bodies
 /// call these). They return `Option<scalar>` — a `None` defers — but carry no `try` segment,
 /// so they are recognized by name in [`body_returns_option`]. Their object-output siblings
@@ -180,17 +207,36 @@ fn body_returns_option(expr: &syn::Expr) -> bool {
     }
 }
 
-/// `__is_fold_redex` / `__is_value_op` / `__weigh` / `__class_is_fold_value` — the fold-readiness
-/// guard and the progress weight, keyed off the generated op-enum.
-fn generate_helpers(language: &LanguageDef, folds: &[FoldRule<'_>]) -> TokenStream {
+/// `__is_redex` / `__is_var_op` / `__is_value_op` / `__weigh` / `__class_is_fold_value` /
+/// `__class_has_normal_form` — the fold/β-readiness guards and the progress weight, keyed off the
+/// generated op-enum.
+///
+/// (E1.5 — MF1) The redex-head set is **folds ∪ substitution-rewrite LHS head ops**: a fold
+/// redex (`f.op_variant`) OR the outermost constructor of a substitution rewrite's LHS
+/// (`op_variant_ident(head_cat, head_label)`, e.g. `App` → `Term_App`). `__is_value_op` therefore
+/// excludes a β-redex head, `__weigh` gives it 100.0, and `__class_is_fold_value` no longer treats
+/// an un-reduced redex (an `App` whose function is still a `Lam`) as a value — so funded 1-best
+/// extraction prefers the contractum once β has fired (without this, β fires in the e-graph but
+/// extraction keeps selecting the redex and the whole extension silently fails).
+fn generate_helpers(
+    language: &LanguageDef,
+    folds: &[FoldRule<'_>],
+    substs: &[SubstRule],
+) -> TokenStream {
     let enum_id = op_enum_ident(language);
-    let fold_heads: Vec<TokenStream> = folds
+    let mut redex_heads: Vec<TokenStream> = folds
         .iter()
         .map(|f| {
             let v = &f.op_variant;
             quote! { #enum_id::#v }
         })
         .collect();
+    // (MF1) Substitution-rewrite LHS head ops join the redex-head set so an un-reduced redex
+    // (e.g. `App(Lam.., ..)`) is heavier than its contractum.
+    for s in substs {
+        let v = op_variant_ident(&s.rewrite.head_cat, &s.rewrite.head_label);
+        redex_heads.push(quote! { #enum_id::#v });
+    }
     let var_pats: Vec<TokenStream> = language
         .types
         .iter()
@@ -209,10 +255,10 @@ fn generate_helpers(language: &LanguageDef, folds: &[FoldRule<'_>]) -> TokenStre
         })
         .collect();
 
-    let is_fold_redex_body = if fold_heads.is_empty() {
+    let is_redex_body = if redex_heads.is_empty() {
         quote! { false }
     } else {
-        quote! { ::core::matches!(__op, #(#fold_heads)|*) }
+        quote! { ::core::matches!(__op, #(#redex_heads)|*) }
     };
     let is_var_body = if var_pats.is_empty() {
         quote! { false }
@@ -221,35 +267,57 @@ fn generate_helpers(language: &LanguageDef, folds: &[FoldRule<'_>]) -> TokenStre
     };
 
     quote! {
-        fn __is_fold_redex(__op: &#enum_id) -> bool { #is_fold_redex_body }
+        // (MF1) A REDEX head: a fold redex OR a substitution-rewrite LHS head (e.g. `App`). The
+        // name is kept as `__is_fold_redex` for call-site stability; its set now also covers
+        // β-redex heads (E1.5). An un-reduced `App(Lam.., ..)` therefore counts as a redex.
+        fn __is_fold_redex(__op: &#enum_id) -> bool { #is_redex_body }
         fn __is_var_op(__op: &#enum_id) -> bool { #is_var_body }
-        // A value op is a fold input that is fully reduced: not a fold redex and not a free
-        // variable (a var defers — matches `int(x, 8)` staying unchanged). `Cast*` literals,
-        // `Err`, and structural non-fold constructors are values.
+        // A value op is fully reduced: not a redex (fold or β) and not a free variable (a var
+        // defers a FOLD — `int(x, 8)` stays unchanged). `Cast*` literals, `Err`, structural
+        // non-fold/non-redex constructors are values.
         fn __is_value_op(__op: &#enum_id) -> bool {
             !__is_fold_redex(__op) && !__is_var_op(__op)
         }
-        // Progress weight: a fold redex is strictly more expensive than its reduced value, so
-        // funded 1-best extraction surfaces the normal form once the fold has fired.
+        // Progress weight: a redex (fold or β) is strictly more expensive than its reduced
+        // result, so funded 1-best extraction surfaces the normal form once the redex has fired.
         fn __weigh(__n: &::dovetail::egraph::ENode<#enum_id>) -> ::rigail::TropicalWeight {
             ::rigail::TropicalWeight(if __is_fold_redex(&__n.op) { 100.0 } else { 1.0 })
         }
         // Fold-readiness (no extraction): a class is value-ready iff some e-node in it is a
-        // value op. After a fold fires (redex == value merged), the value node is present, so
-        // the __weigh-weighted 1-best reconstructs the value.
+        // value op. After a fold/β fires (redex == result merged), the value node is present, so
+        // the __weigh-weighted 1-best reconstructs the value. Used to gate a fold's object
+        // operands AND a substitution's SCOPE (a binder is a value op; an un-reduced redex is
+        // not — so a substitution defers until its scope reduces to a binder).
         fn __class_is_fold_value(
             __eg: &::dovetail::egraph::EGraph<#enum_id>,
             __cls: ::dovetail::egraph::EClassId,
         ) -> bool {
             __eg.nodes(__cls).iter().any(|__n| __is_value_op(&__n.op))
         }
+        // (E1.4) Normal-form readiness for a SUBSTITUTION REPLACEMENT operand: a class is ready
+        // iff some e-node in it is NOT a redex — i.e. it contains a normal form. This ADMITS a
+        // bare variable (a free variable IS a normal form — `(lam x. x, y)` must substitute the
+        // free `y`), unlike `__class_is_fold_value` which excludes vars (a var defers a fold).
+        // It still defers on an un-reduced redex argument, preserving the bottom-up saturation
+        // MF1 relies on. (Unused-allow because a fold-only language has no substitution rules.)
+        #[allow(dead_code)]
+        fn __class_has_normal_form(
+            __eg: &::dovetail::egraph::EGraph<#enum_id>,
+            __cls: ::dovetail::egraph::EClassId,
+        ) -> bool {
+            __eg.nodes(__cls).iter().any(|__n| !__is_fold_redex(&__n.op))
+        }
     }
 }
 
-/// The `vec![NativeRule { .. }]` expression and the dispatcher closure.
+/// The `vec![NativeRule { .. }]` expression and the dispatcher closure for BOTH the fold native
+/// rules (`folds`) and the substitution native rules (`substs`, E1.4). Their `op_id`s are
+/// disjoint (substitution ids start at `folds.len()`), so the dispatch match has one arm per
+/// rule across both kinds.
 fn generate_native_rules_and_dispatch(
     language: &LanguageDef,
     folds: &[FoldRule<'_>],
+    substs: &[SubstRule],
 ) -> (TokenStream, TokenStream) {
     let enum_id = op_enum_ident(language);
 
@@ -424,6 +492,20 @@ fn generate_native_rules_and_dispatch(
         })
         .collect();
 
+    // (E1.4) Substitution native rules + dispatch arms.
+    let subst_native_rules: Vec<TokenStream> = substs
+        .iter()
+        .map(|s| subst_native_rule(language, s, &enum_id))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|reason| {
+            // A substitution rewrite that passed `is_substitution_rewrite` but whose LHS does not
+            // lower (e.g. an unsupported metapattern slipped through) is a generator bug, surfaced
+            // as a build error rather than a silently-missing rule.
+            vec![quote! { compile_error!(#reason); }]
+        });
+    let subst_dispatch_arms: Vec<TokenStream> =
+        substs.iter().map(|s| subst_dispatch_arm(s)).collect();
+
     let dispatch = quote! {
         |__op: ::dovetail::rules::NativeOpId,
          __eg: &mut ::dovetail::egraph::EGraph<#enum_id>,
@@ -431,12 +513,167 @@ fn generate_native_rules_and_dispatch(
          -> ::core::option::Option<::dovetail::egraph::EClassId> {
             match __op {
                 #(#dispatch_arms)*
+                #(#subst_dispatch_arms)*
                 _ => ::core::option::Option::None,
             }
         }
     };
 
-    (quote! { vec![#(#native_rules),*] }, dispatch)
+    (quote! { vec![#(#native_rules,)* #(#subst_native_rules),*] }, dispatch)
+}
+
+/// (E1.4) The `NativeRule` for a substitution rewrite. Its LHS binds the redex (`App(var fun,
+/// var arg)`) — the binder sub-pattern collapsed to bind the WHOLE binder e-class (see
+/// [`subst_rewrite_native_lhs`]); its op is the substitution `op_id` (≥ `folds.len()`); its
+/// label is the rewrite's `<Lang>::rewrite::<name>`.
+fn subst_native_rule(
+    language: &LanguageDef,
+    s: &SubstRule,
+    enum_id: &Ident,
+) -> Result<TokenStream, String> {
+    let op_id = s.op_id;
+    let label = lit(&s.rewrite.label);
+    let lhs = subst_rewrite_native_lhs(language, &s.rewrite, enum_id)?;
+    Ok(quote! {
+        ::dovetail::rules::NativeRule {
+            lhs: #lhs,
+            op: #op_id,
+            label: ::core::option::Option::Some(#label.to_string()),
+        }
+    })
+}
+
+/// (E1.4 — the dropped-`Extractor`-scope-then-mutate discipline) The dispatch arm for a
+/// substitution rewrite. Mirrors the fold dispatch arm structure (gate operand classes, extract
+/// child derivations in ONE dropped `Extractor` scope, reconstruct, mutate via `__add`), but the
+/// "body" is the generated `substitute_<binder_var_cat>` / `multi_substitute_<binder_var_cat>`:
+///
+///  1. bind the scope class + each replacement class from `__subst`; gate the scope on
+///     `__class_is_fold_value` (it must reduce to a binder VALUE, not an un-reduced redex) and
+///     each replacement on `__class_has_normal_form` (admits a bare variable — a free variable is
+///     a normal form — while still deferring an un-reduced redex argument);
+///  2. `kth(.., 0)`-extract all child derivations in ONE `Extractor` scope that DROPS before the
+///     mutable `__add` (A4 borrow discipline);
+///  3. reconstruct the scope via `build_<binder_cat>_d` and each replacement via
+///     `build_<binder_var_cat>_d`; `let binder_cat::binder_label(scope) = … else return None`;
+///  4. `scope.unbind()` → `(binder, body)` (single) / `(binders, body)` (multi); run
+///     `(*body).substitute_<binder_var_cat>(&binder.0, &arg)` (single) or, with an ARITY ASSERT,
+///     `multi_substitute_<binder_var_cat>(&vars, &args)` (multi);
+///  5. re-add the resulting `body_cat` via `__mettail_dovetail_add_<body_cat>` and return its
+///     e-class — the contractum the engine merges with the redex's class.
+fn subst_dispatch_arm(s: &SubstRule) -> TokenStream {
+    let op_id = s.op_id;
+    let sr = &s.rewrite;
+    let scope_var = sr.scope_var.to_string();
+    let binder_cat = &sr.binder_cat;
+    let binder_label = &sr.binder_label;
+    let body_cat = &sr.body_cat;
+    let body_add = category_lowering_fn(body_cat);
+    let binder_build = build_fn(binder_cat);
+
+    // Replacement category build fns + class/derivation idents.
+    let repl_cls: Vec<Ident> = (0..sr.repl_vars.len())
+        .map(|i| format_ident!("__rcls_{i}"))
+        .collect();
+    let repl_d: Vec<Ident> = (0..sr.repl_vars.len())
+        .map(|i| format_ident!("__rd_{i}"))
+        .collect();
+    let repl_build = build_fn(&sr.binder_var_cat);
+
+    // 1. class bindings + gates.
+    let scope_cls_binding = quote! {
+        let __scls = *__subst.get(#scope_var)?;
+        if !__class_is_fold_value(__eg, __scls) {
+            return ::core::option::Option::None;
+        }
+    };
+    let repl_cls_bindings: Vec<TokenStream> = sr
+        .repl_vars
+        .iter()
+        .zip(repl_cls.iter())
+        .map(|(rv, cls)| {
+            let nstr = rv.to_string();
+            quote! {
+                let #cls = *__subst.get(#nstr)?;
+                if !__class_has_normal_form(__eg, #cls) {
+                    return ::core::option::Option::None;
+                }
+            }
+        })
+        .collect();
+
+    // 2. extract all funded 1-best child derivations in ONE Extractor scope (drops before __add).
+    let extract = quote! {
+        let (__sd, #(#repl_d),*) = {
+            let mut __ex = ::dovetail::extract::Extractor::new(&*__eg, __weigh);
+            (
+                __ex.kth(__eg.find(__scls), 0).value?,
+                #( __ex.kth(__eg.find(#repl_cls), 0).value? ),*
+            )
+        };
+    };
+
+    // 3. reconstruct scope (must be the binder) + replacements. The reconstructed `body_cat`
+    //    impls `Drop`, so we match the binder variant BY REFERENCE and clone the inner `Scope`
+    //    (which `unbind` consumes by value) — mirroring the normalize.rs β assemble arm, which
+    //    likewise ref-matches to avoid moving out of a `Drop` category.
+    let scope_reconstruct = quote! {
+        let __scope_term = #binder_build(&__sd)?;
+        let __scope = match &__scope_term {
+            #binder_cat::#binder_label(__s) => __s.clone(),
+            _ => return ::core::option::Option::None,
+        };
+    };
+    let repl_reconstruct: Vec<TokenStream> = repl_d
+        .iter()
+        .enumerate()
+        .map(|(i, dv)| {
+            let arg = format_ident!("__arg_{i}");
+            quote! { let #arg = #repl_build(&#dv)?; }
+        })
+        .collect();
+    let arg_idents: Vec<Ident> = (0..sr.repl_vars.len())
+        .map(|i| format_ident!("__arg_{i}"))
+        .collect();
+
+    // 4. unbind + substitute (single vs multi).
+    let subst_body = if sr.multi {
+        let multi_subst = format_ident!("multi_substitute_{}", to_snake(&sr.binder_var_cat.to_string()));
+        let arity = sr.repl_vars.len();
+        quote! {
+            let (__binders, __body) = __scope.unbind();
+            // (MF5/arity) A multi-binder substitution is well-typed only when the binder arity
+            // matches the replacement count; a mismatch defers (returns None) rather than
+            // panicking inside the engine closure.
+            if __binders.len() != #arity {
+                return ::core::option::Option::None;
+            }
+            let __vars: ::std::vec::Vec<&::mettail_runtime::FreeVar<String>> =
+                __binders.iter().map(|__b| &__b.0).collect();
+            let __args = vec![#(#arg_idents),*];
+            let __result = (*__body).#multi_subst(&__vars, &__args);
+        }
+    } else {
+        let single_subst = format_ident!("substitute_{}", to_snake(&sr.binder_var_cat.to_string()));
+        let arg0 = &arg_idents[0];
+        quote! {
+            let (__binder, __body) = __scope.unbind();
+            let __result = (*__body).#single_subst(&__binder.0, &#arg0);
+        }
+    };
+
+    // 5. re-add the substituted body and return its e-class.
+    quote! {
+        #op_id => {
+            #scope_cls_binding
+            #(#repl_cls_bindings)*
+            #extract
+            #scope_reconstruct
+            #(#repl_reconstruct)*
+            #subst_body
+            ::core::option::Option::Some(#body_add(__eg, &__result))
+        }
+    }
 }
 
 /// (E2.2) Generate the `dovetail_normal_term` method body for a fold-bearing language.
@@ -471,8 +708,13 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         .collect();
 
     let folds = collect_fold_rules(language);
-    let helpers = generate_helpers(language, &folds);
-    let (native_rules_expr, dispatch) = generate_native_rules_and_dispatch(language, &folds);
+    // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
+    // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
+    // both see folds ∪ substitution rules.
+    let substs = collect_substitution_rules(language, folds.len());
+    let helpers = generate_helpers(language, &folds, &substs);
+    let (native_rules_expr, dispatch) =
+        generate_native_rules_and_dispatch(language, &folds, &substs);
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
 
     let primary_cat = &language.types.first().expect("language has a type").name;
@@ -700,8 +942,13 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         .collect();
 
     let folds = collect_fold_rules(language);
-    let helpers = generate_helpers(language, &folds);
-    let (native_rules_expr, dispatch) = generate_native_rules_and_dispatch(language, &folds);
+    // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
+    // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
+    // both see folds ∪ substitution rules.
+    let substs = collect_substitution_rules(language, folds.len());
+    let helpers = generate_helpers(language, &folds, &substs);
+    let (native_rules_expr, dispatch) =
+        generate_native_rules_and_dispatch(language, &folds, &substs);
     // Typed structural rules (congruence is automatic; host-routed Comm/Extrude land in the
     // dropped `unsupported` — NON-FATAL on the fold path).
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));

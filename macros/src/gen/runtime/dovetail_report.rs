@@ -21,20 +21,274 @@ pub(crate) mod reconstruct;
 pub(crate) mod typed_lowering;
 pub(crate) mod typed_report;
 
-/// Whether a language gets the typed-`L` Dovetail fold path (Increment 2/3): it has at least
-/// one `fold` term rule whose OUTPUT category has no native type (a non-native-output fold,
-/// e.g. RhoCalc's `int(..)`/`+`/`concat` casts that return `Proc`). Such folds reduce nowhere
-/// on the `EGraph<String>` path (their `![{..}]` bodies were emitted only into the retired
-/// Ascent backend), so these languages carry a generated typed op-enum and native-rewrite
-/// dispatcher instead. Non-fold languages (Lambda, BaseMath) and native-output-only fold
-/// languages keep the existing `EGraph<String>` path unchanged.
-pub(crate) fn needs_typed_fold_path(language: &LanguageDef) -> bool {
-    language.terms.iter().any(|rule| {
+/// Whether a language gets the typed-`L` Dovetail path (Increment 2/3 + E1). A language needs
+/// the typed path when it has either:
+///
+///   1. **a non-native-output `fold`** — a `fold` term rule whose OUTPUT category has no native
+///      type (e.g. RhoCalc's `int(..)`/`+`/`concat` casts that return `Proc`). Such folds reduce
+///      nowhere on the `EGraph<String>` path (their `![{..}]` bodies were emitted only into the
+///      retired Ascent backend); OR
+///   2. **(E1.1) a substitution rewrite** — a rewrite whose RHS is a β-style `Subst`/`MultiSubst`
+///      replacement ([`is_substitution_rewrite`]). The contractum is a NEW typed term the runtime
+///      must reconstruct from the e-graph, run a generated `substitute_<cat>`/`multi_substitute_<cat>`
+///      on, and re-add — exactly the typed-path machinery (`saturate_with_native` + a native-rule
+///      dispatcher + reconstruction). On the `EGraph<String>` path such a rewrite is rejected
+///      (`dovetail_report_for` errors), leaving the language (e.g. Lambda) with no reducer.
+///
+/// Languages with neither (BaseMath; native-output-only fold languages like Calculator) keep the
+/// existing `EGraph<String>` path unchanged. Renamed from `needs_typed_fold_path` (the path is no
+/// longer fold-only); the old name is retained as a thin alias for any external caller.
+pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
+    let has_native_fold = language.terms.iter().any(|rule| {
         rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold)
             && language
                 .get_type(&rule.category)
                 .map_or(true, |t| t.native_type.is_none())
+    });
+    let has_substitution_rewrite = language
+        .rewrites
+        .iter()
+        .any(|rw| is_substitution_rewrite(language, rw).is_some());
+    has_native_fold || has_substitution_rewrite
+}
+
+/// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
+/// fold-only after E1; this preserves the historical name for any out-of-module reference).
+pub(crate) fn needs_typed_fold_path(language: &LanguageDef) -> bool {
+    needs_typed_dovetail_path(language)
+}
+
+/// (E1.2) A rewrite recognized as a generalized **substitution rewrite** — a β-style replacement
+/// whose contractum is produced by running a generated `substitute_<cat>`/`multi_substitute_<cat>`
+/// on a reconstructed binder body. Everything here is derived from `LanguageDef`; there is NO
+/// per-language hardcoding (no `App`/`Lam` literal, no `name == "Lambda"`).
+#[derive(Debug, Clone)]
+pub(crate) struct SubstRewrite {
+    /// The rewrite's name/label (`<Lang>::rewrite::<name>` for the native-rule label).
+    pub(crate) label: String,
+    /// The whole LHS pattern (`rw.left`). The native-rule LHS is derived from it by
+    /// [`subst_rewrite_native_lhs`], binding `scope_var` to the WHOLE binder node.
+    pub(crate) left: AstPattern,
+    /// The single scope variable — bound by the `binder_label` constructor in `left`, and the
+    /// `scope` of the RHS `Subst`/`MultiSubst`.
+    pub(crate) scope_var: Ident,
+    /// The replacement argument variables (RHS `replacements`), in order. Each is a plain `Var`
+    /// occurring in `left`; `repl_vars.len()` is the substitution arity.
+    pub(crate) repl_vars: Vec<Ident>,
+    /// The matched binder constructor label (a `VariantKind::Binder`/`MultiBinder` whose body the
+    /// `scope_var` denotes) — reconstruction matches `binder_cat::binder_label(scope)`.
+    pub(crate) binder_label: Ident,
+    /// The binder constructor's category (the category `binder_label` constructs).
+    pub(crate) binder_cat: Ident,
+    /// The bound-variable (domain) category — the `substitute_<binder_cat_lc>` replacement type
+    /// and the `&binder.0` free-variable type.
+    pub(crate) binder_var_cat: Ident,
+    /// The body (codomain) category — `build_<body_cat>_d` reconstructs the scope body, the result
+    /// of substitution is a `body_cat`, re-added via `__mettail_dovetail_add_<body_cat>`.
+    pub(crate) body_cat: Ident,
+    /// Whether the matched binder is a `MultiBinder` (`multi_substitute_*` with an arity assert)
+    /// vs a single `Binder` (`substitute_*`, arity-1).
+    pub(crate) multi: bool,
+    /// The outermost constructor of `left` (the redex head, e.g. `App`) — its op-enum variant
+    /// (`op_variant_ident`) joins the MF1 redex-head set so extraction prefers the contractum.
+    pub(crate) head_label: Ident,
+    /// The category of the `head_label` constructor (for `op_variant_ident`).
+    pub(crate) head_cat: Ident,
+}
+
+/// (E1.2 — MF4, shape-guarded) Classify a rewrite as a [`SubstRewrite`], or `None`.
+///
+/// Accepts ONLY the precise β-substitution shape, fail-closed on everything else (verified to
+/// REJECT RhoCalc's `Comm`, whose RHS nests the `MultiSubst` inside an AC `PPar` and whose
+/// replacement is a `Map`):
+///
+///  - premises are congruence-only (every other premise kind is a side condition the structural
+///    saturation cannot discharge);
+///  - the RHS is *exactly* a `Pattern::Term(MultiSubst { scope: Var, .. })` or
+///    `Pattern::Term(Subst { term: Var, .. })` — the substitution is the WHOLE RHS, never nested
+///    inside `Apply`/`Collection`/`Map`/`Zip`;
+///  - exactly one scope variable (single binder), and the scope is a bare `Var`;
+///  - every replacement is a plain `Var` (the supported, fully-general case) — `Map`/`Zip`/
+///    `Collection` replacements (RhoCalc's `qs.*map(..)`) are rejected;
+///  - the LHS contains NO collection metapattern anywhere (no AC-collection-nested redex);
+///  - the `scope_var` is bound by a `Binder`/`MultiBinder` constructor position in the LHS —
+///    i.e. `left` contains an `Apply { constructor: C, args: [Var(scope_var)] }` where `C` is a
+///    `VariantKind::Binder`/`MultiBinder` of its category (resolved via
+///    `collect_category_variants`). This yields `binder_label`/`binder_cat`/`binder_var_cat`/
+///    `body_cat`/`multi`.
+pub(crate) fn is_substitution_rewrite(
+    language: &LanguageDef,
+    rw: &RewriteRule,
+) -> Option<SubstRewrite> {
+    // Premises: congruence-only (same gate as the structural lowering).
+    if !rw.premises.iter().all(premise_supported) {
+        return None;
+    }
+
+    // RHS must be EXACTLY a top-level Subst/MultiSubst (not nested in Apply/Collection/Map/Zip).
+    let AstPattern::Term(rhs_term) = &rw.right else {
+        return None;
+    };
+    let (scope_pat, repl_pats): (&AstPattern, Vec<&AstPattern>) = match rhs_term {
+        PatternTerm::MultiSubst { scope, replacements } => {
+            (scope.as_ref(), replacements.iter().collect())
+        },
+        // Single `Subst { term, var, replacement }` is the 3-arg form; `term` is the scope body,
+        // and `var`/`replacement` give a single (var ↦ replacement) pair. We accept only the
+        // shape where `term` is a bare scope `Var` and there is one replacement, mirroring the
+        // MultiSubst arity-1 case (the general 2-arg `(eval <var> <arg>)` always parses to a
+        // MultiSubst; the 3-arg `Subst` is the legacy form).
+        PatternTerm::Subst { term, replacement, .. } => {
+            (term.as_ref(), vec![replacement.as_ref()])
+        },
+        _ => return None,
+    };
+
+    // Scope is a bare variable.
+    let AstPattern::Term(PatternTerm::Var(scope_var)) = scope_pat else {
+        return None;
+    };
+
+    // Every replacement is a plain `Var` (Map/Zip/Collection replacements rejected — this is what
+    // excludes RhoCalc's `qs.*map(|q| (NQuote q))`).
+    let mut repl_vars: Vec<Ident> = Vec::with_capacity(repl_pats.len());
+    for rp in &repl_pats {
+        match rp {
+            AstPattern::Term(PatternTerm::Var(v)) => repl_vars.push(v.clone()),
+            _ => return None,
+        }
+    }
+    if repl_vars.is_empty() {
+        return None;
+    }
+
+    // LHS must contain no collection metapattern anywhere (no AC-collection-nested redex).
+    if pattern_contains_collection(&rw.left) {
+        return None;
+    }
+
+    // `scope_var` must be bound by a `Binder`/`MultiBinder` constructor position in the LHS.
+    let binder = find_binder_scope(language, &rw.left, scope_var)?;
+
+    // The redex head: the outermost constructor of the LHS.
+    let AstPattern::Term(PatternTerm::Apply { constructor: head_label, .. }) = &rw.left else {
+        return None;
+    };
+    let head_cat = language.category_of_constructor(head_label)?.clone();
+
+    Some(SubstRewrite {
+        label: format!("{}::rewrite::{}", language.name, rw.name),
+        left: rw.left.clone(),
+        scope_var: scope_var.clone(),
+        repl_vars,
+        binder_label: binder.binder_label,
+        binder_cat: binder.binder_cat,
+        binder_var_cat: binder.binder_var_cat,
+        body_cat: binder.body_cat,
+        multi: binder.multi,
+        head_label: head_label.clone(),
+        head_cat,
     })
+}
+
+/// The binder constructor a scope variable is bound by, resolved from the LHS.
+struct BinderScope {
+    binder_label: Ident,
+    binder_cat: Ident,
+    binder_var_cat: Ident,
+    body_cat: Ident,
+    multi: bool,
+}
+
+/// Find the `Binder`/`MultiBinder` constructor that binds `scope_var` in `pattern` — an
+/// `Apply { constructor: C, args: [Var(scope_var)] }` where `C` is a `VariantKind::Binder`/
+/// `MultiBinder` of its category. Searches recursively through `Apply` argument positions (the
+/// binder may be nested under the redex head, e.g. `(App (Lam fun) arg)`). Returns the binder's
+/// label, its category, the bound-variable (domain) category, the body (codomain) category, and
+/// whether it is a multi-binder.
+fn find_binder_scope(
+    language: &LanguageDef,
+    pattern: &AstPattern,
+    scope_var: &Ident,
+) -> Option<BinderScope> {
+    let AstPattern::Term(term) = pattern else {
+        return None;
+    };
+    let PatternTerm::Apply { constructor, args } = term else {
+        return None;
+    };
+
+    // Is THIS apply the binder binding `scope_var`? It must be a binder constructor whose sole
+    // argument is exactly `Var(scope_var)`.
+    if let [AstPattern::Term(PatternTerm::Var(v))] = args.as_slice() {
+        if v == scope_var {
+            if let Some(cat) = language.category_of_constructor(constructor) {
+                for variant in collect_category_variants(cat, language) {
+                    match variant {
+                        VariantKind::Binder {
+                            label,
+                            binder_cat,
+                            body_cat,
+                            ..
+                        } if &label == constructor => {
+                            return Some(BinderScope {
+                                binder_label: label,
+                                binder_cat: cat.clone(),
+                                binder_var_cat: binder_cat,
+                                body_cat,
+                                multi: false,
+                            });
+                        },
+                        VariantKind::MultiBinder {
+                            label,
+                            binder_cat,
+                            body_cat,
+                            ..
+                        } if &label == constructor => {
+                            return Some(BinderScope {
+                                binder_label: label,
+                                binder_cat: cat.clone(),
+                                binder_var_cat: binder_cat,
+                                body_cat,
+                                multi: true,
+                            });
+                        },
+                        _ => {},
+                    }
+                }
+            }
+        }
+    }
+
+    // Otherwise recurse into the argument patterns.
+    for arg in args {
+        if let Some(found) = find_binder_scope(language, arg, scope_var) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Whether a pattern contains a `Pattern::Collection`/`Map`/`Zip` metapattern anywhere (used to
+/// reject an AC-collection-nested substitution-rewrite LHS — MF4).
+fn pattern_contains_collection(pattern: &AstPattern) -> bool {
+    match pattern {
+        AstPattern::Collection { .. } | AstPattern::Map { .. } | AstPattern::Zip { .. } => true,
+        AstPattern::Term(term) => match term {
+            PatternTerm::Apply { args, .. } => args.iter().any(pattern_contains_collection),
+            PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+                pattern_contains_collection(body)
+            },
+            PatternTerm::Subst { term, replacement, .. } => {
+                pattern_contains_collection(term) || pattern_contains_collection(replacement)
+            },
+            PatternTerm::MultiSubst { scope, replacements } => {
+                pattern_contains_collection(scope)
+                    || replacements.iter().any(pattern_contains_collection)
+            },
+            PatternTerm::Var(_) => false,
+        },
+    }
 }
 
 /// Whether any `PatternTerm::Subst`/`MultiSubst` appears anywhere in a pattern (recursing
@@ -522,6 +776,57 @@ fn pattern_term_to_dovetail(
     }
 }
 
+/// (E1.4) The native-rule LHS pattern for a substitution rewrite, lowered over the typed op-enum.
+///
+/// The LHS is `rw.left` with the binder sub-pattern collapsed: the `Apply { constructor:
+/// binder_label, args: [Var(scope_var)] }` node is replaced by a bare `Var(scope_var)`, so the
+/// pattern variable `scope_var` binds the WHOLE binder e-class (the lowered binder node carries an
+/// arity marker + body — two children — which a `Pattern::app(binder, [var])` would NOT match
+/// positionally; binding the whole node is also exactly what the dispatch arm needs, since it
+/// reconstructs `scope_var` back to the typed binder term and matches `binder_cat::binder_label`).
+/// Every other position lowers via the ordinary [`pattern_to_dovetail`].
+fn subst_rewrite_native_lhs(
+    language: &LanguageDef,
+    sr: &SubstRewrite,
+    enum_id: &Ident,
+) -> Result<TokenStream, String> {
+    let collapsed = collapse_binder_scope(&sr.left, &sr.binder_label, &sr.scope_var);
+    pattern_to_dovetail(language, &collapsed, Some(enum_id))
+}
+
+/// Replace the `Apply { constructor: binder_label, args: [Var(scope_var)] }` sub-pattern with a
+/// bare `Var(scope_var)`, recursively. Pure structural rewrite of the metapattern (used only to
+/// synthesize the native-rule LHS).
+fn collapse_binder_scope(
+    pattern: &AstPattern,
+    binder_label: &Ident,
+    scope_var: &Ident,
+) -> AstPattern {
+    match pattern {
+        AstPattern::Term(PatternTerm::Apply { constructor, args }) => {
+            // The binder node binding `scope_var` collapses to the scope variable itself.
+            if constructor == binder_label {
+                if let [AstPattern::Term(PatternTerm::Var(v))] = args.as_slice() {
+                    if v == scope_var {
+                        return AstPattern::Term(PatternTerm::Var(scope_var.clone()));
+                    }
+                }
+            }
+            let new_args = args
+                .iter()
+                .map(|a| collapse_binder_scope(a, binder_label, scope_var))
+                .collect();
+            AstPattern::Term(PatternTerm::Apply {
+                constructor: constructor.clone(),
+                args: new_args,
+            })
+        },
+        // Substitution rewrites have no collection/map/zip/lambda LHS (rejected by the detector),
+        // so every other node is returned unchanged.
+        other => other.clone(),
+    }
+}
+
 fn premise_supported(premise: &Premise) -> bool {
     // EXHAUSTIVE over every `Premise` variant (no catch-all): only a congruence
     // premise is supplied by the e-graph congruence closure; all side-condition
@@ -607,6 +912,17 @@ fn lower_rewrite(
         // The e-graph congruence closure supplies context closure after the
         // premise-free kernel rewrite has merged the child e-class, so explicit
         // generated congruence rules are not emitted as separate Dovetail data.
+        return (Vec::new(), Vec::new());
+    }
+    // (E1.3) A substitution rewrite is NOT a structural `RewriteRule` — it is lowered as a
+    // native rule + dispatcher arm by `typed_report::generate_native_rules_and_dispatch`
+    // (own op-id, own arm), so it must emit NOTHING here and add NOTHING to `unsupported`
+    // (it is fully supported, just on the native lane). This branch is reached only on the
+    // typed path (`enum_id.is_some()`); on the `EGraph<String>` path a substitution rewrite
+    // never appears, because the language is routed to the typed path by
+    // `needs_typed_dovetail_path`. (Gated on `enum_id.is_some()` defensively so the String
+    // path's behavior is byte-identical.)
+    if enum_id.is_some() && is_substitution_rewrite(language, rw).is_some() {
         return (Vec::new(), Vec::new());
     }
 
@@ -1068,5 +1384,181 @@ mod tests {
             needs_normal_term(&language),
             "a MultiSubst in the rewrite RHS must trigger needs_normal_term"
         );
+    }
+
+    // ─── E1.2: `is_substitution_rewrite` shape classifier (MF4) ─────────────────────────────
+
+    /// Find a rewrite by name in a parsed language.
+    fn rewrite<'a>(language: &'a LanguageDef, name: &str) -> &'a RewriteRule {
+        language
+            .rewrites
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("rewrite `{name}` not found"))
+    }
+
+    /// The Lambda `Beta` rule — `(App (Lam fun) arg) ~> (eval fun arg)` — is detected, with all
+    /// `SubstRewrite` fields derived from `LanguageDef` (single binder `[Term->Term]`).
+    #[test]
+    fn is_substitution_rewrite_detects_lambda_beta() {
+        let language = parse(
+            r#"
+                name: Lam,
+                types { Term }
+                terms {
+                    Lam . ^x.body:[Term -> Term] |- "lam " x "." body : Term;
+                    App . fun:Term, arg:Term |- "(" fun "," arg ")" : Term;
+                }
+                equations {}
+                rewrites {
+                    Beta . |- (App (Lam fun) arg) ~> (eval fun arg);
+                    AppCongL . | M0 ~> M1 |- (App M0 N) ~> (App M1 N);
+                }
+            "#,
+        );
+        let sr = is_substitution_rewrite(&language, rewrite(&language, "Beta"))
+            .expect("Beta must be detected as a substitution rewrite");
+        assert_eq!(sr.scope_var.to_string(), "fun");
+        assert_eq!(sr.repl_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(), vec!["arg"]);
+        assert_eq!(sr.binder_label.to_string(), "Lam");
+        assert_eq!(sr.binder_cat.to_string(), "Term");
+        assert_eq!(sr.binder_var_cat.to_string(), "Term");
+        assert_eq!(sr.body_cat.to_string(), "Term");
+        assert!(!sr.multi, "Lam is a single binder");
+        assert_eq!(sr.head_label.to_string(), "App");
+        assert_eq!(sr.head_cat.to_string(), "Term");
+
+        // The congruence rule is NOT a substitution rewrite.
+        assert!(is_substitution_rewrite(&language, rewrite(&language, "AppCongL")).is_none());
+
+        // And it routes the language to the typed path.
+        assert!(needs_typed_dovetail_path(&language));
+    }
+
+    /// (MF4 — the crux negative) RhoCalc's `Comm` is NOT a substitution rewrite: its RHS nests
+    /// the `MultiSubst` inside an AC `PPar` collection, AND the replacement is a `*map(..)`
+    /// comprehension (a `Pattern::Map`), AND the LHS is AC-collection-nested. ANY of these must
+    /// reject it; this exercises all three guards together on the real `Comm` shape.
+    #[test]
+    fn is_substitution_rewrite_rejects_rhocalc_comm() {
+        let language = parse(
+            r#"
+                name: RhoCalcSubset,
+                types {
+                    Name
+                    Proc
+                }
+                terms {
+                    PZero . Proc ::= "0" ;
+                    NQuote . p:Proc |- "@" p : Name ;
+                    POutput . n:Name, q:Proc |- n "!(" q ")" : Proc ;
+                    PInputs . ^[xs].cont:[Name -> Proc] |- "for(" xs ")" "{" cont "}" : Proc ;
+                    PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
+                        ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
+                }
+            "#,
+        );
+        assert!(
+            is_substitution_rewrite(&language, rewrite(&language, "Comm")).is_none(),
+            "RhoCalc Comm (MultiSubst nested in AC PPar, Map replacement, AC-nested LHS) must NOT \
+             be detected as a substitution rewrite"
+        );
+    }
+
+    /// A rewrite whose substitution is NESTED inside another `Apply` (not the whole RHS) is
+    /// rejected — the substitution must be the entire RHS.
+    #[test]
+    fn is_substitution_rewrite_rejects_nested_subst_rhs() {
+        let language = parse(
+            r#"
+                name: NestedSubst,
+                types { Term }
+                terms {
+                    Lam . ^x.body:[Term -> Term] |- "lam " x "." body : Term;
+                    App . fun:Term, arg:Term |- "(" fun "," arg ")" : Term;
+                    Wrap . t:Term |- "wrap(" t ")" : Term;
+                }
+                equations {}
+                rewrites {
+                    BadBeta . |- (App (Lam fun) arg) ~> (Wrap (eval fun arg));
+                }
+            "#,
+        );
+        assert!(
+            is_substitution_rewrite(&language, rewrite(&language, "BadBeta")).is_none(),
+            "a MultiSubst nested under `Wrap` is not a whole-RHS substitution"
+        );
+    }
+
+    /// A rewrite whose scope variable is NOT bound by a binder constructor in the LHS is
+    /// rejected (no `Binder`/`MultiBinder` position binds `fun`).
+    #[test]
+    fn is_substitution_rewrite_rejects_non_binder_scope() {
+        let language = parse(
+            r#"
+                name: NoBinderScope,
+                types { Term }
+                terms {
+                    Pair . l:Term, r:Term |- "<" l "," r ">" : Term;
+                    App . fun:Term, arg:Term |- "(" fun "," arg ")" : Term;
+                }
+                equations {}
+                rewrites {
+                    BadBeta . |- (App (Pair fun other) arg) ~> (eval fun arg);
+                }
+            "#,
+        );
+        assert!(
+            is_substitution_rewrite(&language, rewrite(&language, "BadBeta")).is_none(),
+            "`Pair` is not a binder, so `fun` is not bound by a binder position"
+        );
+    }
+
+    /// (Generality) A CROSS-category binder `[Name -> Proc]` is detected with the bound-variable
+    /// category (`Name`) tracked SEPARATELY from the body category (`Proc`). This is what makes
+    /// the generated dispatcher select the cross-category `substitute_name` (not
+    /// `substitute_proc`) — the substitution lowering is not limited to same-category binders.
+    /// (End-to-end reduction of a synthetic language is covered by the Lambda gates; a test-local
+    /// `language!` is infeasible here because the macro writes crate-coupled `simulate_<lang>.rs`
+    /// + `gen_<lang>_*.rs` files referencing `mettail_languages::<lang>`.)
+    #[test]
+    fn is_substitution_rewrite_tracks_cross_category_binder() {
+        let language = parse(
+            r#"
+                name: CrossCat,
+                types {
+                    Name
+                    Proc
+                }
+                terms {
+                    NVar . n:Name |- "@" n : Proc;
+                    Bind . ^x.body:[Name -> Proc] |- "bind " x "." body : Proc;
+                    Send . k:Proc, arg:Name |- "send(" k "," arg ")" : Proc;
+                }
+                equations {}
+                rewrites {
+                    Deliver . |- (Send (Bind k) a) ~> (eval k a);
+                }
+            "#,
+        );
+        let sr = is_substitution_rewrite(&language, rewrite(&language, "Deliver"))
+            .expect("Deliver must be detected (cross-category binder)");
+        assert_eq!(sr.scope_var.to_string(), "k");
+        assert_eq!(sr.binder_label.to_string(), "Bind");
+        assert_eq!(sr.binder_cat.to_string(), "Proc", "Bind constructs a Proc");
+        assert_eq!(sr.binder_var_cat.to_string(), "Name", "the bound variable is a Name");
+        assert_eq!(sr.body_cat.to_string(), "Proc", "the body is a Proc");
+        assert_ne!(
+            sr.binder_var_cat.to_string(),
+            sr.body_cat.to_string(),
+            "cross-category: bound-variable category differs from body category — the dispatcher \
+             must select `substitute_name`, not `substitute_proc`"
+        );
+        assert_eq!(sr.repl_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(sr.head_label.to_string(), "Send");
     }
 }

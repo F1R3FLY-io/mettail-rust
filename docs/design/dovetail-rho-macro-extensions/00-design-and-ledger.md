@@ -150,7 +150,15 @@ lowering is out of scope).
   multiplicity-2, fold-in-POutput, PNew α-equiv); rhocalc_dovetail_fold 6/6, ambient_dovetail_flip 3/3.
   NOTE: a pre-existing `unreachable_patterns` warning in `rho_scalar_invocation.rs` (MixedMath, NOT E2)
   to be fixed during E3.
-- [ ] **E1.1–E1.5** routing, detector, op_id, dispatch, progress weights (atomic E1.4+E1.5).
+- [x] **E1.1–E1.5** routing (`needs_typed_dovetail_path`), shape-guarded detector
+  (`is_substitution_rewrite` — RhoCalc `Comm` double-rejected via Map-replacement + AC-LHS guards),
+  op_id after `folds.len()` (MF2), dispatch arm (MF5: build→unbind→`substitute_<cat>`→re-add), and
+  progress weights (MF1: redex-head set = folds ∪ subst LHS heads). Verified: `lambda_dovetail.rs`
+  6/6 (incl. Ω fixed-point, gate-4 corrected — round-trip is unsound for bound-var bodies under
+  fresh-binder `_` rendering), `lambda_dovetail_synthetic.rs` 3/3 (synthetic `AppSubst` β-reduces ⇒
+  generality proven, not Lambda-name-keyed). No regressions (rhocalc_dovetail_fold/host_routed,
+  ambient_dovetail_flip, dovetail_normal_term, macros lib 221). NOTE: `_`-unnamed-binder rendering
+  is α-correct but lossy on re-parse (display polish; tracked as a refinement, not a soundness issue).
 - [ ] **E3.2–E3.4** dataflow lowering, `/0` policy, wrapper wiring.
 - [ ] Downstream: 4-language registry wrappers + REPL `rho-languages` Cargo wiring.
 - [ ] Tests: E2/E1/E3 probes promoted to real tests; `repl/tests/registry_exec.rs`; remove `zz_probe_*`.
