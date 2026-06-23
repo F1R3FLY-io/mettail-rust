@@ -66,6 +66,7 @@ pub use mettail_ast::auto_inject::reconstruct_language_def;
 
 pub mod ast;
 pub mod backend;
+pub mod dataflow;
 pub mod deadlock;
 pub mod flip;
 pub mod guard_quality;
@@ -82,6 +83,10 @@ pub use backend::{
     RhoGuardObligation, RhoGuardObligationKind, RhoRejectedRuleClassification,
     RhoRejectedRuleClassificationReason, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
+};
+pub use dataflow::{
+    build_dataflow_call_par, RhoDataflowChild, RhoDataflowError, RhoDataflowNode,
+    RhoFoldDataflowDisposition, RhoFoldDataflowInvocation,
 };
 pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,
