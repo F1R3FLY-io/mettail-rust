@@ -63,6 +63,12 @@ note bottom of RSA
   compile_fail doctest turns the safety property into a checked artifact).
 end note
 
+note right of BA #FEF3C7
+  The Z3/SMT leg (logict_smt::Z3Theory) is a ConstraintTheory ONLY — it deliberately
+  does NOT implement BooleanAlgebra, so it never enters this classical tier; its
+  verdict is the 3-valued Sat3 (DontKnow ⇒ no entailment claimed). See doc 13 §2.1.
+end note
+
 legend right
 |= Color |= Tier |
 |<#FEF3C7> | semi-decidable tier (reject-safe / Heyting — the caution color) |

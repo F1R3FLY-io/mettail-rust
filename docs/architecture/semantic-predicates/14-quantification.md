@@ -1,6 +1,6 @@
 # Quantification: Existential and Universal Predicates over Relational, Modal, and Bounded Domains
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This document is the **proof-home for quantification** in the semantic-predicate
@@ -27,11 +27,11 @@ A quantifier `∀x ∈ D. φ` / `∃x ∈ D. φ` binds a variable `x`, ranges it
 `D`, and aggregates the truth of the **body** `φ` across `D`. The substrate models this
 **three** ways, chosen by what the body is and where the guard lives:
 
-| Realization | Where | Domain | Aggregation | Decidability |
-|---|---|---|---|---|
-| **A. Relational / LogicT enumeration** | `prattail/src/logict.rs`, run-time `runtime/src/behavioral_pred.rs` | tuples of a Datalog relation (the closed-world active domain), optionally bounded | `∀` folds with `all`, `∃` with `any`; three-valued via `TriState` | exact on a finite relation (`T1`/`T2`); **semi-decidable** (`DontKnow`) on a bounded-truncated domain (`T3`) |
-| **B. Modal / behavioral denotation** | `prattail/src/behavioral_algebra.rs` | a relational domain inside a behavioral formula over an LTS | `⟦∀x∈D.φ⟧ = ⋂_{v∈D} ⟦φ[x:=v]⟧`, `⟦∃x∈D.φ⟧ = ⋃_{v∈D} ⟦φ[x:=v]⟧` over the state-set lattice | relational fragment exact; a modal body makes satisfiability `DontKnow` (`T3`) |
-| **C. Bounded ∃/∀ as an EBA atom** | `prattail/src/collection_algebra.rs`, `prattail/src/presburger.rs` | the elements of one finite collection value, or the integers of a Presburger NFA | an occupancy/count atom (collection); NFA existential projection (Presburger) | **exact and total** — a decidable effective Boolean algebra (`T1`/`T2`) |
+| Realization                            | Where                                                               | Domain                                                                            | Aggregation                                                                               | Decidability                                                                                                 |
+|----------------------------------------|---------------------------------------------------------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| **A. Relational / LogicT enumeration** | `prattail/src/logict.rs`, run-time `runtime/src/behavioral_pred.rs` | tuples of a Datalog relation (the closed-world active domain), optionally bounded | `∀` folds with `all`, `∃` with `any`; three-valued via `TriState`                         | exact on a finite relation (`T1`/`T2`); **semi-decidable** (`DontKnow`) on a bounded-truncated domain (`T3`) |
+| **B. Modal / behavioral denotation**   | `prattail/src/behavioral_algebra.rs`                                | a relational domain inside a behavioral formula over an LTS                       | `⟦∀x∈D.φ⟧ = ⋂_{v∈D} ⟦φ[x:=v]⟧`, `⟦∃x∈D.φ⟧ = ⋃_{v∈D} ⟦φ[x:=v]⟧` over the state-set lattice | relational fragment exact; a modal body makes satisfiability `DontKnow` (`T3`)                               |
+| **C. Bounded ∃/∀ as an EBA atom**      | `prattail/src/collection_algebra.rs`, `prattail/src/presburger.rs`  | the elements of one finite collection value, or the integers of a Presburger NFA  | an occupancy/count atom (collection); NFA existential projection (Presburger)             | **exact and total** — a decidable effective Boolean algebra (`T1`/`T2`)                                      |
 
 The unifying intuition: **`∃`/`∀` is decidable exactly when its domain is finitely
 materialized**. Closed-world relational quantifiers are finite because the active
@@ -41,7 +41,13 @@ relations are recognized by automata. A quantifier becomes *semi-decidable* only
 domain is deliberately **bounded-truncated** to keep search tractable — then the honest
 answer on exhaustion is `Sat3::DontKnow`, never a guessed `false`.
 
-![The three realizations of quantification, side by side, tagged decidable versus semi-decidable](figures/14-three-realizations.svg)
+A fourth path specializes realization **B** rather than adding a new domain kind: when the
+modal body is a **recursive** predicate written with `letprop`, its fixpoint and any
+embedded `∀`/`∃` are decided by lowering to a *parity tree automaton* (PATA) instead of an
+LTS denotation — the same `T3` semi-decidable story, detailed in §8.1. The figure below
+shows it as the rightmost lane.
+
+![The three realizations of quantification side by side, plus the letprop-to-PATA lowering of the modal realization, tagged decidable versus semi-decidable](figures/14-three-realizations.svg)
 
 PlantUML source: [figures/14-three-realizations.puml](figures/14-three-realizations.puml).
 
@@ -349,12 +355,12 @@ part of the design, not an accident.
 
 **Definition 8.1 (the four quantifier-domain shapes).**
 
-| Layer | Type | Domain encoding |
-|---|---|---|
-| AST | `BehavioralPred::Quantified { quantifier, var, domain: Option<Ident>, bound: Option<usize>, body }` (`ast/src/language/model.rs`) | a relation name **and** a separate optional bound (no enum) |
-| LogicT | `QuantifiedDomain::{ Relation(String), Bounded { relation, limit } }` (`logict.rs`) | a relation, or a relation paired with a limit |
-| runtime | `QuantifiedDomain::{ Named(String), Bounded(usize), Enumerated(Vec) }` (`behavioral_pred.rs`) | a named relation, a bound-only (relation inferred from the body), or a literal value set |
-| modal | `QDomain::{ Values(Vec), RelationColumn(String, usize), Active, Bounded(Box) }` (`behavioral_algebra.rs`) | a value set, a relation column, the active domain, or a bounded inner domain |
+| Layer   | Type                                                                                                                              | Domain encoding                                                                          |
+|---------|-----------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| AST     | `BehavioralPred::Quantified { quantifier, var, domain: Option<Ident>, bound: Option<usize>, body }` (`ast/src/language/model.rs`) | a relation name **and** a separate optional bound (no enum)                              |
+| LogicT  | `QuantifiedDomain::{ Relation(String), Bounded { relation, limit } }` (`logict.rs`)                                               | a relation, or a relation paired with a limit                                            |
+| runtime | `QuantifiedDomain::{ Named(String), Bounded(usize), Enumerated(Vec) }` (`behavioral_pred.rs`)                                     | a named relation, a bound-only (relation inferred from the body), or a literal value set |
+| modal   | `QDomain::{ Values(Vec), RelationColumn(String, usize), Active, Bounded(Box) }` (`behavioral_algebra.rs`)                         | a value set, a relation column, the active domain, or a bounded inner domain             |
 
 **The lowering** `try_to_quantified_formula` (`ast/src/language/model.rs`) maps the AST
 quantifier to a `logict::QuantifiedFormula` by three rules on the AST's `(domain, bound)`
@@ -379,6 +385,42 @@ a quantified guard against the thread-local `PRED_FACT_SNAPSHOT`: `ForAll` folds
 binding around each body evaluation. This evaluator is **relational-only** — it has no
 modal arm (`AcMatch` fails closed), consistent with the classify-only boundary
 ([08](08-runtime-comm-enforcement.md)).
+
+### 8.1 The `letprop → parity-tree` lowering (recursive modal bodies)
+
+Realization B has one further lowering, for the case the §1 table abbreviates as "a modal
+body": a body that is itself **recursive**. The `letprop` construct lets a user *name* a
+behavioral predicate and refer to it inside its own definition —
+`letprop Safe(x) = safe(x) ∧ ∀y. step(x, y) ⇒ Safe(y);` — a least/greatest fixpoint rather
+than a flat formula. Such a body is **not** decided by the relational evaluator of §8; it
+is lowered to a **parity tree automaton (PATA)** and decided by non-emptiness.
+
+The lowering `letprop_to_pata` (`prattail/src/letprop.rs`, feature `oslf-letprop`, off by
+default) is a two-step compile:
+
+1. **`LetPropExpr → μ-calculus`.** The recursive definition becomes a modal-`μ` formula. A
+   quantifier in the body lowers to a modality over the tree engine: `∀` to
+   `MuCalculusFormula::Box` (`□`) and `∃` to `Diamond` (`◇`), with `child_idx 0` reserved
+   for the reduction direction. The fixpoint polarity is read off the recursion: a
+   positively-recursive body becomes `μX. …`, a negatively-recursive body `νX. …`, and a
+   **quantifier-only** body (no genuine recursion) defaults to `νX. □¬X` — the
+   greatest-fixpoint safety reading rather than a "not recursive" error. Predicate arguments
+   are carried as `LetPropArg::{ Var, App }` (so `Safe(child(x))` is representable), but the
+   `μ`-calculus decision **drops** them, which is precisely why argument substitution is
+   *decision-invariant*.
+2. **`μ-calculus → PATA → emptiness`.** The formula is realized as a parity tree automaton
+   and decided by `parity_tree::check_emptiness`. A **non-empty** arena means the recursive
+   type is inhabited; an **empty** arena means it is a *dead behavioral type*, surfaced as
+   the `LP01` lint rather than a crash.
+
+Because the body is modal, satisfiability is reported `DontKnow` at tier `T3` — identical to
+realization B, so this lowering adds *expressiveness* (named recursion, embedded
+quantifiers) without changing the decidability story. The whole path is mechanized
+zero-admission in `LetpropPataWiringSound.v` (`lower_forall_box`, `lower_exists_diamond`,
+`lower_argsubst_invariant`, `letprop_decision_total`, `empty_arena_is_dead`, `lower_total`;
+[10 §2.6](10-formal-verification-and-tests.md)). The surface syntax for `letprop` itself is
+still proposed ([06 §3.1](06-guard-syntax-and-extensions.md)); the lowering and its decision
+procedure are wired and proven today.
 
 ## 9. Syntax (supported and proposed)
 
@@ -426,15 +468,16 @@ enumeration and no `DontKnow` (`T1`/`T2`). On `bag = [3, -2]` the count of `¬po
 Quantification's mechanized results, with their Coq witnesses (cited only here; the
 proofs live in their proof-home documents). Build with
 `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-symbolic-algebra` (and
-`=rocq-presburger`, `=rocq-predicate-dispatch`).
+`=rocq-presburger`, `=rocq-predicate-dispatch`, `=rocq-advanced-automata`).
 
-| Claim (here) | Witness | Where |
-|---|---|---|
-| bounded `∃`/`∀` over a finite collection is a decidable EBA (Proposition 6.1, §7) | `collection_eba_laws` (occupancy atoms `CFAtom` / `present`) | `CollectionAlgebraClosure.v` — [05 Theorem 7.4](05-algebra-pyramid-and-decidability.md) |
-| `∃`/`∀` over a node's children, absorbed into the tree automaton (§6.2) | `tree_eba_laws` | `TreeAlgebraClosure.v` — [05 Theorem 7.5](05-algebra-pyramid-and-decidability.md) |
-| Presburger Boolean operations are exact (the quantifier-free core; §6.3) | `nfa_complement_correct`, `de_morgan_and`, `complement_or` | `PresburgerBooleanAlgebra.v` — [02 §5.1](02-effective-boolean-algebra.md) |
-| no modal quantifier is mistaken for an exact tier (§7) | tier-classification soundness | `BehavioralTierClassificationSound.v` |
-| the duality `∀x.φ ≡ ¬∃x.¬φ` (Proposition 5.1) | Rust tests `gnot_equivalence_forall_not_exists_not`, `gnot_equivalence_exists_not_forall_not` | `prattail/src/logict.rs` (tests, **not** Coq) |
+| Claim (here)                                                                      | Witness                                                                                       | Where                                                                                   |
+|-----------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
+| bounded `∃`/`∀` over a finite collection is a decidable EBA (Proposition 6.1, §7) | `collection_eba_laws` (occupancy atoms `CFAtom` / `present`)                                  | `CollectionAlgebraClosure.v` — [05 Theorem 7.4](05-algebra-pyramid-and-decidability.md) |
+| `∃`/`∀` over a node's children, absorbed into the tree automaton (§6.2)           | `tree_eba_laws`                                                                               | `TreeAlgebraClosure.v` — [05 Theorem 7.5](05-algebra-pyramid-and-decidability.md)       |
+| Presburger Boolean operations are exact (the quantifier-free core; §6.3)          | `nfa_complement_correct`, `de_morgan_and`, `complement_or`                                    | `PresburgerBooleanAlgebra.v` — [02 §5.1](02-effective-boolean-algebra.md)               |
+| no modal quantifier is mistaken for an exact tier (§7)                            | tier-classification soundness                                                                 | `BehavioralTierClassificationSound.v`                                                   |
+| the `letprop → PATA` quantifier lowering is total and decision-invariant under argument substitution (§8.1) | `lower_forall_box`, `lower_exists_diamond`, `lower_argsubst_invariant`, `letprop_decision_total`, `empty_arena_is_dead` | `LetpropPataWiringSound.v` — [10 §2.6](10-formal-verification-and-tests.md) |
+| the duality `∀x.φ ≡ ¬∃x.¬φ` (Proposition 5.1)                                     | Rust tests `gnot_equivalence_forall_not_exists_not`, `gnot_equivalence_exists_not_forall_not` | `prattail/src/logict.rs` (tests, **not** Coq)                                           |
 
 ## 12. Cross-references
 

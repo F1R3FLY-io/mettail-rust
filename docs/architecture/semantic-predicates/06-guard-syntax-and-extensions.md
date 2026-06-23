@@ -1,6 +1,6 @@
 # Guard Syntax and Extensions
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This document is the **syntax reference** for semantic-predicate guards: exactly
@@ -34,8 +34,14 @@ Each construct also carries an evidence line with four fixed fields:
 `Algebra:` the Rust type/fn · `Proof:` the `.v` file or `none` · `Builds:` the
 `BehavioralPred` variant or algebra instance · `Parser:` the parser fn or `—`.
 
-Reserve `⊳` exclusively for proposed syntax — a reader can grep this document for
-`⊳` to see every construct that is design, not implementation.
+Reserve `⊳` exclusively for proposed *surface syntax* — a reader can grep this
+document for `⊳` to see every construct that has no `language!` spelling. Read the
+scope carefully: `⊳` marks the **syntax** as unwritten, **not** the algebra as
+unbuilt. Most of these algebras are in fact **wired into the live analysis pipeline**
+behind a default-off Cargo feature, firing as a lint (`RT03`, `RT07`, `LP01`, `HM01`,
+the `N06-ISO` bisimulation supersede, the `letprop → PATA` decision); the default
+build stays byte-identical. So `⊳` means **wired but not writable** — the algebra runs
+as analysis, you simply cannot name it from a `language!` spec.
 
 > **Spec versus reality.** The design specifications `docs/design/predicated-types.md`
 > and `docs/design/guards-block.md` describe several constructs as if live that the
@@ -338,6 +344,18 @@ connectives and quantifiers for free. The design principles:
    position, so a language that does not opt in keeps it as a plain identifier.
 5. Opt-in via `guards { }` where a construct needs a backing algebra.
 
+Though the surface syntax below is proposed, the algebra behind most of these
+proposals is already **wired into the live analysis pipeline** behind a default-off
+Cargo feature, firing as a lint rather than as authorable syntax — the `RT03`
+structural-disjointness, `RT07` dead-cast, `LP01` dead-behavioral-type, and `HM01`
+base-sort lints, the `N06-ISO` bisimulation supersede, and the `letprop → PATA`
+decision. The status map separates **wired-but-gated algebra** from **still-proposed
+surface syntax**: wired is not the same as writable.
+
+![Substrate wiring status: each OSLF module behind a default-off Cargo feature, its lint, and whether its surface syntax is shipped or proposed](figures/06-substrate-wiring-status.svg)
+
+PlantUML source: [figures/06-substrate-wiring-status.puml](figures/06-substrate-wiring-status.puml).
+
 ### 3.1 P1 — Natural bounded quantifier — ⊳
 
 `Algebra:` `logict::QuantifiedFormula` · `Proof:` [13 — Constraint-Theory Engine, §3](13-constraint-theory-engine.md) · `Modeled:` [14 — Quantification](14-quantification.md) · `Builds:`
@@ -400,8 +418,13 @@ Maps `AG φ` to `behavioral_algebra::ag(⟦φ⟧)`, `EF φ` to `ef(…)`, the pa
 `◇φ` → `EF φ`. The atoms `⟦φ⟧` are the existing propositional atoms built from the
 relation-query syntax. Opt-in requirement: the language declares the LTS edge
 relation (see P8's `transitions =` hint). The unbounded LTL fairness fragment
-(`GF p`) is deliberately excluded — it routes through a Büchi construction outside
-this CTL fragment.
+(`GF p`) is deliberately excluded from the guard fragment — it routes through a Büchi
+construction outside this CTL fragment. That Büchi construction is, however, now
+realized at *run time*: the simulation runner checks a language's `ltl_properties`
+against its execution trace via `check_trace_ltl` (the LTL-to-Büchi acceptance proved
+sound in `TraceLtlCheckSound.v`, [10 §2.6](10-formal-verification-and-tests.md)) — a
+runtime trace check, not a compile-time guard operator, so it stays outside this
+fragment.
 
 ### 3.3 P3 — Transducer-shaped guard — ⊳
 
@@ -615,7 +638,7 @@ and string constraints over a `Pair` category; `transitions = step;` records whi
 
 ## 4. Master status table
 
-`✅` supported · `◐` partial · `⊳` proposed (algebra exists, syntax does not).
+`✅` supported · `◐` partial · `⊳` proposed (algebra exists — often wired as a default-off lint — surface syntax does not).
 
 | Construct | Surface today | Builds | Algebra | Proof | Status | Proposed |
 |---|---|---|---|---|---|---|
@@ -647,8 +670,10 @@ The one-line summary: of the algebra families implemented and largely proved in
 `prattail`, only relation queries, the propositional connectives, prefix-call
 quantifiers, and integer comparisons are reachable from `language!` source today;
 everything modal/temporal, transducer-shaped, tree/collection/product-shaped, and
-every effective-theory literal beyond integer comparison is *algebra without
-syntax* — which §3 proposes to close.
+every effective-theory literal beyond integer comparison is *algebra without surface
+syntax* — the algebra is built (and, for several, now wired into the live pipeline as
+a default-off lint; see §3's status map), but unreachable from `language!` source —
+which §3 proposes to close on the syntax side.
 
 ## 5. Cross-references
 

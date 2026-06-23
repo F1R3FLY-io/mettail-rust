@@ -174,7 +174,7 @@ predicate is enforced by the host, not by the substrate — see
 | Subsystem | Relationship |
 |---|---|
 | `language!` macro | Upstream source of guard declarations (`guards { }`, `?guard:Guard`); the substrate consumes the generated `GuardConfig` / `BehavioralPred`. |
-| `prattail` crate | Owns the entire substrate: `symbolic.rs` (EBA + SFA), `sft.rs` / `sym_tree_transducer.rs` (SFT / STFT), `algebra_tower.rs` (tower), the closure family, `presburger.rs`, `behavioral_algebra.rs`, `any_algebra.rs`. |
+| `prattail` crate | Owns the entire substrate: `symbolic.rs` (EBA + SFA), `sft.rs` / `sym_tree_transducer.rs` (SFT / STFT), `algebra_tower.rs` (tower), the closure family, `presburger.rs`, `behavioral_algebra.rs`, `any_algebra.rs`, `logict.rs` / `logict_smt.rs` (constraint theories + the Sat3-only Z3 backend), `letprop.rs` / `parity_tree.rs`, `bisimulation.rs`, `hindley_milner.rs`, and the `parser/predicate_pratt.rs` guard parser. The OSLF-substrate wirings are gated behind default-off Cargo features (the default build is byte-identical). |
 | `rholang-codegen` | Downstream consumer: `backend.rs` collects obligations and runs the coverage gate; `guard_quality.rs` derives the quality tag; `flip.rs` makes the fail-closed flip decision. |
 | Dovetail | Consumes covered guarded rewrite rules and saturates them; pure-structural obligations may be discharged by exact-key semantics. |
 | Rho backend / F1r3node | Lowers a covered language to `rhoapi::Par` and enforces the surviving guard at run time (RSpace match / `where` / native join). |
@@ -193,5 +193,6 @@ Run the formal-verification gates under the 32 GiB RSS cap:
 ```text
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-symbolic-algebra
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-sft
+make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-advanced-automata
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-critical-zero-admission
 ```

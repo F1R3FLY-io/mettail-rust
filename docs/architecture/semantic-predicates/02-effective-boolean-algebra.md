@@ -1,6 +1,6 @@
 # Effective Boolean Algebra
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This document is the algebraic foundation: what an effective Boolean algebra (EBA)
@@ -270,7 +270,10 @@ shipped instances:
 > its integers ([Büchi, 1960](references.md#buchi-1960);
 > [Bartzis & Bultan, 2003](references.md#bartzis-bultan-2003)); `is_satisfiable`
 > is NFA non-emptiness (`is_satisfiable_nfa`, `presburger.rs`). There is no Z3 in
-> this path. This is a deliberate trade documented in
+> this path. (The substrate *does* ship a Z3/SMT backend, but only as a
+> `Sat3`-only secondary gap-filler for the mixed bit-vector guards the automata
+> cannot express — [13 §2.1](13-constraint-theory-engine.md); it is never the
+> integer decision procedure here.) This is a deliberate trade documented in
 > `prattail/docs/design/constraint-theories/why-automata-instead-of-solvers.md`:
 > automata give closure and exactness over the *whole* algebra (complement,
 > projection, equivalence), which a solver's per-query yes/no cannot.
@@ -297,7 +300,9 @@ three NFA constructions —
 
 with `⊤ := fun _ ⟼ true` (`pred_true`, universal acceptance) and
 `⊥ := fun _ ⟼ false` (`pred_false`, empty NFA). Satisfiability is NFA non-emptiness
-(`is_satisfiable_nfa`), so no Z3 ever appears. The first obligation is that each NFA op
+(`is_satisfiable_nfa`), so no Z3 ever appears *in the Presburger path* (the optional
+Z3/SMT backend of [13 §2.1](13-constraint-theory-engine.md) is a separate, `Sat3`-only
+gap-filler). The first obligation is that each NFA op
 **coincides definitionally** with its Boolean op.
 
 **Lemma 5.1 (NFA Boolean ops are the Boolean ops).** For all `P, Q : Pred` and `z : ℤ`,
@@ -371,7 +376,11 @@ algebra.
   finitely sized.
 - `AnyPred` / `AnyAlgebra` mirror the domain. `fold_pred` is the many-sorted
   projection: a predicate of sort `Int` evaluated against a `Bool` element folds
-  to `⊥` (a sort mismatch is *unsatisfiable*, not a type error).
+  to `⊥` (a sort mismatch is *unsatisfiable*, not a type error). This projection is
+  mechanized zero-admission as `fold_all_foreign_unsat` (foreign sort `⊥`) and
+  `wrapper_eval_faithful` / `wrapper_sat_faithful` (the wrapper agrees with the bare
+  leaf) in `AnyAlgebraProjectionSound.v`
+  ([10 §2.1](10-formal-verification-and-tests.md)).
 - A `Sort` registry (`Native(NativeKind) | Category | Tuple | Sum | List | Bag |
   Map`) indexes each language type to its algebra; `SortRegistry::from_grammar`
   derives the family from the `language!` `NativeKind`s and grammar categories,
@@ -382,6 +391,10 @@ The closure constructors (`ProductAlgebra`, `SumAlgebra`, `BagAlgebra`,
 are covered in [05](05-algebra-pyramid-and-decidability.md); each is itself a
 `BooleanAlgebra` (or a reject-safe algebra), so the SFA/SFT code is reused verbatim
 and the algebra-agnostic Coq proofs apply unchanged.
+
+The carrier is wired into the live guard pipeline behind the `any-algebra-carrier`
+Cargo feature, **off by default** (the default build is byte-identical), so the
+uniform projection *augments* the per-leaf analyses rather than replacing them.
 
 ## 7. What this buys the rest of the suite
 
@@ -425,6 +438,7 @@ Presburger tier with `=rocq-presburger`. Both files end with `Print Assumptions`
 | Lemma 5.3 (De Morgan) | `de_morgan_and`, `de_morgan_or` | `PresburgerBooleanAlgebra.v` |
 | Lemma 5.4 (distributivity) | `distributivity_and_or`, `distributivity_or_and` | `PresburgerBooleanAlgebra.v` |
 | Remaining Presburger laws (commutativity, associativity, absorption, idempotence, units/annihilators, double negation) | `and_comm`, `or_comm`, `and_assoc`, `or_assoc`, `absorption_and_or`, `absorption_or_and`, `and_idempotent`, `or_idempotent`, `and_true`, `or_false`, `and_false`, `or_true`, `double_negation` | `PresburgerBooleanAlgebra.v` |
+| The `AnyAlgebra` uniform-carrier projection (foreign sort `⊥` unsatisfiable, wrapper faithful, product/sum layers EBA) | `fold_all_foreign_unsat`, `wrapper_eval_faithful`, `wrapper_sat_faithful`, `carrier_product_layer_is_eba`, `carrier_sum_layer_is_eba` | `AnyAlgebraProjectionSound.v` |
 
 The minterm construction (Definition 4.1 and the `Minterms` algorithm of §4) is **not**
 a Coq theorem but an algorithm; its implementation is `compute_minterms`

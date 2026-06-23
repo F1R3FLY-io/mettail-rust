@@ -1,6 +1,6 @@
 # Formal Verification and Tests
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This document is the **evidence ledger** for the semantic-predicate substrate. It
@@ -23,7 +23,7 @@ answering a different question and each reproducible by a single command.
 |---|---|---|---|---|
 | **Mechanized proofs** | Rocq theories in `formal/rocq/` and `dovetail/formal/rocq/` | "Is the *algebra* sound — do the Boolean laws, closure, composition, functionality, and bridge soundness hold for *all* inputs?" | machine-checked over arbitrary inputs, **zero-admission** | `make -C formal check-capped FORMAL_CAPPED_TARGET=<target>` |
 | **Runtime tests** | Rust integration tests in `rholang-runtime/tests/` and `languages/tests/` | "Does the *live host* behave as the proofs require — does a failed guard rest its data, and does a real guarded language plan end-to-end with usable quality?" | concrete executions against f1r3node's `RhoRuntime` and the real codegen path | `cargo test -p <crate> --test <name>` |
-| **Zero-admission gate** | `formal/scripts/check_rocq_zero_admission.py` | "Are the proofs *complete* — no `Axiom`, `Conjecture`, `Parameter`, `Admitted.`, or `admit.` hiding a hole?" | a syntactic scanner with its own `--self-test`, run on the four critical trees | `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-critical-zero-admission` |
+| **Zero-admission gate** | `formal/scripts/check_rocq_zero_admission.py` | "Are the proofs *complete* — no `Axiom`, `Conjecture`, `Parameter`, `Admitted.`, or `admit.` hiding a hole?" | a syntactic scanner with its own `--self-test`, run on the five critical trees | `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-critical-zero-admission` |
 
 The layers are **complementary, not redundant**. A proof shows the algebra is
 sound for every input but says nothing about whether f1r3node actually rests a
@@ -35,8 +35,8 @@ agrees.
 
 > **Two Rocq trees.** The proofs live in *two* workspaces. The substrate's own
 > algebra/transducer/bridge proofs are under the workspace tree
-> `formal/rocq/` (subtrees `symbolic_algebra/`, `sft/`, `presburger/`,
-> `predicate_dispatch/`, `rho_bridge/`). The Dovetail saturation/extraction
+> `formal/rocq/` (subtrees `symbolic_algebra/`, `sft/`, `advanced_automata/`,
+> `presburger/`, `predicate_dispatch/`, `rho_bridge/`). The Dovetail saturation/extraction
 > proofs are under the companion tree `dovetail/formal/rocq/theories/`. Both are
 > in the zero-admission gate's `DEFAULT_ROOTS`; this document covers the
 > substrate tree in detail and references the Dovetail tree where the bridge
@@ -47,6 +47,14 @@ agrees.
 Each row pairs a substrate claim with the `.v` file that mechanizes it, the
 key theorem name(s) you can grep for, and the capped build target that compiles
 it. Names are exact (read from source). Rows are grouped by theory tree.
+
+Two kinds of claim appear below. The original rows certify the **algebra** itself
+— Boolean laws, closure, composition, functionality, bridge soundness. The rows
+marked *(wiring)* were added when the substrate was wired into the live pipeline:
+each certifies an **integration seam** where a module was activated behind a
+Cargo feature that is **off by default** (so the default build stays
+byte-identical), and each *reuses* the algebra soundness above rather than
+re-deriving it. Both kinds are zero-admission and live in the same trees.
 
 ### 2.1 `symbolic_algebra` — target `rocq-symbolic-algebra`
 
@@ -64,6 +72,12 @@ Directory: `formal/rocq/symbolic_algebra/theories/`.
 | The Heyting tier models behavioral negation: triple-negation collapse `¬¬¬a = ¬a`, `¬¬a = ⊥ ⇒ a = ⊥`, the regular-element subalgebra, and `¬¬a = a` *only on regulars*. | `HeytingAlgebra.v` | `dneg_idempotent`, `dneg_eq_bot_implies_bot`, `regular_meet`, `excluded_middle_reg`, `neg_involutive_on_regular` | `rocq-symbolic-algebra` |
 | The decidability-tier lattice is a **join-semilattice** that is a **homomorphism under theory combination**, and tier maps to regularity. | `GuardTierCertificate.v` | `tier_le` (total order: `tier_le_refl`/`tier_le_antisym`/`tier_le_trans`/`tier_le_total`); `tier_max_comm`/`tier_max_idem`/`tier_max_assoc`/`tier_max_ub_l`/`tier_max_ub_r`/`tier_max_least`; `tier_max_sound_hom`/`tier_max_complete_hom`/`tier_max_exact`; `tier_regularity_reg`/`tier_regularity_boundary`/`tier_regularity_closed` | `rocq-symbolic-algebra` |
 | The **mixed structural `×` behavioral complement is a reject-safe over-approximation** that never fires falsely; the concrete 3-valued model proves classical complement is genuinely unavailable there. | `BehavioralNegation.v` | `mixed_negation_soundness`, `mixed_guard_no_false_fire`, `weak_dneg`; module `TriModel`: `tri_neg_sound`, `excluded_middle_fails`, `no_classical_complement` | `rocq-symbolic-algebra` |
+| *(wiring)* The **`AnyAlgebra` carrier** projects every foreign-sort leaf to `⊥` (a sort mismatch is unsatisfiable) and the wrapper is faithful — `eval`/`sat`/`∧` agree with the bare leaf — with the product and sum carrier layers EBAs. | `AnyAlgebraProjectionSound.v` | `fold_all_foreign_unsat`, `fold_foreign_leaf_eval_false`, `wrapper_eval_faithful`, `wrapper_sat_faithful`, `wrapper_and_faithful`, `carrier_product_layer_is_eba`, `carrier_sum_layer_is_eba` | `rocq-symbolic-algebra` |
+| *(wiring)* The **guard-tier classifier** is sound-and-complete on `T1`, a registry decision equals the leaf decision, and the per-fold tier is the `tier-max` homomorphism (a structural fold stays `T1`). | `GuardTierClassificationSound.v` | `classify_T1_sound_and_complete`, `structural_classifies_exact`, `registry_decision_is_leaf_decision`, `fold_app_tier_max`, `partition_sound_hom`, `partition_complete_hom`, `structural_fold_is_T1` | `rocq-symbolic-algebra` |
+| *(wiring)* The **`sym_tree` structural recognizer** decides emptiness, disjointness, and subtype with the latter two exclusive, and on a finite payload alphabet **agrees** with the live tree automaton; the tree-payload layer is a faithful EBA. | `SymTreeWiringSound.v` | `sat_empty_iff`, `disjoint_iff`, `subtype_iff`, `disjoint_subtype_exclusive`, `finite_agreement`, `tree_layer_is_eba`, `tree_payload_eval_faithful`, `tree_payload_sat_faithful` | `rocq-symbolic-algebra` |
+| *(wiring)* The **behavioral decidability-tier routing** sends a ground guard to `T1`, relational to `T2`, modal to `T3`, and never mis-routes a modal guard to the relational-only evaluator. | `BehavioralTierClassificationSound.v` | `tier_ground_is_t1`, `tier_relational_is_t2`, `tier_modal_is_t3`, `routing_sound`, `routing_complete`, `ground_not_modal` | `rocq-symbolic-algebra` |
+| *(wiring)* The **`behavioral_pred → BehavioralFormula` lowering** sends `AcMatch` to the structural leg (fail-closed `None`), a relational pred to a faithful relational formula, and preserves both the exact/ground classification and the tier. | `BehavioralLoweringSound.v` | `lower_acmatch_none`, `lower_relational_some`, `lower_non_modal`, `lower_preserves_exact`, `lower_ground`, `lower_tier_sound`, `lower_implies_demorgan` | `rocq-symbolic-algebra` |
+| *(wiring)* A **certificate-checked Z3 witness** is sound (re-evaluates to `true`), genuinely evaluates the model, and fabricates nothing — the discipline that keeps the `Sat3`-only Z3 backend (`logict_smt.rs`, [13](13-constraint-theory-engine.md)) from ever claiming an unproven `Sat`. | `Z3WitnessChecked.v` | `checked_witness_sound`, `checked_witness_evaluates`, `checked_witness_no_fabrication` | `rocq-symbolic-algebra` |
 
 ### 2.2 `sft` — target `rocq-sft`
 
@@ -76,6 +90,7 @@ Directory: `formal/rocq/sft/theories/`.
 | SFT **functionality** (single-valuedness) is preserved by composition and characterized by per-input output length `≤ 1`. | `SftFunctionality.v` | `identity_functional`, `constant_functional`, `epsilon_functional`, `compose_preserves_functional`, `domain_characterization`, `functional_iff_all_le1` | `rocq-sft` |
 | The **tree-transducer** relabeling homomorphism composes associatively and counts are preserved by fusion. | `StftComposition.v` | `thom_id`, `thom_fusion`, `thom_compose_assoc`, `tcount_thom`; `ft_compose_left_identity`/`ft_compose_right_identity`/`ft_compose_assoc` | `rocq-sft` |
 | Tree-transducer **functionality** is preserved by composition and the relabeling preserves the tree node count. | `StftFunctionality.v` | `identity_functional`, `compose_preserves_functional`, `thom_preserves_tcount`, `functional_output_le1` | `rocq-sft` |
+| *(wiring)* The **cast pre-image factors** through the tree-transducer composition — the backward-type-reasoning basis for the `RT07` dead-cast lint (an empty pre-image is a dead cast). | `StftWiringSound.v` | `cast_preimage_factors`, `ft_compose_assoc` | `rocq-sft` |
 
 ### 2.3 `presburger` — target `rocq-presburger`
 
@@ -121,6 +136,20 @@ compose it with OSLF funding and the fail-closed flip gate.
 > guarantees no language reaches a live COMM at all unless every obligation is
 > covered with non-`Unknown` quality.
 
+### 2.6 `advanced_automata` — target `rocq-advanced-automata`
+
+Directory: `formal/rocq/advanced_automata/theories/`. These certify the four
+wiring seams the substrate-wiring campaign added behind default-off features
+(`oslf-bisimulation`, `oslf-letprop`, the simulation trace-LTL check, and
+`oslf-hindley-milner`); each reuses a shipped automaton/algebra result.
+
+| Claim | File | Key theorem(s) | Target |
+|---|---|---|---|
+| *(wiring)* The **Paige–Tarjan bisimulation** partition refinement relates only genuinely bisimilar states — the certified basis for the `N06-ISO` category-dedup that supersedes the weaker `alternating` equivalence. | `BisimulationWiringSound.v` | `certified_partition_relates_only_bisimilar`, `bisimilar_refl` | `rocq-advanced-automata` |
+| *(wiring)* The **`letprop → parity-tree (PATA)`** lowering is decision-total and an empty arena is a dead behavioral type, with `∀` lowering to `Box`, `∃` to `Diamond`, and argument substitution decision-invariant. | `LetpropPataWiringSound.v` | `letprop_decision_total`, `empty_arena_is_dead`, `lower_forall_box`, `lower_exists_diamond`, `lower_argsubst_invariant`, `decide_argsubst_invariant`, `lower_total` | `rocq-advanced-automata` |
+| *(wiring)* The **trace-LTL adaptor** marks a normal-form outcome at exactly the last step, never before, and uniquely — the basis for the runtime `check_trace_ltl` Büchi acceptance over a simulation trace. | `TraceLtlCheckSound.v` | `adaptor_nf_at_last`, `adaptor_nf_not_last`, `adaptor_unique_nf` | `rocq-advanced-automata` |
+| *(wiring)* The **Hindley–Milner base-sort** pass derives a well-formed principal constructor arrow, is exact against the declared sorts, and the `HM01` lint fires precisely on a genuine base-sort inconsistency. | `HindleyMilnerWiringSound.v` | `hm_principal_arrow_wf`, `hm_consistency_exact`, `hm01_lint_sound` | `rocq-advanced-automata` |
+
 ## 3. The zero-admission gate
 
 > ## ⚠ Callout — `Sat3` and `Esakia` are **not** Coq objects
@@ -160,16 +189,17 @@ syntactically:
    `Axiom`/`Conjecture`/`Parameter`/`Admitted.`/`admit.` fixture each fails — so
    the scanner's own correctness is checked before it scans the repository.
 
-Its `DEFAULT_ROOTS` are the **four critical trees**:
+Its `DEFAULT_ROOTS` are the **five critical trees**:
 
 ```text
 dovetail/formal/rocq/theories
 formal/rocq/rho_bridge/theories
 formal/rocq/symbolic_algebra/theories
 formal/rocq/sft/theories
+formal/rocq/advanced_automata/theories
 ```
 
-Every tree in the matrices of §2.1, §2.2, and §2.5 is inside `DEFAULT_ROOTS`
+Every tree in the matrices of §2.1, §2.2, §2.5, and §2.6 is inside `DEFAULT_ROOTS`
 and passes the gate with exit `0`; the substrate ships with no `Admitted.` and
 no `Axiom` in those trees. The aggregate target runs the self-test, then the
 scanner:
@@ -181,9 +211,9 @@ rocq-critical-zero-admission:
 ```
 
 The `presburger` and `predicate_dispatch` trees are compiled and `Qed`-checked
-by their own targets (§2.3, §2.4); the four-tree `DEFAULT_ROOTS` set is the
+by their own targets (§2.3, §2.4); the five-tree `DEFAULT_ROOTS` set is the
 *critical-path* gate that blocks a release on any admission in the algebra,
-transducer, bridge, or Dovetail proofs.
+transducer, advanced-automata, bridge, or Dovetail proofs.
 
 ## 4. Runtime-test matrix
 
@@ -237,14 +267,17 @@ make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-predicate-dispatch
 # Algebra-to-COMM bridges: guarded-COMM soundness, flip gate, OSLF laws, GSLT
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rho-bridge
 
-# The zero-admission gate over the four critical trees (self-test, then scan)
+# Advanced automata: bisimulation, letprop→PATA, trace-LTL, Hindley–Milner wiring soundness
+make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-advanced-automata
+
+# The zero-admission gate over the five critical trees (self-test, then scan)
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-critical-zero-admission
 ```
 
 Each command runs `make -j1` inside the capped scope (`-j1` for the
 memory-intensive modular proofs, per the project's resource-limiting discipline)
 and exits `0` on success. A reviewer reproducing the whole substrate ledger runs
-the five proof targets plus the gate; a CI run gates the release on
+the six proof targets plus the gate; a CI run gates the release on
 `rocq-critical-zero-admission` together with the per-tree targets.
 
 ## 6. References cross-link

@@ -1,6 +1,6 @@
 # Executive Brief
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 A one-page orientation to the semantic-predicate substrate for principals. The
 detail is in the numbered documents; this page is the decision-level summary.
@@ -68,7 +68,9 @@ Of the algebra families implemented and largely proved in `prattail`, only relat
 queries, the propositional connectives, prefix-call quantifiers, and integer
 comparisons are reachable from `language!` source today. Everything
 modal/temporal, transducer-shaped, tree/collection/product-shaped, and every
-effective-theory literal beyond integer comparison is *algebra without syntax*.
+effective-theory literal beyond integer comparison is *algebra without surface
+syntax* — built, and for several now wired into the live pipeline as a default-off
+lint, but unreachable from `language!` source.
 [06 — Guard Syntax and Extensions](06-guard-syntax-and-extensions.md) documents
 exactly what is supported and proposes a clean syntax to close the gap, with a
 sharp `✅ supported / ◐ partial / ⊳ proposed` distinction.
@@ -82,5 +84,6 @@ sharp `✅ supported / ◐ partial / ⊳ proposed` distinction.
   fires falsely — the conservative posture that keeps a semi-decidable predicate
   sound in a concurrent setting.
 - The framework already covers every data type by construction; the open work is
-  *surface syntax*, not algebra — and that work is scoped and proposed in
-  [06](06-guard-syntax-and-extensions.md).
+  *surface syntax*, not algebra — the algebras are built and several are already wired
+  into the live pipeline as default-off lints, so what remains is a `language!`
+  spelling, scoped and proposed in [06](06-guard-syntax-and-extensions.md).

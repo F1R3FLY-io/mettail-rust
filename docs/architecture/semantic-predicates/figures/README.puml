@@ -27,6 +27,8 @@ rectangle "prattail substrate\n(theory of guards — compile time, classify-only
   component "SFA\n(predicate-labeled automata)\nsymbolic.rs" as SFA #CCFBF1
   component "SFT / STFT\nsft.rs · sym_tree_transducer.rs" as SFT #EDE9FE
   component "Algebra tower\nRejectSafe / Heyting\nalgebra_tower.rs" as Tower #FEF3C7
+  component "AnyAlgebra carrier\nany_algebra.rs (feat. any-algebra-carrier)" as Carrier #BFDBFE
+  component "Z3 / SMT — Sat3-only\nlogict_smt.rs (feat. smt)" as Z3 #FEF3C7
 }
 
 ' ── Downstream classification: rholang-codegen ──────────────────────────
@@ -57,6 +59,15 @@ Quality --> Gate : coverage evidence
 Gate --> Dovetail : admit only if covered, non-Unknown
 Gate --> Rho : admit only if covered, non-Unknown
 Gate --> Spec : REFUSE (fail-closed) on Unknown
+
+Tower -[hidden]down- Carrier
+Carrier -[hidden]down- Z3
+
+note bottom of Sub
+  OSLF-substrate modules (AnyAlgebra carrier, bisimulation, letprop→PATA,
+  Hindley–Milner, Z3/SMT) are wired behind default-off Cargo features;
+  the default build is byte-identical.
+end note
 
 legend right
 |= Color |= Area |

@@ -47,9 +47,17 @@ note bottom of Where
   precede the slot.
 end note
 
+note bottom of Built #FEF3C7
+  Beyond these authorable surfaces, the OSLF substrate algebras are now wired into
+  the live pipeline as default-off lints (RT03 / RT07 / LP01 / HM01, the N06-ISO
+  bisimulation supersede, the letprop→PATA decision) — see the substrate
+  wiring-status map. Wired is not writable: those still have no language! surface.
+end note
+
 legend right
 |= Color |= Side |
 |<#DBEAFE> | guard surface (what the author writes) |
 |<#DCFCE7> | the obligation / config it builds |
+|<#FEF3C7> | algebra wired as a default-off lint (not an authorable surface) |
 endlegend
 @enduml

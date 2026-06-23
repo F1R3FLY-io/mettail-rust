@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 This page collects the external literature, the repository-local source files, and
 the mechanized proofs that the suite cites. External works link to a DOI where a
@@ -189,6 +189,11 @@ The substrate (the `prattail` crate):
 - `prattail/src/regex_sfa.rs`
 - `prattail/src/ordered_field.rs`
 - `prattail/src/logict.rs`
+- `prattail/src/logict_smt.rs`
+- `prattail/src/letprop.rs`
+- `prattail/src/parity_tree.rs`
+- `prattail/src/hindley_milner.rs`
+- `prattail/src/parser/predicate_pratt.rs`
 
 The declaration surface (the `ast` crate) and the consumer (`rholang-codegen`):
 
@@ -218,6 +223,12 @@ Symbolic algebra (`make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-symboli
 - `formal/rocq/symbolic_algebra/theories/HeytingAlgebra.v`
 - `formal/rocq/symbolic_algebra/theories/GuardTierCertificate.v`
 - `formal/rocq/symbolic_algebra/theories/BehavioralNegation.v`
+- `formal/rocq/symbolic_algebra/theories/AnyAlgebraProjectionSound.v`
+- `formal/rocq/symbolic_algebra/theories/GuardTierClassificationSound.v`
+- `formal/rocq/symbolic_algebra/theories/SymTreeWiringSound.v`
+- `formal/rocq/symbolic_algebra/theories/BehavioralTierClassificationSound.v`
+- `formal/rocq/symbolic_algebra/theories/BehavioralLoweringSound.v`
+- `formal/rocq/symbolic_algebra/theories/Z3WitnessChecked.v`
 
 Symbolic transducers (`FORMAL_CAPPED_TARGET=rocq-sft`):
 
@@ -226,12 +237,20 @@ Symbolic transducers (`FORMAL_CAPPED_TARGET=rocq-sft`):
 - `formal/rocq/sft/theories/SftFunctionality.v`
 - `formal/rocq/sft/theories/StftComposition.v`
 - `formal/rocq/sft/theories/StftFunctionality.v`
+- `formal/rocq/sft/theories/StftWiringSound.v`
 
 Presburger and dispatch (`FORMAL_CAPPED_TARGET=rocq-presburger` / `rocq-predicate-dispatch`):
 
 - `formal/rocq/presburger/theories/PresburgerBooleanAlgebra.v`
 - `formal/rocq/predicate_dispatch/theories/DispatchCompleteness.v`
+
+Advanced automata (`FORMAL_CAPPED_TARGET=rocq-advanced-automata`):
+
 - `formal/rocq/advanced_automata/theories/RegisterEquivalence.v`
+- `formal/rocq/advanced_automata/theories/BisimulationWiringSound.v`
+- `formal/rocq/advanced_automata/theories/LetpropPataWiringSound.v`
+- `formal/rocq/advanced_automata/theories/TraceLtlCheckSound.v`
+- `formal/rocq/advanced_automata/theories/HindleyMilnerWiringSound.v`
 
 Algebra-to-COMM bridges (`FORMAL_CAPPED_TARGET=rocq-rho-bridge`):
 

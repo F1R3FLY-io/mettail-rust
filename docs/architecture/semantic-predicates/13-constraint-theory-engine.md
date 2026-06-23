@@ -1,6 +1,6 @@
 # The Constraint-Theory Engine: LogicT Under the Substrate
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 The algebra documents ([02](02-effective-boolean-algebra.md)–[05](05-algebra-pyramid-and-decidability.md))
@@ -80,6 +80,10 @@ sentence:
 > apply unchanged.** This is how a `theories { name = T for [Cat] }` registration
 > ([06 §2.1.3](06-guard-syntax-and-extensions.md)) becomes a usable guard algebra.
 
+This lift holds for every domain whose satisfiability is **decidable**. One
+shipped backend is deliberately held *back* from it, because its satisfiability
+is only **semi-decidable** — the Z3/SMT oracle of §2.1.
+
 The three shipped theories — `PresburgerTheory`, `UnificationTheory`,
 `LatticeTheory` — return an empty `label` (decidable: propagation only, the
 `search_bound` is irrelevant), except `UnificationTheory`'s extended custom-match,
@@ -87,6 +91,54 @@ whose non-empty `label` engages the fair search bounded by `search_bound` (the
 `LT01` lint guards it). `PresburgerAlgebra` additionally has a *direct*
 `BooleanAlgebra` path (NFA-backed, [02 §5](02-effective-boolean-algebra.md)) for
 speed, distinct from the bridge.
+
+### 2.1 The Z3/SMT backend — a `ConstraintTheory` that deliberately stops there
+
+The payoff above has **one deliberate exception**. `Z3Theory`
+(`prattail/src/logict_smt.rs`, feature `smt`, default-off — it dynamically links
+the system `libz3`) is a `ConstraintTheory` over `bool`, linear integer
+arithmetic, and fixed-width bit-vectors, but it is **never** lifted to a
+`TheoryAlgebra<Z3Theory>` and **never** becomes a `BooleanAlgebra`. The reason is
+soundness, not convenience.
+
+A general SMT query has three outcomes — `Sat`, `Unsat`, and `unknown` — and
+`unknown` is irreducibly semi-decidable. The generic bridge of §2 decides
+satisfiability by `witness(...).is_some()`, a **two-valued** test; routing Z3
+through it would collapse `unknown → witness None → is_satisfiable false`,
+silently reporting a wrong **`Unsat`** (the exact defect in the upstream
+lling-llang hoist this backport corrects). So the backend is exposed **only**
+through a three-valued surface — `logict_smt::is_satisfiable_3v` and
+`checked_witness`, returning `Sat3 = Sat | Unsat | DontKnow`
+([05 §3](05-algebra-pyramid-and-decidability.md)) — and a Z3 `unknown` maps to
+`DontKnow`, **never** to `Unsat`. `DontKnow` then meets the same reject-safe
+collapse the rest of the engine uses (`Unknown → false`, §5). In the bridge
+figure above, this is the amber Z3 leg that branches off `ConstraintTheory` to a
+`Sat3` exit and stops — it never reaches the `BooleanAlgebra` node.
+
+Two further disciplines keep it sound:
+
+- **Verified deciders stay primary.** Z3 is a **secondary gap-filler**, consulted
+  only where a verified decider — the Presburger NFA
+  ([02 §5](02-effective-boolean-algebra.md)), the interval, or the ordered-field
+  algebra — itself returns `DontKnow` on a mixed numeric/bit-vector guard the
+  hand-rolled leaves cannot express. It is **never** routed into the classical SFA
+  consumers (complement, determinization, equivalence) that require a *total*
+  Boolean algebra.
+- **Every witness is certificate-checked.** A reported `Sat` model is
+  re-`evaluate`d before it is believed, so the oracle can never fabricate a
+  satisfying assignment (`Z3WitnessChecked.v` — `checked_witness_sound`,
+  `checked_witness_no_fabrication`, mechanized zero-admission,
+  [10 §2.1](10-formal-verification-and-tests.md)).
+
+The first consumer is **refinement-subtyping entailment**:
+`RefinementTypeSystem::predicate_entails`
+(`prattail/src/type_system/refinement.rs`) decides `premise ⟹ conclusion` over
+mixed numeric/bit-vector refinements by asking Z3 whether `premise ∧ ¬conclusion`
+is unsatisfiable — `Unsat ⇒ entailment holds`, `Sat ⇒ it does not`, and
+`DontKnow ⇒ do not claim entailment` (the reject-safe default; the non-`smt`
+build computes the same judgement without Z3). `GuardTierCertificate` classifies a
+Z3-decided guard at tier `T3`, degrading to `T4` on an `unknown`
+([05 §6](05-algebra-pyramid-and-decidability.md)).
 
 ## 3. Quantified-predicate evaluation
 
@@ -180,6 +232,7 @@ which the fail-closed gate ([07 §5](07-language-to-rholang-integration.md)) act
 | finite-relation quantifier / decidable theory (propagation decides; `label = empty`) | T1 / T2 | `ExactDecidable` |
 | bounded quantifier or `search_bound`-limited labeling that returned a definite verdict | T3 | `BoundedDecidable` |
 | `evaluate_quantified_with_theory → Unknown` (budget exhausted, `had_unknown`), or `collect_bounded` truncated without a witness (`LT01`) | maps to `Sat3::DontKnow` | fail-closed unless asserted (`#[tier(t4)]` / `@[quality(trusted)]`) |
+| Z3/SMT gap-filler (feature `smt`, §2.1) decides via `is_satisfiable_3v` + a certificate-checked witness; `Sat`/`Unsat` are definite, an `unknown` is `DontKnow` | T3 (T4 on `unknown`) | `BoundedDecidable` (reject-safe on `DontKnow`) |
 
 Two places turn the engine's "don't know" into a *rejection*, never a false
 admission: `into_safe_bool` (`Unknown → false`) and the bridge's
@@ -234,6 +287,7 @@ mechanizing witnesses of the cited theorems.
 | theory combination is an EBA (Nelson–Oppen joint-search base case) | [05 — Theorem 7.6](05-algebra-pyramid-and-decidability.md) | `combined_eba_laws`, `csat_sound`, `csat_complete`, `cwit_sound`, `cwit_total` (`TheoryCombination.v`) |
 | the mixed-guard complement is reject-safe (a covered theory guard never false-fires) | [12 — Theorem 6.1](12-heyting-behavioral-logic.md) | `mixed_negation_soundness` (`BehavioralNegation.v`); run-time mirror `rho_complement_no_commit` (`RhoGuardedCommSoundness.v`) |
 | the tier ↔ regularity / decidability frame the engine populates | [12 — Proposition 6.3](12-heyting-behavioral-logic.md) ([05 §6](05-algebra-pyramid-and-decidability.md) summary) | `tier_max_sound_hom`, `tier_regularity_reg`, `tier_regularity_boundary`, `tier_regularity_closed` (`GuardTierCertificate.v`) |
+| the Z3/SMT witness is certificate-checked, never fabricated — the soundness fence on the `Sat3`-only backend (§2.1) | [10 §2.1](10-formal-verification-and-tests.md) | `checked_witness_sound`, `checked_witness_no_fabrication` (`Z3WitnessChecked.v`) |
 | the consolidated proof ledger for all three rows above | [10 §2.1](10-formal-verification-and-tests.md) | — |
 | the bounded-search lint | `prattail/docs/diagnostics/logict/LT01.md` | `logict-search-bound-exceeded` |
 | full API + algorithms (`msplit`, `interleave`, `fair_conjoin`, `witness`, `evaluate_quantified`) | `prattail/docs/design/constraint-theories/logict-framework.md` | — |

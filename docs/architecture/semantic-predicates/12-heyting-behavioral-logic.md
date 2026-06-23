@@ -1,6 +1,6 @@
 # Heyting Algebras for Behavioral Constraints
 
-Last updated: 2026-06-22
+Last updated: 2026-06-23
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This is the theoretical treatise behind a claim that
@@ -904,7 +904,9 @@ front-matter applies: those names are Rust / theory, not Coq.
 | classical laws contrasted in §2.1 | `excluded_middle`, `non_contradiction`, `double_neg`, `de_morgan_conj` | `EffectiveBooleanAlgebra.v` |
 | Def 3.1; Propositions 3.2–3.4 (excluded middle fails; reject-safe negation) | `TriModel`: `tri_eval`, `tri_neg`, `excluded_middle_fails`, `no_classical_complement`, `tri_neg_sound` | `BehavioralNegation.v` |
 | Defs 4.1–4.7 (behavioral operators, model, evaluation, tier) | `HostTerm`, `FactBase`, `build_lts`, `denote`, `evaluate`, `is_satisfiable_3v`, `pseudo_complement` (Rust); tier soundness | `prattail/src/behavioral_algebra.rs`; `BehavioralTierClassificationSound.v` |
+| §4.1/§6 the `behavioral_pred → BehavioralFormula` lowering: `AcMatch` to the structural leg (fail-closed), the relational core faithful, the tier preserved | `lower_acmatch_none`, `lower_relational_some`, `lower_tier_sound`, `lower_non_modal` | `BehavioralLoweringSound.v` |
 | Lemmas 5.2, 5.3 (bisimulation reflexive, fixed point) | `is_bisimulation`, `bisimilar`, `self_bisimilar`, `fixed_point_is_bisimulation` | `RegisterEquivalence.v` |
+| §5.2 the certified bisimulation partition relates only bisimilar states (the `N06-ISO` category-dedup that supersedes `alternating`) | `certified_partition_relates_only_bisimilar`, `bisimilar_refl` | `BisimulationWiringSound.v` |
 | Theorem 6.1 (mixed complement reject-safe) | `mixed_negation_soundness`, `mixed_guard_no_false_fire`, `weak_dneg` | `BehavioralNegation.v` |
 | Theorem 6.1, run-time mirror | `comm_fires_iff`, `product_eval_sound`, `mixed_negation_soundness`, `rho_complement_no_commit`, `rho_guard_true_commits` | `RhoGuardedCommSoundness.v` |
 | Proposition 6.2 (EBA implies reject-safe) | `RejectSafeLaws`, `eba_implies_reject_safe` | `EffectiveBooleanAlgebra.v` |

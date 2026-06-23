@@ -42,11 +42,30 @@ end note
 component "TheoryCombination.v\ncombined_eba_laws" as Formal #E0E7FF
 Adapter ..> Formal : formal counterpart
 
+' ── The Z3/SMT exception: a ConstraintTheory that stops at Sat3, never a BooleanAlgebra ──
+component "Z3Theory\npropagate · is_consistent · witness\n(logict_smt.rs, feature smt)" as Z3 #FEF3C7
+interface "Sat3-only API\nis_satisfiable_3v · checked_witness\nSat | Unsat | DontKnow" as Sat3 #FEF3C7
+
+Theory -down-> Z3   : SMT gap-filler\n(only where a verified decider says DontKnow)
+Z3     -down-> Sat3 : decides (3-valued)
+Z3     ..>     BA   : ✗ does NOT implement
+
+note bottom of Z3 #FEE2E2
+  Z3Theory impls ONLY ConstraintTheory — never
+  BooleanAlgebra / RejectSafeAlgebra / HeytingAlgebra.
+  DontKnow ⇒ don't-claim-entailment; never routed into
+  SFA complement / determinize / equivalence.
+end note
+
+component "Z3WitnessChecked.v\nchecked_witness_sound\nchecked_witness_no_fabrication" as ZForm #E0E7FF
+Z3 ..> ZForm : formal counterpart
+
 legend right
 |= Color |= Role |
 |<#DBEAFE> | classical / decidable: registration + ConstraintTheory |
 |<#DCFCE7> | adapter + the BooleanAlgebra it provides |
 |<#CCFBF1> | SFA consumers that reuse the algebra (teal) |
+|<#FEF3C7> | Z3/SMT leg — a Sat3-only ConstraintTheory that STOPS here (amber) |
 |<#E0E7FF> | formal counterpart discharged in Coq (indigo) |
 endlegend
 @enduml

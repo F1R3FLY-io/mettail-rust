@@ -1,0 +1,117 @@
+@startuml
+title Substrate wiring status — module → Cargo feature → lint/seam → wired-but-gated (surface still proposed)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam componentStyle rectangle
+skinparam component {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+' ── OSLF substrate modules (blue) ──
+component "any_algebra.rs\n(Ω-carrier)" as M_CAR #DBEAFE
+component "sym_tree structural_types" as M_SYM #DBEAFE
+component "bisimulation.rs" as M_BIS #DBEAFE
+component "sym_tree_transducer.rs" as M_TRA #DBEAFE
+component "letprop.rs → parity_tree.rs" as M_LET #DBEAFE
+component "hindley_milner.rs" as M_HM #DBEAFE
+component "behavioral_pred → behavioral_algebra" as M_BL #DBEAFE
+component "logict_smt.rs (Z3Theory)" as M_Z3 #DBEAFE
+
+' ── Cargo features, OFF by default (green) ──
+component "any-algebra-carrier" as F_CAR #DCFCE7
+component "sym-tree-structural" as F_SYM #DCFCE7
+component "oslf-bisimulation" as F_BIS #DCFCE7
+component "oslf-transducer" as F_TRA #DCFCE7
+component "oslf-letprop" as F_LET #DCFCE7
+component "oslf-hindley-milner" as F_HM #DCFCE7
+component "oslf-behavioral-lowering" as F_BL #DCFCE7
+component "smt (z3)" as F_Z3 #DCFCE7
+
+' ── Lint / seam the wired algebra fires (amber) ──
+component "RT03 empty-intersection" as L_RT03 #FEF3C7
+component "RT07 dead-cast" as L_RT07 #FEF3C7
+component "LP01 empty PATA" as L_LP01 #FEF3C7
+component "HM01 sort-mismatch" as L_HM01 #FEF3C7
+component "N06-ISO supersede" as L_N06 #FEF3C7
+component "Sat3-only gap-filler" as L_SAT #FEF3C7
+
+' ── Status sinks ──
+rectangle "WIRED but GATED\n(default-off Cargo feature;\ndefault build byte-identical)" as WG #FEF3C7
+rectangle "Surface syntax: still PROPOSED\n(06 §3 — wired is not writable)" as PROP #FEE2E2
+
+M_CAR -right-> F_CAR
+M_SYM -right-> F_SYM
+M_BIS -right-> F_BIS
+M_TRA -right-> F_TRA
+M_LET -right-> F_LET
+M_HM  -right-> F_HM
+M_BL  -right-> F_BL
+M_Z3  -right-> F_Z3
+
+F_SYM -right-> L_RT03
+F_TRA -right-> L_RT07
+F_LET -right-> L_LP01
+F_HM  -right-> L_HM01
+F_BIS -right-> L_N06
+F_Z3  -right-> L_SAT
+
+F_CAR  -right-> WG
+F_BL   -right-> WG
+L_RT03 -right-> WG
+L_RT07 -right-> WG
+L_LP01 -right-> WG
+L_HM01 -right-> WG
+L_N06  -right-> WG
+L_SAT  -right-> WG
+
+WG -right-> PROP : no language! surface
+
+' ── force a 4-column matrix: stack each column vertically ──
+M_CAR -[hidden]down- M_SYM
+M_SYM -[hidden]down- M_BIS
+M_BIS -[hidden]down- M_TRA
+M_TRA -[hidden]down- M_LET
+M_LET -[hidden]down- M_HM
+M_HM  -[hidden]down- M_BL
+M_BL  -[hidden]down- M_Z3
+F_CAR -[hidden]down- F_SYM
+F_SYM -[hidden]down- F_BIS
+F_BIS -[hidden]down- F_TRA
+F_TRA -[hidden]down- F_LET
+F_LET -[hidden]down- F_HM
+F_HM  -[hidden]down- F_BL
+F_BL  -[hidden]down- F_Z3
+L_RT03 -[hidden]down- L_RT07
+L_RT07 -[hidden]down- L_LP01
+L_LP01 -[hidden]down- L_HM01
+L_HM01 -[hidden]down- L_N06
+L_N06  -[hidden]down- L_SAT
+
+note bottom of WG #E0E7FF
+  Zero-admission Coq wiring proofs: AnyAlgebraProjectionSound · GuardTierClassificationSound ·
+  SymTreeWiringSound · BehavioralTierClassificationSound · BehavioralLoweringSound ·
+  Z3WitnessChecked · StftWiringSound · BisimulationWiringSound · LetpropPataWiringSound ·
+  TraceLtlCheckSound · HindleyMilnerWiringSound (formal/rocq, 10 §2.1/§2.2/§2.6).
+end note
+
+legend right
+|= Color |= Meaning |
+|<#DBEAFE> | OSLF substrate module (input) |
+|<#DCFCE7> | Cargo feature flag (off by default) |
+|<#FEF3C7> | lint / seam the wired algebra fires (semi-decidable / gated) |
+|<#FEE2E2> | surface syntax still proposed — wired is not writable |
+|<#E0E7FF> | zero-admission Coq wiring-soundness proofs |
+endlegend
+@enduml

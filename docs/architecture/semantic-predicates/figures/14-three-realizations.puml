@@ -6,7 +6,7 @@ skinparam componentStyle rectangle
 skinparam NoteBackgroundColor #FEFEFE
 skinparam NoteBorderColor #9CA3AF
 
-title Three realizations of quantification
+title Three realizations of quantification + the letprop→PATA lowering (modal, rightmost)
 
 package "A. Relational / LogicT enumeration" #FEF3C7 {
   component "evaluate_quantified / _with_theory\n∀ folds all, ∃ folds any\nover Datalog relation tuples\n2-valued bool / 3-valued TriState" as A
@@ -32,8 +32,18 @@ package "C. Bounded ∃/∀ as an EBA atom" #DCFCE7 {
   end note
 }
 
+package "D. letprop → modal-μ → PATA (specializes B)" #FEF3C7 {
+  component "letprop_to_pata (letprop.rs)\n∀ → MuCalculusFormula::Box (□)\n∃ → Diamond (◇)\nquantifier-only body → Nu (νX.□¬X)\nemptiness via parity_tree::check_emptiness" as D
+  note bottom of D
+    recursive modal body: DontKnow (T3)
+    empty PATA arena ⇒ LP01 (dead behavioral type)
+    feature oslf-letprop (off by default)
+  end note
+}
+
 A -[hidden]right- B
 B -[hidden]right- C
+C -[hidden]right- D
 
 legend right
   |= Color |= Meaning |
