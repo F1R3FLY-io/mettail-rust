@@ -2,6 +2,18 @@
 
 Last updated: 2026-06-23
 
+> **STATUS: COMPLETE ✅** — All three macro extensions (E2 → E1 → E3) and the downstream REPL wiring
+> are implemented, verified, and committed; `exec` now works for every bundled language with
+> capability-based backends. Commits: **E2** `6a8cc0ad`; **E1** `e463895c`; **E3** `90b59dfa`
+> (planner) + `e17fba8e` (emitter+runtime) + `26e50fe2` (walk); **AppSubst fixture** `c0166564`;
+> **downstream** `cdc81c89`. Verified: `dataflow` unit 6/6 · `run_dataflow` (real RhoRuntime) 5/5
+> (`(2+3)*(4-1)`→15, `==`→true, `++`→"abc", literal, deep chain) · `rho_dataflow_walk` 2/2 ·
+> `lambda_dovetail` 6/6 · `lambda_dovetail_synthetic` 3/3 · `dovetail_normal_term` 4/4 ·
+> `rho_rhocalc_ast` 17/0 · `registry_exec` 2/2 · macros lib 221 · `gen_appsubst_*` 73/0 · **manual REPL
+> session 6/6** (pure-COMM→`OUT:[p]`, mixed `@("OUT")!(int(1+2,8))`→`OUT:[3]`, `int(1+2,8)`→Dovetail,
+> `1+2`→`OUT:[3]`, `(2+3)*(4-1)`→`OUT:[15]`, `(lam x.x, y)`→`y`). E3's authoritative spec (with the
+> red-team NO-GO→corrected architecture) is `01-e3-dataflow-design.md`.
+
 ## Context
 
 The `mettail` REPL `exec` failed for all bundled languages because raw `language!`-generated
