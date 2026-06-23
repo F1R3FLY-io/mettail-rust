@@ -145,6 +145,29 @@ oslf-letprop = ["any-algebra-carrier"]
 ## `any-algebra-carrier`. OFF BY DEFAULT; the default build is byte-for-byte
 ## unchanged.
 oslf-hindley-milner = ["any-algebra-carrier"]
+## OSLF Phase 9 `.0`-inert (2026-06-22): the parity-safe DE-DUP FOUNDATION that
+## reconciles the two parallel behavioral-predicate representations in this crate
+## — the runtime CARRIER `behavioral_pred::BehavioralPred` (produced by the WPDA
+## walker; the runtime crate re-exports it and evaluates it via
+## `evaluate_pred_with_bindings`) and the DECIDER
+## `behavioral_algebra::BehavioralFormula` (the `algebra_tower`-backed relational
+## classifier). When enabled, `BehavioralPred::to_behavioral_formula` lowers the
+## carrier into the decider's RELATIONAL fragment by a PROVEN-CANONICAL mapping
+## (negation→`Not` wrapper, `Implies`→reject-safe `¬a∨b`, `Top`→`Top`, and the
+## structural `AcMatch` leg fail-closed to `None` — recursively), and
+## `BehavioralPred::behavioral_tier` reads the decider's
+## `decidability_tier()` off the lowered image. Because the image is the
+## relational fragment ONLY (never modal), every lowered formula's tier is `T1`
+## (iff `Top`) or `T2` — NEVER `T3`: that is the load-bearing parity fact, proven
+## by `prattail/tests/behavioral_lowering_snapshot.rs` (tier-equivalence + an
+## eval-agreement gate against the runtime evaluator on the literal/relational
+## subset). `.0`-inert: the lowering has NO live caller — the eval-path
+## unification (routing `evaluate_pred_with_bindings` through the lowered
+## decider) is a later increment. The EVAL PATH (`evaluate_pred_with_bindings`)
+## is UNTOUCHED. The carrier reuses the `any_algebra` scalar-sort plumbing the
+## sibling OSLF phases use, so it implies `any-algebra-carrier`. OFF BY DEFAULT;
+## the default build is byte-for-byte unchanged.
+oslf-behavioral-lowering = ["any-algebra-carrier"]
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []
@@ -233,6 +256,15 @@ z3 = { version = "0.12", optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
+# OSLF Phase 9 eval-agreement gate (test-only). The behavioral-lowering snapshot
+# (`tests/behavioral_lowering_snapshot.rs`, itself `#![cfg(feature =
+# "oslf-behavioral-lowering")]`) cross-checks the lowered `BehavioralFormula`
+# against the runtime carrier evaluator `evaluate_pred_with_bindings`. This is a
+# DEV-dependency cycle (`runtime`'s lib → `prattail`'s lib; `prattail`'s tests →
+# `runtime`), which Cargo permits because dev-dependencies never enter the lib
+# build graph. It adds NO new test in the default build (the snapshot file is
+# feature-gated to zero tests when the feature is off).
+mettail-runtime = { package = "runtime", path = "../runtime" }
 
 # Author-DX demo (OSLF Phase 7a): renders the always-on text railroad diagrams
 # for a small in-memory `LanguageSpec`. Builds under the default feature set

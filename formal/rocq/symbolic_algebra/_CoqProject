@@ -48,3 +48,9 @@ theories/BehavioralTierClassificationSound.v
 # construction — so the Z3 oracle's trusted Sat is certificate-backed and NO new
 # admission enters the proven EBA core. Self-contained.
 theories/Z3WitnessChecked.v
+# OSLF substrate Phase 9: behavioral_pred -> behavioral_algebra relational-core
+# lowering soundness. The lowering rejects AcMatch, never produces a modal
+# operator (so a lowered carrier never mis-classifies above T2), is tier-sound,
+# and pins the Implies De Morgan reduct. Reuses the BehavioralTierClassificationSound
+# Tier framework; self-contained.
+theories/BehavioralLoweringSound.v
