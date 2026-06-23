@@ -41,7 +41,7 @@ object "modal base" as MODAL #E0E7FF {
 MU ..> MODAL : ⟨-⟩ / [-] one-step base
 NU ..> MODAL : ⟨-⟩ / [-] one-step base
 
-note bottom of MU #4338CA
+note bottom of MU #E0E7FF
   branching-time only; linear-time fairness GF p routes to the Büchi engine
   (crate::buchi).
 end note
