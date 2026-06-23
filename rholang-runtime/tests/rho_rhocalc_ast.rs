@@ -179,32 +179,60 @@ fn ambiguous_term_rejects_cross_category_alternative_instead_of_dropping_it() {
     assert_eq!(err, RhocalcAstLowerError::ExpectedProcTerm);
 }
 
+// End-to-end: the generated `RhoCalcLanguage` (defined by the `language!` macro)
+// driven through the public `Language` trait and evaluated on the REAL
+// f1r3node-rust Rholang interpreter, this variant focusing on the observed VALUE.
+//
+// `rho_runtime_backed_rhocalc_values` installs RhoCalc as a Rho-backed `Language`
+// whose plan fingerprint matches the generated `RhoCalcLanguage` (built by
+// `rhocalc_dynamic_backend`), so the test exercises the real language identity
+// rather than an ad-hoc fragment. The term is parsed by the generated parser,
+// lowered to `rhoapi::Par`, and reduced on an in-memory `RhoRuntime`/RSpace.
 #[test]
 fn rhocalc_language_default_report_observes_runtime_values() {
+    // Install the Rho-backed language; "OUT" is the channel results are read from.
     let language = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT")
         .expect("dynamic RhoCalc plan should install through the public AST helper");
+    // Parse a COMM example through the generated language's parser:
+    //   receiver `(@("c")?x).{*(x)}` listens on channel @("c"), binds x, and drops
+    //     it (`*(x)` runs the received process);
+    //   sender `@("c")!(@("OUT")!("p"))` transmits the process `@("OUT")!("p")`.
+    // After the rendezvous, `*(x)` runs that process, emitting "p" on OUT.
     let term = language
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
 
+    // Lower the parsed term to `rhoapi::Par` and run it on the Rholang interpreter,
+    // collecting the structured observation report.
     let report = language
         .run_default_backend_report(term.as_ref())
         .expect("Rho-backed RhoCalc language must return a structured observation report");
+    // Read back whatever came to rest on the OUT channel in RSpace.
     let out = report
         .observations_for_channel("OUT")
         .expect("Rho-backed RhoCalc report must expose OUT observations");
 
+    // The COMM fired and the dropped process emitted "p", surfaced here as a typed
+    // `RuntimeObservationValue` (the value-observation projection).
     assert_eq!(out.values, vec![RuntimeObservationValue::Text("p".to_string())]);
 }
 
+// Same end-to-end flow as above (parse → lower → reduce on the real Rholang
+// interpreter), but this variant additionally pins down the BACKEND WIRING: it
+// proves the generated language routes to the Rho machine and that execution went
+// through the normalized-AST path (a `Par` artifact), never generated Rholang
+// source text. Hence the name "...executes parsed process as ast call".
 #[test]
 fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
     let language = rho_runtime_backed_rhocalc_strings(rhocalc_dynamic_backend(), "OUT")
         .expect("dynamic RhoCalc plan should install through the public AST helper");
+    // Reuse the single-channel COMM example; it reduces to "p" on OUT.
     let term = language
         .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
 
+    // The generated language must declare (and support) the Rho machine as its
+    // default runtime backend.
     assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
     assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
 
@@ -212,11 +240,14 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         .run_default_backend_report(term.as_ref())
         .expect("Rho-backed RhoCalc language must return an observation report");
 
+    // The report must confirm it executed on the Rho machine via the normalized
+    // `Par` AST artifact (`RhoNormalizedAst`) — i.e. AST lowering, not source-gen.
     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
     assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
     let out = report
         .observations_for_channel("OUT")
         .expect("Rho-backed RhoCalc report must expose OUT observations");
+    // Same "p" result observed on OUT, confirming the AST-call path actually ran.
     assert_eq!(out.values, vec![RuntimeObservationValue::Text("p".to_string())]);
 }
 

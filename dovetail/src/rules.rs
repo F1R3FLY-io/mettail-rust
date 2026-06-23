@@ -820,7 +820,6 @@ mod dv0_probe {
         }
         let _ = seed; // (seed label reserved for diagnostic naming)
         eg.rebuild();
-        let seed_nodes = eg.node_count();
         // DV-0′: the seed node KEYSET, so the saturation-added population is exactly
         // `after \ seed` and untouched-shares are true set-differences over it.
         let seed_keys = all_node_keys(&eg);
