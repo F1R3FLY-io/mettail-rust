@@ -97,7 +97,13 @@ fn rule(label: &str, cat: &str, syntax: Vec<SyntaxItemSpec>) -> SyntaxRule {
 fn normalized(pairs: &[(String, String)]) -> BTreeSet<(String, String)> {
     pairs
         .iter()
-        .map(|(a, b)| if a <= b { (a.clone(), b.clone()) } else { (b.clone(), a.clone()) })
+        .map(|(a, b)| {
+            if a <= b {
+                (a.clone(), b.clone())
+            } else {
+                (b.clone(), a.clone())
+            }
+        })
         .collect()
 }
 
@@ -149,7 +155,11 @@ fn calculator_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
         rule("ProcBool", "Proc", vec![nonterm("Bool", "b")]),
         rule("ProcStr", "Proc", vec![nonterm("Str", "s")]),
         rule("AddInt", "Int", vec![nonterm("Int", "a"), term("+"), nonterm("Int", "b")]),
-        rule("FloatToInt", "Int", vec![term("int"), term("("), nonterm("Str", "a"), term(")")]),
+        rule(
+            "FloatToInt",
+            "Int",
+            vec![term("int"), term("("), nonterm("Str", "a"), term(")")],
+        ),
         rule("Fact", "Int", vec![nonterm("Int", "a"), term("!")]),
         rule("BagLit", "Bag", vec![bag_collection("xs", "Proc", "|")]),
     ];
@@ -200,8 +210,7 @@ fn rhocalc_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
 /// Ambient: `Proc` and `Name` only, both non-scalar (the "no scalar sorts"
 /// stress case).
 fn ambient_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
-    let categories =
-        vec![struct_cat("Proc", true, true), struct_cat("Name", false, true)];
+    let categories = vec![struct_cat("Proc", true, true), struct_cat("Name", false, true)];
     let all_syntax = vec![
         rule("PZero", "Proc", vec![term("0")]),
         rule(
@@ -209,7 +218,11 @@ fn ambient_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
             "Proc",
             vec![term("in("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
         ),
-        rule("PAmb", "Proc", vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")]),
+        rule(
+            "PAmb",
+            "Proc",
+            vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")],
+        ),
         rule("PNew", "Proc", vec![binder("x", "Name", false), nonterm("Proc", "p")]),
         rule("PPar", "Proc", vec![term("{"), bag_collection("ps", "Proc", "|"), term("}")]),
         rule("NVar", "Name", vec![ident("x")]),
@@ -338,7 +351,8 @@ fn dump_agreement_evidence() {
         ("ambient", ambient_fixture()),
         ("guarded_rho", guarded_rho_fixture()),
     ] {
-        let bisim = normalized(&bisimulation::analyze_from_bundle(&rules, &cats).non_bisimilar_pairs);
+        let bisim =
+            normalized(&bisimulation::analyze_from_bundle(&rules, &cats).non_bisimilar_pairs);
         let alt = normalized(&alternating::analyze_from_bundle(&rules, &cats).non_bisimilar_pairs);
         eprintln!(
             "[{name}]\n  bisimulation non-bisim = {bisim:?}\n  alternating  non-bisim = {alt:?}\n  AGREE={}",

@@ -410,7 +410,9 @@ pub fn cast_preimage_automaton(
         }
         let classification = crate::classify::classify_rule(items, category, &category_names);
         return match (classification.is_cast, classification.cast_source_category.as_deref()) {
-            (true, Some(src)) => Some(build_cast_transducer(label, src, &alpha, &elem).domain_sta()),
+            (true, Some(src)) => {
+                Some(build_cast_transducer(label, src, &alpha, &elem).domain_sta())
+            },
             _ => None,
         };
     }
@@ -458,9 +460,9 @@ fn build_cast_transducer(
         // mapped payload when guarded) over the transduced children in order.
         let payload = match &trans.payload_guard {
             None => PayloadOut::Structural,
-            Some(_) => PayloadOut::Map(std::sync::Arc::new(|d: &crate::any_algebra::AnyDomain| {
-                d.clone()
-            })),
+            Some(_) => {
+                PayloadOut::Map(std::sync::Arc::new(|d: &crate::any_algebra::AnyDomain| d.clone()))
+            },
         };
         t.add_rule(TransducerRule {
             constructor: trans.constructor.clone(),

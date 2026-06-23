@@ -369,10 +369,7 @@ pub fn analyze_from_bundle(
 /// `structural_types::collect_structural_child_categories` so the LTS edges track
 /// the same notion of "structural child" the rest of the substrate uses.
 #[cfg(feature = "oslf-bisimulation")]
-fn collect_nonterminal_targets<'a>(
-    items: &'a [crate::SyntaxItemSpec],
-    out: &mut Vec<&'a str>,
-) {
+fn collect_nonterminal_targets<'a>(items: &'a [crate::SyntaxItemSpec], out: &mut Vec<&'a str>) {
     use crate::SyntaxItemSpec as Item;
     for item in items {
         match item {

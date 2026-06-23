@@ -91,7 +91,10 @@ fn refinement(name: &str, base: &str) -> RefinementTypeSpec {
 // ranked alphabet — the `is_equivalent` reduction).
 // ══════════════════════════════════════════════════════════════════════════════
 
-fn languages_equal(a: &SymbolicTreeAutomaton<AnyAlgebra>, b: &SymbolicTreeAutomaton<AnyAlgebra>) -> bool {
+fn languages_equal(
+    a: &SymbolicTreeAutomaton<AnyAlgebra>,
+    b: &SymbolicTreeAutomaton<AnyAlgebra>,
+) -> bool {
     // a \ b = a ∩ ¬b ; b \ a = b ∩ ¬a. Both empty ⟺ L(a) = L(b).
     let a_minus_b = a.intersect(&b.complement());
     if !a_minus_b.is_empty() {
@@ -190,8 +193,8 @@ fn analysis_is_self_consistent() {
     // category empty. None of the fixture casts are dead (every source category
     // — Int, PosInt — is inhabited and cast-reachable), so `dead_casts` is empty.
     for (label, src) in expected_casts() {
-        let preimage = cast_preimage_automaton(label, &all_syntax, &categories)
-            .expect("cast has a pre-image");
+        let preimage =
+            cast_preimage_automaton(label, &all_syntax, &categories).expect("cast has a pre-image");
         let source_auto = category_automaton(src, &alpha, &elem);
         let intersection_empty = preimage.intersect(&source_auto).is_empty();
         assert_eq!(
@@ -217,10 +220,7 @@ fn analysis_is_self_consistent() {
     );
     for (_, src) in expected_casts() {
         assert!(
-            analysis
-                .non_total_casts
-                .iter()
-                .any(|(s, _)| s == src),
+            analysis.non_total_casts.iter().any(|(s, _)| s == src),
             "source `{src}` must appear among the non-total casts: {:?}",
             analysis.non_total_casts
         );
@@ -240,8 +240,8 @@ fn fixture_exercises_inhabited_casts() {
     assert!(!expected_casts().is_empty(), "fixture must contain cast rules");
 
     for (label, src) in expected_casts() {
-        let preimage = cast_preimage_automaton(label, &all_syntax, &categories)
-            .expect("cast has a pre-image");
+        let preimage =
+            cast_preimage_automaton(label, &all_syntax, &categories).expect("cast has a pre-image");
         assert!(
             !preimage.is_empty(),
             "cast `{label}` pre-image (source `{src}`) must be non-empty — else agreement is vacuous"
@@ -264,8 +264,8 @@ fn dump_transducer_evidence() {
     eprintln!("  non_total_casts = {:?}", analysis.non_total_casts);
     eprintln!("  dead_casts      = {:?}", analysis.dead_casts);
     for (label, src) in expected_casts() {
-        let preimage = cast_preimage_automaton(label, &all_syntax, &categories)
-            .expect("cast has a pre-image");
+        let preimage =
+            cast_preimage_automaton(label, &all_syntax, &categories).expect("cast has a pre-image");
         let alpha = ranked_alphabet(&all_syntax, &categories);
         let elem = build_tree_algebra(&alpha);
         let source_auto = category_automaton(src, &alpha, &elem);

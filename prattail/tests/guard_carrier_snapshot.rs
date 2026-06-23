@@ -143,9 +143,17 @@ fn calculator_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
         // Prefix casts (Terminal-led, shared "float" / "int" leading terminals
         // across categories → these create real overlapping/subsumed structure
         // when in the SAME category).
-        rule("FloatToInt", "Int", vec![term("int"), term("("), nonterm("Float", "a"), term(")")]),
+        rule(
+            "FloatToInt",
+            "Int",
+            vec![term("int"), term("("), nonterm("Float", "a"), term(")")],
+        ),
         rule("StrToInt", "Int", vec![term("int"), term("("), nonterm("Str", "a"), term(")")]),
-        rule("IntToFloat", "Float", vec![term("float"), term("("), nonterm("Int", "a"), term(")")]),
+        rule(
+            "IntToFloat",
+            "Float",
+            vec![term("float"), term("("), nonterm("Int", "a"), term(")")],
+        ),
         // Mixfix postfix factorial (NonTerminal-led).
         rule("Fact", "Int", vec![nonterm("Int", "a"), term("!")]),
         // Collection literal (Collection-led) on Bag.
@@ -203,8 +211,16 @@ fn rhocalc_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
         rule("CastList", "Proc", vec![nonterm("List", "l")]),
         // Numeric casts (Terminal-led; share leading "int"/"uint"/"float" with
         // each other to drive overlapping/subsumed structure).
-        rule("IntBinProc", "Proc", vec![term("int"), term("("), nonterm("Proc", "a"), term(",")]),
-        rule("UIntBinProc", "Proc", vec![term("uint"), term("("), nonterm("Proc", "a"), term(",")]),
+        rule(
+            "IntBinProc",
+            "Proc",
+            vec![term("int"), term("("), nonterm("Proc", "a"), term(",")],
+        ),
+        rule(
+            "UIntBinProc",
+            "Proc",
+            vec![term("uint"), term("("), nonterm("Proc", "a"), term(",")],
+        ),
         // Int variable (IdentCapture-led).
         rule("IVar", "Int", vec![ident("x")]),
     ];
@@ -218,20 +234,34 @@ fn rhocalc_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
 /// cover terminal-led (`"0"`, `"in("`), the NonTerminal-led `PAmb`
 /// (`Name "[" Proc "]"`), the binder-led `PNew`, and the collection-led `PPar`.
 fn ambient_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
-    let categories = vec![
-        struct_cat("Proc", None, true, true),
-        struct_cat("Name", None, false, true),
-    ];
+    let categories =
+        vec![struct_cat("Proc", None, true, true), struct_cat("Name", None, false, true)];
 
     let all_syntax = vec![
         // Nil (Terminal-led).
         rule("PZero", "Proc", vec![term("0")]),
         // Capabilities (Terminal-led; distinct leading terminals).
-        rule("PIn", "Proc", vec![term("in("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")]),
-        rule("POut", "Proc", vec![term("out("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")]),
-        rule("POpen", "Proc", vec![term("open("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")]),
+        rule(
+            "PIn",
+            "Proc",
+            vec![term("in("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
+        ),
+        rule(
+            "POut",
+            "Proc",
+            vec![term("out("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
+        ),
+        rule(
+            "POpen",
+            "Proc",
+            vec![term("open("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
+        ),
         // Ambient (NonTerminal-led: `Name "[" Proc "]"`).
-        rule("PAmb", "Proc", vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")]),
+        rule(
+            "PAmb",
+            "Proc",
+            vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")],
+        ),
         // New (Binder-led).
         rule("PNew", "Proc", vec![binder("x", "Name", false), nonterm("Proc", "p")]),
         // Parallel composition (Collection-led).

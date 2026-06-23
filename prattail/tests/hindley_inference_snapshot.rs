@@ -175,7 +175,11 @@ fn calculator_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
         rule("ProcBool", "Proc", vec![nonterm("Bool", "b")]),
         rule("ProcStr", "Proc", vec![nonterm("Str", "s")]),
         rule("AddInt", "Int", vec![nonterm("Int", "a"), term("+"), nonterm("Int", "b")]),
-        rule("FloatToInt", "Int", vec![term("int"), term("("), nonterm("Str", "a"), term(")")]),
+        rule(
+            "FloatToInt",
+            "Int",
+            vec![term("int"), term("("), nonterm("Str", "a"), term(")")],
+        ),
         rule("Fact", "Int", vec![nonterm("Int", "a"), term("!")]),
         rule("BagLit", "Bag", vec![bag_collection("xs", "Proc", "|")]),
     ];
@@ -226,7 +230,11 @@ fn ambient_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
             "Proc",
             vec![term("in("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
         ),
-        rule("PAmb", "Proc", vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")]),
+        rule(
+            "PAmb",
+            "Proc",
+            vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")],
+        ),
         rule("PNew", "Proc", vec![binder("x", "Name", false), nonterm("Proc", "p")]),
         rule("PPar", "Proc", vec![term("{"), bag_collection("ps", "Proc", "|"), term("}")]),
         rule("NVar", "Name", vec![ident("x")]),
@@ -295,8 +303,10 @@ fn assert_inert_and_correct(name: &str, all_syntax: &[SyntaxRule], categories: &
         "fixture `{name}`: every rule must yield exactly one inferred constructor type"
     );
 
-    for ((got_label, got_rendered), (exp_label, exp_cat, items)) in
-        analysis.inferred_constructor_types.iter().zip(all_syntax.iter())
+    for ((got_label, got_rendered), (exp_label, exp_cat, items)) in analysis
+        .inferred_constructor_types
+        .iter()
+        .zip(all_syntax.iter())
     {
         assert_eq!(
             got_label, exp_label,
@@ -328,14 +338,15 @@ fn assert_inert_and_correct(name: &str, all_syntax: &[SyntaxRule], categories: &
 /// base-sort pass must never emit one. (Category names in the fixtures are
 /// PascalCase, so this never false-positives.)
 fn contains_fresh_var(rendered: &str) -> bool {
-    rendered.split(|c: char| !c.is_ascii_alphanumeric()).any(|tok| {
-        let mut chars = tok.chars();
-        matches!(chars.next(), Some('t'))
-            && {
+    rendered
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| {
+            let mut chars = tok.chars();
+            matches!(chars.next(), Some('t')) && {
                 let rest: String = chars.collect();
                 !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
             }
-    })
+        })
 }
 
 #[test]
@@ -457,7 +468,10 @@ fn positive_undeclared_field_category_is_one_mismatch() {
     // The `Bad` rule, having failed unification, must NOT appear among the
     // successfully-inferred constructor types.
     assert!(
-        !analysis.inferred_constructor_types.iter().any(|(l, _)| l == "Bad"),
+        !analysis
+            .inferred_constructor_types
+            .iter()
+            .any(|(l, _)| l == "Bad"),
         "the clashing `Bad` rule must not appear among inferred constructor types"
     );
 }

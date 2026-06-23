@@ -925,7 +925,11 @@ mod structural_dispatch_tests {
             has_var: true,
         }
     }
-    fn struct_cat(name: &str, native: Option<&str>, primary: bool) -> crate::pipeline::CategoryInfo {
+    fn struct_cat(
+        name: &str,
+        native: Option<&str>,
+        primary: bool,
+    ) -> crate::pipeline::CategoryInfo {
         crate::pipeline::CategoryInfo {
             name: name.to_string(),
             native_type: native.map(|s| s.to_string()),
@@ -997,8 +1001,7 @@ mod structural_dispatch_tests {
         );
 
         // Structural recognizer: PRECISE Disjoint.
-        let structural =
-            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
         assert_eq!(
             structural.disjoint_pairs,
             vec![("One".to_string(), "TwoPlus".to_string())],
@@ -1036,8 +1039,7 @@ mod structural_dispatch_tests {
         );
 
         // Structural recognizer: PRECISE Subtype (TwoPlus <: OnePlus).
-        let structural =
-            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
         assert_eq!(
             structural.subtype_pairs,
             vec![("TwoPlus".to_string(), "OnePlus".to_string())],
@@ -1061,8 +1063,7 @@ mod structural_dispatch_tests {
             structural_refinement("OnePlus", "List", "l == cons(x, t)"),
             structural_refinement("TwoPlus", "List", "l == cons(x, cons(y, t))"),
         ];
-        let structural =
-            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
         assert_eq!(
             structural.subtype_pairs,
             vec![("TwoPlus".to_string(), "OnePlus".to_string())],
@@ -1080,8 +1081,7 @@ mod structural_dispatch_tests {
             structural_refinement("Weird", "List", "some_relation(l)"),
             structural_refinement("AlsoWeird", "List", "other_relation(l)"),
         ];
-        let structural =
-            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
         // No parse ⇒ no precise disjoint/subtype; the heuristic's Overlapping
         // verdict is used, so the pair is Overlapping (not disjoint, not subtype).
         assert!(structural.disjoint_pairs.is_empty());
@@ -1110,16 +1110,12 @@ mod structural_dispatch_tests {
         };
         let specs = vec![pos, nonpos];
         let heuristic = analyze_refinement_dispatch(&specs);
-        let structural =
-            analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
+        let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
         // Identical disjoint/subtype/overlapping verdicts for the Presburger pair.
         assert_eq!(heuristic.disjoint_pairs, structural.disjoint_pairs);
         assert_eq!(heuristic.subtype_pairs, structural.subtype_pairs);
         assert_eq!(heuristic.overlapping_pairs, structural.overlapping_pairs);
         // And the heuristic genuinely finds these disjoint (x>0 vs x<=0).
-        assert_eq!(
-            structural.disjoint_pairs,
-            vec![("Pos".to_string(), "NonPos".to_string())]
-        );
+        assert_eq!(structural.disjoint_pairs, vec![("Pos".to_string(), "NonPos".to_string())]);
     }
 }

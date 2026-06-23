@@ -37,9 +37,7 @@ use mettail_prattail::algebra_tower::RejectSafeAlgebra;
 use mettail_prattail::behavioral_algebra::{
     Arg, BehavioralAlgebra, BehavioralFormula, BehavioralWorld, FactBase, NoTerm,
 };
-use mettail_prattail::behavioral_pred::{
-    BehavioralPred, PredArg, QuantifiedDomain, Quantifier,
-};
+use mettail_prattail::behavioral_pred::{BehavioralPred, PredArg, QuantifiedDomain, Quantifier};
 use mettail_prattail::symbolic::DecidabilityTier;
 
 // The runtime carrier evaluator + its thread-local fact snapshot, reached
@@ -60,7 +58,11 @@ fn pstr(s: &str) -> PredArg {
     PredArg::StringLit(s.to_string())
 }
 fn rel(name: &str, args: Vec<PredArg>, negated: bool) -> BehavioralPred {
-    BehavioralPred::RelationQuery { relation_name: name.to_string(), args, negated }
+    BehavioralPred::RelationQuery {
+        relation_name: name.to_string(),
+        args,
+        negated,
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -93,11 +95,7 @@ fn corpus() -> Vec<Case> {
         c("rel_pos_var", rel("safe", vec![pvar("x")], false), false),
         c("rel_neg_literal", rel("halts", vec![pstr("q")], true), false),
         c("rel_neg_var", rel("blocked", vec![pvar("x")], true), false),
-        c(
-            "rel_mixed_args",
-            rel("edge", vec![pvar("x"), pint(3), pstr("c")], false),
-            false,
-        ),
+        c("rel_mixed_args", rel("edge", vec![pvar("x"), pint(3), pstr("c")], false), false),
         // ── Top ──
         c("top", Top, false),
         // ── Quantified × {ForAll, Exists} × {Named, Bounded, Enumerated, None} ──
@@ -244,7 +242,8 @@ fn tier_equivalence_over_corpus() {
             Some(DecidabilityTier::RuntimeDecidable)
         };
         assert_eq!(
-            tier, expected,
+            tier,
+            expected,
             "tier mismatch for `{}`: lowered={:?}",
             case.name,
             case.pred.to_behavioral_formula()
@@ -286,10 +285,7 @@ fn h1_negated_relation_wraps_in_not() {
 
     // And the positive twin lowers to a BARE Relation (no Not).
     let pos = rel("halts", vec![pvar("x"), pint(3)], false);
-    assert!(matches!(
-        pos.to_behavioral_formula(),
-        Some(BehavioralFormula::Relation { .. })
-    ));
+    assert!(matches!(pos.to_behavioral_formula(), Some(BehavioralFormula::Relation { .. })));
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -298,10 +294,7 @@ fn h1_negated_relation_wraps_in_not() {
 
 #[test]
 fn h5_top_lowers_to_formula_top() {
-    assert_eq!(
-        BehavioralPred::Top.to_behavioral_formula(),
-        Some(BehavioralFormula::Top)
-    );
+    assert_eq!(BehavioralPred::Top.to_behavioral_formula(), Some(BehavioralFormula::Top));
     // Explicitly NOT the syn-twin's `"true"`/`"__top__"` relation encoding.
     assert!(!matches!(
         BehavioralPred::Top.to_behavioral_formula(),
@@ -395,7 +388,10 @@ fn eval_agreement_relational_subset() {
     // Facts: halts(p), safe(p); deliberately NO halts(q)/safe(q).
     let alg = seed(&[("halts", vec!["p"]), ("safe", vec!["p"])]);
     let bind = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     };
 
     // Top — both true unconditionally.

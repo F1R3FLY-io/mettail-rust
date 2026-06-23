@@ -1104,15 +1104,24 @@ mod tests {
 
     #[test]
     fn decidability_tier_ground_is_t1() {
-        assert_eq!(BehavioralFormula::Top.decidability_tier(), DecidabilityTier::CompileTimeDecidable);
-        assert_eq!(BehavioralFormula::Bot.decidability_tier(), DecidabilityTier::CompileTimeDecidable);
+        assert_eq!(
+            BehavioralFormula::Top.decidability_tier(),
+            DecidabilityTier::CompileTimeDecidable
+        );
+        assert_eq!(
+            BehavioralFormula::Bot.decidability_tier(),
+            DecidabilityTier::CompileTimeDecidable
+        );
     }
 
     #[test]
     fn decidability_tier_relational_is_t2() {
         // A purely relational guard is runtime-decidable (closed-world over the
         // snapshot once populated).
-        let rel = BehavioralFormula::Relation { name: "halts".into(), args: vec![var("x")] };
+        let rel = BehavioralFormula::Relation {
+            name: "halts".into(),
+            args: vec![var("x")],
+        };
         assert_eq!(rel.decidability_tier(), DecidabilityTier::RuntimeDecidable);
         // ∀/∃ + boolean combination over relational atoms stays T2.
         let quant = BehavioralFormula::Forall {
@@ -1120,7 +1129,10 @@ mod tests {
             domain: QDomain::Active,
             body: Box::new(BehavioralFormula::Or(
                 Box::new(BehavioralFormula::Not(Box::new(rel.clone()))),
-                Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("y")] }),
+                Box::new(BehavioralFormula::Relation {
+                    name: "safe".into(),
+                    args: vec![var("y")],
+                }),
             )),
         };
         assert_eq!(quant.decidability_tier(), DecidabilityTier::RuntimeDecidable);
@@ -1146,7 +1158,10 @@ mod tests {
         // (the modal subformula dominates) — the load-bearing case for the
         // mixed structural×behavioral guard rail.
         let mixed = BehavioralFormula::And(
-            Box::new(BehavioralFormula::Relation { name: "safe".into(), args: vec![var("x")] }),
+            Box::new(BehavioralFormula::Relation {
+                name: "safe".into(),
+                args: vec![var("x")],
+            }),
             Box::new(BehavioralFormula::Diamond(
                 ActionPattern::Any,
                 Box::new(BehavioralFormula::Atom("done".into())),

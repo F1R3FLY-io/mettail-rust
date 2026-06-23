@@ -45,16 +45,20 @@ fn production_bleg_relational_is_exact() {
     let p = mixed();
     // structural [0,50) ∧ behavioral halts(p) — a relational behavioral leg is
     // exact (closed-world over the snapshot): Sat through the product.
-    let halts =
-        BehavioralFormula::Relation { name: "halts".into(), args: vec![Arg::Lit("p".into())] };
+    let halts = BehavioralFormula::Relation {
+        name: "halts".into(),
+        args: vec![Arg::Lit("p".into())],
+    };
     let g = MixedPred(vec![(IntervalPred::Range(0, 50), halts)]);
     assert_eq!(p.is_satisfiable_3v(&g), Sat3::Sat);
     // Fires iff BOTH legs hold: 25 ∈ [0,50) ∧ halts(p) ⇒ fire; 75 ∉ [0,50) ⇒ no.
     assert!(p.evaluate(&g, &(25, world())));
     assert!(!p.evaluate(&g, &(75, world())));
     // A relational behavioral leg Unsat over the snapshot ⇒ Unsat product.
-    let diverges =
-        BehavioralFormula::Relation { name: "halts".into(), args: vec![Arg::Lit("q".into())] };
+    let diverges = BehavioralFormula::Relation {
+        name: "halts".into(),
+        args: vec![Arg::Lit("q".into())],
+    };
     let g2 = MixedPred(vec![(IntervalPred::Range(0, 50), diverges)]);
     assert_eq!(p.is_satisfiable_3v(&g2), Sat3::Unsat);
     assert!(!p.evaluate(&g2, &(25, world())));
@@ -66,8 +70,10 @@ fn production_bleg_modal_is_dontknow_rejectsafe() {
     // A MODAL behavioral leg is only semi-decidable: is_satisfiable_3v ⇒ DontKnow,
     // which propagates through the product (Kleene OR over rectangles). The guard
     // never fires on a DontKnow leg ⇒ reject-safe (never wrongly admits a Comm).
-    let modal =
-        BehavioralFormula::Diamond(ActionPattern::Any, Box::new(BehavioralFormula::Atom("done".into())));
+    let modal = BehavioralFormula::Diamond(
+        ActionPattern::Any,
+        Box::new(BehavioralFormula::Atom("done".into())),
+    );
     let g = MixedPred(vec![(IntervalPred::Range(0, 50), modal)]);
     assert_eq!(p.is_satisfiable_3v(&g), Sat3::DontKnow);
     // NoTerm has no transitions, so ⟨-⟩done is false there ⇒ no fire (and never a
@@ -81,8 +87,10 @@ fn production_bleg_negation_is_reject_safe() {
     // leg: wherever the asymmetric De Morgan complement fires, the guard
     // genuinely rejects — so a guarded receive never wrongly admits a Comm.
     let p = mixed();
-    let halts =
-        BehavioralFormula::Relation { name: "halts".into(), args: vec![Arg::Lit("p".into())] };
+    let halts = BehavioralFormula::Relation {
+        name: "halts".into(),
+        args: vec![Arg::Lit("p".into())],
+    };
     let g = MixedPred(vec![(IntervalPred::Range(10, 60), halts)]);
     let pc = p.pseudo_complement(&g);
     for x in [0i64, 5, 10, 30, 59, 60, 80, 99] {

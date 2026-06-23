@@ -943,10 +943,7 @@ mod tests {
             prop_assert!(any.evaluate(&wrapped, &d));
         }
         // (3) EVALUATE agreement on a freely-chosen element.
-        prop_assert_eq!(
-            bare.evaluate(p, &elem),
-            any.evaluate(&wrapped, &wrap_dom(elem))
-        );
+        prop_assert_eq!(bare.evaluate(p, &elem), any.evaluate(&wrapped, &wrap_dom(elem)));
         Ok(())
     }
 

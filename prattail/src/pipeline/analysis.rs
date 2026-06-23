@@ -960,11 +960,16 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
     {
         // Identify which disjoint pairs are STRUCTURAL (both sides Structural and
         // both predicates parse) — only those are precise emptiness findings.
-        let alpha = crate::structural_types::ranked_alphabet(&bundle.all_syntax, &bundle.categories);
-        let kind_by_name: std::collections::HashMap<&str, &crate::RefinementPredKind> =
-            spec.iter().map(|s| (s.name.as_str(), &s.predicate_kind)).collect();
-        let repr_by_name: std::collections::HashMap<&str, &str> =
-            spec.iter().map(|s| (s.name.as_str(), s.predicate_repr.as_str())).collect();
+        let alpha =
+            crate::structural_types::ranked_alphabet(&bundle.all_syntax, &bundle.categories);
+        let kind_by_name: std::collections::HashMap<&str, &crate::RefinementPredKind> = spec
+            .iter()
+            .map(|s| (s.name.as_str(), &s.predicate_kind))
+            .collect();
+        let repr_by_name: std::collections::HashMap<&str, &str> = spec
+            .iter()
+            .map(|s| (s.name.as_str(), s.predicate_repr.as_str()))
+            .collect();
         for (a, b) in &dispatch.disjoint_pairs {
             let both_structural = kind_by_name.get(a.as_str())
                 == Some(&&crate::RefinementPredKind::Structural)

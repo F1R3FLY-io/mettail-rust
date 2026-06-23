@@ -45,9 +45,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::any_algebra::{AnyAlgebra, AnyDomain, SortRegistry};
+use crate::pipeline::CategoryInfo;
 use crate::sym_tree::{SymTerm, SymbolicTreeAutomaton, TreeAlgebra, TreeTrans};
 use crate::symbolic::BooleanAlgebra;
-use crate::pipeline::CategoryInfo;
 use crate::SyntaxItemSpec;
 
 /// A grammar syntax rule: `(label, category, syntax_items)` — the same shape the
@@ -96,10 +96,7 @@ pub struct RankedAlphabet {
 /// `SetTheoreticTypeSystem` bridge over the *same* arity logic as this
 /// recognizer — the agreement is only meaningful if both sides derive the
 /// alphabet identically.
-pub fn collect_structural_child_categories(
-    items: &[SyntaxItemSpec],
-    out: &mut Vec<String>,
-) {
+pub fn collect_structural_child_categories(items: &[SyntaxItemSpec], out: &mut Vec<String>) {
     for item in items {
         match item {
             SyntaxItemSpec::NonTerminal { category, .. } => out.push(category.clone()),
@@ -107,9 +104,7 @@ pub fn collect_structural_child_categories(
             SyntaxItemSpec::Collection { element_category, .. } => {
                 out.push(element_category.clone())
             },
-            SyntaxItemSpec::Optional { inner } => {
-                collect_structural_child_categories(inner, out)
-            },
+            SyntaxItemSpec::Optional { inner } => collect_structural_child_categories(inner, out),
             SyntaxItemSpec::Sep { body, .. } => {
                 collect_structural_child_categories(std::slice::from_ref(body.as_ref()), out)
             },
@@ -164,11 +159,7 @@ fn category_is_scalar_by_string(ci: &CategoryInfo) -> bool {
     };
     // Take the last `::`-separated segment, then the bare identifier (drop any
     // generic args / whitespace the full-string form may carry).
-    let last_segment = type_str
-        .rsplit("::")
-        .next()
-        .unwrap_or(type_str)
-        .trim();
+    let last_segment = type_str.rsplit("::").next().unwrap_or(type_str).trim();
     let ident = last_segment
         .split(['<', ' ', '('])
         .next()
@@ -416,8 +407,8 @@ pub fn structural_verdict(
 // Structural-pattern parsing + refined automata (the `.1` dispatch substrate)
 // ══════════════════════════════════════════════════════════════════════════════
 
-use crate::sym_tree::{SymbolicTreeAutomaton as StAuto, TreePred};
 use crate::any_algebra::AnyPred;
+use crate::sym_tree::{SymbolicTreeAutomaton as StAuto, TreePred};
 
 /// Parse a refinement-type `predicate_repr` (the `Display` of a
 /// [`RefinementPredicate`](mettail_ast)) for a `Structural` (term-pattern)
@@ -691,7 +682,11 @@ mod tests {
             struct_cat("Expr", false),
         ];
         let all_syntax = vec![
-            rule("IVar", "Int", vec![SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }]),
+            rule(
+                "IVar",
+                "Int",
+                vec![SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }],
+            ),
             rule("Nil", "List", vec![term("nil")]),
             rule("Cons", "List", vec![nonterm("Int", "h"), nonterm("List", "t")]),
             // Expr has only a recursive rule — no base case ⇒ empty.
@@ -723,11 +718,8 @@ mod tests {
     /// structural.
     #[test]
     fn scalar_split_marks_payloaded() {
-        let categories = vec![
-            struct_cat("Proc", true),
-            scalar_cat("Int", "i64"),
-            struct_cat("List", false),
-        ];
+        let categories =
+            vec![struct_cat("Proc", true), scalar_cat("Int", "i64"), struct_cat("List", false)];
         let all_syntax = vec![
             rule("ILit", "Int", vec![term("0")]),
             rule("Nil", "List", vec![term("nil")]),

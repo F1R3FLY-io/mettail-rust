@@ -204,9 +204,14 @@ fn assert_agrees(name: &str, all_syntax: &[SyntaxRule], categories: &[CategoryIn
     let finite_empty = finite_engine_empty_categories(all_syntax, categories);
 
     if sym_empty != finite_empty {
-        let only_sym: Vec<&String> = sym_empty.iter().filter(|c| !finite_empty.contains(c)).collect();
-        let only_finite: Vec<&String> =
-            finite_empty.iter().filter(|c| !sym_empty.contains(c)).collect();
+        let only_sym: Vec<&String> = sym_empty
+            .iter()
+            .filter(|c| !finite_empty.contains(c))
+            .collect();
+        let only_finite: Vec<&String> = finite_empty
+            .iter()
+            .filter(|c| !sym_empty.contains(c))
+            .collect();
         panic!(
             "structural-type recognizer diverged from SetTheoreticTypeSystem for `{name}` \
              (the `.0` recognizer MUST agree category-for-category):\n  \
@@ -241,7 +246,11 @@ fn calculator_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
         rule("ProcBool", "Proc", vec![nonterm("Bool", "b")]),
         rule("ProcStr", "Proc", vec![nonterm("Str", "s")]),
         rule("AddInt", "Int", vec![nonterm("Int", "a"), term("+"), nonterm("Int", "b")]),
-        rule("FloatToInt", "Int", vec![term("int"), term("("), nonterm("Str", "a"), term(")")]),
+        rule(
+            "FloatToInt",
+            "Int",
+            vec![term("int"), term("("), nonterm("Str", "a"), term(")")],
+        ),
         rule("Fact", "Int", vec![nonterm("Int", "a"), term("!")]),
         rule("BagLit", "Bag", vec![bag_collection("xs", "Proc", "|")]),
     ];
@@ -288,7 +297,11 @@ fn ambient_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
             "Proc",
             vec![term("in("), nonterm("Name", "n"), term(","), nonterm("Proc", "p"), term(")")],
         ),
-        rule("PAmb", "Proc", vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")]),
+        rule(
+            "PAmb",
+            "Proc",
+            vec![nonterm("Name", "n"), term("["), nonterm("Proc", "p"), term("]")],
+        ),
         rule("PNew", "Proc", vec![binder("x", "Name", false), nonterm("Proc", "p")]),
         rule("PPar", "Proc", vec![term("{"), bag_collection("ps", "Proc", "|"), term("}")]),
         rule("NVar", "Name", vec![ident("x")]),

@@ -214,7 +214,7 @@ impl Z3Theory {
                     None
                 };
                 (Sat3::Sat, model)
-            }
+            },
         }
     }
 }
@@ -226,10 +226,7 @@ impl ConstraintTheory for Z3Theory {
 
     fn empty_store(&self) -> Self::Store {
         // The empty conjunction is trivially satisfiable.
-        SmtStore {
-            asserts: Vec::new(),
-            status: Sat3::Sat,
-        }
+        SmtStore { asserts: Vec::new(), status: Sat3::Sat }
     }
 
     fn propagate(&self, store: &Self::Store, c: &Self::Constraint) -> Option<Self::Store> {
@@ -304,7 +301,7 @@ pub fn checked_witness(theory: &Z3Theory, c: &SmtConstraint) -> Option<SmtModel>
             // Certificate check: the model must re-satisfy the constraint under the
             // independent pure evaluator before we trust it.
             eval_constraint(c, &m).then_some(m)
-        }
+        },
         Sat3::Unsat | Sat3::DontKnow => None,
     }
 }
@@ -409,7 +406,7 @@ impl<'ctx> Z3Env<'ctx> {
                 Z3Num::Bv(x) => {
                     let w = x.get_size();
                     Z3Num::Bv(z3::ast::BV::from_u64(self.ctx, *k as u64, w).bvmul(&x))
-                }
+                },
             },
         }
     }
@@ -446,12 +443,12 @@ impl<'ctx> Z3Env<'ctx> {
                 let x = self.constraint(a);
                 let y = self.constraint(b);
                 z3::ast::Bool::and(self.ctx, &[&x, &y])
-            }
+            },
             SmtConstraint::Or(a, b) => {
                 let x = self.constraint(a);
                 let y = self.constraint(b);
                 z3::ast::Bool::or(self.ctx, &[&x, &y])
-            }
+            },
         }
     }
 
@@ -599,10 +596,7 @@ mod tests {
             Box::new(SmtConstraint::Lt(ivar("y"), ilit(0))),
         );
         assert_eq!(is_satisfiable_3v(&th, &unsat), Sat3::Unsat);
-        assert!(
-            checked_witness(&th, &unsat).is_none(),
-            "Unsat must not fabricate a witness"
-        );
+        assert!(checked_witness(&th, &unsat).is_none(), "Unsat must not fabricate a witness");
 
         // (c) Kleene-strong composition of the two independent verdicts.
         let s3 = is_satisfiable_3v(&th, &sat);
@@ -632,9 +626,6 @@ mod tests {
             "an unsatisfiable guard must never be reported Sat (DontKnow is allowed; Unsat is allowed)"
         );
         // A witness is produced ONLY on a checked `Sat`; never on `Unsat`/`DontKnow`.
-        assert!(
-            checked_witness(&tight, &hard).is_none(),
-            "no witness for a non-Sat verdict"
-        );
+        assert!(checked_witness(&tight, &hard).is_none(), "no witness for a non-Sat verdict");
     }
 }

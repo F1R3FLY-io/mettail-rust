@@ -290,8 +290,12 @@ impl BehavioralPred {
                 let qdomain = QuantifiedDomain::to_qdomain(domain.as_ref());
                 // H2: ForAll → Forall, Exists → Exists.
                 match quantifier {
-                    Quantifier::ForAll => Some(F::Forall { var: var.clone(), domain: qdomain, body }),
-                    Quantifier::Exists => Some(F::Exists { var: var.clone(), domain: qdomain, body }),
+                    Quantifier::ForAll => {
+                        Some(F::Forall { var: var.clone(), domain: qdomain, body })
+                    },
+                    Quantifier::Exists => {
+                        Some(F::Exists { var: var.clone(), domain: qdomain, body })
+                    },
                 }
             },
             And(a, b) => Some(F::And(
@@ -372,9 +376,7 @@ impl QuantifiedDomain {
             Some(QuantifiedDomain::Enumerated(args)) => {
                 QDomain::Values(args.iter().map(PredArg::to_qdomain_value).collect())
             },
-            Some(QuantifiedDomain::Bounded(k)) => {
-                QDomain::Bounded(Box::new(QDomain::Active), *k)
-            },
+            Some(QuantifiedDomain::Bounded(k)) => QDomain::Bounded(Box::new(QDomain::Active), *k),
             None => QDomain::Active,
         }
     }

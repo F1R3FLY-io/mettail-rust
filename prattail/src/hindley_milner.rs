@@ -500,13 +500,9 @@ fn collect_field_sorts(items: &[crate::SyntaxItemSpec], out: &mut Vec<HmType>) {
                 out.push(HmType::Mono(element_category.clone()))
             },
             Item::Optional { inner } => collect_field_sorts(inner, out),
-            Item::Sep { body, .. } => {
-                collect_field_sorts(std::slice::from_ref(body.as_ref()), out)
-            },
+            Item::Sep { body, .. } => collect_field_sorts(std::slice::from_ref(body.as_ref()), out),
             Item::Map { body_items } => collect_field_sorts(body_items, out),
-            Item::Zip { body, .. } => {
-                collect_field_sorts(std::slice::from_ref(body.as_ref()), out)
-            },
+            Item::Zip { body, .. } => collect_field_sorts(std::slice::from_ref(body.as_ref()), out),
             // Terminal, IdentCapture, BinderCollection — no field sort.
             _ => {},
         }
@@ -600,7 +596,8 @@ pub fn analyze_from_bundle(
         }
     };
 
-    let mut inferred_constructor_types: Vec<(String, String)> = Vec::with_capacity(all_syntax.len());
+    let mut inferred_constructor_types: Vec<(String, String)> =
+        Vec::with_capacity(all_syntax.len());
     let mut sort_mismatches: Vec<(String, String)> = Vec::new();
 
     for (label, category, items) in all_syntax {
@@ -633,7 +630,10 @@ pub fn analyze_from_bundle(
         }
     }
 
-    HmInferenceAnalysis { inferred_constructor_types, sort_mismatches }
+    HmInferenceAnalysis {
+        inferred_constructor_types,
+        sort_mismatches,
+    }
 }
 
 #[cfg(test)]
