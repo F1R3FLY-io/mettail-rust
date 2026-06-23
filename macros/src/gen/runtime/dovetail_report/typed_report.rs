@@ -439,6 +439,246 @@ fn generate_native_rules_and_dispatch(
     (quote! { vec![#(#native_rules),*] }, dispatch)
 }
 
+/// (E2.2) Generate the `dovetail_normal_term` method body for a fold-bearing language.
+///
+/// `dovetail_normal_term(term, max_iters, max_nodes) -> Result<Box<dyn Term>, String>` reuses
+/// the `dovetail_report_for` saturation prologue VERBATIM (downcast → lower roots →
+/// `saturate_with_native` weighted by `__weigh`), then — instead of projecting a runtime report
+/// — extracts each root's funded 1-best derivation and reconstructs it back into a typed AST term
+/// via the generated `__mettail_dovetail_build_<cat>_d`, wrapping it in `<Lang>Term`.
+///
+/// Fail-closed: returns `Err` if saturation does not `Converge`, if any root extraction is
+/// `BoundedByCycleCut`, or if reconstruction returns `None` (a stuck term the inverse cannot
+/// recover — e.g. an opaque/`Vec`/`HashSet`/`HashMap` field). Multi-type languages reconstruct
+/// each `all_alts()` alternative under its own category and reassemble the distinct results into
+/// `<Lang>TermInner::Ambiguous` (deduplicated by semantic key), mirroring
+/// `rholang-runtime/src/rhocalc_ast.rs`'s `lower_proc_alternatives`.
+fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) -> TokenStream {
+    let enum_id = op_enum_ident(language);
+    let term_name = format_ident!("{}Term", language.name);
+    let inner_enum = format_ident!("{}TermInner", language.name);
+    let language_lit = lit(&language.name.to_string());
+
+    let typed_category_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
+        .collect();
+    let reconstruct_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
+        .collect();
+
+    let folds = collect_fold_rules(language);
+    let helpers = generate_helpers(language, &folds);
+    let (native_rules_expr, dispatch) = generate_native_rules_and_dispatch(language, &folds);
+    let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
+
+    let primary_cat = &language.types.first().expect("language has a type").name;
+    let primary_add = category_lowering_fn(primary_cat);
+    let primary_build = build_fn(primary_cat);
+
+    // Per-language root lowering + reconstruction. For a single-type language the root IS the
+    // primary category (so `<Lang>Term(rebuilt)` wraps it directly). For a multi-type language
+    // each `all_alts()` alternative is lowered under its own category, the category index is
+    // tracked alongside the root e-class, and after extraction the per-category
+    // `build_<cat>_d` reconstructs it and re-wraps it into `<Lang>TermInner::<cat>`.
+    let multi = language.types.len() > 1;
+    let (lower_roots, reconstruct_wrap) = if multi {
+        let lower_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .enumerate()
+            .map(|(idx, ty)| {
+                let cat = &ty.name;
+                let add_fn = category_lowering_fn(cat);
+                let idx = idx as u32;
+                quote! {
+                    #inner_enum::#cat(value) => {
+                        __max_depth = __max_depth.max(value.term_depth());
+                        __roots.push((#add_fn(&mut eg, value), #idx));
+                    }
+                }
+            })
+            .collect();
+        let rebuild_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .enumerate()
+            .map(|(idx, ty)| {
+                let cat = &ty.name;
+                let build = build_fn(cat);
+                let idx = idx as u32;
+                quote! {
+                    #idx => {
+                        let __rebuilt = #build(&__derivation).ok_or_else(|| format!(
+                            "generated Dovetail normal-form reconstruction for language {} failed (stuck term)",
+                            #language_lit,
+                        ))?;
+                        #inner_enum::#cat(__rebuilt)
+                    }
+                }
+            })
+            .collect();
+        let lower = quote! {
+            // (root e-class, category index) per parse alternative.
+            let mut __roots: Vec<(::dovetail::egraph::EClassId, u32)> = Vec::new();
+            let mut __max_depth: u32 = 0;
+            for __alt in typed_term.0.all_alts() {
+                match __alt {
+                    #(#lower_arms)*
+                    #inner_enum::Ambiguous(_) => unreachable!(
+                        "all_alts() returns flat alternatives, not nested Ambiguous"
+                    ),
+                }
+            }
+        };
+        let reconstruct = quote! {
+            // Reconstruct each root under its own category, dedup distinct alternatives by
+            // semantic key, and reassemble into a single `<Lang>TermInner` (a bare inner for a
+            // singleton, `Ambiguous` for 2+). Mirrors `lower_proc_alternatives`.
+            let mut __seen: ::std::collections::BTreeSet<Vec<u8>> = ::std::collections::BTreeSet::new();
+            let mut __alts: Vec<#inner_enum> = Vec::new();
+            for (__root, __cat_idx) in __roots {
+                let __extracted = {
+                    let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
+                    __extractor.funded_best(eg.find(__root))
+                };
+                if __extracted.completeness
+                    == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
+                {
+                    return Err(format!(
+                        "generated Dovetail normal-form extraction for language {} hit a cycle cut",
+                        #language_lit,
+                    ));
+                }
+                let __derivation = __extracted.value.ok_or_else(|| format!(
+                    "generated Dovetail normal-form extraction for language {} produced no derivation",
+                    #language_lit,
+                ))?;
+                let __inner = match __cat_idx {
+                    #(#rebuild_arms)*
+                    _ => unreachable!("category index out of range"),
+                };
+                let mut __hasher = ::mettail_runtime::FramedSemanticKeyHasher::default();
+                __inner.semantic_hash(&mut __hasher);
+                if __seen.insert(__hasher.into_key()) {
+                    __alts.push(__inner);
+                }
+            }
+            let __result_inner = match __alts.len() {
+                0 => return Err(format!(
+                    "generated Dovetail normal form for language {} produced no alternatives",
+                    #language_lit,
+                )),
+                1 => __alts.pop().expect("checked len == 1"),
+                _ => #inner_enum::Ambiguous(__alts),
+            };
+            Ok(Box::new(#term_name(__result_inner)) as Box<dyn mettail_runtime::Term>)
+        };
+        (lower, reconstruct)
+    } else {
+        // Single-type: the root is the primary category; `<Lang>Term` wraps it directly.
+        let lower = quote! {
+            let mut __roots: Vec<::dovetail::egraph::EClassId> = Vec::new();
+            let mut __max_depth: u32 = typed_term.0.term_depth();
+            __roots.push(#primary_add(&mut eg, &typed_term.0));
+        };
+        let reconstruct = quote! {
+            let mut __seen: ::std::collections::BTreeSet<Vec<u8>> = ::std::collections::BTreeSet::new();
+            let mut __results: Vec<#primary_cat> = Vec::new();
+            for __root in __roots {
+                let __extracted = {
+                    let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
+                    __extractor.funded_best(eg.find(__root))
+                };
+                if __extracted.completeness
+                    == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
+                {
+                    return Err(format!(
+                        "generated Dovetail normal-form extraction for language {} hit a cycle cut",
+                        #language_lit,
+                    ));
+                }
+                let __derivation = __extracted.value.ok_or_else(|| format!(
+                    "generated Dovetail normal-form extraction for language {} produced no derivation",
+                    #language_lit,
+                ))?;
+                let __rebuilt = #primary_build(&__derivation).ok_or_else(|| format!(
+                    "generated Dovetail normal-form reconstruction for language {} failed (stuck term)",
+                    #language_lit,
+                ))?;
+                use ::std::hash::Hash as _;
+                let mut __hasher = ::mettail_runtime::FramedSemanticKeyHasher::default();
+                __rebuilt.hash(&mut __hasher);
+                if __seen.insert(__hasher.into_key()) {
+                    __results.push(__rebuilt);
+                }
+            }
+            let __result = match __results.len() {
+                0 => return Err(format!(
+                    "generated Dovetail normal form for language {} produced no result",
+                    #language_lit,
+                )),
+                _ => __results.pop().expect("at least one result"),
+            };
+            Ok(Box::new(#term_name(__result)) as Box<dyn mettail_runtime::Term>)
+        };
+        (lower, reconstruct)
+    };
+
+    // `__roots` element type differs (tuple vs bare) between the multi/single arms, so the
+    // empty-check is shared but uses the appropriate iterator emptiness.
+    quote! {
+        /// (E2.2) Reduce `term` to a typed Dovetail normal form and reconstruct it as a typed
+        /// AST term. Same saturation as `dovetail_report_for`, but returns the reduced
+        /// `<Lang>Term` (boxed) instead of a runtime report. Fail-closed: `Err` on
+        /// non-convergence, a cycle cut, or a stuck (non-invertible) reconstruction.
+        pub fn dovetail_normal_term(
+            term: &dyn mettail_runtime::Term,
+            max_iters: usize,
+            max_nodes: usize,
+        ) -> Result<Box<dyn mettail_runtime::Term>, String> {
+            let typed_term = term
+                .as_any()
+                .downcast_ref::<#term_name>()
+                .ok_or_else(|| format!("expected {}Term, got {:?}", #language_lit, term))?;
+
+            #(#typed_category_fns)*
+            #(#reconstruct_fns)*
+            #helpers
+
+            let mut eg = ::dovetail::egraph::EGraph::<#enum_id>::with_config(
+                ::dovetail::egraph::EGraphConfig { max_nodes },
+            );
+
+            #lower_roots
+            if __roots.is_empty() {
+                return Err(format!(
+                    "generated Dovetail normal form for language {} produced no roots",
+                    #language_lit,
+                ));
+            }
+
+            let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
+            let rules = #rules_expr;
+            let __native_rules = #native_rules_expr;
+            let __dispatch = #dispatch;
+            let sat = eg.saturate_with_native(&rules, &__native_rules, &__dispatch, __iters);
+            if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
+                return Err(format!(
+                    "generated Dovetail saturation for language {} stopped before convergence: {:?}",
+                    #language_lit,
+                    sat.outcome,
+                ));
+            }
+
+            #reconstruct_wrap
+        }
+    }
+}
+
 /// Generate the full typed `impl <Lang>Language { dovetail_report_for, dovetail_compiler_stage }`
 /// + the op-enum, for a fold-bearing language.
 pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStream {
@@ -508,6 +748,16 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // taken as a lower bound. An over-estimate is harmless — saturation returns `Converged`
     // early on a zero-merge pass.
     let struct_slack = language.equations.len() * 2 + language.rewrites.len() + 8;
+
+    // (E2.2) The optional `dovetail_normal_term` method, emitted only when the MF7 gate
+    // (`super::needs_normal_term`) holds. It reuses the saturation prologue and per-category
+    // reconstruction verbatim, but returns the reduced term as a typed `Box<dyn Term>`
+    // (wrapped `<Lang>Term`) instead of a `RuntimeDovetailRunReport`.
+    let normal_term_method = if super::needs_normal_term(language) {
+        generate_dovetail_normal_term(language, struct_slack)
+    } else {
+        TokenStream::new()
+    };
 
     quote! {
         // `op_enum_decl` carries `#[cfg(feature = "dovetail-codegen")]` on each of its items.
@@ -608,6 +858,8 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     __runner as fn(&dyn mettail_runtime::Term) -> Result<mettail_runtime::RuntimeDovetailRunReport, String>,
                 )
             }
+
+            #normal_term_method
         }
     }
 }

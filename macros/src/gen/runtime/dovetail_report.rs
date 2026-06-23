@@ -37,6 +37,84 @@ pub(crate) fn needs_typed_fold_path(language: &LanguageDef) -> bool {
     })
 }
 
+/// Whether any `PatternTerm::Subst`/`MultiSubst` appears anywhere in a pattern (recursing
+/// through `Apply`/`Lambda`/`MultiLambda`/`Collection`/`Map`/`Zip` and the substitution
+/// sub-patterns themselves). A substitution in a rewrite RHS means the language performs
+/// β-style replacement, whose contractum is a NEW typed term that the runtime must
+/// reconstruct from the e-graph — hence `dovetail_normal_term` is meaningful for it.
+///
+/// This is a self-contained structural detector for the MF7 gate; it deliberately does NOT
+/// depend on E1's stricter `is_substitution_rewrite` shape-classifier (E1 is a separate
+/// surface). Being more permissive here is safe: it can only enable `dovetail_normal_term`,
+/// which is itself fail-closed (`Err` on a stuck reconstruction).
+fn pattern_contains_substitution(pattern: &AstPattern) -> bool {
+    match pattern {
+        AstPattern::Term(term) => pattern_term_contains_substitution(term),
+        AstPattern::Collection { elements, .. } => {
+            elements.iter().any(pattern_contains_substitution)
+        },
+        AstPattern::Map { collection, body, .. } => {
+            pattern_contains_substitution(collection) || pattern_contains_substitution(body)
+        },
+        AstPattern::Zip { first, second } => {
+            pattern_contains_substitution(first) || pattern_contains_substitution(second)
+        },
+    }
+}
+
+fn pattern_term_contains_substitution(term: &PatternTerm) -> bool {
+    match term {
+        PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => true,
+        PatternTerm::Apply { args, .. } => args.iter().any(pattern_contains_substitution),
+        PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+            pattern_contains_substitution(body)
+        },
+        PatternTerm::Var(_) => false,
+    }
+}
+
+/// Whether a generated language should also expose `dovetail_normal_term` (E2.2) — the method
+/// that reduces a term to a typed Dovetail normal form and reconstructs it as a typed AST term
+/// (rather than the `dovetail_report_for` report projection).
+///
+/// MF7 gate (generic; derived entirely from `LanguageDef` — no per-language hardcoding):
+/// emit it iff the language
+///   1. has a **substitution rewrite** (a rewrite whose RHS contains a `Subst`/`MultiSubst`),
+///      i.e. it performs β-style replacement producing a fresh typed contractum; OR
+///   2. has a **typed-path structural rewrite/equation** — a non-congruence rewrite, or any
+///      equation (equations are structural rewrites the typed path turns into bidirectional
+///      `RewriteRule`s); these can rewrite a term into a different typed normal form (e.g.
+///      RhoCalc's `Comm`/`PNew` AC equations); OR
+///   3. **declares a Rho/RhoMachine backend capability**. Raw `language!` codegen advertises
+///      `NO_RUNTIME_BACKEND_CAPABILITIES` in metadata (backends are installed by runtime
+///      wrappers, not the macro), so the closest `LanguageDef`-level signal is a `guards {
+///      channels { … } }` block (channels + join patterns are the Rho-style COMM substrate).
+///
+/// A pure scalar-fold language (native-output folds only, no structural rewrites/equations, no
+/// substitution, no channels — e.g. Calculator) satisfies none of these and is NOT given the
+/// method. (Such a language also never reaches the typed-fold path at all — it stays on the
+/// `EGraph<String>` path — so the gate is doubly fail-closed for it.)
+pub(crate) fn needs_normal_term(language: &LanguageDef) -> bool {
+    let has_substitution_rewrite = language
+        .rewrites
+        .iter()
+        .any(|rw| pattern_contains_substitution(&rw.right));
+
+    let has_structural_rewrite_or_equation = language
+        .rewrites
+        .iter()
+        .any(|rw| !rw.is_congruence_rule())
+        || !language.equations.is_empty();
+
+    let declares_rho_backend = language
+        .guard_config
+        .as_ref()
+        .and_then(|gc| gc.channels.as_ref())
+        .is_some_and(|ch| !ch.channel_categories.is_empty() || !ch.join_patterns.is_empty());
+
+    has_substitution_rewrite || has_structural_rewrite_or_equation || declares_rho_backend
+}
+
 fn to_snake(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
     for (i, ch) in s.chars().enumerate() {
@@ -905,5 +983,90 @@ mod tests {
             relation: id("rel"),
             args: vec![id("a")],
         }));
+    }
+
+    // ─── E2.2: `needs_normal_term` MF7 gating ───────────────────────────────────
+
+    #[test]
+    fn needs_normal_term_true_for_structural_rewrite() {
+        // A language with a non-congruence structural rewrite (`A ~> B`) gets the method.
+        let language = parse(
+            r#"
+                name: NntStructural,
+                types { Expr }
+                terms {
+                    A . |- "a" : Expr ;
+                    B . |- "b" : Expr ;
+                }
+                equations {}
+                rewrites { AToB . |- A ~> B ; }
+            "#,
+        );
+        assert!(needs_normal_term(&language));
+    }
+
+    #[test]
+    fn needs_normal_term_true_for_equation() {
+        // A language with a (structural) equation gets the method even with no rewrites.
+        let language = parse(
+            r#"
+                name: NntEquation,
+                types { Expr }
+                terms {
+                    A . |- "a" : Expr ;
+                    B . |- "b" : Expr ;
+                }
+                equations { Swap . |- A = B ; }
+                rewrites {}
+            "#,
+        );
+        assert!(needs_normal_term(&language));
+    }
+
+    #[test]
+    fn needs_normal_term_false_for_pure_scalar_fold() {
+        // A pure scalar-fold language (a native-output `+`/`-` fold, no structural rewrites/
+        // equations, no substitution, no channels) is NOT given `dovetail_normal_term`.
+        let language = parse(
+            r#"
+                name: NntPureScalar,
+                types { ![i32] as Int }
+                terms {
+                    AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+                    SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+                }
+            "#,
+        );
+        assert!(!needs_normal_term(&language));
+        // It also never reaches the typed-fold path (native output stays on the String path),
+        // so the method is doubly excluded for it.
+        assert!(!needs_typed_fold_path(&language));
+    }
+
+    #[test]
+    fn needs_normal_term_true_for_substitution_rewrite() {
+        // A β-style substitution in a rewrite RHS (`(eval fun arg)` parses to a `MultiSubst`)
+        // triggers the gate. This is independent of E1's stricter `is_substitution_rewrite`
+        // shape classifier — being permissive here is sound (it can only enable a fail-closed
+        // method). Mirrors the Lambda `Beta` rule.
+        let language = parse(
+            r#"
+                name: NntBeta,
+                types { Term }
+                terms {
+                    Lam . ^x.body:[Term -> Term] |- "lam " x "." body : Term;
+                    App . fun:Term, arg:Term |- "(" fun "," arg ")" : Term;
+                }
+                equations {}
+                rewrites {
+                    Beta . |- (App (Lam fun) arg) ~> (eval fun arg);
+                    AppCongL . | M0 ~> M1 |- (App M0 N) ~> (App M1 N);
+                }
+            "#,
+        );
+        assert!(
+            needs_normal_term(&language),
+            "a MultiSubst in the rewrite RHS must trigger needs_normal_term"
+        );
     }
 }

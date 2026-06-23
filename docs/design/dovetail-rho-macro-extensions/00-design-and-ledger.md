@@ -142,8 +142,14 @@ lowering is out of scope).
 ## Progress ledger
 - [x] Design (Plan agent) + red-team (NO-GO/7 must-fixes) + converge (this doc).
 - [x] `dovetail_backed` generic helper (`dovetail-runtime/src/lib.rs`) — compiles (`cargo check` green).
-- [ ] **E2.1** reconstruct Collection/Binder/MultiBinder arms (+ iterative).
-- [ ] **E2.2** `dovetail_normal_term` + `needs_normal_term` gating.
+- [x] **E2.1** reconstruct Collection/Binder/MultiBinder arms (recursive, consistent with existing
+  `build_fn`; `#[allow(unreachable_patterns)]` on the defensive catch-all). Multiplicity preserved;
+  binders α-faithful (fresh binder, positional de-Bruijn). Iterative-hardening = noted follow-up.
+- [x] **E2.2** `dovetail_normal_term` + `needs_normal_term` gating (substitution ∨ typed-structural
+  ∨ Rho-backend). Verified: `languages/tests/dovetail_normal_term.rs` 4/4 (PPar collection,
+  multiplicity-2, fold-in-POutput, PNew α-equiv); rhocalc_dovetail_fold 6/6, ambient_dovetail_flip 3/3.
+  NOTE: a pre-existing `unreachable_patterns` warning in `rho_scalar_invocation.rs` (MixedMath, NOT E2)
+  to be fixed during E3.
 - [ ] **E1.1–E1.5** routing, detector, op_id, dispatch, progress weights (atomic E1.4+E1.5).
 - [ ] **E3.2–E3.4** dataflow lowering, `/0` policy, wrapper wiring.
 - [ ] Downstream: 4-language registry wrappers + REPL `rho-languages` Cargo wiring.
