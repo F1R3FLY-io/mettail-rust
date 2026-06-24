@@ -1,0 +1,44 @@
+@startuml
+title Guarded contract COMM: classify at compile time, enforce per message
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.2
+skinparam ParticipantBorderColor #1F2937
+skinparam ParticipantFontColor #111827
+
+participant "Sender\nc!(m)" as S #DCFCE7
+participant "RSpace COMM\nboundary" as R #E5E7EB
+participant "Guard gate\n(host enforcement)" as G #FEF3C7
+participant "OSLF funding\nis_funded(Δ, Σ)" as O #DBEAFE
+participant "Contract body\nfor(@m <= c where P(m)){ ... }" as C #DCFCE7
+
+S -> R : message m on channel c
+R -> R : name_match(σ)  —  hash by channel
+alt name_match(σ) holds
+  R -> G : structural_eval(σ) ∧ behavioral_eval(σ)
+  alt guard_holds(P, m)
+    G -> O : is_funded(Δ, Σ, margin)
+    alt funded
+      O -> C : COMM commits — m consumed
+      note over C #DCFCE7
+        a persistent contract re-installs and
+        keeps awaiting the next message
+      end note
+    else underfunded
+      O --> R : rest — m stays on channel c
+    end
+  else guard fails
+    G --> R : rest — m is NOT consumed
+  end
+else no name match
+  R --> S : rest
+end
+
+note right of G #FEF3C7
+  Guard atomicity (GuardedCommSoundness.v):
+  failed_guard_no_commit — a non-satisfying
+  message is never consumed.
+  COMM fires ⟺ guard-satisfied ∧ funded.
+end note
+@enduml

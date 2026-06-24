@@ -1,0 +1,51 @@
+@startuml
+title Runtime backend selection: from the macro to a per-term route
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "language! { ... }\nmacro emits NO_RUNTIME_BACKEND_CAPABILITIES\n(parse / introspection substrate)" as MACRO #E5E7EB
+
+rectangle "COMPILE-TIME ELIGIBILITY GATE\ndecide_rho_flip(coverage, artifact,\ndeadlock, guard_quality)\nfail-closed: can_flip_to_rho() iff blockers empty" as GATE #FEF3C7
+
+rectangle "WIRING\nper-language wrapper overrides\nruntime_backend_capabilities()" as WIRE #FEF3C7
+
+rectangle "PURE DOVETAIL\nLambda, Ambient\n(Dovetail capability only)" as DOVE #DBEAFE
+rectangle "HYBRID\nCalculator, RhoCalc\n(RhoMachine default + Dovetail)" as HYBRID #DCFCE7
+rectangle "HOST-ROUTED\nGuardedRho\n(RhoMachine + RhoNativeJoin)" as HOST #DCFCE7
+
+rectangle "PER-TERM ROUTE   run_backend_report(RhoMachine, t)\nD-stage Dovetail report  ->  build RhoBackendInvocation" as ROUTE #F3F4F6
+rectangle "DeferToDovetailReport\nno Rho-lowerable contract:\nthe Dovetail report IS the answer" as DEFER #DBEAFE
+rectangle "rhoapi::Par on F1r3node RSpace\nCOMM fires; resting data read back" as PAR #DCFCE7
+
+MACRO --> GATE
+GATE --> WIRE : can_flip_to_rho()
+WIRE --> DOVE
+WIRE --> HYBRID
+WIRE --> HOST
+HYBRID --> ROUTE
+HOST --> ROUTE
+ROUTE --> DEFER : fold-only / non-lowerable term
+ROUTE --> PAR : COMM / scalar-dataflow term
+DOVE --> DEFER : every redex in-engine
+
+note right of GATE
+  blockers: Coverage, ArtifactValidation,
+  ChannelDeadlocks, GuardQuality(Unknown).
+  Rust image of RhoBackendFlipGate.v.
+end note
+
+legend right
+|= Color |= Meaning |
+|<#FEF3C7> | compile-time classification / gate |
+|<#DBEAFE> | Dovetail (in-engine rewrite) |
+|<#DCFCE7> | Rholang / F1r3node host (COMM) |
+|<#E5E7EB> | macro / neutral |
+endlegend
+@enduml

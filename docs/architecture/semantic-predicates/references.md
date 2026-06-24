@@ -156,6 +156,20 @@ Programming.* Scheme and Functional Programming Workshop, 2013. The minimal
 relational-programming core in the lineage of the constraint-theory search. (No
 resolvable DOI; cited by venue.)
 
+## Pattern dispatch and term indexing
+
+Ground the run-time dispatch of a message to its compatible predicate-guarded contracts
+([17 — Predicate Dispatch Optimization](17-predicate-dispatch-optimization.md)).
+
+### forgy-1982
+
+C. L. Forgy. *Rete: A Fast Algorithm for the Many Pattern/Many Object Pattern Match
+Problem.* Artificial Intelligence, 19(1):17–37, 1982. The discrimination-network
+algorithm that compiles many patterns so each object is routed to only the productions it
+can match — the classical precedent for routing a message to its compatible contracts
+without testing every predicate.
+DOI: [10.1016/0004-3702(82)90020-0](https://doi.org/10.1016/0004-3702%2882%2990020-0).
+
 ## Temporal logic and the modal μ-calculus
 
 Ground the modal/temporal fixpoint logic of the behavioral Heyting algebra

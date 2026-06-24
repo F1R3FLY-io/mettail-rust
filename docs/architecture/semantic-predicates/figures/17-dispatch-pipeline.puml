@@ -1,0 +1,41 @@
+@startuml
+title Layered dispatch: classify a message once, never evaluate every predicate
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "incoming message m on channel c" as MSG #FFFFFF
+
+rectangle "L0  CHANNEL HASH\nRSpace routes by channel / channel-set\nfree, native — only c's receiver set" as L0 #E5E7EB
+rectangle "L1  STRUCTURAL MATCH\nRSpace spatial pattern (folded guard prefix)\nfree — shrinks the candidate set" as L1 #DBEAFE
+rectangle "L2  MINTERM DISPATCH TABLE\ncompute_minterms partitions the domain;\nclassify m once  ->  accepting-contract set" as L2 #FEF3C7
+rectangle "L3  RESIDUAL VALIDATION\nT3/T4 only (halts/safe, SMT, bounded)\nnative-join handler at the check_commit veto" as L3 #FEE2E2
+
+rectangle "compatible contracts for m" as OUT #DCFCE7
+
+MSG --> L0
+L0 --> L1 : candidates on c
+L1 --> L2 : structural survivors
+L2 --> L3 : residual survivors (few)
+L3 --> OUT : commit — no-consume-on-false
+
+note right of L2
+  O(M·N·eval)  ->  O(N_distinct·eval) + lookup;
+  a decision-DAG / BDD over atoms is sub-linear in N.
+  Compile-time-built for T1/T2 non-Z3 EBA guards.
+end note
+
+legend right
+|= Color |= Dispatch layer |
+|<#E5E7EB> | L0 channel hash (native, free) |
+|<#DBEAFE> | L1 structural match (native, free) |
+|<#FEF3C7> | L2 minterm table (compile-time-built) |
+|<#FEE2E2> | L3 residual run-time validation |
+endlegend
+@enduml

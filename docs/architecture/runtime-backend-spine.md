@@ -1,6 +1,6 @@
 # Runtime Backend Replacement Spine
 
-Last updated: 2026-06-15
+Last updated: 2026-06-24
 
 This page is the connective tissue between the standalone
 [Dovetail rewrite-engine suite](dovetail/README.md) and the
@@ -255,6 +255,89 @@ The same source-level behavior appears in three different representations:
 These are intentionally not the same object. The source syntax is parsed, the
 Dovetail report is checked rewrite evidence, and the Rho artifact is executable
 host AST.
+
+## Runtime Targets: Backend Selection, Rewrites, and Predicates
+
+This section answers three questions a reader brings to the spine: how a language
+is routed to a backend, how the spec's rewrite rules are handled on each, and how
+semantic predicates are enforced on each. It stays at overview altitude; the deep
+treatments live in the linked suite documents.
+
+### Backend selection is a three-layer, capability-based decision
+
+There is no single compile-time switch. The `language!` macro emits **no** backend
+at all (`NO_RUNTIME_BACKEND_CAPABILITIES`); a raw generated language is a
+parse/introspection substrate. Selection happens in three layers:
+
+1. a **compile-time eligibility gate**, `decide_rho_flip` (`rholang-codegen`, the Rust
+   image of `RhoBackendFlipGate.v`), fail-closed on four blockers — coverage, artifact
+   validation, channel deadlocks, and guard-quality;
+2. a **wiring-time wrapper** that overrides `runtime_backend_capabilities()` per language;
+3. a **per-term run-time router**, `run_backend_report`, whose `DeferToDovetailReport`
+   discharge rule chooses Dovetail-versus-Rho for each term.
+
+![Runtime backend selection: from the macro to a per-term route](figures/backend-selection.svg)
+
+*The macro advertises no backend; the compile-time gate decides eligibility; a wrapper
+installs capabilities; the per-term router discharges each term to Dovetail or the host.*
+
+The three operational categories, and where each bundled language lands:
+
+| Category | Languages | What it means |
+|---|---|---|
+| pure Dovetail | Lambda, Ambient | every redex reduced in-engine by `saturate_with_native`; no host |
+| hybrid | Calculator, RhoCalc | RhoMachine default + Dovetail fallback; `DeferToDovetailReport` routes each term |
+| host-routed | GuardedRho | a guard over external relations forces `RhoNativeJoin` (no `rhoapi::Par` form) |
+
+`RuntimeBackend::Ascent` is a fail-closed reference oracle only — never a production
+default.
+
+### Rewrites: the spec's rules are the authority on every target
+
+The spec's rewrite rules are **not** discarded in favor of the Rholang interpreter.
+Reduction is split by node kind, not by target:
+
+| Node kind | Reduced by |
+|---|---|
+| fold / cast / `β` (`Add`, `IntBinProc`, `CastInt`, `(eval)`, …) | **Dovetail** — the rule's own `![{…}]` body runs as a `NativeRule` in `saturate_with_native` |
+| structural rewrite (`Pattern → Pattern`) | **Dovetail** — `RewriteRule` e-graph equalities |
+| COMM / process (`POutput`, `PInputs`, `PPar`, `PNew`) | **Rholang** — the real `RhoRuntime` / RSpace |
+
+Rholang is invoked **only** for process semantics; it is never handed a MeTTaIL fold
+redex (mechanically enforced — `mettail-rust` is forbidden as a f1r3node dependency,
+`BridgeInertness.v`). A hybrid (mixed) term flows one way: Dovetail folds first, the
+result is lowered to `rhoapi::Par`, then Rholang fires the COMM — one pass, no callback.
+The deep treatment is
+[Term-Level Reduction Split](rho-native-integration/09-term-level-reduction-split.md).
+
+### Predicates: classified at compile time, enforced by the host
+
+The semantic-predicate algebra (EBA / SFA / SFT / the Heyting tower) runs **once at
+compile time** and is never re-run at run time. On every target it emits an
+`obligation → disposition → quality` classification and admits the language only through
+the fail-closed flip gate. At run time the *surviving* decision is enforced:
+
+| Target | Predicate enforcement |
+|---|---|
+| pure Dovetail | structural shape is the `AcApp` pattern; the OSLF resource axis (`is_funded`) gates native folds; no in-engine guard evaluation |
+| pure Rholang | RSpace spatial match (structural), a `where` boolean, or a host-routed `RhoNativeJoin` (theory / transducer / behavioral) |
+| hybrid | split by layer; the generated-runtime `Comm` path consults a closed-world fact snapshot (`evaluate_pred_with_bindings`) |
+
+Both axes compose at the boundary as `COMM fires ⟺ guard-satisfied ∧ funded`
+([OSLF Composition](semantic-predicates/09-oslf-composition.md)). The full per-target
+treatment is [Runtime COMM Enforcement](semantic-predicates/08-runtime-comm-enforcement.md).
+
+### Guarded contracts and their dispatch
+
+A contract that awaits messages satisfying a semantic predicate is the guarded-receive
+mechanism above, applied to a persistent receive: the predicate is classified at compile
+time, enforced at the COMM boundary with guard atomicity (a failing message is left
+resting), and composed with OSLF funding. The design, its proven core, and the pieces
+that remain to be wired are
+[Predicate-Guarded Contracts](semantic-predicates/16-predicate-guarded-contracts.md); how
+a host dispatches one message to many guarded contracts without evaluating every
+predicate — the per-channel minterm dispatch table — is
+[Predicate Dispatch Optimization](semantic-predicates/17-predicate-dispatch-optimization.md).
 
 ## Correctness Spine
 

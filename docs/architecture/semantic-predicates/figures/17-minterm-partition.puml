@@ -1,0 +1,48 @@
+@startuml
+title The minterm partition as a dispatch table (D'Antoni and Veanes)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam card {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "channel c receiver predicates\n{ φ1, φ2, φ3 }   (T1 / T2, non-Z3)" as PREDS #DBEAFE
+
+card "compute_minterms\nmaximal satisfiable\nsign-vector conjunctions" as CM #FEF3C7
+
+rectangle "minterm cells — they partition the message domain" as CELLS #FEF3C7 {
+  card "φ1 ∧ φ2 ∧ ¬φ3\n->  { C1, C2 }" as M1 #FEF9C3
+  card "¬φ1 ∧ φ2 ∧ φ3\n->  { C2, C3 }" as M2 #FEF9C3
+  card "¬φ1 ∧ ¬φ2 ∧ ¬φ3\n->  { }  (rests)" as M3 #FEF9C3
+}
+
+rectangle "message m\nclassified once into\nexactly one cell" as MSG #DCFCE7
+rectangle "accepting contracts\n(dispatch result)" as OUT #DCFCE7
+
+PREDS --> CM
+CM --> CELLS : is_satisfiable prunes\nunrealizable cells
+MSG --> M1 : evaluate distinguishing\natoms (decision DAG)
+M1 --> OUT
+
+note bottom of CELLS
+  "All elements in the same minterm are treated identically
+  by every predicate" — so a cell names exactly which
+  contracts accept m. Worst case 2^N cells; build it
+  per channel and lazily.
+end note
+
+legend right
+|= Color |= Role |
+|<#DBEAFE> | input predicate set |
+|<#FEF3C7> | minterm construction / cells |
+|<#DCFCE7> | message classification + result |
+endlegend
+@enduml

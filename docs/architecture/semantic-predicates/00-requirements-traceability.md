@@ -1,6 +1,6 @@
 # Requirements Traceability
 
-Last updated: 2026-06-22
+Last updated: 2026-06-24
 
 This page maps each documentation requirement for the semantic-predicate substrate
 to the document that satisfies it, so a reviewer can confirm coverage without
@@ -26,6 +26,8 @@ reading the whole suite. It also records the consistency conditions that
 | Document the LogicT constraint-theory engine and its integration: quantified-predicate evaluation, the theory-to-EBA bridge, theory combination, and predicated-type enforcement | [13 — Constraint-Theory Engine](13-constraint-theory-engine.md) |
 | Document thoroughly and precisely how existential and universal quantification are modeled: the three realizations, the domain model, the `∀≡¬∃¬` duality, decidability, lowering, and a worked example | [14 — Quantification](14-quantification.md) |
 | Document the modal μ-calculus of the behavioral Heyting algebra: syntax, Knaster–Tarski fixpoint semantics, how a process is concretized as an LTS to be predicated against, the model-checking algorithm and its exactness, and the CTL encoding — all proved | [15 — Modal μ-Calculus](15-mu-calculus.md) |
+| Answer how a contract awaits messages satisfying a semantic predicate: the authoring surface, the classify-then-enforce path, guard atomicity, and the wiring-status ledger | [16 — Predicate-Guarded Contracts](16-predicate-guarded-contracts.md) |
+| Answer how the host dispatches one message to many predicate-guarded contracts without evaluating every predicate: the layered pipeline, the minterm dispatch table, the decidability-tier gate, and residuation | [17 — Predicate Dispatch Optimization](17-predicate-dispatch-optimization.md) |
 | Provide citations with DOIs and a repository-local artifact index | [References](references.md) |
 | Provide diagrams of the best type with the best actors per concept | `figures/` (see the diagramming policy in the [README](README.md#diagramming-choices)) |
 | Provide a one-page decision brief | [00 — Executive Brief](00-executive-brief.md) |
