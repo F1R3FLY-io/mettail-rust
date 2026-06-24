@@ -102,6 +102,7 @@ Section LanguageDefInventory.
     {| inventory_name := "rhocalc"; inventory_requirements := process_rewrite_surface ++ arithmetic_rewrite_surface |};
     {| inventory_name := "ambient"; inventory_requirements := process_rewrite_surface |};
     {| inventory_name := "lambda"; inventory_requirements := binder_rewrite_surface |};
+    {| inventory_name := "appsubst"; inventory_requirements := binder_rewrite_surface |};
     {| inventory_name := "guardedrho"; inventory_requirements := guarded_rho_surface |};
     {| inventory_name := "ledtest"; inventory_requirements := arithmetic_rewrite_surface |};
     {| inventory_name := "optsmoke"; inventory_requirements := ReqFoldNativeHandler :: class2_collection_surface |};
