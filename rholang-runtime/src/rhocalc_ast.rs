@@ -352,6 +352,18 @@ fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, 
     )
 }
 
+/// The step-only Dovetail report producer for RhoCalc — same saturation as
+/// [`rhocalc_dovetail_report`], but each term record carries reconstructed source syntax
+/// (`source_display`) for comprehensible REPL `step` display. Reached only via the `step` path
+/// (`Language::run_step_backend_report`); production `exec` uses `rhocalc_dovetail_report`.
+fn rhocalc_dovetail_step_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+    RhoCalcLanguage::dovetail_step_report(
+        term,
+        RHOCALC_DOVETAIL_MAX_ITERS,
+        RHOCALC_DOVETAIL_MAX_NODES,
+    )
+}
+
 /// Two-stage Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of RhoCalc.
 ///
 /// One-way pipeline (no bidirectional bridge; see
@@ -408,6 +420,7 @@ pub fn dovetail_rho_backed_rhocalc(
         RhocalcAstRuntimeLanguage,
         backend,
         rhocalc_dovetail_report,
+        rhocalc_dovetail_step_report,
         invocation,
     )
     .map_err(|err| format!("RhoCalc Dovetail+Rho backend install failed: {err:?}"))?;

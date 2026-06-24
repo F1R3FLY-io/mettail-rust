@@ -108,6 +108,14 @@ mod rho {
         CalculatorLanguage::dovetail_report_for(term, MAX_ITERS, MAX_NODES)
     }
 
+    /// The Calculator step-only Dovetail report producer — same saturation as
+    /// `calculator_dovetail_report`, but each term record carries reconstructed source syntax
+    /// (`source_display`) for comprehensible REPL `step` display. Reached only via
+    /// `Language::run_step_backend_report`; production `exec` uses `calculator_dovetail_report`.
+    fn calculator_dovetail_step_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        CalculatorLanguage::dovetail_step_report(term, MAX_ITERS, MAX_NODES)
+    }
+
     /// The Calculator F-stage: lower the term's scalar expression tree to a Rholang dataflow (E3)
     /// and run it on the Rho machine, or defer to Dovetail for a non-scalar / free-var / `÷0` /
     /// overflow term. The Dovetail report is the completeness gate + the Defer-fallback payload.
@@ -131,6 +139,7 @@ mod rho {
             CalculatorLanguage,
             backend,
             calculator_dovetail_report,
+            calculator_dovetail_step_report,
             calculator_invocation,
         )
         .map_err(|err| anyhow!("Calculator Dovetail+Rho backend install failed: {err:?}"))?;

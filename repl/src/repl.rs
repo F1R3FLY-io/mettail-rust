@@ -873,7 +873,10 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
                     let display = roots
                         .iter()
                         .filter_map(|ordinal| dovetail_report.terms.get(*ordinal))
-                        .map(|term| term.op_display.as_str())
+                        // Prefer reconstructed source (step reports); op_display fallback (exec).
+                        .map(|term| {
+                            term.source_display.as_deref().unwrap_or(term.op_display.as_str())
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
                     terms.push(RuntimeGraphTerm {
@@ -895,7 +898,13 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
 
             terms.extend(dovetail_report.terms.iter().map(|term| RuntimeGraphTerm {
                 id: term.ordinal as u64,
-                display: term.op_display.clone(),
+                // Prefer reconstructed source syntax (step reports populate `source_display`); fall
+                // back to the op-enum name. Exec reports leave `source_display` None ⇒ op_display, so
+                // exec rendering is unchanged.
+                display: term
+                    .source_display
+                    .clone()
+                    .unwrap_or_else(|| term.op_display.clone()),
                 is_normal_form: term.is_root,
                 is_root: term.is_root,
             }));
@@ -2074,7 +2083,7 @@ impl Repl {
             match trace {
                 Some(report) => report,
                 None if language.supports_runtime_backend(RuntimeBackend::Dovetail) => language
-                    .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+                    .run_step_backend_report(term.as_ref())
                     .map_err(|e| anyhow::anyhow!("{}", e))?,
                 None => anyhow::bail!(
                     "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {} and the language exposes no graph-capable backend. Use 'exec' for runtime observations.",

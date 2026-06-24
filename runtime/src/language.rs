@@ -1178,6 +1178,18 @@ pub trait Language: Send + Sync {
         self.run_backend_report(backend, term)
     }
 
+    /// Run a **step-mode** backend report — the comprehensible, source-rendered counterpart of
+    /// [`run_backend_report`](Self::run_backend_report)`(Dovetail, …)` for the REPL `step` command.
+    ///
+    /// The default delegates to the plain Dovetail report (op-name display, no source
+    /// reconstruction), so a language without a step-aware backend is unchanged. The Dovetail+Rho
+    /// wrapper overrides this to run the generated `dovetail_step_report`, whose term records carry
+    /// `source_display` (reconstructed source syntax). This surface is reached **only** from the
+    /// REPL's `step` routing — never from production `exec` — so it costs `exec` nothing.
+    fn run_step_backend_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
+        self.run_backend_report(RuntimeBackend::Dovetail, term)
+    }
+
     /// Start a **live, incremental** Rho-machine COMM single-stepper (the reactive stepper). The
     /// returned [`ReductionStepper`] advances by exactly one COMM per `next_step` (pay-as-you-go —
     /// works for divergent Rholang; halt anytime by dropping it). Default: fail closed — only the

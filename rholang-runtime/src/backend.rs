@@ -922,12 +922,21 @@ pub struct DovetailRhoRuntimeBackedLanguage<L, D, F> {
     invocation: RhoInvocationCompilerStage<F>,
 }
 
+/// Step-only Dovetail report producer (the generated `dovetail_step_report`). Boxed because it is a
+/// distinct fn item from the production `compiler` (`dovetail_report_for`), hence a distinct type;
+/// boxing keeps it off the wrapper's generic list. Reached only via `run_step_backend_report` (the
+/// REPL `step` path); production `exec` never touches it.
+#[cfg(feature = "runtime-report")]
+pub type StepReportCompiler =
+    Box<dyn Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync>;
+
 /// Language-specific Dovetail compiler stage derived from a generated
 /// `LanguageDef`.
 #[cfg(feature = "runtime-report")]
 pub struct DovetailCompilerStage<D> {
     definition_fingerprint: String,
     compiler: D,
+    step_compiler: StepReportCompiler,
 }
 
 /// Language-specific Rho invocation compiler stage derived from a generated
@@ -940,10 +949,15 @@ pub struct RhoInvocationCompilerStage<F> {
 
 #[cfg(feature = "runtime-report")]
 impl<D> DovetailCompilerStage<D> {
-    pub fn new(definition_fingerprint: impl Into<String>, compiler: D) -> Self {
+    pub fn new(
+        definition_fingerprint: impl Into<String>,
+        compiler: D,
+        step_compiler: StepReportCompiler,
+    ) -> Self {
         Self {
             definition_fingerprint: definition_fingerprint.into(),
             compiler,
+            step_compiler,
         }
     }
 
@@ -1012,21 +1026,27 @@ where
 /// `RhoMachine` is default, `Dovetail` is the checked intermediate, and legacy
 /// Ascent is not exposed through the wrapped value.
 #[cfg(feature = "runtime-report")]
-pub fn install_dovetail_rho_runtime_backend<L, D, F>(
+pub fn install_dovetail_rho_runtime_backend<L, D, DStep, F>(
     inner: L,
     backend: PlannedRhoBackend,
     dovetail: D,
+    dovetail_step: DStep,
     invocation: F,
 ) -> Result<DovetailRhoRuntimeBackedLanguage<L, D, F>, RhoRuntimeBackedLanguageError>
 where
     L: Language,
     D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    DStep: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync + 'static,
     F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
         + Send
         + Sync,
 {
     let definition_fingerprint = backend.plan().definition_fingerprint().to_string();
-    let dovetail = DovetailCompilerStage::new(definition_fingerprint.clone(), dovetail);
+    let dovetail = DovetailCompilerStage::new(
+        definition_fingerprint.clone(),
+        dovetail,
+        Box::new(dovetail_step),
+    );
     let invocation = RhoInvocationCompilerStage::new(definition_fingerprint, invocation);
     DovetailRhoRuntimeBackedLanguage::new(inner, backend, dovetail, invocation)
 }
@@ -1576,6 +1596,21 @@ where
                 self.name()
             )),
         }
+    }
+
+    /// Step-mode report: identical to `run_backend_report(Dovetail, …)` but runs the generated
+    /// `dovetail_step_report` (`self.dovetail.step_compiler`) so each term record carries its
+    /// reconstructed `source_display` for comprehensible REPL `step` display. Production `exec` uses
+    /// `run_backend_report`/`compiler` and never reaches this path — so `exec` is unaffected.
+    fn run_step_backend_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
+        let dovetail_report =
+            checked_complete_dovetail_report(&self.inner, term, &self.dovetail.step_compiler)?;
+        RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
+            format!(
+                "Dovetail step stage for language {} produced malformed report: {err}",
+                self.name()
+            )
+        })
     }
 
     /// Start the reactive single-stepper for a COMM-bearing term: run the Dovetail D-stage (so any
@@ -2191,7 +2226,11 @@ mod tests {
         let err = match DovetailRhoRuntimeBackedLanguage::new(
             MiniLanguage,
             backend,
-            DovetailCompilerStage::new("wrong-definition", complete_mini_dovetail_report),
+            DovetailCompilerStage::new(
+                "wrong-definition",
+                complete_mini_dovetail_report,
+                Box::new(complete_mini_dovetail_report),
+            ),
             RhoInvocationCompilerStage::new(fingerprint, mini_invocation_from_dovetail),
         ) {
             Ok(_) => panic!("mismatched Dovetail compiler must not install"),
