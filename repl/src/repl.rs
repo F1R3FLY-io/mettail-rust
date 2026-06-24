@@ -2016,18 +2016,31 @@ impl Repl {
                 language.name()
             )
         })?;
-        if step_mode && backend == RuntimeBackend::RhoMachine {
-            anyhow::bail!(
-                "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {}. Use 'exec' for runtime observations.",
-                backend
-            );
-        }
-
-        print!("Running {} backend... ", backend);
+        // Step mode needs graph/derivation evidence; the RhoMachine backend yields runtime
+        // observations, not a navigable graph. When the default backend is RhoMachine and the
+        // language also supports the Dovetail backend, step against the Dovetail derivation graph
+        // instead of bailing (Layer 1: a pure-fold term shows its fold derivation; a pure-COMM
+        // term yields a trivial root — the reactive COMM stepper, Layer 2, refines such terms
+        // into a live step trace). Bail only when no graph-capable backend exists.
         let start_time = Instant::now();
-        let report = language
-            .run_default_backend_report(term.as_ref())
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let report = if step_mode && backend == RuntimeBackend::RhoMachine {
+            if language.supports_runtime_backend(RuntimeBackend::Dovetail) {
+                print!("Running {} backend (step)... ", RuntimeBackend::Dovetail);
+                language
+                    .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+            } else {
+                anyhow::bail!(
+                    "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {} and the language exposes no graph-capable backend. Use 'exec' for runtime observations.",
+                    backend
+                );
+            }
+        } else {
+            print!("Running {} backend... ", backend);
+            language
+                .run_default_backend_report(term.as_ref())
+                .map_err(|e| anyhow::anyhow!("{}", e))?
+        };
         let end_time = Instant::now();
         println!("Time taken: {:?}", end_time.duration_since(start_time));
         println!("{}", "Done!".green());
