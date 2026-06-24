@@ -724,6 +724,19 @@ pub fn build_fold_dataflow_invocation_from_contract(
 
 #[cfg(feature = "runtime-report")]
 impl RhoBackendInvocation {
+    /// The lowered program `Par` this invocation runs on the Rho machine, if any. The
+    /// `RunWithCall*` variants carry it (a COMM / dataflow program — exactly what the reactive
+    /// single-stepper `inj`s); the pure-observe / call-by-need / deferred variants do not.
+    pub fn program_par(&self) -> Option<&Par> {
+        match self {
+            RhoBackendInvocation::RunWithCallAndObserveInts { call, .. }
+            | RhoBackendInvocation::RunWithCallAndObserveBools { call, .. }
+            | RhoBackendInvocation::RunWithCallAndObserveStrings { call, .. }
+            | RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { call, .. } => Some(call),
+            _ => None,
+        }
+    }
+
     async fn execute(self, backend: &PlannedRhoBackend) -> Result<RuntimeBackendReport, String> {
         match self {
             RhoBackendInvocation::RunAndObserveInts { out_channel } => backend
@@ -1523,6 +1536,39 @@ where
             _ => Err(format!(
                 "{} backend is not exposed by Dovetail+Rho-backed language {}",
                 backend,
+                self.name()
+            )),
+        }
+    }
+
+    /// Start the reactive single-stepper for a COMM-bearing term: run the Dovetail D-stage (so any
+    /// statically-present fold pre-reduces), build the F-stage invocation, and `inj` its program
+    /// `Par` under a [`crate::step::StepSession`]. A term that lowers to no COMM program (a pure
+    /// value/fold ⇒ `DeferToDovetailReport`, or a pure-observe invocation) has nothing to single-
+    /// step on the Rho machine, so this fails — the REPL then falls back to the Dovetail derivation
+    /// graph (Layer 1). Tier-3 held-fold `Definition`s are threaded in here once lowering emits them
+    /// (empty for now).
+    fn start_reduction_stepper(
+        &self,
+        term: &dyn Term,
+    ) -> Result<Box<dyn mettail_runtime::ReductionStepper>, String> {
+        let dovetail_report =
+            checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
+        let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
+            format!(
+                "live single-step for language {} could not build an AST invocation from the \
+                 checked Dovetail report: {err}",
+                self.name()
+            )
+        })?;
+        match invocation.program_par() {
+            Some(par) => {
+                let session = crate::step::StepSession::start(par.clone(), Vec::new())?;
+                Ok(Box::new(session))
+            },
+            None => Err(format!(
+                "term has no COMM program to single-step on the Rho machine for language {} (it \
+                 reduces entirely in Dovetail); inspect the Dovetail derivation graph instead",
                 self.name()
             )),
         }

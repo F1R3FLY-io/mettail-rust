@@ -336,6 +336,35 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_start_reduction_stepper_drives_a_comm_term() {
+        // End-to-end through the production RhoCalc wrapper: `Language::start_reduction_stepper`
+        // runs the D-stage + F-stage lowering and hands back a live stepper over the program Par.
+        use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
+        let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
+        let term = RhoCalcLanguage.parse_term(COMM_SRC).expect("parse COMM term");
+        let mut stepper =
+            language.start_reduction_stepper(term.as_ref()).expect("wrapper starts a stepper");
+        let mut count = 0usize;
+        while stepper.next_step().expect("next_step").is_some() {
+            count += 1;
+        }
+        assert!(count >= 1, "the wrapper's stepper must yield ≥1 COMM step; got {count}");
+    }
+
+    #[test]
+    fn wrapper_rejects_pure_fold_term_for_stepping() {
+        // A pure value/fold lowers to no COMM program ⇒ the wrapper fails to start a stepper, so
+        // the REPL falls back to the Dovetail derivation graph (Layer 1).
+        use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
+        let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
+        let term = RhoCalcLanguage.parse_term("int(1+2, 8)").expect("parse fold term");
+        assert!(
+            language.start_reduction_stepper(term.as_ref()).is_err(),
+            "a pure-fold term has no COMM program to single-step"
+        );
+    }
+
+    #[test]
     fn dropping_a_session_mid_trace_aborts_cleanly() {
         // Start a session, take one step, then drop it: the gate aborts the paused worker and the
         // Drop impl joins it without leaking a thread or panicking.
