@@ -27,6 +27,7 @@ use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
+use rholang::rust::interpreter::system_processes::Definition;
 
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
@@ -260,6 +261,27 @@ fn matched_string_tuple(data: &ListParWithRandom) -> Option<Vec<String>> {
     data.pars.iter().map(par_as_string).collect()
 }
 
+thread_local! {
+    // Tier-3: held-fold contract `Definition`s for the CURRENT exec on THIS worker thread. The exec
+    // path spawns a fresh worker (`backend::run_rho_invocation_blocking`) that calls
+    // `set_pending_fold_definitions` before `block_on`, and `build_runtime` (running inside that
+    // `block_on`, same thread) drains them here. Worker threads are fresh per invocation and `take`
+    // clears, so nothing leaks across runs. Empty unless the term lifted a held fold.
+    static PENDING_FOLD_DEFINITIONS: std::cell::RefCell<Vec<Definition>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Stash the held-fold contract `Definition`s for the next [`build_runtime`] on THIS thread (the
+/// exec worker). See `backend::run_rho_invocation_blocking`.
+pub(crate) fn set_pending_fold_definitions(definitions: Vec<Definition>) {
+    PENDING_FOLD_DEFINITIONS.with(|cell| *cell.borrow_mut() = definitions);
+}
+
+/// Take (and clear) the pending held-fold contract `Definition`s for this thread.
+fn take_pending_fold_definitions() -> Vec<Definition> {
+    PENDING_FOLD_DEFINITIONS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
 async fn build_runtime() -> Result<impl RhoRuntime, String> {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm
@@ -269,12 +291,15 @@ async fn build_runtime() -> Result<impl RhoRuntime, String> {
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(store, Arc::new(Box::new(Matcher))).map_err(|e| format!("rspace: {e:?}"))?;
 
+    // Tier-3 held-fold contracts for this exec (empty for every term without a held fold, so the
+    // common path is byte-identical to the prior `&mut Vec::new()`).
+    let mut extra_system_processes = take_pending_fold_definitions();
     Ok(create_rho_runtime(
         space,
-        Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
-        false,                    // init_registry: not needed for pure arithmetic
-        &mut Vec::new(),          // no extra system processes
-        ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
+        Arc::new(HashMap::new()),     // mergeable tags: none (single-node eval)
+        false,                        // init_registry: not needed for pure arithmetic
+        &mut extra_system_processes,  // held-fold trampoline contracts (usually none)
+        ExternalServices::noop(),     // inert — no ChromaDB/SBERT/OpenAI
     )
     .await)
 }

@@ -16,10 +16,10 @@ use mettail_rholang_codegen::{
     RhoRejectedRuleDispositionKind,
 };
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc, lower_rhocalc_term, rho_runtime_backed_rhocalc_strings,
-    rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, run_normalized_par_for_oracle,
-    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
-    RHOCALC_BAG_ABI_TAG,
+    dovetail_rho_backed_rhocalc, lower_rhocalc_proc, lower_rhocalc_term,
+    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def,
+    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend,
+    RhocalcAstLowerError, RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::{
     clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
@@ -249,6 +249,27 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         .expect("Rho-backed RhoCalc report must expose OUT observations");
     // Same "p" result observed on OUT, confirming the AST-call path actually ran.
     assert_eq!(out.values, vec![RuntimeObservationValue::Text("p".to_string())]);
+}
+
+#[test]
+fn held_fold_over_comm_received_value_execs_to_the_folded_value() {
+    // Tier-3 (exec path): a fold over a COMM-received value, in a NON-standalone position (a send
+    // payload). After the receive COMM binds x, the trampoline folds int(5,8)→5 on the metered Rho
+    // machine and the result lands on OUT — proving the held-fold contract is registered AND driven
+    // on the exec path (not just the stepper), and that the general C[*r] continuation lift works.
+    let language =
+        dovetail_rho_backed_rhocalc("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
+    let term = language
+        .parse_term(r#"{ (@("c")?x).{ @("OUT")!(int(*(x), 8)) } | @("c")!(int(5,8)) }"#)
+        .expect("the held-fold-in-send term parses");
+    let report = language
+        .run_default_backend_report(term.as_ref())
+        .expect("the held-fold term execs on the Rho machine via the trampoline");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("the folded value lands on OUT");
+    assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)], "int(5,8) = 5");
 }
 
 #[test]

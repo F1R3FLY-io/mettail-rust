@@ -808,14 +808,43 @@ impl RhoBackendInvocation {
     }
 }
 
+/// Tier-3: clear the held-fold lowering session state before an invocation compiler runs, so its
+/// lifted fold contracts can be collected afterwards with [`drain_pending_fold_definitions`]. No-op
+/// unless the rhocalc lowering (which defines the fold-contract types) is compiled in — a dependency
+/// boundary, not a behavior gate.
+#[cfg(feature = "runtime-report")]
+fn clear_pending_fold_sites() {
+    #[cfg(feature = "rhocalc-runtime")]
+    crate::rhocalc_ast::clear_held_fold_sites();
+}
+
+/// Tier-3: drain the held-fold contract `Definition`s recorded by the just-run invocation compiler
+/// (empty unless the term lifted a fold over a COMM-received value).
+#[cfg(feature = "runtime-report")]
+fn drain_pending_fold_definitions() -> Vec<rholang::rust::interpreter::system_processes::Definition>
+{
+    #[cfg(feature = "rhocalc-runtime")]
+    {
+        crate::fold_contract::fold_definitions_for(&crate::rhocalc_ast::take_held_fold_sites())
+    }
+    #[cfg(not(feature = "rhocalc-runtime"))]
+    {
+        Vec::new()
+    }
+}
+
 #[cfg(feature = "runtime-report")]
 fn run_rho_invocation_blocking(
     backend: PlannedRhoBackend,
     invocation: RhoBackendInvocation,
+    fold_definitions: Vec<rholang::rust::interpreter::system_processes::Definition>,
 ) -> Result<RuntimeBackendReport, String> {
     let worker = thread::Builder::new()
         .name("mettail-rho-backend-report".to_string())
         .spawn(move || {
+            // Hand the lifted held-fold contracts to `build_runtime` on THIS worker thread (the
+            // thread-local can't cross the spawn, so it's re-stashed here, same thread as block_on).
+            crate::run::set_pending_fold_definitions(fold_definitions);
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -1290,13 +1319,15 @@ where
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
             RuntimeBackend::RhoMachine => {
+                clear_pending_fold_sites();
                 let invocation = (self.invocation.compiler)(term).map_err(|err| {
                     format!(
                         "RhoMachine backend for language {} could not build an AST invocation: {err}",
                         self.name()
                     )
                 })?;
-                run_rho_invocation_blocking(self.backend.clone(), invocation)
+                let fold_definitions = drain_pending_fold_definitions();
+                run_rho_invocation_blocking(self.backend.clone(), invocation, fold_definitions)
             },
             RuntimeBackend::Ascent => Err(format!(
                 "legacy Ascent runtime is not exposed by Rho-backed language {}",
@@ -1495,12 +1526,14 @@ where
             RuntimeBackend::RhoMachine => {
                 let dovetail_report =
                     checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
+                clear_pending_fold_sites();
                 let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
                     format!(
                         "RhoMachine backend for language {} could not build an AST invocation from the checked Dovetail report: {err}",
                         self.name()
                     )
                 })?;
+                let fold_definitions = drain_pending_fold_definitions();
                 match invocation {
                     // Native-handler-dispositioned term: its production semantics is the
                     // checked Dovetail report (a fold / generated normalization), not a Rho
@@ -1516,7 +1549,11 @@ where
                             )
                         })
                     },
-                    invocation => run_rho_invocation_blocking(self.backend.clone(), invocation),
+                    invocation => run_rho_invocation_blocking(
+                        self.backend.clone(),
+                        invocation,
+                        fold_definitions,
+                    ),
                 }
             },
             RuntimeBackend::Dovetail => {
@@ -1555,11 +1592,8 @@ where
         let dovetail_report =
             checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
         // Tier-3: bracket the lowering so we can collect any held-fold contract sites it records
-        // (rhocalc only; empty for Calculator). The `rhocalc-runtime` cfg is the dependency boundary
-        // that defines the fold-contract types — NOT a behavior gate (off-by-default is the lean
-        // build that lacks the rhocalc lowering entirely).
-        #[cfg(feature = "rhocalc-runtime")]
-        crate::rhocalc_ast::clear_held_fold_sites();
+        // (rhocalc only; empty for Calculator).
+        clear_pending_fold_sites();
         let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
             format!(
                 "live single-step for language {} could not build an AST invocation from the \
@@ -1580,14 +1614,8 @@ where
                 };
                 // The held-fold contract `Definition`s the lifted call targets (empty unless the
                 // term had a fold over a COMM-received value).
-                #[cfg(feature = "rhocalc-runtime")]
-                let fold_defs = crate::fold_contract::fold_definitions_for(
-                    &crate::rhocalc_ast::take_held_fold_sites(),
-                );
-                #[cfg(not(feature = "rhocalc-runtime"))]
-                let fold_defs: Vec<rholang::rust::interpreter::system_processes::Definition> =
-                    Vec::new();
-                let session = crate::step::StepSession::start(program, fold_defs)?;
+                let fold_definitions = drain_pending_fold_definitions();
+                let session = crate::step::StepSession::start(program, fold_definitions)?;
                 Ok(Box::new(session))
             },
             None => Err(format!(
