@@ -213,6 +213,9 @@ runtime values are normalized AST artifacts, and the executable form is
 | [06 — Correctness and Coverage](06-correctness-and-coverage.md) | What is proved, under which assumptions, and what is not claimed? |
 | [07 — Verification and Rollout](07-verification-and-rollout.md) | How does M-RHO.0 through M-RHO.4 land safely? |
 | [08 — Production Runtime Backend Completion Guide](08-production-runtime-backend-completion.md) | What evidence, gates, and exact AST contracts let another agent complete the runtime backend replacement? |
+| [09 — Term-Level Reduction Split](09-term-level-reduction-split.md) | How do Dovetail folds and Rholang COMM compose in one term, and where is the boundary? |
+| [10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md) | When does a reduction run sequentially vs trampoline, and how does the Tier-3 held-fold contract close the boundary? |
+| [11 — Reactive COMM Stepper](11-reactive-comm-stepper.md) | How does `step` single-step COMM reductions on the Rho machine, lock-free and zero-cost when off? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

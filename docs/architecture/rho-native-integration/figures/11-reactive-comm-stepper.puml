@@ -1,0 +1,48 @@
+@startuml
+title Reactive Lock-Free COMM Stepper: EMIT / GATE / RENDER back-pressure for one step
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #2C3E50
+  LifeLineBorderColor #5D6D7E
+  ParticipantBorderColor #2C3E50
+  ParticipantFontColor #1B2631
+  NoteBackgroundColor #FCF3CF
+  NoteBorderColor #B7950B
+}
+
+participant "step driver\n(StepSession, main thread)" as Drv #D2B4DE
+participant "Rho reducer\n(reduce.rs, worker thread)" as Red #AED6F1
+participant "StepGate\n(tokio Semaphore)" as Gate #F9E79F
+queue "emit queue\n(crossbeam, lock-free)" as Q #A9DFBF
+participant "render thread\n(256 MB stack)" as Rnd #AED6F1
+
+== resume (back-pressure release) ==
+Drv -> Gate : release_one() (add 1 permit)
+Gate --> Red : permit available
+
+== EMIT (lock-free, no park) ==
+Red -> Red : space.produce / consume\n(one RSpace COMM)
+Red -> Q : log_comm: try_send(raw COMM Pars)
+note right of Q : bounded non-blocking send;\nno RSpace lock held
+
+== GATE (cooperative park) ==
+Red -> Gate : pause(): acquire() (no permit)
+note right of Gate : parks the TASK, not the OS thread;\nthe per-channel lock was dropped\ninside produce/consume
+
+== RENDER (large stack, off the reducer) ==
+Drv -> Q : recv() one COMM event
+Q --> Drv : raw COMM Pars
+Drv -> Rnd : PrettyPrinter on a scoped thread
+Rnd --> Drv : display string
+Drv -> Drv : return RuntimeReductionStep
+
+legend right
+  | Color | Role |
+  |<#D2B4DE>| step driver / navigable trace |
+  |<#AED6F1>| stock f1r3node reducer + render |
+  |<#F9E79F>| GATE: back-pressure semaphore (None-gated when off) |
+  |<#A9DFBF>| EMIT: lock-free bounded queue |
+endlegend
+@enduml

@@ -144,23 +144,45 @@ The fold `1+2` reduces in **Dovetail**; the send fires on **Rholang**. One pass,
 one direction, no callback. The Dovetail and Rho phases touch disjoint parts of
 the same term.
 
-## 5. The boundary: folds over COMM-received variables
+## 5. The boundary: folds over COMM-received variables — RESOLVED by Tier 3
 
-A one-way bridge cannot reduce a fold whose operands only become known **after a
-COMM fires**, e.g. a continuation `(@("c")?x).{ *(x) + 1 }` joined with a sender
-on `@("c")`. The redex `*(x) + 1` does not exist until `x` is substituted, and
-that substitution happens on the **Rho** side — which never calls back into
-Dovetail. Such a residual fold is therefore **not** reduced one-shot under this
-architecture.
+A fold whose operand only becomes known **after a COMM fires** — e.g. the
+continuation `(@("c")?x).{ int(*(x), 8) }` joined with a sender on `@("c")` —
+has no redex until `x` is substituted, and that substitution happens on the
+**Rho** side. Earlier this was the unclosable boundary of the one-way bridge: the
+residual fold could only be **detected and reported** (it failed to lower with a
+clear error) rather than reduced.
 
-This case is frequently not even expressible: `c?x` binds a **Name**, not a
-**Proc**, so an arithmetic fold directly over a received binder does not typecheck
-without an intervening `*` (drop). Where it is expressible, the runtime
-**detects and reports it** (the residual fold fails to lower with a clear error)
-rather than silently mis-reducing. Closing it would require either lowering folds
-to Rho-native arithmetic (so the host performs them post-substitution — which
-moves fold authority off Dovetail) or a genuinely interleaved reducer (which the
-one-way bridge forbids); both are out of scope here and noted as future work.
+It is now **resolved** by the **Tier-3 held-fold trampoline**
+([10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md) §4), **without**
+the rejected bidirectional design of §6. The lowering **lifts** the held fold into
+a contract call and binds its reply:
+
+```
+(@("c")?x).{ C[int(*(x), 8)] }
+  ↦  (@("c")?x).{ new ret in { @"<fold>"!(*(x), ret)
+                             | for(@r <- ret){ C[int(*(x),8) ↦ *r] } } }
+```
+
+and injects a **Dovetail-backed system-process `Definition`** on the private
+channel `@"<fold>"` (via the existing `extra_system_processes` DI seam — `f1r3node`
+gains no MeTTaIL dependency). After the binding COMM substitutes `x := datum`, the
+lifted body sends the now-ground operand to the contract; the contract handler runs
+**the exact native fold** (`proc_int_bin` — the rule's own `![{…}]` body) on the
+ground operand and `produce`s the result on `ret`; the `for(@r <- ret)` resumes the
+continuation with the fold's value. Fold authority **stays on Dovetail** (the
+handler is MeTTaIL-side data, not Rho-native arithmetic), and there is **no
+`f1r3node → MeTTaIL` callback** — the contract is an ordinary one-shot receive the
+stock reducer dispatches. Soundness: `HeldFoldContractSound.v` (zero-admission) —
+`lift(C[fold(*x)]) ; COMM ; fold-contract ≡ intended_eval(C[fold(*x)])`.
+
+Operands that cannot become a ground value leaf after the COMM
+(`GInt`/`GBool`/`GString`) still **fail closed** to the Tier-2 detect-and-report
+diagnostic — never a silent mis-reduction (the honest Tier-3 boundary).
+
+> Note: the apparent type obstacle — `c?x` binds a **Name**, not a **Proc** — is
+> handled by the `*` (drop): `int(*(x), 8)` takes the dropped Proc as the operand,
+> exactly the shape the trampoline lifts.
 
 ## 6. Why not a bidirectional design?
 

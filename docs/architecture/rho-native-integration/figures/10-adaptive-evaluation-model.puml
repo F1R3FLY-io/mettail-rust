@@ -1,0 +1,43 @@
+@startuml
+title Tier-3 Held-Fold Trampoline: runtime reduction of a fold over a COMM-bound variable
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #2C3E50
+  LifeLineBorderColor #5D6D7E
+  ParticipantBorderColor #2C3E50
+  ParticipantFontColor #1B2631
+  NoteBackgroundColor #FCF3CF
+  NoteBorderColor #B7950B
+}
+
+participant "Rho reducer\n(stock RSpace COMM)" as Rho #AED6F1
+participant "Lifted continuation\nnew ret { send | for }" as Body #A9DFBF
+participant "Fold contract @[0xF0,site]\n(injected Definition,\nMeTTaIL-side data)" as Fold #F9E79F
+participant "Dovetail native fold\nproc_int_bin (the rule body)" as DT #F5B7B1
+
+== binding COMM (grounds the operand) ==
+Rho -> Body : COMM on @("c") binds x := 5
+note right of Body : the held fold's operand drop(x)\nis now the ground value 5
+
+== fold-contract COMM (Dovetail authority) ==
+Body -> Fold : @[0xF0,site]!(5, ret)
+activate Fold
+Fold -> DT : fold_eval(operand = 5, width = 8)
+DT --> Fold : 5    (int(5,8) = 5)
+Fold -> Body : produce(ret, 5)
+deactivate Fold
+
+== continuation COMM (resume) ==
+Body -> Rho : for(@r <- ret) fires, r := 5\nthe held-fold position now reads *r = 5
+note right of Rho : output = the intended\n"do the COMM, then fold" value
+
+legend right
+  | Color | Actor |
+  |<#AED6F1>| stock f1r3node Rho machine (unchanged) |
+  |<#A9DFBF>| lowering-generated lifted continuation |
+  |<#F9E79F>| injected fold contract (extra_system_processes) |
+  |<#F5B7B1>| Dovetail native fold (fold authority) |
+endlegend
+@enduml
