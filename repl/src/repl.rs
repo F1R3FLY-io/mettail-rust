@@ -738,7 +738,7 @@ impl RuntimeGraphKind {
             RuntimeGraphKind::AscentRewriteGraph => "rewrites",
             RuntimeGraphKind::DovetailDerivationGraph => "derivation_edges",
             RuntimeGraphKind::DovetailRewriteGraph => "rewrites",
-            RuntimeGraphKind::RhoReductionTrace => "comm_steps",
+            RuntimeGraphKind::RhoReductionTrace => "reductions",
         }
     }
 
@@ -747,7 +747,7 @@ impl RuntimeGraphKind {
             RuntimeGraphKind::AscentRewriteGraph => "rewrite",
             RuntimeGraphKind::DovetailDerivationGraph => "derivation dependency",
             RuntimeGraphKind::DovetailRewriteGraph => "rewrite",
-            RuntimeGraphKind::RhoReductionTrace => "next COMM",
+            RuntimeGraphKind::RhoReductionTrace => "next reduction",
         }
     }
 }
@@ -1018,7 +1018,9 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
             for (index, step) in trace.steps.iter().enumerate() {
                 terms.push(RuntimeGraphTerm {
                     id: step.ordinal,
-                    display: format!("[{}] {}", step.engine.label(), step.display),
+                    // "[Rho <kind>]" — the per-reduction node tag (COMM, deref, output, …); all live
+                    // Rho-machine steps share the RhoComm engine, so the kind carries the distinction.
+                    display: format!("[Rho {}] {}", step.kind.label(), step.display),
                     is_normal_form: index == last,
                     is_root: index == 0,
                 });
@@ -1026,7 +1028,8 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
                     edges.push(RuntimeGraphEdge {
                         from_id: step.ordinal,
                         to_id: trace.steps[index + 1].ordinal,
-                        label: Some(step.engine.label().to_string()),
+                        // The edge is labeled by the reduction it advances to.
+                        label: Some(trace.steps[index + 1].kind.label().to_string()),
                     });
                 }
             }
@@ -2468,25 +2471,26 @@ impl Repl {
                     .set_term_with_report(result_term, report.clone(), current.id)?;
             },
             RuntimeBackendOutput::ReductionTrace(trace) => {
-                // The reactive COMM reduction trace, projected as a navigable linear chain. `apply
-                // 0` advances to the next COMM (reusing the same graph-navigation path as the
-                // Dovetail derivation graph). Only ever reached in step mode.
+                // The reactive Rho-machine reduction trace, projected as a navigable linear chain.
+                // `apply 0` advances to the next reduction (COMM, dereference, output, … — reusing the
+                // same graph-navigation path as the Dovetail derivation graph). Only reached in step
+                // mode.
                 println!();
                 println!("Computed:");
                 println!("  - backend: {}", report.backend());
                 println!("  - artifact: {}", report.artifact());
-                println!("  - {} COMM step(s) on the Rho machine", trace.step_count());
+                println!("  - {} reduction step(s) on the Rho machine", trace.step_count());
                 println!();
 
                 let graph = runtime_graph_view(&report)?;
                 let current = graph.entry_term().cloned().unwrap_or(RuntimeGraphTerm {
                     id: 0,
-                    display: "(no COMM steps)".to_string(),
+                    display: "(no reduction steps)".to_string(),
                     is_normal_form: true,
                     is_root: true,
                 });
 
-                println!("{}", "COMM reduction trace (step 0):".bold());
+                println!("{}", "Reduction trace (step 0):".bold());
                 println!("{}", format_term_pretty(&current.display).cyan());
                 println!();
 
@@ -2494,12 +2498,12 @@ impl Repl {
                     graph.edges.iter().filter(|edge| edge.from_id == current.id).count();
                 if remaining > 0 {
                     println!(
-                        "  Use {} to advance to the next COMM ({} remaining).",
+                        "  Use {} to advance to the next reduction ({} remaining).",
                         "apply 0".cyan(),
                         remaining
                     );
                 } else {
-                    println!("  Final COMM (reduction complete).");
+                    println!("  Final reduction (quiescence reached).");
                 }
 
                 let result_term =

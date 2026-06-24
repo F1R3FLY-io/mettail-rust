@@ -615,6 +615,45 @@ impl RuntimeReductionEngine {
     }
 }
 
+/// The kind of a single Rho-machine reduction within a `RhoComm`-engine step. The reactive stepper
+/// observes every meaningful reduction, not just COMM rendezvous; `engine` stays `RhoComm` for all of
+/// them and `kind` discriminates the COMM from the structural reductions (dereference, method,
+/// `match`/`if`/`new`/`bundle` body). `Comm` is set directly when rendering a COMM event; the
+/// structural kinds map 1:1 from the fork's `rspace_plus_plus::rspace::logging::ReductionKind`. (A
+/// resting output is the *result* of the last reduction, not a separate reduction, so there is no
+/// output kind.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeReductionKind {
+    /// A COMM rendezvous (the structured `comm` payload is `Some`).
+    Comm,
+    /// Dereference `*N`.
+    Deref,
+    /// A `match` case body firing.
+    Match,
+    /// An `if` branch firing.
+    If,
+    /// A `new` scope body.
+    New,
+    /// A `bundle` body.
+    Bundle,
+    /// A method call re-eval.
+    Method,
+}
+
+impl RuntimeReductionKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            RuntimeReductionKind::Comm => "COMM",
+            RuntimeReductionKind::Deref => "deref",
+            RuntimeReductionKind::Match => "match",
+            RuntimeReductionKind::If => "if",
+            RuntimeReductionKind::New => "new",
+            RuntimeReductionKind::Bundle => "bundle",
+            RuntimeReductionKind::Method => "method",
+        }
+    }
+}
+
 /// A committed COMM event observed on the Rho machine (the reactive single-stepper emit payload).
 #[derive(Debug, Clone)]
 pub struct RuntimeCommEvent {
@@ -631,11 +670,13 @@ pub struct RuntimeCommEvent {
 pub struct RuntimeReductionStep {
     /// 0-based deterministic emit ordinal — also the node id in the REPL linear chain.
     pub ordinal: u64,
-    /// Which engine produced this step.
+    /// Which engine produced this step (always `RhoComm` for the live Rho-machine reduction trace).
     pub engine: RuntimeReductionEngine,
-    /// A one-line rendering of the step (the COMM event, the Dovetail fold, or the stuck site).
+    /// The kind of reduction — COMM vs the structural deref/match/if/new/bundle/method/output.
+    pub kind: RuntimeReductionKind,
+    /// A one-line rendering of the step (the COMM event, the deref/output redex, etc.).
     pub display: String,
-    /// The structured COMM payload when `engine == RhoComm`.
+    /// The structured COMM payload when `kind == Comm`.
     pub comm: Option<RuntimeCommEvent>,
 }
 
