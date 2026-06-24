@@ -1522,6 +1522,7 @@ mod tests {
                 op_display: "normal-form".to_string(),
                 weight_display: "1".to_string(),
                 is_root: true,
+                source_display: None,
             }],
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),

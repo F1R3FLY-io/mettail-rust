@@ -511,7 +511,12 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// Instantiate a RHS pattern under a substitution, adding nodes within the
     /// node budget. Returns `None` if a variable is unbound (ill-formed rule) or
     /// the budget refused a fresh node (then `node_limit_reached()` is set).
-    fn instantiate(&mut self, pattern: &Pattern<L>, subst: &Subst) -> Option<EClassId> {
+    ///
+    /// `pub` so the step-only rewrite enumerator (the REPL `step` rewrite-graph stepper) can build a
+    /// rule's RHS class on a fresh, unsaturated single-term e-graph and splice it into the term's
+    /// derivation — the same AC-flattening RHS construction saturation uses, reused read-only.
+    /// Adds no behavior and no production-path cost (production saturation is unchanged).
+    pub fn instantiate(&mut self, pattern: &Pattern<L>, subst: &Subst) -> Option<EClassId> {
         match pattern {
             Pattern::Var(name) => subst.get(name).map(|&id| self.find(id)),
             Pattern::App { op, args } => {

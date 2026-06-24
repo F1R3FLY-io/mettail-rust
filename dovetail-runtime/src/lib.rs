@@ -48,6 +48,9 @@ where
                 op_display: term.op.to_string(),
                 weight_display: term.weight.to_string(),
                 is_root: term.is_root,
+                // Substrate-neutral projection cannot reconstruct typed terms; the generated
+                // step-report producer populates this. Production `exec` leaves it `None`.
+                source_display: None,
             })
             .collect(),
         derivation_edges: report
@@ -199,6 +202,10 @@ where
             op_display: seed.display,
             weight_display: "0".to_string(),
             is_root: true,
+            // Native direct-eval roots: op_display is already `seed.display` (source-like), so the
+            // reader-facing fallback is comprehensible without reconstruction. Step-only reports
+            // populate source_display; this (exec-reachable) path stays None ⇒ byte-identical.
+            source_display: None,
         });
     }
 
@@ -791,6 +798,7 @@ mod tests {
                 op_display: "cycle".to_string(),
                 weight_display: "1".to_string(),
                 is_root: true,
+                source_display: None,
             }],
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),

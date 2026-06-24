@@ -304,6 +304,11 @@ pub struct RuntimeDovetailTermRecord {
     pub op_display: String,
     pub weight_display: String,
     pub is_root: bool,
+    /// Reconstructed source-syntax rendering of this term (the inverse of the typed lowering, via
+    /// the generated `build_<cat>_d` reconstructor + `Extractor`, then `format_term`). `None` when
+    /// not reconstructed — production `exec` reports leave it `None`, byte-identical — or when the op
+    /// is not structurally invertible. Reader-facing only; identity stays [`key`](Self::key).
+    pub source_display: Option<String>,
 }
 
 /// Parent-to-child derivation edge from a Dovetail report.
@@ -2410,6 +2415,7 @@ mod tests {
                     op_display: "Pair".to_string(),
                     weight_display: "1".to_string(),
                     is_root: true,
+                    source_display: None,
                 },
                 RuntimeDovetailTermRecord {
                     ordinal: 1,
@@ -2418,6 +2424,7 @@ mod tests {
                     op_display: "Leaf".to_string(),
                     weight_display: "0".to_string(),
                     is_root: false,
+                    source_display: None,
                 },
             ],
             derivation_edges: vec![RuntimeDovetailDerivationEdge {
@@ -2487,6 +2494,7 @@ mod tests {
             op_display: "DuplicateLeaf".to_string(),
             weight_display: "0".to_string(),
             is_root: false,
+            source_display: None,
         });
 
         let err = report

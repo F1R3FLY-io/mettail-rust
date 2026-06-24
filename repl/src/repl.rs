@@ -399,6 +399,7 @@ mod tests {
                     op_display: "root".to_string(),
                     weight_display: "0".to_string(),
                     is_root: true,
+                    source_display: None,
                 },
                 RuntimeDovetailTermRecord {
                     ordinal: 1,
@@ -407,6 +408,7 @@ mod tests {
                     op_display: "child".to_string(),
                     weight_display: "0".to_string(),
                     is_root: false,
+                    source_display: None,
                 },
             ],
             derivation_edges: vec![RuntimeDovetailDerivationEdge {
@@ -633,6 +635,7 @@ mod tests {
             op_display: "other_root".to_string(),
             weight_display: "0".to_string(),
             is_root: true,
+            source_display: None,
         });
 
         let backend_report = RuntimeBackendReport::try_dovetail(report)
