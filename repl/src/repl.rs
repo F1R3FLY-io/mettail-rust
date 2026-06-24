@@ -719,6 +719,8 @@ const DOVETAIL_SYNTHETIC_ROOT_ID: u64 = u64::MAX;
 enum RuntimeGraphKind {
     AscentRewriteGraph,
     DovetailDerivationGraph,
+    /// A live Rho-machine COMM reduction trace projected as a linear chain (the reactive stepper).
+    RhoReductionTrace,
 }
 
 impl RuntimeGraphKind {
@@ -726,6 +728,7 @@ impl RuntimeGraphKind {
         match self {
             RuntimeGraphKind::AscentRewriteGraph => "rewrites",
             RuntimeGraphKind::DovetailDerivationGraph => "derivation_edges",
+            RuntimeGraphKind::RhoReductionTrace => "comm_steps",
         }
     }
 
@@ -733,6 +736,7 @@ impl RuntimeGraphKind {
         match self {
             RuntimeGraphKind::AscentRewriteGraph => "rewrite",
             RuntimeGraphKind::DovetailDerivationGraph => "derivation dependency",
+            RuntimeGraphKind::RhoReductionTrace => "next COMM",
         }
     }
 }
@@ -916,6 +920,37 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
             "Current {} backend report contains runtime observations; this command requires rewrite-graph or derivation-graph evidence.",
             report.backend()
         )),
+        RuntimeBackendOutput::ReductionTrace(trace) => {
+            // Project the ordered COMM trace as a linear chain: node id = step ordinal, root =
+            // step 0, normal form = last step, edge i→i+1. Iterative (a flat fold over the steps),
+            // never recursive — safe for arbitrarily long traces.
+            let last = trace.steps.len().saturating_sub(1);
+            let mut terms = Vec::with_capacity(trace.steps.len());
+            let mut edges = Vec::new();
+            for (index, step) in trace.steps.iter().enumerate() {
+                terms.push(RuntimeGraphTerm {
+                    id: step.ordinal,
+                    display: format!("[{}] {}", step.engine.label(), step.display),
+                    is_normal_form: index == last,
+                    is_root: index == 0,
+                });
+                if index < last {
+                    edges.push(RuntimeGraphEdge {
+                        from_id: step.ordinal,
+                        to_id: trace.steps[index + 1].ordinal,
+                        label: Some(step.engine.label().to_string()),
+                    });
+                }
+            }
+            Ok(RuntimeGraphView {
+                kind: RuntimeGraphKind::RhoReductionTrace,
+                entry_id: trace.steps.first().map(|step| step.ordinal),
+                terms,
+                edges,
+                equivalences: Vec::new(),
+                custom_relations: HashMap::new(),
+            })
+        },
         _ => Err(anyhow::anyhow!(
             "Current {} backend report contains {}; this command requires rewrite-graph or derivation-graph evidence.",
             report.backend(),
@@ -2024,16 +2059,24 @@ impl Repl {
         // into a live step trace). Bail only when no graph-capable backend exists.
         let start_time = Instant::now();
         let report = if step_mode && backend == RuntimeBackend::RhoMachine {
-            if language.supports_runtime_backend(RuntimeBackend::Dovetail) {
-                print!("Running {} backend (step)... ", RuntimeBackend::Dovetail);
-                language
+            // Prefer the reactive COMM reduction trace: the live single-stepper drives the Rho
+            // machine and records each committed COMM, projected as a navigable linear chain. A
+            // pure-fold / no-rendezvous term has no COMM program to step (the stepper errors or
+            // yields zero steps) — fall back to the Dovetail derivation graph (Layer 1). Bail only
+            // if neither is available.
+            print!("Running {} backend (step)... ", backend);
+            let trace = language.run_reduction_trace_report(term.as_ref()).ok().filter(|report| {
+                report.as_reduction_trace().map(|trace| trace.step_count()).unwrap_or(0) >= 1
+            });
+            match trace {
+                Some(report) => report,
+                None if language.supports_runtime_backend(RuntimeBackend::Dovetail) => language
                     .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
-                    .map_err(|e| anyhow::anyhow!("{}", e))?
-            } else {
-                anyhow::bail!(
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
+                None => anyhow::bail!(
                     "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {} and the language exposes no graph-capable backend. Use 'exec' for runtime observations.",
                     backend
-                );
+                ),
             }
         } else {
             print!("Running {} backend... ", backend);
@@ -2275,6 +2318,46 @@ impl Repl {
                     } else {
                         println!("  No derivation dependencies from this node.");
                     }
+                }
+
+                let result_term =
+                    term_from_display_or_fallback(language, &current.display, current.id);
+                self.state
+                    .set_term_with_report(result_term, report.clone(), current.id)?;
+            },
+            RuntimeBackendOutput::ReductionTrace(trace) => {
+                // The reactive COMM reduction trace, projected as a navigable linear chain. `apply
+                // 0` advances to the next COMM (reusing the same graph-navigation path as the
+                // Dovetail derivation graph). Only ever reached in step mode.
+                println!();
+                println!("Computed:");
+                println!("  - backend: {}", report.backend());
+                println!("  - artifact: {}", report.artifact());
+                println!("  - {} COMM step(s) on the Rho machine", trace.step_count());
+                println!();
+
+                let graph = runtime_graph_view(&report)?;
+                let current = graph.entry_term().cloned().unwrap_or(RuntimeGraphTerm {
+                    id: 0,
+                    display: "(no COMM steps)".to_string(),
+                    is_normal_form: true,
+                    is_root: true,
+                });
+
+                println!("{}", "COMM reduction trace (step 0):".bold());
+                println!("{}", format_term_pretty(&current.display).cyan());
+                println!();
+
+                let remaining =
+                    graph.edges.iter().filter(|edge| edge.from_id == current.id).count();
+                if remaining > 0 {
+                    println!(
+                        "  Use {} to advance to the next COMM ({} remaining).",
+                        "apply 0".cyan(),
+                        remaining
+                    );
+                } else {
+                    println!("  Final COMM (reduction complete).");
                 }
 
                 let result_term =

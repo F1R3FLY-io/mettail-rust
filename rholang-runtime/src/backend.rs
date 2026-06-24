@@ -1562,8 +1562,17 @@ where
             )
         })?;
         match invocation.program_par() {
-            Some(par) => {
-                let session = crate::step::StepSession::start(par.clone(), Vec::new())?;
+            Some(call) => {
+                // Compose the call with the backend's persistent contracts (e.g. Calculator's E3
+                // `@"AddInt"`/`@"SubInt"`/`@"MulInt"` dataflow contracts) so their COMMs actually
+                // fire — the SAME composition the wrapper's run path uses
+                // (`run::evaluate_validated_program_with_call` → `par.append(call)`). For RhoCalc
+                // the contract program is empty, so this is just the call (a direct COMM term).
+                let program = match self.backend.program().ast_par() {
+                    Some(contracts) => contracts.append(call.clone()),
+                    None => call.clone(),
+                };
+                let session = crate::step::StepSession::start(program, Vec::new())?;
                 Ok(Box::new(session))
             },
             None => Err(format!(
