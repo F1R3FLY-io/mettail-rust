@@ -13,13 +13,28 @@
 //! See `docs/architecture/rho-native-integration/10-adaptive-evaluation-model.md` (Tier 3) and the
 //! zero-admission proof `formal/rocq/rho_bridge/theories/HeldFoldContractSound.v`.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use mettail_languages::rhocalc::{Bool, Int, Proc, Str};
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::Par;
+use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
+use models::rhoapi::{GPrivate, GUnforgeable, ListParWithRandom, Par};
+use rholang::rust::interpreter::contract_call::ContractCall;
+use rholang::rust::interpreter::errors::InterpreterError;
+use rholang::rust::interpreter::system_processes::Definition;
 
 use crate::rhocalc_ast::{lower_rhocalc_proc, RhocalcAstLowerError};
+
+/// First byte of every held-fold contract's unforgeable channel id `[0xF0, site]` — a reserved
+/// MeTTaIL band that cannot collide with f1r3node's std (0–36) or test-framework (101–108) byte
+/// names (those are single-byte `GPrivate{id:[b]}`; ours are two-byte).
+const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
+/// Reserved `body_ref` band for held-fold contracts (well clear of std 0–36 / test 101–108, and
+/// NOT in `non_deterministic_ops()` — the folds are pure, so dispatch is a `DeterministicCall` and
+/// replay reproduces bit-identically).
+const MTL_FOLD_BODY_REF_BASE: i64 = 0xF000;
 
 /// Which width/cast native fold a held-fold site runs. Captured *statically* at lift time (the rule
 /// + the ground width literal), so the contract handler is a pure function of the runtime operand.
@@ -87,6 +102,78 @@ pub fn fold_eval(operand: &Par, kind: FoldKind, width: i64) -> Result<Par, FoldE
         FoldKind::Fixed => mettail_runtime::proc_fixed_bin::<Proc, i64>(&operand_proc, width),
     };
     lower_rhocalc_proc(&result_proc).map_err(FoldEvalError::Lower)
+}
+
+/// The static spec of one held-fold site: the fold kind + ground width + a per-term site index
+/// (0-based) that deterministically keys the contract channel + `body_ref`. Stable for a given term,
+/// so replay installs the identical contract on the identical channel.
+#[derive(Clone, Debug)]
+pub struct FoldSpec {
+    pub kind: FoldKind,
+    pub width: i64,
+    pub site_index: u8,
+}
+
+impl FoldSpec {
+    /// The unforgeable contract channel `@[0xF0, site]` (the lowered send targets it; the
+    /// `Definition` installs on it).
+    pub fn channel(&self) -> Par {
+        fold_channel(self.site_index)
+    }
+}
+
+/// The unforgeable held-fold contract channel for a site index (two-byte private name `[0xF0, n]`).
+pub fn fold_channel(site_index: u8) -> Par {
+    Par::default().with_unforgeables(vec![GUnforgeable {
+        unf_instance: Some(GPrivateBody(GPrivate { id: vec![MTL_FOLD_CHANNEL_TAG, site_index] })),
+    }])
+}
+
+/// Build the Dovetail-backed system-process [`Definition`] for one held-fold site: a synchronous,
+/// deterministic, value-returning contract on the fold channel (arity 2 = `[operand, ack]`) whose
+/// handler runs the native fold ([`fold_eval`]) on the received ground operand and `produce`s the
+/// result on `ack` — driving the lifted `for(@r <- ret){…}`. Built MeTTaIL-side, injected as data.
+pub fn fold_definition(spec: &FoldSpec) -> Definition {
+    let kind = spec.kind;
+    let width = spec.width;
+    let site_index = spec.site_index;
+    Definition {
+        urn: format!("mtl:fold:{}:{}#{}", kind.tag(), width, site_index),
+        fixed_channel: fold_channel(site_index),
+        arity: 2,
+        body_ref: MTL_FOLD_BODY_REF_BASE + site_index as i64,
+        remainder: None,
+        handler: Box::new(move |ctx| {
+            let space = ctx.space.clone();
+            let dispatcher = ctx.dispatcher.clone();
+            Box::new(move |args: (Vec<ListParWithRandom>, bool, Vec<Par>)| {
+                let cc = ContractCall { space: space.clone(), dispatcher: dispatcher.clone() };
+                Box::pin(async move {
+                    let Some((produce, _is_replay, _previous, payload)) = cc.unapply(args) else {
+                        return Err(InterpreterError::IllegalArgumentError(
+                            "mtl:fold contract: not a single-message contract call".to_string(),
+                        ));
+                    };
+                    let [operand, ack] = payload.as_slice() else {
+                        return Err(InterpreterError::IllegalArgumentError(format!(
+                            "mtl:fold contract: expected [operand, ack], got arity {}",
+                            payload.len()
+                        )));
+                    };
+                    let result = fold_eval(operand, kind, width)
+                        .map_err(|err| InterpreterError::IllegalArgumentError(err.to_string()))?;
+                    let output = vec![result];
+                    produce(&output, ack).await?;
+                    Ok(output)
+                }) as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+            })
+        }),
+    }
+}
+
+/// Materialize the contract `Definition`s for a term's held-fold sites (one per site).
+pub fn fold_definitions_for(specs: &[FoldSpec]) -> Vec<Definition> {
+    specs.iter().map(fold_definition).collect()
 }
 
 /// Why a held-fold contract could not produce a result. Both are honest, non-silent failures.
