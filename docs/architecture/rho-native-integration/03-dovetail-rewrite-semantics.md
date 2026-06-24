@@ -128,6 +128,31 @@ If a child rewrites, a parent may rewrite at the child position:
 The constructor `K` has result category `C` and a child of category `A`.
 Congruence is generated only where the language definition requires it.
 
+### Specification Relation vs Engine Closure
+
+The `Eq_C`, `Rw_Cᵣ`, equivalence-respecting-rewrite, and explicit per-constructor
+congruence rules above are the **denotational specification** of the rewrite
+closure — the relations that *must hold* for a correct engine. They are written
+in the Datalog-flavored relational style ([DATALOG-BOOK](references.md#datalog-book))
+on purpose, because it states the fixpoint precisely. They do **not** prescribe
+that the Dovetail engine *stores* those relations.
+
+The Dovetail engine realizes this specification as an e-graph
+([EQUALITY-SATURATION-2009](references.md#equality-saturation-2009)):
+
+| Specification relation | Engine realization |
+|---|---|
+| `Eq_C(t, u)` and its reflexive/symmetric/transitive closure | a single shared e-class (union-find); the closure laws are structural, not stored facts |
+| explicit per-constructor congruence (`Rw_A(x,y) ⇒ Rw_C(K(…,x,…), K(…,y,…))`) | one implicit congruence-closure invariant restored by the engine `rebuild` step, for all constructors at once |
+| `Rw_Cᵣ(t, u)` | a `merge` that adds the equality `t ≈ u`; the engine records **no** `Rw` relation, only an aggregate per-rule firing count and an extraction-time derivation tree |
+
+So the relational rules on this page are the contract; the engine is an e-graph
+that satisfies the contract without materializing `Eq`/`Rw` rows — which is also
+why it sidesteps the fact-explosion the relational realization is prone to. The
+representational difference, the measured explosion, and the navigability
+trade-off are documented in the Dovetail suite's
+[E-Graph Rewrites vs Datalog Rewrites](../dovetail/13-egraph-vs-datalog-rewrites.md).
+
 ### 6. Native and Fold Rules
 
 A native handler is a total-or-explicit-error function from matched inputs to a

@@ -1,0 +1,120 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  Two ways to represent "these three forms of one term are equal".
+//
+//  LEFT  — the retired Ascent / Datalog model: each form is a DISTINCT FACT
+//          (a row in a relation), and equality is an EXPLICIT relation, so
+//          the three forms are three slate-grey fact-nodes joined by ORANGE
+//          `eq`/`rewrites` edges that the evaluator must materialize and close.
+//
+//  RIGHT — the Dovetail / e-graph model, drawn in the egg convention
+//          (Willsey et al., POPL 2021, doi:10.1145/3434304):
+//            • an e-CLASS is a DASHED rounded box (a set of provably-equal terms);
+//            • an e-NODE  is a SOLID box inside it (one operator, child e-CLASS
+//              references — NOT child e-nodes).
+//          The same three forms are THREE E-NODES inside ONE merged green
+//          e-class. Equality is the shared class itself — there is no `eq`
+//          relation to store, no `rewrites` rows to close.
+//
+//  Worked term: the integer cast  int(1+1, 8)  in RhoCalc, equal to its reduced
+//  forms  int(2, 8)  and  2  (the fold result). Datalog stores the three terms
+//  plus the equalities; the e-graph stores one class holding the three e-nodes.
+//
+//  Color legend (shared with the suite, plus this page's new colors):
+//    • slate-grey  = Datalog fact / relation row        (#E2E8F0 / #475569)
+//    • orange      = explicit `eq` / `rewrites` edge     (#EA580C)
+//    • blue        = input / leaf e-class                (#DBEAFE / #2563EB)
+//    • violet      = structural (applied) e-class        (#EDE9FE / #7C3AED)
+//    • green       = saturation-merged e-class           (#DCFCE7 / #16A34A)
+//
+//  Render:  dot -Tsvg 13-datalog-vs-egraph-rep.dot -o 13-datalog-vs-egraph-rep.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph DatalogVsEgraphRep {
+    compound = true;
+    rankdir  = TB;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 18;
+    label = "One equality, two representations: Datalog stores terms + equality rows; the e-graph stores one class of e-nodes";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3];
+
+    // ═══════════════════ LEFT: Datalog term-relation model ════════════════════
+    subgraph cluster_datalog {
+        label = "Model A — Datalog (retired Ascent): three distinct facts + explicit equality";
+        labeljust = "l"; fontsize = 14; fontcolor = "#0F172A";
+        style = "rounded"; color = "#475569"; penwidth = 1.8; margin = 16;
+
+        // Each form is a separate fact row (slate-grey).
+        d_t0 [label="proc( int(1+1, 8) )\n— fact: a row in relation proc",
+              fillcolor="#E2E8F0", color="#475569", fontcolor="#1E293B"];
+        d_t1 [label="proc( int(2, 8) )\n— fact",
+              fillcolor="#E2E8F0", color="#475569", fontcolor="#1E293B"];
+        d_t2 [label="proc( 2 )\n— fact",
+              fillcolor="#E2E8F0", color="#475569", fontcolor="#1E293B"];
+
+        // Explicit rewrite + equality relations (orange) — must be stored AND closed.
+        d_t0 -> d_t1 [color="#EA580C", penwidth=2.0, fontcolor="#9A3412",
+                      label="  rw_proc(s,t)\n  rewrites(from,to)  "];
+        d_t1 -> d_t2 [color="#EA580C", penwidth=2.0, fontcolor="#9A3412",
+                      label="  rw_proc(s,t)  "];
+        d_t0 -> d_t2 [color="#EA580C", penwidth=1.6, style=dashed, fontcolor="#9A3412",
+                      label="  eq_proc(t,t')  (transitive closure)  ", constraint=false];
+
+        d_note [shape=note, fillcolor="#FFEDD5", color="#EA580C", fontsize=11,
+                label="Equality is a RELATION the evaluator\nmaterializes and closes (reflexive,\nsymmetric, transitive). Every form is\na separately stored fact."];
+        d_t2 -> d_note [style=invis];
+    }
+
+    // ═══════════════════ RIGHT: e-graph equality-class model ═══════════════════
+    subgraph cluster_egraph {
+        label = "Model B — Dovetail e-graph: one merged class holds all three e-nodes";
+        labeljust = "l"; fontsize = 14; fontcolor = "#0F172A";
+        style = "rounded"; color = "#16A34A"; penwidth = 1.8; margin = 16;
+
+        // The single merged e-class (green) holding the three forms as e-nodes.
+        subgraph cluster_qmerged {
+            label = "q★ = { int(1+1,·) , int(2,·) , 2 }   ◄ one class, three e-nodes, all alive";
+            style = "dashed,rounded"; color = "#16A34A";
+            fontcolor = "#14532D"; bgcolor = "#DCFCE7";
+            e_t0 [label="int(·, ·)\n(over 1+1)", fillcolor="#F0FDF4", color="#16A34A"];
+            e_t1 [label="int(·, ·)\n(over 2)",  fillcolor="#F0FDF4", color="#16A34A"];
+            e_t2 [label="2\n(fold result)",     fillcolor="#F0FDF4", color="#16A34A"];
+        }
+
+        // Child leaf classes referenced by the structural e-nodes (blue / violet).
+        subgraph cluster_qsum {
+            label = "q_a"; style = "dashed,rounded"; color = "#2563EB";
+            fontcolor = "#1E3A8A"; bgcolor = "#DBEAFE";
+            e_sum [label="1+1 ≈ 2", fillcolor="#EFF6FF", color="#2563EB"];
+        }
+        subgraph cluster_qw {
+            label = "q_w"; style = "dashed,rounded"; color = "#7C3AED";
+            fontcolor = "#5B21B6"; bgcolor = "#EDE9FE";
+            e_w [label="8", fillcolor="#F5F3FF", color="#7C3AED"];
+        }
+
+        e_t0 -> e_sum [lhead=cluster_qsum, label=" child"];
+        e_t0 -> e_w   [lhead=cluster_qw,   label=" width"];
+        e_t1 -> e_sum [lhead=cluster_qsum, label=" child"];
+        e_t1 -> e_w   [lhead=cluster_qw,   label=" width"];
+
+        e_note [shape=note, fillcolor="#DCFCE7", color="#16A34A", fontsize=11,
+                label="Equality is the SHARED CLASS itself.\nNo `eq` relation, no `rewrites` rows:\ncongruence is carried implicitly by\n`rebuild`; nothing is pruned."];
+        e_t2 -> e_note [style=invis];
+    }
+
+    // ───────────────────────────── legend ────────────────────────────────────
+    subgraph cluster_legend {
+        label = "legend"; fontsize = 12; style = "rounded"; color = "#CBD5E1"; margin = 10;
+        node [shape=box, style="filled,rounded", fontsize=11, width=2.2];
+        L_fact [label="Datalog fact / relation row", fillcolor="#E2E8F0", color="#475569"];
+        L_eq   [label="explicit eq / rewrites edge",  fillcolor="#FFEDD5", color="#EA580C"];
+        L_in   [label="input / leaf e-class",          fillcolor="#DBEAFE", color="#2563EB"];
+        L_str  [label="structural (applied) e-class",  fillcolor="#EDE9FE", color="#7C3AED"];
+        L_merge[label="merged e-class (all alive)",    fillcolor="#DCFCE7", color="#16A34A"];
+        L_fact -> L_eq -> L_in -> L_str -> L_merge [style=invis];
+    }
+}

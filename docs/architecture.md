@@ -10,6 +10,9 @@ Technical overview of MeTTaIL's implementation architecture.
 > provider, `oracle-ascent` feature) was **removed in P6**; `Language::run_ascent`
 > survives as a fail-closed differential-oracle hook only. Sections still written in
 > the Ascent present tense are retained for history, not as the current execution path.
+> For *why* the production engine is an e-graph rather than the retired Datalog one —
+> the representation, the measured fact-explosion, and the navigability trade-off — see
+> [`architecture/dovetail/13-egraph-vs-datalog-rewrites.md`](architecture/dovetail/13-egraph-vs-datalog-rewrites.md).
 
 ---
 

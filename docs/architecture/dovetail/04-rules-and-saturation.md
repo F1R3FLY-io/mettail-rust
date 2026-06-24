@@ -249,6 +249,21 @@ To saturate an e-graph:
   Return IterationLimit.
 ```
 
+## Equality Closure, Not a Rewrite Relation
+
+It is worth stating what saturation produces, because a reader arriving from a
+Datalog engine expects a stored `rewrites(from,to)` relation. Dovetail builds
+**no** such relation. Each `merge` *adds an equality* between the redex and the
+instantiated right-hand side — both forms stay live in one e-class — and
+congruence is carried by `rebuild`, not by per-constructor rewrite clauses. The
+only navigable artifacts are the aggregate `RuleFiring { label, count }` on the
+`SatReport` and, at extraction time, a derivation *tree* (not a term-to-term
+relation). The retired Ascent path made the opposite choice: it materialized
+`eq`/`rw` relations and explicit congruence clauses, which is why it could be
+queried directly but could also explode. That contrast — store the relation vs
+collapse into a class — is the subject of
+[13 - E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md).
+
 ## Monotonicity
 
 Saturation adds equality evidence; it does not replace a term with another term.

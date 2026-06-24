@@ -1,0 +1,105 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  The Datalog fact-explosion failure mode, with the e-graph contrast inset.
+//
+//  Source of the numbers: docs/design/exploring/performance.md (the RhoCalc
+//  18.5 s case) and docs/archive/phase-3/SESSION-EQUATIONAL-REWRITE.md
+//  (60–80 s rewrites at term depth 6+). The retired Ascent backend materialized
+//  three interacting relations — `proc` (terms), `eq_proc` (equivalence), and
+//  `rw_proc` (rewrites) — whose closure rules feed each other in a POSITIVE
+//  FEEDBACK loop: more terms ⇒ more congruence checks ⇒ more equalities ⇒
+//  more rewrite variants ⇒ more terms.
+//
+//  The growth that loop produced on the 7-process test case:
+//     ~25 proc facts
+//       → 25² = 625 congruence checks
+//       → 100–500 eq_proc facts
+//       → ~500 rw_proc facts
+//       → 10–20 fixpoint iterations
+//       → 100,000+ clause evaluations.
+//
+//  RIGHT inset: the e-graph keeps ONE class for all equal forms (green
+//  collapse), so the n² congruence product never materializes as facts —
+//  congruence is the implicit `rebuild` invariant, not stored rows.
+//
+//  Color legend:
+//    • slate-grey  = a materialized Datalog relation       (#E2E8F0 / #475569)
+//    • red         = the positive-feedback back-edge        (#DC2626)
+//    • amber       = the cost the feedback amplifies to      (#F59E0B / #FFEDD5)
+//    • green       = the e-graph's single collapsed class    (#DCFCE7 / #16A34A)
+//
+//  Render:  dot -Tsvg 13-class-explosion.dot -o 13-class-explosion.svg
+// ════════════════════════════════════════════════════════════════════════════
+digraph ClassExplosion {
+    compound = true;
+    rankdir  = LR;
+    bgcolor  = "white";
+    labelloc = "t";
+    fontname = "Helvetica,Arial,sans-serif";
+    fontsize = 18;
+    label = "Datalog fact explosion: relations feed each other in a positive-feedback loop; the e-graph collapses equals into one class";
+
+    node [shape=box, style="filled,rounded", fillcolor="white",
+          fontname="Helvetica,Arial,sans-serif", fontsize=13, penwidth=1.4];
+    edge [fontname="Helvetica,Arial,sans-serif", fontsize=10, color="#334155", penwidth=1.3];
+
+    // ═══════════════════ LEFT: the feedback loop ══════════════════════════════
+    subgraph cluster_loop {
+        label = "Model A — Datalog (retired Ascent): three relations amplify each other";
+        labeljust = "l"; fontsize = 14; fontcolor = "#0F172A";
+        style = "rounded"; color = "#475569"; penwidth = 1.8; margin = 18;
+
+        proc [label="proc(t)\n~25 term facts",
+              fillcolor="#E2E8F0", color="#475569", fontcolor="#1E293B"];
+        eq   [label="eq_proc(t,t')\n25² = 625 congruence checks\n→ 100–500 eq facts",
+              fillcolor="#FFEDD5", color="#F59E0B", fontcolor="#92400E"];
+        rw   [label="rw_proc(s,t)\n~500 rewrite facts\n(rw × eq product)",
+              fillcolor="#FFEDD5", color="#F59E0B", fontcolor="#92400E"];
+
+        // Forward closure edges.
+        proc -> eq [label="  reflexivity + congruence\n  (per constructor, O(n²))  ",
+                    color="#475569", penwidth=1.6];
+        eq -> rw   [label="  rw(s1,t) <-- rw(s0,t), eq(s0,s1)\n  (rewrite along equality)  ",
+                    color="#475569", penwidth=1.6];
+
+        // THE positive-feedback back-edge (red): new rewrites + deconstruction
+        // produce new terms, which restart the whole loop.
+        rw -> proc [label="  new terms: proc(p1) <-- proc(p0), rw(p0,p1)\n  + eager collection deconstruction  ",
+                    color="#DC2626", penwidth=2.6, fontcolor="#991B1B",
+                    constraint=false];
+
+        loop_note [shape=note, fillcolor="#FEE2E2", color="#DC2626", fontsize=11,
+                   label="POSITIVE FEEDBACK:\nmore terms → more checks →\nmore equalities → more rewrites →\nmore terms. 10–20 fixpoint\niterations, 100,000+ clause\nevaluations; 60–80 s at depth 6+."];
+        rw -> loop_note [style=invis];
+    }
+
+    // ═══════════════════ RIGHT: the e-graph collapse inset ═════════════════════
+    subgraph cluster_inset {
+        label = "Model B — Dovetail e-graph: one class for all equal forms (no fact product)";
+        labeljust = "l"; fontsize = 14; fontcolor = "#0F172A";
+        style = "rounded"; color = "#16A34A"; penwidth = 1.8; margin = 18;
+
+        subgraph cluster_qone {
+            label = "q★ = { all n equal forms }   ◄ ONE class";
+            style = "dashed,rounded"; color = "#16A34A";
+            fontcolor = "#14532D"; bgcolor = "#DCFCE7";
+            g1 [label="form₁", fillcolor="#F0FDF4", color="#16A34A"];
+            g2 [label="form₂", fillcolor="#F0FDF4", color="#16A34A"];
+            g3 [label="…",     fillcolor="#F0FDF4", color="#16A34A"];
+            gn [label="formₙ", fillcolor="#F0FDF4", color="#16A34A"];
+        }
+        inset_note [shape=note, fillcolor="#DCFCE7", color="#16A34A", fontsize=11,
+                    label="union-find merges equals into\none class; congruence is the\nimplicit `rebuild` invariant —\nNOT n² stored rows. Rewrites\nADD equalities; nothing is\npruned, nothing explodes."];
+        gn -> inset_note [style=invis];
+    }
+
+    // ───────────────────────────── legend ────────────────────────────────────
+    subgraph cluster_legend {
+        label = "legend"; fontsize = 12; style = "rounded"; color = "#CBD5E1"; margin = 10;
+        node [shape=box, style="filled,rounded", fontsize=11, width=2.4];
+        L_rel  [label="materialized Datalog relation", fillcolor="#E2E8F0", color="#475569"];
+        L_amp  [label="cost the feedback amplifies",    fillcolor="#FFEDD5", color="#F59E0B"];
+        L_back [label="positive-feedback back-edge",    fillcolor="#FEE2E2", color="#DC2626"];
+        L_one  [label="single collapsed e-class",        fillcolor="#DCFCE7", color="#16A34A"];
+        L_rel -> L_amp -> L_back -> L_one [style=invis];
+    }
+}

@@ -14,6 +14,11 @@ files that are versioned with the implementation and formal artifacts.
 - `docs/architecture/dovetail/10-runtime-facing-reports.md`
 - `docs/architecture/rho-native-integration/README.md`
 - `prattail/docs/theory/formal-verification/coverage-matrix.md`
+- `docs/design/made/ascent_generation.md` (retired Ascent clause shapes quoted in [13](13-egraph-vs-datalog-rewrites.md))
+- `docs/design/exploring/performance.md` (the measured class-explosion numbers in [13](13-egraph-vs-datalog-rewrites.md))
+- `docs/archive/phase-6/CONGRUENCE-DRIVEN-PROJECTIONS.md` (Datalog AC projection relations cited in [13](13-egraph-vs-datalog-rewrites.md))
+- `docs/archive/phase-3/SESSION-EQUATIONAL-REWRITE.md` (the 60–80 s rewrite timings cited in [13](13-egraph-vs-datalog-rewrites.md))
+- `docs/design/made/repl.md` (the old REPL `rw_proc` step view contrasted in [13](13-egraph-vs-datalog-rewrites.md))
 
 ## Rust Source
 
@@ -28,6 +33,9 @@ files that are versioned with the implementation and formal artifacts.
 - `dovetail/src/space.rs`
 - `macros/src/gen/runtime/binder_congruence.rs` (Ambient binder NativeHandler codegen)
 - `macros/src/gen/runtime/dovetail_report.rs` (generated report compiler + handler install)
+- `macros/src/gen/runtime/dovetail_report/typed_report.rs` (the step-only `dovetail_step_report` producer cited in [13 §6](13-egraph-vs-datalog-rewrites.md#6-what-each-engine-can-and-cannot-answer))
+- `runtime/src/language.rs` (`Language::run_step_backend_report`, the step-report routing point)
+- `rholang-runtime/src/backend.rs` (the Dovetail+Rho wrapper that runs the step compiler)
 
 ## Rust Tests
 
@@ -172,3 +180,25 @@ Journal of Automata, Languages and Combinatorics 7(3):321–350, 2002. No regist
 ACM's non-resolvable internal prefix, **not** a real DOI. The semiring / tropical
 (min-plus) shortest-distance basis for `rigail`'s inside-weight algebra; local use:
 [OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+
+### ASCENT-2022
+
+Sahebolamri, Gilray, and Micinski, "Seamless Deductive Inference via Macros",
+Proceedings of the 31st ACM SIGPLAN International Conference on Compiler
+Construction (CC 2022), pp. 77–88, DOI:
+[10.1145/3497776.3517779](https://doi.org/10.1145/3497776.3517779) (resolves via
+doi.org to the ACM Digital Library); evaluation artifact archived at Zenodo, DOI:
+[10.5281/zenodo.6330172](https://doi.org/10.5281/zenodo.6330172). Ascent is the
+Rust-embedded Datalog engine the retired MeTTaIL rewrite backend generated;
+local use: [13 - E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md).
+
+### EGGLOG-2023
+
+Zhang, Wang, Flatt, Cao, Zucker, Rosenthal, Tatlock, and Willsey, "Better
+Together: Unifying Datalog and Equality Saturation", Proceedings of the ACM on
+Programming Languages 7(PLDI), Article 125, 2023, DOI:
+[10.1145/3591239](https://doi.org/10.1145/3591239) (resolves via doi.org to the
+ACM Digital Library). Shows that Datalog and equality saturation unify in one
+framework (egglog); the basis for [13](13-egraph-vs-datalog-rewrites.md)'s point
+that the two paradigms are complementary rather than opposed; local use:
+[13 - E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md).

@@ -33,6 +33,11 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | structural predicated type | A guard whose truth is determined by constructor shape, exact keys, binding layout, AC decomposition, or other pattern structure. |
 | behavioral predicated type | A guard whose truth depends on a relation, theory, host operation, channel compatibility, or other behavior beyond immediate shape. |
 | equality saturation | Iterative growth of an equality graph until no new equalities are found or a bound stops the run. |
+| Datalog | A bottom-up logic-programming language: `head <-- body` rules over relations, evaluated to a least fixpoint. The retired Ascent backend was a Datalog engine; the e-graph contrast is in [13 - E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md). |
+| fact / relation | A *fact* is one ground tuple (a row), e.g. `proc(int(2,8))`; a *relation* is a named set of fixed-arity facts (`proc/1`, `eq_proc/2`, `rw_proc/2`). The Datalog model represents rewriting as growing these relations. |
+| bottom-up fixpoint | Datalog's evaluation strategy: repeatedly apply every rule to the facts derived so far until an iteration adds none. *Semi-naive* evaluation only revisits rules with a premise in the just-added delta. |
+| navigable rewrite relation | An explicitly stored `rewrites(from,to)` relation (the Ascent `rw_proc`) pairing each term with each one-step successor, directly queryable. Dovetail does **not** keep one — it reconstructs a source-rendered derivation view on demand for the REPL `step` UX (see [13 §6](13-egraph-vs-datalog-rewrites.md#6-what-each-engine-can-and-cannot-answer)). |
+| class explosion | The Datalog failure mode where the `proc` × `eq` × `rw` relations feed each other in a positive-feedback loop and the materialized fact count grows super-linearly (`25 → 625 → 100,000+` evaluations on the measured RhoCalc case). The e-graph collapses equal forms into one class and avoids it. |
 | e-graph | A graph of equivalence classes and expression nodes. |
 | e-class | An equivalence class of terms, identified by `EClassId`. |
 | e-node | A labeled operator with zero or more child e-classes. |
@@ -147,7 +152,7 @@ The report completeness contract is:
 | Dovetail | Rewrite semantics and extraction. |
 | Rho backend | Lowering and execution bridge from Dovetail semantics to RhoRuntime. |
 | Rho machine | Host process-calculus runtime in F1r3node/Rholang. |
-| Ascent | Legacy generated Datalog rewrite backend and oracle path. |
+| Ascent | Legacy generated Datalog rewrite backend and oracle path (a term-relation Datalog engine — contrast the e-graph in [13](13-egraph-vs-datalog-rewrites.md)). |
 | WPDA | Active parser/recognizer architecture upstream of Dovetail. |
 
 ## Safety Terms

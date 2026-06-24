@@ -39,8 +39,9 @@ For implementers:
 6. [Runtime-Facing Reports](10-runtime-facing-reports.md)
 7. [Binder-Congruence Handler](11-binder-congruence-handler.md)
 8. [Native-Fold Reduction](12-native-fold-reduction.md)
-9. [Worked Example](09-worked-example.md)
-10. [Engineering Handoff](08-engineering-handoff.md)
+9. [E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md)
+10. [Worked Example](09-worked-example.md)
+11. [Engineering Handoff](08-engineering-handoff.md)
 
 For reviewers checking claims:
 
@@ -92,6 +93,7 @@ the e-graph or extractor internals.
 | [10 - Runtime-Facing Reports](10-runtime-facing-reports.md) | What is a Dovetail report, why does a rewrite engine need one, and what may downstream runtimes rely on? |
 | [11 - Binder-Congruence Handler](11-binder-congruence-handler.md) | How does Dovetail evaluate Ambient's binders and freshness equations capture-safely (float-then-AC-reduce), and why is that in-engine rather than host-routed? |
 | [12 - Native-Fold Reduction](12-native-fold-reduction.md) | How does Dovetail reduce a language's `fold` rules (native-computed RHS) in-engine via the typed-`L` op-enum + native-rewrite dispatcher, and how is that funded and proven? |
+| [13 - E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md) | How does Dovetail's e-graph equality-saturation model of rewriting differ from the retired Ascent engine's Datalog term-relation model, and what does each trade away? |
 | [References](references.md) | Which local source, test, proof, and design artifacts support the suite? |
 
 ## Architecture at a Glance
@@ -118,6 +120,16 @@ The e-graph drawings — [`figures/03-egraph-term-dag.svg`](figures/03-egraph-te
 (binder capture-safety) — use a consistent per-concept color legend: inputs/leaves
 blue, AC op-bags amber, constructors violet, saturation-merged results green,
 binders lilac, captured names red.
+
+The [E-Graph vs Datalog](13-egraph-vs-datalog-rewrites.md) figures —
+[`figures/13-datalog-vs-egraph-rep.svg`](figures/13-datalog-vs-egraph-rep.svg)
+(one equality, two representations),
+[`figures/13-class-explosion.svg`](figures/13-class-explosion.svg) (the fact-explosion
+loop), and [`figures/13-saturation-fixpoint.svg`](figures/13-saturation-fixpoint.svg)
+(the two fixpoints side by side) — extend that legend with three Datalog-specific
+colors: slate-grey for a Datalog fact / relation row, orange for an explicit
+`eq` / `rewrites` edge, and a red→amber pairing for the class-explosion
+positive-feedback back-edge (red) and the cost it amplifies (amber).
 
 Other installed tools remain useful for future packet layouts, timing diagrams,
 statistical plots, and publication figures, but they would add little signal to
