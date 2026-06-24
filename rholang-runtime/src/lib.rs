@@ -45,6 +45,9 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+/// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
+#[cfg(feature = "rhocalc-runtime")]
+pub mod fold_contract;
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
 pub mod run;
