@@ -67,3 +67,23 @@ fn generated_dovetail_report_lowers_lambda_after_substitution_lowering() {
         "the lowered Lambda variable report should carry at least one term record: {report:?}",
     );
 }
+
+#[test]
+fn exec_dovetail_report_leaves_source_display_none_byte_identical() {
+    // Perf-neutrality regression guard for the REPL `step` UX work: the production `exec` path
+    // (`dovetail_report_for`) must stay byte-identical to the pre-stepper build — every term
+    // record's `source_display` is `None`, because source reconstruction is gated behind
+    // `record_source` (false on the exec path; only the step-only `dovetail_step_report` sets it).
+    // This guards against a future change accidentally populating source on the exec path. (The
+    // step path's source reconstruction is verified end-to-end by the REPL `step 1+2*3 → 7` check.)
+    let term = BaseMathLanguage
+        .parse_term("1 + 2")
+        .expect("BaseMath parses scalar addition");
+
+    let exec = BaseMathLanguage::dovetail_report_for(term.as_ref(), 8, 1_024)
+        .expect("exec Dovetail report runs");
+    assert!(
+        exec.terms.iter().all(|record| record.source_display.is_none()),
+        "exec report must leave source_display None on every record (byte-identical exec): {exec:?}",
+    );
+}
