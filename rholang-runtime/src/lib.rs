@@ -48,6 +48,11 @@ pub mod backend;
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
 pub mod run;
+/// Reactive single-step COMM stepper (the `step` command's live Rho-machine evidence).
+#[cfg(feature = "runtime-report")]
+pub mod step;
+#[cfg(feature = "runtime-report")]
+pub use step::StepSession;
 #[cfg(feature = "runtime-report")]
 pub use backend::{
     build_fold_dataflow_invocation_from_contract, build_scalar_contract_invocation,

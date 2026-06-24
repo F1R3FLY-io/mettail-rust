@@ -65,6 +65,13 @@ mettail-runtime = { package = "runtime", path = "../runtime", optional = true }
 mettail-prattail = { package = "prattail", path = "../prattail", optional = true }
 mettail-ast = { package = "ast", path = "../ast", optional = true }
 syn = { workspace = true, optional = true }
+# Reactive single-step COMM stepper (step.rs): a lock-free bounded channel carries the RAW COMM
+# payload (Pars) from the worker thread's observer to the REPL driver (no rendering under the
+# tuplespace lock). The driver renders via f1r3node's existing (recursive) PrettyPrinter on a
+# dedicated LARGE-STACK thread — an interim measure: rather than growing the native stack or forking
+# the printer, we run Rholang rendering on a big stack. A properly stack-safe PrettyPrinter is a
+# separate f1r3node PR.
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive

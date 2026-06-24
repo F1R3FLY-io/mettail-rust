@@ -562,6 +562,86 @@ impl RuntimeDovetailRunReport {
     }
 }
 
+/// The engine that produced a reduction step — drives the per-node label in the REPL's
+/// linear-chain projection and the one-way Dovetail→Rho phase composition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeReductionEngine {
+    /// A Rho-machine COMM rendezvous (produce/consume) on the cost-metered RSpace.
+    RhoComm,
+    /// A MeTTaIL native fold reduced in Dovetail — the pre-phase, or a Tier-3 runtime fold contract.
+    DovetailFold,
+    /// A stuck fold over a COMM-received value (Tier-2 detect-and-report): not reducible one-shot
+    /// under the one-way bridge; surfaced, never silently mis-reduced.
+    Stuck,
+}
+
+impl RuntimeReductionEngine {
+    pub fn label(&self) -> &'static str {
+        match self {
+            RuntimeReductionEngine::RhoComm => "Rho COMM",
+            RuntimeReductionEngine::DovetailFold => "Dovetail fold",
+            RuntimeReductionEngine::Stuck => "stuck",
+        }
+    }
+}
+
+/// A committed COMM event observed on the Rho machine (the reactive single-stepper emit payload).
+#[derive(Debug, Clone)]
+pub struct RuntimeCommEvent {
+    /// The rendezvous channel(s), rendered.
+    pub channels: Vec<String>,
+    /// The data matched/consumed by the rendezvous, rendered.
+    pub consumed: Vec<String>,
+    /// `"comm.consume"` or `"comm.produce"` — which side observed the COMM.
+    pub label: String,
+}
+
+/// One reduction step in a live Rho-machine COMM trace (the reactive single-stepper).
+#[derive(Debug, Clone)]
+pub struct RuntimeReductionStep {
+    /// 0-based deterministic emit ordinal — also the node id in the REPL linear chain.
+    pub ordinal: u64,
+    /// Which engine produced this step.
+    pub engine: RuntimeReductionEngine,
+    /// A one-line rendering of the step (the COMM event, the Dovetail fold, or the stuck site).
+    pub display: String,
+    /// The structured COMM payload when `engine == RhoComm`.
+    pub comm: Option<RuntimeCommEvent>,
+}
+
+/// An ordered live single-step reduction trace from the Rho machine. Each entry is one COMM (the
+/// principled process-calculus reduction unit), with Dovetail fold steps interleaved only when a
+/// Tier-3 runtime fold contract fires. Projected by the REPL into a navigable linear chain.
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeReductionTrace {
+    pub steps: Vec<RuntimeReductionStep>,
+}
+
+impl RuntimeReductionTrace {
+    pub fn new(steps: Vec<RuntimeReductionStep>) -> Self {
+        Self { steps }
+    }
+
+    pub fn step_count(&self) -> usize {
+        self.steps.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+}
+
+/// A live, incremental Rho-machine COMM single-stepper (the reactive stepper), returned by
+/// [`Language::start_reduction_stepper`] and held by the REPL across advance commands. Each
+/// `next_step` advances the reduction by exactly one COMM (pay-as-you-go — works for divergent
+/// Rholang, halt anytime). Dropping the stepper aborts the underlying worker (the back-pressure
+/// gate is closed and the worker thread joined). `Send` so the REPL can store it in its state.
+pub trait ReductionStepper: Send {
+    /// Advance the reduction by one COMM and return that step, or `None` once the reduction has
+    /// reached quiescence (no further COMMs fire). `Err(msg)` on an interpreter or abort error.
+    fn next_step(&mut self) -> Result<Option<RuntimeReductionStep>, String>;
+}
+
 /// Runtime-neutral output of an installed backend.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -572,6 +652,8 @@ pub enum RuntimeBackendOutput {
     Dovetail(RuntimeDovetailRunReport),
     /// Resting observations from a substrate such as RSpace.
     Observations(Vec<RuntimeChannelObservation>),
+    /// Ordered live single-step COMM reduction trace from the Rho machine (reactive stepper).
+    ReductionTrace(RuntimeReductionTrace),
 }
 
 impl RuntimeBackendOutput {
@@ -580,6 +662,7 @@ impl RuntimeBackendOutput {
             RuntimeBackendOutput::Ascent(_) => "AscentResults",
             RuntimeBackendOutput::Dovetail(_) => "DovetailRunReport",
             RuntimeBackendOutput::Observations(_) => "runtime observations",
+            RuntimeBackendOutput::ReductionTrace(_) => "reduction trace",
         }
     }
 }
@@ -652,11 +735,23 @@ impl RuntimeBackendReport {
         self.output
     }
 
+    /// Construct a Rho-machine reduction-trace report (the reactive single-stepper output). Always
+    /// `RhoMachine` / `RhoNormalizedAst` — the trace is inherently a live Rho-machine artifact, so
+    /// no backend/artifact validation branch is needed.
+    pub fn reduction_trace(trace: RuntimeReductionTrace) -> Self {
+        Self {
+            backend: RuntimeBackend::RhoMachine,
+            artifact: RuntimeBackendArtifact::RhoNormalizedAst,
+            output: RuntimeBackendOutput::ReductionTrace(trace),
+        }
+    }
+
     pub fn as_ascent_results(&self) -> Option<&AscentResults> {
         match &self.output {
             RuntimeBackendOutput::Ascent(results) => Some(results),
             RuntimeBackendOutput::Dovetail(_) => None,
             RuntimeBackendOutput::Observations(_) => None,
+            RuntimeBackendOutput::ReductionTrace(_) => None,
         }
     }
 
@@ -665,6 +760,16 @@ impl RuntimeBackendReport {
             RuntimeBackendOutput::Ascent(results) => Ok(results),
             RuntimeBackendOutput::Dovetail(_) => Err(self),
             RuntimeBackendOutput::Observations(_) => Err(self),
+            RuntimeBackendOutput::ReductionTrace(_) => Err(self),
+        }
+    }
+
+    pub fn as_reduction_trace(&self) -> Option<&RuntimeReductionTrace> {
+        match &self.output {
+            RuntimeBackendOutput::ReductionTrace(trace) => Some(trace),
+            RuntimeBackendOutput::Ascent(_) => None,
+            RuntimeBackendOutput::Dovetail(_) => None,
+            RuntimeBackendOutput::Observations(_) => None,
         }
     }
 
@@ -675,6 +780,7 @@ impl RuntimeBackendReport {
             RuntimeBackendOutput::Observations(observations) => observations
                 .iter()
                 .find(|observation| observation.channel == channel),
+            RuntimeBackendOutput::ReductionTrace(_) => None,
         }
     }
 }
@@ -1065,6 +1171,44 @@ pub trait Language: Send + Sync {
             format!("language {} does not advertise a default runtime backend", self.name())
         })?;
         self.run_backend_report(backend, term)
+    }
+
+    /// Start a **live, incremental** Rho-machine COMM single-stepper (the reactive stepper). The
+    /// returned [`ReductionStepper`] advances by exactly one COMM per `next_step` (pay-as-you-go —
+    /// works for divergent Rholang; halt anytime by dropping it). Default: fail closed — only the
+    /// two-stage Dovetail+Rholang wrappers, which own a real f1r3node runtime, install this. The
+    /// wrapper backs the stepper with a dedicated worker thread running `inj` with the COMM
+    /// observer + back-pressure gate installed; dropping the box aborts the worker.
+    fn start_reduction_stepper(
+        &self,
+        term: &dyn Term,
+    ) -> Result<Box<dyn ReductionStepper>, String> {
+        let _ = term;
+        Err(format!(
+            "language {} does not support live single-step COMM reduction tracing (no Rho-machine \
+             stepper installed)",
+            self.name()
+        ))
+    }
+
+    /// Drive [`start_reduction_stepper`] to quiescence (or the safety cap) and return the whole
+    /// ordered trace as a report — the non-interactive / test-facing surface (the REPL drives the
+    /// stepper live instead). Capped so a divergent term cannot hang this convenience driver; the
+    /// cap is far beyond any terminating Rho program the bundled languages produce.
+    fn run_reduction_trace_report(
+        &self,
+        term: &dyn Term,
+    ) -> Result<RuntimeBackendReport, String> {
+        const SAFETY_CAP: usize = 100_000;
+        let mut stepper = self.start_reduction_stepper(term)?;
+        let mut steps = Vec::new();
+        while steps.len() < SAFETY_CAP {
+            match stepper.next_step()? {
+                Some(step) => steps.push(step),
+                None => break,
+            }
+        }
+        Ok(RuntimeBackendReport::reduction_trace(RuntimeReductionTrace::new(steps)))
     }
 
     /// Run Ascent on a term with pre-seeded relation facts.
