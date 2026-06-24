@@ -189,6 +189,18 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
         })
         .collect();
+    // Structure-preserving (no-normalize) analogue of `substitute_arms`, for
+    // `substitute_env_preserve_structure` (REPL `step`). Same per-category dispatch, but to the
+    // non-folding `substitute_env_no_normalize`.
+    let substitute_preserve_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env_no_normalize(env)) }
+        })
+        .collect();
 
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
@@ -269,6 +281,16 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
             quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
+        })
+        .collect();
+    // No-normalize analogue for the Ambiguous branch of `substitute_env_no_normalize`.
+    let ambiguous_substitute_preserve_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env_no_normalize(env)) }
         })
         .collect();
 
@@ -707,6 +729,55 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             #inner_enum_name::Ambiguous(_) => unreachable!(),
                         };
                         // Cross-category: if still a variable, try resolving from other categories
+                        match &substituted {
+                            #(#cross_resolve_arms)*
+                            _ => {}
+                        }
+                        substituted
+                    }
+                }
+            }
+
+            /// Structure-preserving (no constant folding) environment substitution. Identical to
+            /// [`substitute_env`](Self::substitute_env) — including cross-category bare-variable
+            /// resolution and semantic-key dedup of `Ambiguous` alternatives — except the
+            /// per-category substitution does NOT normalize, so the surface operator tree is
+            /// preserved (e.g. `1 + 2 * 3` stays an `Add`/`Mul` tree rather than folding to `7`).
+            /// Backs the trait's `substitute_env_preserve_structure`, used by the REPL `step`
+            /// command so each reduction is shown as a navigable one-step rewrite.
+            pub fn substitute_env_no_normalize(&self, env: &#env_name) -> Self {
+                match self {
+                    #inner_enum_name::Ambiguous(alts) => {
+                        let results: Vec<Self> = alts.iter().map(|alt| {
+                            let substituted = match alt {
+                                #(#ambiguous_substitute_preserve_arms),*,
+                                #inner_enum_name::Ambiguous(_) => unreachable!("nested Ambiguous"),
+                            };
+                            let cross_resolved = (|| -> Self {
+                                match &substituted {
+                                    #(#ambiguous_cross_resolve_arms)*
+                                    _ => {}
+                                }
+                                substituted.clone()
+                            })();
+                            cross_resolved
+                        }).collect();
+
+                        let mut seen_keys: std::collections::HashSet<Vec<u8>> =
+                            std::collections::HashSet::new();
+                        let unique: Vec<Self> = results.into_iter()
+                            .filter(|a| {
+                                seen_keys.insert(a.semantic_fingerprint())
+                            })
+                            .collect();
+
+                        Self::from_alternatives(unique)
+                    }
+                    _ => {
+                        let substituted = match self {
+                            #(#substitute_preserve_arms),*,
+                            #inner_enum_name::Ambiguous(_) => unreachable!(),
+                        };
                         match &substituted {
                             #(#cross_resolve_arms)*
                             _ => {}
@@ -2187,7 +2258,9 @@ fn generate_language_trait_impl(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env(typed_env);
+                // No-normalize substitution: replace env-bound free variables but preserve the
+                // surface term tree (no constant folding) — the REPL `step` contract.
+                let substituted = typed_term.0.substitute_env_no_normalize(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 
@@ -2545,7 +2618,9 @@ fn generate_language_trait_impl_multi(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env(typed_env);
+                // No-normalize substitution: replace env-bound free variables but preserve the
+                // surface term tree (no constant folding) — the REPL `step` contract.
+                let substituted = typed_term.0.substitute_env_no_normalize(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 

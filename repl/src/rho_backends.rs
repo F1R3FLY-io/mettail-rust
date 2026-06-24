@@ -108,12 +108,12 @@ mod rho {
         CalculatorLanguage::dovetail_report_for(term, MAX_ITERS, MAX_NODES)
     }
 
-    /// The Calculator step-only Dovetail report producer — same saturation as
-    /// `calculator_dovetail_report`, but each term record carries reconstructed source syntax
-    /// (`source_display`) for comprehensible REPL `step` display. Reached only via
+    /// The Calculator step-only Dovetail producer — the REPL `step` navigable one-step REWRITE-step
+    /// graph (Increment 4): each node is a whole program state in source syntax, each edge a
+    /// one-step rewrite successor, and a node with no successor is a normal form. Reached only via
     /// `Language::run_step_backend_report`; production `exec` uses `calculator_dovetail_report`.
-    fn calculator_dovetail_step_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
-        CalculatorLanguage::dovetail_step_report(term, MAX_ITERS, MAX_NODES)
+    fn calculator_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        CalculatorLanguage::dovetail_step_graph(term, MAX_ITERS, MAX_NODES)
     }
 
     /// The Calculator F-stage: lower the term's scalar expression tree to a Rholang dataflow (E3)
@@ -139,7 +139,7 @@ mod rho {
             CalculatorLanguage,
             backend,
             calculator_dovetail_report,
-            calculator_dovetail_step_report,
+            calculator_dovetail_step_graph,
             calculator_invocation,
         )
         .map_err(|err| anyhow!("Calculator Dovetail+Rho backend install failed: {err:?}"))?;

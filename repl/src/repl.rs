@@ -7,12 +7,12 @@ use colored::Colorize;
 use mettail_query::run_query_report as query_run_query_report;
 use mettail_runtime::{
     Language, RelationData, RuntimeBackend, RuntimeBackendOutput, RuntimeBackendReport,
-    RuntimeDovetailRunReport,
+    RuntimeDovetailGraphKind, RuntimeDovetailRunReport,
 };
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// Extract the term portion from a REPL command line.
@@ -68,8 +68,8 @@ mod tests {
     use mettail_runtime::{
         AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackendArtifact,
         RuntimeBackendReport, RuntimeChannelObservation, RuntimeDovetailCompleteness,
-        RuntimeDovetailDerivationEdge, RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
-        RuntimeObservationValue, Term, TermType, VarTypeInfo,
+        RuntimeDovetailDerivationEdge, RuntimeDovetailGraphKind, RuntimeDovetailRunReport,
+        RuntimeDovetailTermRecord, RuntimeObservationValue, Term, TermType, VarTypeInfo,
     };
     use std::fmt;
 
@@ -419,6 +419,7 @@ mod tests {
             }],
             rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
+            graph_kind: RuntimeDovetailGraphKind::Derivation,
         }
     }
 
@@ -722,6 +723,11 @@ const DOVETAIL_SYNTHETIC_ROOT_ID: u64 = u64::MAX;
 enum RuntimeGraphKind {
     AscentRewriteGraph,
     DovetailDerivationGraph,
+    /// The Dovetail step-only one-step REWRITE-step graph: nodes are whole program states (source
+    /// syntax), edges are one-step rewrite successors, a node with no outgoing edge is a normal
+    /// form. The faithful, navigable small-step relation reconstructed for the REPL `step` command
+    /// (Increment 4) — the e-graph keeps no rewrite relation, so this is enumerated step-only.
+    DovetailRewriteGraph,
     /// A live Rho-machine COMM reduction trace projected as a linear chain (the reactive stepper).
     RhoReductionTrace,
 }
@@ -731,6 +737,7 @@ impl RuntimeGraphKind {
         match self {
             RuntimeGraphKind::AscentRewriteGraph => "rewrites",
             RuntimeGraphKind::DovetailDerivationGraph => "derivation_edges",
+            RuntimeGraphKind::DovetailRewriteGraph => "rewrites",
             RuntimeGraphKind::RhoReductionTrace => "comm_steps",
         }
     }
@@ -739,6 +746,7 @@ impl RuntimeGraphKind {
         match self {
             RuntimeGraphKind::AscentRewriteGraph => "rewrite",
             RuntimeGraphKind::DovetailDerivationGraph => "derivation dependency",
+            RuntimeGraphKind::DovetailRewriteGraph => "rewrite",
             RuntimeGraphKind::RhoReductionTrace => "next COMM",
         }
     }
@@ -841,6 +849,74 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
                 edges,
                 equivalences,
                 custom_relations,
+            })
+        },
+        RuntimeBackendOutput::Dovetail(dovetail_report)
+            if dovetail_report.graph_kind == RuntimeDovetailGraphKind::Rewrite =>
+        {
+            // Increment 4: the step-only one-step REWRITE-step graph. Each term record is a whole
+            // program state rendered in source syntax; each `derivation_edge` is a one-step rewrite
+            // successor (`parent_key → child_key`). A state with NO outgoing rewrite edge is a
+            // normal form (the faithful definition — `is_root` marks only the single entry state, to
+            // satisfy `validate_shape`). No synthetic `DovetailRoots` node on this path: the entry
+            // state IS the navigable root.
+            dovetail_report
+                .validate_shape()
+                .map_err(|err| anyhow::anyhow!("Dovetail rewrite graph is malformed: {}", err))?;
+
+            let mut key_to_id = HashMap::with_capacity(dovetail_report.terms.len());
+            for term in &dovetail_report.terms {
+                key_to_id.insert(term.key.clone(), term.ordinal as u64);
+            }
+
+            let edges: Vec<RuntimeGraphEdge> = dovetail_report
+                .derivation_edges
+                .iter()
+                .filter_map(|edge| {
+                    let from_id = key_to_id.get(&edge.parent_key)?;
+                    let to_id = key_to_id.get(&edge.child_key)?;
+                    // The rewrite menu shows the successor STATE (`0) → <term>`); the edge carries no
+                    // rule-name label (the runtime edge record has no label field, and the target
+                    // source is the load-bearing display).
+                    Some(RuntimeGraphEdge { from_id: *from_id, to_id: *to_id, label: None })
+                })
+                .collect();
+
+            // A state is a normal form iff it has no outgoing rewrite edge.
+            let mut has_outgoing: HashSet<u64> = HashSet::with_capacity(edges.len());
+            for edge in &edges {
+                has_outgoing.insert(edge.from_id);
+            }
+
+            let terms: Vec<RuntimeGraphTerm> = dovetail_report
+                .terms
+                .iter()
+                .map(|term| {
+                    let id = term.ordinal as u64;
+                    RuntimeGraphTerm {
+                        id,
+                        display: term
+                            .source_display
+                            .clone()
+                            .unwrap_or_else(|| term.op_display.clone()),
+                        is_normal_form: !has_outgoing.contains(&id),
+                        is_root: term.is_root,
+                    }
+                })
+                .collect();
+
+            let entry_id = dovetail_report
+                .root_ordinals
+                .first()
+                .map(|ordinal| *ordinal as u64);
+
+            Ok(RuntimeGraphView {
+                kind: RuntimeGraphKind::DovetailRewriteGraph,
+                entry_id,
+                terms,
+                edges,
+                equivalences: Vec::new(),
+                custom_relations: HashMap::new(),
             })
         },
         RuntimeBackendOutput::Dovetail(dovetail_report) => {
@@ -2053,8 +2129,13 @@ impl Repl {
             term
         };
 
-        // Normalize (beta-reduce Apply/MApply of Lam/MLam) before evaluation
-        let term = language.normalize_term(term.as_ref());
+        // Normalize (beta-reduce Apply/MApply of Lam/MLam, and constant-fold arithmetic) before
+        // evaluation — but ONLY for `exec`. In `step` mode the whole point is to show those
+        // reductions one small step at a time, so normalizing here would hand the stepper an
+        // already-reduced normal form (it would report "0 rewrites, already a normal form"). This
+        // mirrors the step-mode choice above to use `substitute_env_preserve_structure` (no
+        // constant folding) rather than `substitute_env`.
+        let term = if step_mode { term } else { language.normalize_term(term.as_ref()) };
 
         // Execute using the language's selected backend.
         let backend = language.selected_default_runtime_backend().ok_or_else(|| {
@@ -2063,32 +2144,52 @@ impl Repl {
                 language.name()
             )
         })?;
-        // Step mode needs graph/derivation evidence; the RhoMachine backend yields runtime
-        // observations, not a navigable graph. When the default backend is RhoMachine and the
-        // language also supports the Dovetail backend, step against the Dovetail derivation graph
-        // instead of bailing (Layer 1: a pure-fold term shows its fold derivation; a pure-COMM
-        // term yields a trivial root — the reactive COMM stepper, Layer 2, refines such terms
-        // into a live step trace). Bail only when no graph-capable backend exists.
+        // Step mode needs a navigable rewrite/derivation graph; the RhoMachine backend yields
+        // runtime observations, not a graph. When the default backend is RhoMachine and the language
+        // also supports Dovetail, we present the FAITHFUL one-step REWRITE graph (Increment 4): a
+        // pure-fold / β / AC term (Calculator, Lambda, Ambient) reduces structurally in Dovetail, so
+        // `dovetail_step_graph` enumerates real branching successors (`1 + 2 * 3 → 1 + 6 → 7`). A
+        // genuine COMM term (RhoCalc `for(x<-@1){*x} | @1!(42)`) has NO Dovetail structural successor
+        // (COMM is host-routed), so its rewrite graph is a single normal-form node — for those we
+        // refine to the live reactive COMM reduction trace (Layer 2), one operational schedule on the
+        // real Rho machine. Bail only when neither is available.
         let start_time = Instant::now();
         let report = if step_mode && backend == RuntimeBackend::RhoMachine {
-            // Prefer the reactive COMM reduction trace: the live single-stepper drives the Rho
-            // machine and records each committed COMM, projected as a navigable linear chain. A
-            // pure-fold / no-rendezvous term has no COMM program to step (the stepper errors or
-            // yields zero steps) — fall back to the Dovetail derivation graph (Layer 1). Bail only
-            // if neither is available.
             print!("Running {} backend (step)... ", backend);
-            let trace = language.run_reduction_trace_report(term.as_ref()).ok().filter(|report| {
-                report.as_reduction_trace().map(|trace| trace.step_count()).unwrap_or(0) >= 1
-            });
-            match trace {
-                Some(report) => report,
-                None if language.supports_runtime_backend(RuntimeBackend::Dovetail) => language
-                    .run_step_backend_report(term.as_ref())
-                    .map_err(|e| anyhow::anyhow!("{}", e))?,
-                None => anyhow::bail!(
-                    "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {} and the language exposes no graph-capable backend. Use 'exec' for runtime observations.",
-                    backend
-                ),
+            // (Layer 1) The Dovetail rewrite graph. Keep it iff it shows at least one rewrite step;
+            // a trivial single-node graph means the term does not reduce structurally in Dovetail
+            // (a host-routed COMM term), so we prefer the COMM trace below.
+            let dovetail_graph = language
+                .supports_runtime_backend(RuntimeBackend::Dovetail)
+                .then(|| language.run_step_backend_report(term.as_ref()).ok())
+                .flatten();
+            let has_rewrite_steps = dovetail_graph
+                .as_ref()
+                .and_then(|report| report.as_dovetail())
+                .map(|dovetail| {
+                    dovetail.graph_kind == RuntimeDovetailGraphKind::Rewrite
+                        && !dovetail.derivation_edges.is_empty()
+                })
+                .unwrap_or(false);
+            if has_rewrite_steps {
+                dovetail_graph.expect("checked Some above")
+            } else {
+                // (Layer 2) The reactive COMM reduction trace: the live single-stepper drives the
+                // Rho machine and records each committed COMM, projected as a navigable linear chain.
+                let trace =
+                    language.run_reduction_trace_report(term.as_ref()).ok().filter(|report| {
+                        report.as_reduction_trace().map(|trace| trace.step_count()).unwrap_or(0) >= 1
+                    });
+                match (trace, dovetail_graph) {
+                    (Some(report), _) => report,
+                    // No COMM trace, but the Dovetail graph ran (a normal form with no successors) —
+                    // show it (the honest "already a normal form").
+                    (None, Some(report)) => report,
+                    (None, None) => anyhow::bail!(
+                        "step mode requires rewrite-graph or derivation-graph evidence; the selected default backend is {} and the language exposes no graph-capable backend. Use 'exec' for runtime observations.",
+                        backend
+                    ),
+                }
             }
         } else {
             print!("Running {} backend... ", backend);
@@ -2277,14 +2378,26 @@ impl Repl {
                     .set_term_with_report(result_term, report.clone(), result_id)?;
             },
             RuntimeBackendOutput::Dovetail(dovetail_report) => {
+                let is_rewrite_graph =
+                    dovetail_report.graph_kind == RuntimeDovetailGraphKind::Rewrite;
+                let edge_noun = if is_rewrite_graph { "rewrite edge" } else { "derivation edge" };
+
                 println!();
                 println!("Computed:");
                 println!("  - backend: {}", report.backend());
                 println!("  - artifact: {}", report.artifact());
                 println!("  - completeness: {}", dovetail_report.completeness);
-                println!("  - {} root(s)", dovetail_report.roots.len());
-                println!("  - {} term record(s)", dovetail_report.terms.len());
-                println!("  - {} derivation edge(s)", dovetail_report.derivation_edges.len());
+                if is_rewrite_graph {
+                    println!("  - {} program state(s)", dovetail_report.terms.len());
+                } else {
+                    println!("  - {} root(s)", dovetail_report.roots.len());
+                    println!("  - {} term record(s)", dovetail_report.terms.len());
+                }
+                println!(
+                    "  - {} {}(s)",
+                    dovetail_report.derivation_edges.len(),
+                    edge_noun
+                );
                 println!();
 
                 let display = dovetail_report_display(dovetail_report);
@@ -2306,10 +2419,14 @@ impl Repl {
                     is_root: false,
                 });
 
-                let heading = if step_mode {
-                    "Current derivation root:"
-                } else {
-                    "Current Dovetail result:"
+                // Rewrite graph (the `step` faithful small-step relation): the entry node is the
+                // initial program state and edges are one-step rewrite successors. The
+                // derivation graph (other Dovetail callers): the entry node is the derivation root
+                // and edges are dependency children.
+                let heading = match (step_mode, is_rewrite_graph) {
+                    (true, true) => "Current term (initial):",
+                    (true, false) => "Current derivation root:",
+                    (false, _) => "Current Dovetail result:",
                 };
                 println!("{}", heading.bold());
                 println!("{}", format_term_pretty(&current.display).cyan());
@@ -2321,14 +2438,27 @@ impl Repl {
                     .filter(|edge| edge.from_id == current.id)
                     .count();
                 if step_mode {
-                    if available > 0 {
-                        println!(
-                            "  Use {} to inspect a derivation dependency ({} available).",
-                            "apply 0".cyan(),
-                            available
-                        );
-                    } else {
-                        println!("  No derivation dependencies from this node.");
+                    match (is_rewrite_graph, available) {
+                        (true, 0) => {
+                            println!("  No rewrites from this term (already a normal form).");
+                        },
+                        (true, n) => {
+                            println!(
+                                "  Use {} to apply a rewrite ({} available).",
+                                "apply 0".cyan(),
+                                n
+                            );
+                        },
+                        (false, 0) => {
+                            println!("  No derivation dependencies from this node.");
+                        },
+                        (false, n) => {
+                            println!(
+                                "  Use {} to inspect a derivation dependency ({} available).",
+                                "apply 0".cyan(),
+                                n
+                            );
+                        },
                     }
                 }
 

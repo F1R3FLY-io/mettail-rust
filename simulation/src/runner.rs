@@ -1370,8 +1370,8 @@ mod tests {
     use mettail_runtime::{
         AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackend,
         RuntimeBackendArtifact, RuntimeBackendReport, RuntimeChannelObservation,
-        RuntimeDovetailCompleteness, RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
-        RuntimeObservationValue, Term, TermType, VarTypeInfo,
+        RuntimeDovetailCompleteness, RuntimeDovetailGraphKind, RuntimeDovetailRunReport,
+        RuntimeDovetailTermRecord, RuntimeObservationValue, Term, TermType, VarTypeInfo,
     };
     use std::any::Any;
 
@@ -1527,6 +1527,7 @@ mod tests {
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
+            graph_kind: RuntimeDovetailGraphKind::Derivation,
         }
     }
 

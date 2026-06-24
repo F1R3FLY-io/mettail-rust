@@ -455,6 +455,31 @@ pub struct RuntimeDovetailRunReport {
     pub derivation_edges: Vec<RuntimeDovetailDerivationEdge>,
     pub rule_firings: Vec<RuntimeDovetailRuleFiring>,
     pub completeness: RuntimeDovetailCompleteness,
+    /// What the [`derivation_edges`](Self::derivation_edges) relation MEANS, so a consumer can
+    /// project the right navigable graph. Production `exec` reports and the legacy step-display
+    /// producer leave this [`Derivation`](RuntimeDovetailGraphKind::Derivation) (the default — the
+    /// per-term derivation-dependency DAG, edges = child positions of a term's funded-best
+    /// derivation). The REPL `step` rewrite-graph producer (`dovetail_step_graph`) sets it to
+    /// [`Rewrite`](RuntimeDovetailGraphKind::Rewrite): each term is a WHOLE program state and each
+    /// edge is a one-step rewrite successor (parent → child). The two shapes are projected
+    /// differently in the REPL; the field is the unambiguous discriminator.
+    pub graph_kind: RuntimeDovetailGraphKind,
+}
+
+/// What a [`RuntimeDovetailRunReport`]'s edge relation encodes — see
+/// [`RuntimeDovetailRunReport::graph_kind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RuntimeDovetailGraphKind {
+    /// Edges are derivation dependencies: `child_index` is a child position within a term's
+    /// funded-best derivation tree, and `terms` are the e-classes that derivation references.
+    /// This is the default and the only shape production `exec` ever produces.
+    #[default]
+    Derivation,
+    /// Edges are one-step rewrite successors: `parent_key → child_key` means "the parent program
+    /// state rewrites in one small step to the child state". `terms` are whole program states
+    /// (each `source_display` rendered), `root_ordinals` is the single entry state, and a state
+    /// with no outgoing edge is a normal form. Produced only by the step-only rewrite enumerator.
+    Rewrite,
 }
 
 impl RuntimeDovetailRunReport {
@@ -775,6 +800,15 @@ impl RuntimeBackendReport {
             RuntimeBackendOutput::Ascent(_) => None,
             RuntimeBackendOutput::Dovetail(_) => None,
             RuntimeBackendOutput::Observations(_) => None,
+        }
+    }
+
+    pub fn as_dovetail(&self) -> Option<&RuntimeDovetailRunReport> {
+        match &self.output {
+            RuntimeBackendOutput::Dovetail(report) => Some(report),
+            RuntimeBackendOutput::Ascent(_) => None,
+            RuntimeBackendOutput::Observations(_) => None,
+            RuntimeBackendOutput::ReductionTrace(_) => None,
         }
     }
 
@@ -2451,6 +2485,7 @@ mod tests {
                 count: 2,
             }],
             completeness: RuntimeDovetailCompleteness::Complete,
+            graph_kind: RuntimeDovetailGraphKind::Derivation,
         }
     }
 

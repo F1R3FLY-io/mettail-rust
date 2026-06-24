@@ -312,6 +312,26 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                         result.normalize()
                     }
 
+                    /// Like [`substitute_env`](Self::substitute_env) but WITHOUT the final
+                    /// [`normalize`](Self::normalize) — it substitutes every environment-bound free
+                    /// variable (to a name-match fixpoint) and unifies FreeVar IDs, but performs NO
+                    /// constant folding / β-reduction / collection flattening, so the surface term
+                    /// TREE is preserved. This is the structure-preserving substitution the REPL
+                    /// `step` command needs: a term such as `1 + 2 * 3` keeps its operator tree
+                    /// (rather than collapsing to `7`) so the stepper can show each reduction as a
+                    /// navigable one-step rewrite. Backs `substitute_env_preserve_structure`.
+                    pub fn substitute_env_no_normalize(&self, env: &#env_name) -> Self {
+                        let mut result = self.clone();
+                        for _ in 0..100 {
+                            let prev_str = format!("{}", result);
+                            #(#all_subst_calls)*
+                            if format!("{}", result) == prev_str {
+                                break;
+                            }
+                        }
+                        result.unify_freevars()
+                    }
+
                     #(#subst_by_name_methods)*
 
                     /// Unify FreeVar IDs by pretty_name using the global

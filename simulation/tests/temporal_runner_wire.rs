@@ -32,8 +32,8 @@ use std::any::Any;
 
 use mettail_runtime::{
     AscentResults, BackendCapabilityDef, Language, LanguageMetadata, RuntimeBackend,
-    RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailRunReport,
-    RuntimeDovetailTermRecord, Term, TermType, VarTypeInfo,
+    RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailGraphKind,
+    RuntimeDovetailRunReport, RuntimeDovetailTermRecord, Term, TermType, VarTypeInfo,
 };
 use mettail_simulation::results::CampaignResults;
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
@@ -142,6 +142,7 @@ fn single_root_report(op_display: &str) -> RuntimeDovetailRunReport {
         derivation_edges: Vec::new(),
         rule_firings: Vec::new(),
         completeness: RuntimeDovetailCompleteness::Complete,
+        graph_kind: RuntimeDovetailGraphKind::Derivation,
     }
 }
 

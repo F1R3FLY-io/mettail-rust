@@ -352,12 +352,13 @@ fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, 
     )
 }
 
-/// The step-only Dovetail report producer for RhoCalc — same saturation as
-/// [`rhocalc_dovetail_report`], but each term record carries reconstructed source syntax
-/// (`source_display`) for comprehensible REPL `step` display. Reached only via the `step` path
+/// The step-only Dovetail producer for RhoCalc — the REPL `step` navigable one-step REWRITE-step
+/// graph (Increment 4): each node is a whole program state in source syntax, each edge a one-step
+/// rewrite successor (structural `Exec`/`QuoteDrop`/`Extrude` + folds; host-routed COMM is NOT in
+/// this graph), and a node with no successor is a normal form. Reached only via the `step` path
 /// (`Language::run_step_backend_report`); production `exec` uses `rhocalc_dovetail_report`.
-fn rhocalc_dovetail_step_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
-    RhoCalcLanguage::dovetail_step_report(
+fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+    RhoCalcLanguage::dovetail_step_graph(
         term,
         RHOCALC_DOVETAIL_MAX_ITERS,
         RHOCALC_DOVETAIL_MAX_NODES,
@@ -420,7 +421,7 @@ pub fn dovetail_rho_backed_rhocalc(
         RhocalcAstRuntimeLanguage,
         backend,
         rhocalc_dovetail_report,
-        rhocalc_dovetail_step_report,
+        rhocalc_dovetail_step_graph,
         invocation,
     )
     .map_err(|err| format!("RhoCalc Dovetail+Rho backend install failed: {err:?}"))?;

@@ -249,8 +249,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use mettail_runtime::{
-        RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailRunReport,
-        RuntimeDovetailTermRecord,
+        RuntimeBackendReport, RuntimeDovetailCompleteness, RuntimeDovetailGraphKind,
+        RuntimeDovetailRunReport, RuntimeDovetailTermRecord,
     };
 
     use super::*;
@@ -271,6 +271,7 @@ mod tests {
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
+            graph_kind: RuntimeDovetailGraphKind::Derivation,
         })
         .expect("sample Dovetail report is shape-valid")
     }

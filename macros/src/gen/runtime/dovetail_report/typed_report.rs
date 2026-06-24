@@ -921,6 +921,473 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     }
 }
 
+/// (Increment 4) Generate `dovetail_step_graph` — the REPL `step` command's navigable, one-step
+/// REWRITE-step graph producer.
+///
+/// Our Dovetail e-graph is congruence CLOSURE: it merges equal terms and retains NO term→term
+/// rewrite relation (the retired Ascent engine had one). So a navigable rewrite graph cannot be
+/// read off a saturation; it is RECONSTRUCTED step-only by a lazy small-step enumerator that, given
+/// a program state `T`, lowers `T` into a FRESH unsaturated e-graph, extracts its funded-best
+/// derivation `D_T`, then for every redex match of every structural [`RewriteRule`] AND every
+/// fold/substitution [`NativeRule`] builds the rule's RHS class on that same fresh graph
+/// (`instantiate` for structural, the native `dispatch` for native), extracts the RHS derivation,
+/// and SPLICES it into `D_T` at every subtree whose canonical e-class equals the matched redex's
+/// (per-class, faithful to the e-graph). Each spliced tree reconstructs (via the generated
+/// `__mettail_dovetail_build_<cat>_d`) to a whole successor program state; deduped by rendered
+/// source these are `T`'s one-step successors. A bounded BFS over successors yields the whole
+/// navigable graph; a state with no successor is a normal form.
+///
+/// Splicing reads only `op`/`children` through the reconstructor, so the spliced nodes' `key`/
+/// `weight` are irrelevant (carried forward verbatim). `search`/`instantiate`/`dispatch`/`rebuild`
+/// add nodes and canonicalize but NEVER merge (merging happens only inside `saturate_with_native`),
+/// so `D_T` stays the pristine current state and a matched class's canonical id is stable across the
+/// enumeration loop.
+///
+/// This path is reached ONLY from the REPL `step` routing (via `Language::run_step_backend_report`
+/// → the wrapper's `step_compiler`); production `exec` (`dovetail_report_for`) never calls it, so it
+/// costs `exec` nothing and the exec report is byte-identical.
+fn generate_step_graph(language: &LanguageDef) -> TokenStream {
+    let enum_id = op_enum_ident(language);
+    let term_name = format_ident!("{}Term", language.name);
+    let inner_enum = format_ident!("{}TermInner", language.name);
+    let language_lit = lit(&language.name.to_string());
+
+    let typed_category_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
+        .collect();
+    let reconstruct_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
+        .collect();
+
+    let folds = collect_fold_rules(language);
+    let substs = collect_substitution_rules(language, folds.len());
+    let helpers = generate_helpers(language, &folds, &substs);
+    let (native_rules_expr, dispatch) =
+        generate_native_rules_and_dispatch(language, &folds, &substs);
+    let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
+
+    let primary_cat = &language.types.first().expect("language has a type").name;
+    let primary_add = category_lowering_fn(primary_cat);
+    let primary_build = build_fn(primary_cat);
+
+    let multi = language.types.len() > 1;
+
+    // Per-category lowering arms (inner-enum alt → its category's e-class root) and reconstruction
+    // arms (category index → `build_<cat>_d` then re-wrap into the inner enum). For a single-type
+    // language `<Lang>Term` wraps the primary category directly (no inner enum), so the alt loop and
+    // category dispatch collapse to the one primary category.
+    let (
+        // Returns `Vec<(typed_alt_for_lowering, cat_idx)>` for the input term.
+        alts_expr,
+        // `fn __step_lower(eg, alt, cat_idx) -> EClassId`
+        lower_fn,
+        // `fn __step_build(cat_idx, &Rc<Derivation>) -> Option<TypedTermForKeying>`
+        build_fn_def,
+        // `fn __step_render(&TypedTermForKeying) -> String`
+        render_fn,
+        // the Rust type the BFS frontier/successors carry (`<Lang>TermInner` or `<primary>`)
+        node_ty,
+    ) = if multi {
+        let lower_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .enumerate()
+            .map(|(idx, ty)| {
+                let cat = &ty.name;
+                let add_fn = category_lowering_fn(cat);
+                let idx = idx as u32;
+                quote! {
+                    (#idx, #inner_enum::#cat(__v)) => #add_fn(__eg, __v),
+                }
+            })
+            .collect();
+        let build_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .enumerate()
+            .map(|(idx, ty)| {
+                let cat = &ty.name;
+                let build = build_fn(cat);
+                let idx = idx as u32;
+                quote! {
+                    #idx => #build(__d).map(#inner_enum::#cat),
+                }
+            })
+            .collect();
+        // Map each inner-enum alternative to its declared category index (so `__step_lower` /
+        // `__step_build` can route it). `Ambiguous` is impossible here — `all_alts()` returns flat
+        // alternatives, never a nested `Ambiguous`.
+        let idx_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .enumerate()
+            .map(|(idx, ty)| {
+                let cat = &ty.name;
+                let idx = idx as u32;
+                quote! { #inner_enum::#cat(_) => #idx, }
+            })
+            .collect();
+        let alts = quote! {
+            {
+                let mut __out: Vec<(#inner_enum, u32)> = Vec::new();
+                for __alt in __input.all_alts() {
+                    let __idx: u32 = match __alt {
+                        #(#idx_arms)*
+                        #inner_enum::Ambiguous(_) => unreachable!(
+                            "all_alts() returns flat alternatives, not nested Ambiguous"
+                        ),
+                    };
+                    __out.push((::core::clone::Clone::clone(__alt), __idx));
+                }
+                __out
+            }
+        };
+        let lower = quote! {
+            fn __step_lower(
+                __eg: &mut ::dovetail::egraph::EGraph<#enum_id>,
+                __alt: &#inner_enum,
+                __cat_idx: u32,
+            ) -> ::dovetail::egraph::EClassId {
+                match (__cat_idx, __alt) {
+                    #(#lower_arms)*
+                    _ => unreachable!("category index does not match the alternative"),
+                }
+            }
+        };
+        let build = quote! {
+            fn __step_build(
+                __cat_idx: u32,
+                __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
+            ) -> ::core::option::Option<#inner_enum> {
+                match __cat_idx {
+                    #(#build_arms)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        };
+        let render = quote! {
+            fn __step_render(__n: &#inner_enum) -> String {
+                format!("{}", #term_name(__n.clone()))
+            }
+        };
+        (alts, lower, build, render, quote! { #inner_enum })
+    } else {
+        // Single-type: one category, index 0; `<Lang>Term` wraps the primary category directly.
+        let alts = quote! {
+            { vec![(::core::clone::Clone::clone(__input), 0u32)] }
+        };
+        let lower = quote! {
+            fn __step_lower(
+                __eg: &mut ::dovetail::egraph::EGraph<#enum_id>,
+                __alt: &#primary_cat,
+                _cat_idx: u32,
+            ) -> ::dovetail::egraph::EClassId {
+                #primary_add(__eg, __alt)
+            }
+        };
+        let build = quote! {
+            fn __step_build(
+                _cat_idx: u32,
+                __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
+            ) -> ::core::option::Option<#primary_cat> {
+                #primary_build(__d)
+            }
+        };
+        let render = quote! {
+            fn __step_render(__n: &#primary_cat) -> String {
+                format!("{}", #term_name(::core::clone::Clone::clone(__n)))
+            }
+        };
+        (alts, lower, build, render, quote! { #primary_cat })
+    };
+
+    quote! {
+        /// (Increment 4) Build the navigable one-step REWRITE-step graph for `term` and project it
+        /// as a [`RuntimeDovetailRunReport`] whose `graph_kind` is
+        /// [`RuntimeDovetailGraphKind::Rewrite`]. Each term record is a whole program STATE rendered
+        /// in source syntax (`source_display`); each edge is a one-step rewrite successor
+        /// (`parent → child`). The single entry state is the report root; a state with no outgoing
+        /// edge is a normal form. Step-only — production `exec` never reaches it.
+        pub fn dovetail_step_graph(
+            term: &dyn mettail_runtime::Term,
+            max_iters: usize,
+            max_nodes: usize,
+        ) -> Result<mettail_runtime::RuntimeDovetailRunReport, String> {
+            let typed_term = term
+                .as_any()
+                .downcast_ref::<#term_name>()
+                .ok_or_else(|| format!("expected {}Term, got {:?}", #language_lit, term))?;
+
+            #(#typed_category_fns)*
+            #(#reconstruct_fns)*
+            #helpers
+
+            #lower_fn
+            #build_fn_def
+            #render_fn
+
+            // Per-class splice: replace every subtree of `__d` whose canonical e-class is `__target`
+            // with `__repl`. `key`/`weight` of rebuilt interior nodes are carried forward verbatim —
+            // the reconstructor reads only `op`/`children`, so they are irrelevant to the result.
+            fn __step_splice(
+                __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
+                __target: ::dovetail::egraph::EClassId,
+                __repl: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
+                __eg: &::dovetail::egraph::EGraph<#enum_id>,
+            ) -> ::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>> {
+                if __eg.find(__d.class) == __target {
+                    return ::std::rc::Rc::clone(__repl);
+                }
+                ::std::rc::Rc::new(::dovetail::extract::Derivation {
+                    op: ::core::clone::Clone::clone(&__d.op),
+                    class: __d.class,
+                    children: __d
+                        .children
+                        .iter()
+                        .map(|__c| __step_splice(__c, __target, __repl, __eg))
+                        .collect(),
+                    weight: ::core::clone::Clone::clone(&__d.weight),
+                    key: ::core::clone::Clone::clone(&__d.key),
+                })
+            }
+
+            // The whole-state one-step successors of `__alt` (a single typed alternative under
+            // category `__cat_idx`): lower it into a FRESH unsaturated e-graph, extract `D_T`, and
+            // for every redex match of every rule splice the rule's RHS derivation into `D_T`, then
+            // reconstruct the whole spliced state. Returns `(rule label, successor state)` pairs.
+            let __successors_of_alt = |__alt: &#node_ty, __cat_idx: u32, __max_nodes: usize|
+              -> Vec<(::core::option::Option<String>, #node_ty)> {
+                let mut __succ: Vec<(::core::option::Option<String>, #node_ty)> = Vec::new();
+                let mut __eg = ::dovetail::egraph::EGraph::<#enum_id>::with_config(
+                    ::dovetail::egraph::EGraphConfig { max_nodes: __max_nodes },
+                );
+                let __r0 = __step_lower(&mut __eg, __alt, __cat_idx);
+                __eg.rebuild();
+                let __d_t = {
+                    let mut __ex = ::dovetail::extract::Extractor::new(&__eg, __weigh);
+                    __ex.funded_best(__eg.find(__r0)).value
+                };
+                let ::core::option::Option::Some(__d_t) = __d_t else {
+                    return __succ;
+                };
+
+                let __push_succ = |
+                    __succ: &mut Vec<(::core::option::Option<String>, #node_ty)>,
+                    __eg: &::dovetail::egraph::EGraph<#enum_id>,
+                    __redex: ::dovetail::egraph::EClassId,
+                    __rhs_id: ::dovetail::egraph::EClassId,
+                    __label: ::core::option::Option<String>,
+                | {
+                    let __d_rhs = {
+                        let mut __ex = ::dovetail::extract::Extractor::new(__eg, __weigh);
+                        __ex.funded_best(__eg.find(__rhs_id)).value
+                    };
+                    let ::core::option::Option::Some(__d_rhs) = __d_rhs else {
+                        return;
+                    };
+                    let __spliced =
+                        __step_splice(&__d_t, __eg.find(__redex), &__d_rhs, __eg);
+                    if let ::core::option::Option::Some(__state) = __step_build(__cat_idx, &__spliced) {
+                        // A successor identical to the source under rendering is not a step (e.g. a
+                        // rule that re-derives the same term); drop it so a fixpoint is a real
+                        // normal form rather than a self-loop.
+                        if __step_render(&__state) != __step_render(__alt) {
+                            __succ.push((__label, __state));
+                        }
+                    }
+                };
+
+                // Structural rewrite rules: instantiate the RHS pattern on the fresh graph. The
+                // explicit type lets `vec![]` (a language with no structural rewrites, e.g. Lambda)
+                // infer; with rules the element type already matches.
+                let __rules: Vec<::dovetail::rules::RewriteRule<#enum_id>> = #rules_expr;
+                for __rule in &__rules {
+                    for (__c, __subst) in __eg.search(&__rule.lhs) {
+                        if let ::core::option::Option::Some(__rhs_id) =
+                            __eg.instantiate(&__rule.rhs, &__subst)
+                        {
+                            __eg.rebuild();
+                            __push_succ(&mut __succ, &__eg, __c, __rhs_id, __rule.label.clone());
+                        }
+                    }
+                }
+
+                // Native (fold / substitution) rules: the generated dispatcher computes the RHS
+                // class from the matched substitution (the same computation saturation uses).
+                let __native_rules: Vec<::dovetail::rules::NativeRule<#enum_id>> = #native_rules_expr;
+                let __dispatch = #dispatch;
+                for __nrule in &__native_rules {
+                    for (__c, __subst) in __eg.search(&__nrule.lhs) {
+                        if let ::core::option::Option::Some(__rhs_id) =
+                            __dispatch(__nrule.op, &mut __eg, &__subst)
+                        {
+                            __eg.rebuild();
+                            __push_succ(&mut __succ, &__eg, __c, __rhs_id, __nrule.label.clone());
+                        }
+                    }
+                }
+
+                __succ
+            };
+
+            // The one-step successors of a whole program STATE: union the successors over each of its
+            // parse alternatives, deduped by rendered source (a node is its source string).
+            let __successors_of_state = |__state: &#node_ty, __max_nodes: usize|
+              -> Vec<(::core::option::Option<String>, #node_ty)> {
+                let mut __out: Vec<(::core::option::Option<String>, #node_ty)> = Vec::new();
+                let mut __seen: ::std::collections::HashSet<String> =
+                    ::std::collections::HashSet::new();
+                let __alts: Vec<(#node_ty, u32)> = {
+                    let __input = __state;
+                    #alts_expr
+                };
+                for (__alt, __cat_idx) in &__alts {
+                    for (__label, __next) in __successors_of_alt(__alt, *__cat_idx, __max_nodes) {
+                        if __seen.insert(__step_render(&__next)) {
+                            __out.push((__label, __next));
+                        }
+                    }
+                }
+                __out
+            };
+
+            // Bounded BFS over states, keyed by rendered source. `__nodes` preserves discovery order
+            // (entry first) so ordinals are stable; `__edges` are (from-source, to-source, label).
+            const MAX_STEP_NODES: usize = 256;
+            const MAX_STEP_DEPTH: usize = 64;
+            // `max_iters` is a per-term saturation floor for the report/normal-form paths; the
+            // small-step BFS is bounded by `MAX_STEP_NODES`/`MAX_STEP_DEPTH` instead, so it is unused
+            // here (kept in the signature for a uniform stepper API across languages).
+            let _ = max_iters;
+
+            let __entry: #node_ty = {
+                let __input = &typed_term.0;
+                ::core::clone::Clone::clone(__input)
+            };
+            let __entry_src = __step_render(&__entry);
+
+            let mut __order: Vec<String> = Vec::new();
+            let mut __states: ::std::collections::HashMap<String, #node_ty> =
+                ::std::collections::HashMap::new();
+            let mut __depth: ::std::collections::HashMap<String, usize> =
+                ::std::collections::HashMap::new();
+            let mut __edges: Vec<(String, String, ::core::option::Option<String>)> = Vec::new();
+            let mut __edge_seen: ::std::collections::HashSet<(String, String)> =
+                ::std::collections::HashSet::new();
+            let mut __queue: ::std::collections::VecDeque<String> =
+                ::std::collections::VecDeque::new();
+
+            __order.push(__entry_src.clone());
+            __states.insert(__entry_src.clone(), __entry);
+            __depth.insert(__entry_src.clone(), 0);
+            __queue.push_back(__entry_src.clone());
+
+            while let ::core::option::Option::Some(__cur_src) = __queue.pop_front() {
+                let __cur_depth = *__depth.get(&__cur_src).unwrap_or(&0);
+                if __cur_depth >= MAX_STEP_DEPTH {
+                    continue;
+                }
+                let __cur_state = match __states.get(&__cur_src) {
+                    ::core::option::Option::Some(__s) => ::core::clone::Clone::clone(__s),
+                    ::core::option::Option::None => continue,
+                };
+                for (__label, __next) in __successors_of_state(&__cur_state, max_nodes) {
+                    let __next_src = __step_render(&__next);
+                    if !__states.contains_key(&__next_src) {
+                        if __order.len() >= MAX_STEP_NODES {
+                            // Node budget hit: record no further new states (and so no edges into
+                            // them), keeping the graph bounded. Existing edges remain valid.
+                            continue;
+                        }
+                        __order.push(__next_src.clone());
+                        __states.insert(__next_src.clone(), __next);
+                        __depth.insert(__next_src.clone(), __cur_depth + 1);
+                        __queue.push_back(__next_src.clone());
+                    }
+                    if __edge_seen.insert((__cur_src.clone(), __next_src.clone())) {
+                        __edges.push((__cur_src.clone(), __next_src.clone(), __label));
+                    }
+                }
+            }
+
+            // Project the BFS into a `RuntimeDovetailRunReport`. Each distinct state is one term
+            // record (ordinal = discovery order, key = its source bytes — unique because states are
+            // keyed by source); the entry state is the single root (`is_root` only on it, so
+            // `validate_shape` holds — normal-form-ness is recovered in the REPL from the absence of
+            // outgoing edges). `op_display` = `source_display` = the rendered source.
+            let mut __key_of: ::std::collections::HashMap<String, Vec<u8>> =
+                ::std::collections::HashMap::with_capacity(__order.len());
+            let mut __ordinal_of: ::std::collections::HashMap<String, usize> =
+                ::std::collections::HashMap::with_capacity(__order.len());
+            let mut __terms: Vec<mettail_runtime::RuntimeDovetailTermRecord> =
+                Vec::with_capacity(__order.len());
+            for (__ordinal, __src) in __order.iter().enumerate() {
+                let __key = __src.clone().into_bytes();
+                __key_of.insert(__src.clone(), __key.clone());
+                __ordinal_of.insert(__src.clone(), __ordinal);
+                __terms.push(mettail_runtime::RuntimeDovetailTermRecord {
+                    ordinal: __ordinal,
+                    class_id: __ordinal as u32,
+                    key: __key,
+                    op_display: __src.clone(),
+                    weight_display: String::new(),
+                    is_root: __ordinal == 0,
+                    source_display: ::core::option::Option::Some(__src.clone()),
+                });
+            }
+
+            let __entry_key = __key_of
+                .get(&__entry_src)
+                .cloned()
+                .ok_or_else(|| format!(
+                    "generated Dovetail step graph for language {} lost its entry state",
+                    #language_lit,
+                ))?;
+
+            let mut __derivation_edges: Vec<mettail_runtime::RuntimeDovetailDerivationEdge> =
+                Vec::with_capacity(__edges.len());
+            for (__ordinal, (__from, __to, _label)) in __edges.iter().enumerate() {
+                let (::core::option::Option::Some(__parent_key), ::core::option::Option::Some(__child_key)) =
+                    (__key_of.get(__from), __key_of.get(__to))
+                else {
+                    continue;
+                };
+                // `child_index` = the successor's ordinal among the parent's outgoing edges (a stable
+                // per-edge index for the navigable menu).
+                let __child_index = __derivation_edges
+                    .iter()
+                    .filter(|__e| &__e.parent_key == __parent_key)
+                    .count();
+                __derivation_edges.push(mettail_runtime::RuntimeDovetailDerivationEdge {
+                    ordinal: __ordinal,
+                    parent_key: __parent_key.clone(),
+                    child_key: __child_key.clone(),
+                    child_index: __child_index,
+                });
+            }
+
+            let __report = mettail_runtime::RuntimeDovetailRunReport {
+                roots: vec![__entry_key],
+                root_ordinals: vec![0],
+                terms: __terms,
+                derivation_edges: __derivation_edges,
+                rule_firings: Vec::new(),
+                completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
+                graph_kind: mettail_runtime::RuntimeDovetailGraphKind::Rewrite,
+            };
+            __report.validate_shape().map_err(|err| format!(
+                "generated Dovetail step graph for language {} is malformed: {err}",
+                #language_lit,
+            ))?;
+            Ok(__report)
+        }
+    }
+}
+
 /// Generate the full typed `impl <Lang>Language { dovetail_report_for, dovetail_compiler_stage }`
 /// + the op-enum, for a fold-bearing language.
 pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStream {
@@ -1045,6 +1512,11 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     } else {
         TokenStream::new()
     };
+
+    // (Increment 4) The REPL `step` navigable one-step rewrite-graph producer. Emitted for every
+    // fold-bearing language (its only caller is the REPL `step` path); production `exec` never
+    // reaches it.
+    let step_graph_method = generate_step_graph(language);
 
     quote! {
         // `op_enum_decl` carries `#[cfg(feature = "dovetail-codegen")]` on each of its items.
@@ -1190,6 +1662,8 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
             }
 
             #normal_term_method
+
+            #step_graph_method
         }
     }
 }

@@ -16,8 +16,9 @@ use dovetail::extract::ExtractionCompleteness;
 use dovetail::report::DovetailRunReport;
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendCapability, RuntimeBackendReport,
-    RuntimeDovetailCompleteness, RuntimeDovetailDerivationEdge, RuntimeDovetailReportError,
-    RuntimeDovetailRuleFiring, RuntimeDovetailRunReport, RuntimeDovetailTermRecord, SeedFacts,
+    RuntimeDovetailCompleteness, RuntimeDovetailDerivationEdge, RuntimeDovetailGraphKind,
+    RuntimeDovetailReportError, RuntimeDovetailRuleFiring, RuntimeDovetailRunReport,
+    RuntimeDovetailTermRecord, SeedFacts,
     Term, TermType, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
 };
 
@@ -79,6 +80,10 @@ where
                 RuntimeDovetailCompleteness::BoundedByCycleCut
             },
         },
+        // The substrate projection is always the per-term derivation-dependency DAG. The step-only
+        // rewrite-graph producer builds its `Rewrite` report separately (in generated code), not
+        // through this projection.
+        graph_kind: RuntimeDovetailGraphKind::Derivation,
     }
 }
 
@@ -220,6 +225,7 @@ where
         derivation_edges: Vec::new(),
         rule_firings: Vec::new(),
         completeness: RuntimeDovetailCompleteness::Complete,
+        graph_kind: RuntimeDovetailGraphKind::Derivation,
     };
     report
         .validate_shape()
@@ -803,6 +809,7 @@ mod tests {
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
             completeness: RuntimeDovetailCompleteness::BoundedByCycleCut,
+            graph_kind: RuntimeDovetailGraphKind::Derivation,
         }
     }
 
