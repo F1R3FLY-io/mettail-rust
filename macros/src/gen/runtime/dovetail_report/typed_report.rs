@@ -996,6 +996,46 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // early on a zero-merge pass.
     let struct_slack = language.equations.len() * 2 + language.rewrites.len() + 8;
 
+    // Step-only source reconstruction (powers `source_display` on the step report). `__source_of`
+    // tries each category's `build_<cat>_d` reconstructor (each self-filters by `__d.op`, so the
+    // matching category returns `Some`) and renders the typed term via its source-syntax `Display`.
+    // `__collect_sources` walks a derivation tree, recording one source string per exact
+    // `ContentKey`. Emitted into the report impl; only invoked when `record_source`.
+    let source_attempts: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| {
+            let bf = reconstruct::build_fn(&ty.name);
+            quote! {
+                if let ::core::option::Option::Some(__t) = #bf(__d) {
+                    return ::core::option::Option::Some(format!("{}", __t));
+                }
+            }
+        })
+        .collect();
+    let source_helpers = quote! {
+        fn __source_of(
+            __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
+        ) -> ::core::option::Option<String> {
+            #(#source_attempts)*
+            ::core::option::Option::None
+        }
+        fn __collect_sources(
+            __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
+            __map: &mut ::std::collections::HashMap<Vec<u8>, String>,
+        ) {
+            let __k = __d.key.as_bytes().to_vec();
+            if !__map.contains_key(&__k) {
+                if let ::core::option::Option::Some(__s) = __source_of(__d) {
+                    __map.insert(__k, __s);
+                }
+            }
+            for __c in &__d.children {
+                __collect_sources(__c, __map);
+            }
+        }
+    };
+
     // (E2.2) The optional `dovetail_normal_term` method, emitted only when the MF7 gate
     // (`super::needs_normal_term`) holds. It reuses the saturation prologue and per-category
     // reconstruction verbatim, but returns the reduced term as a typed `Box<dyn Term>`
@@ -1012,12 +1052,16 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
 
         #[cfg(feature = "dovetail-codegen")]
         impl #language_struct {
-            /// Compile this language's generated typed AST into a checked runtime Dovetail
-            /// report, reducing `fold` rules in-engine via native rewrites (Increment 2/3).
-            pub fn dovetail_report_for(
+            /// Shared report builder. `record_source = false` is the production `exec` path —
+            /// byte-identical to the pre-step-feature build: no source reconstruction runs and every
+            /// `source_display` stays `None`. `record_source = true` is the step-only path, which
+            /// additionally reconstructs each derivation node's source syntax. The flag gates ALL the
+            /// extra work, so `exec` pays nothing for the stepper feature.
+            fn __dovetail_report_impl(
                 term: &dyn mettail_runtime::Term,
                 max_iters: usize,
                 max_nodes: usize,
+                record_source: bool,
             ) -> Result<mettail_runtime::RuntimeDovetailRunReport, String> {
                 let typed_term = term
                     .as_any()
@@ -1027,6 +1071,7 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                 #(#typed_category_fns)*
                 #(#reconstruct_fns)*
                 #helpers
+                #source_helpers
 
                 let mut eg = ::dovetail::egraph::EGraph::<#enum_id>::with_config(
                     ::dovetail::egraph::EGraphConfig { max_nodes },
@@ -1073,6 +1118,16 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     }
                 }
 
+                // Step-only: reconstruct each derivation node's source syntax, keyed by exact
+                // `ContentKey`. Skipped entirely when `record_source` is false ⇒ `exec` pays nothing.
+                let mut __source_map: ::std::collections::HashMap<Vec<u8>, String> =
+                    ::std::collections::HashMap::new();
+                if record_source {
+                    for __d in &__derivations {
+                        __collect_sources(__d, &mut __source_map);
+                    }
+                }
+
                 let report = ::dovetail::report::report_from_extraction_with_rule_firings(
                     ::dovetail::extract::Extraction {
                         value: __derivations,
@@ -1080,11 +1135,39 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     },
                     sat.rule_firings,
                 );
-                let runtime_report = ::mettail_dovetail_runtime::project_dovetail_report(&report);
+                let mut runtime_report =
+                    ::mettail_dovetail_runtime::project_dovetail_report(&report);
+                if record_source {
+                    for __term in &mut runtime_report.terms {
+                        __term.source_display = __source_map.get(&__term.key).cloned();
+                    }
+                }
                 runtime_report
                     .validate_shape()
                     .map_err(|err| format!("generated Dovetail report for language {} is malformed: {err}", #language_lit))?;
                 Ok(runtime_report)
+            }
+
+            /// Compile this language's generated typed AST into a checked runtime Dovetail
+            /// report, reducing `fold` rules in-engine via native rewrites (Increment 2/3). This is
+            /// the production `exec` path — byte-identical (`record_source = false`).
+            pub fn dovetail_report_for(
+                term: &dyn mettail_runtime::Term,
+                max_iters: usize,
+                max_nodes: usize,
+            ) -> Result<mettail_runtime::RuntimeDovetailRunReport, String> {
+                Self::__dovetail_report_impl(term, max_iters, max_nodes, false)
+            }
+
+            /// Step-only report: same saturation/extraction as `dovetail_report_for`, but each term
+            /// record carries its reconstructed source syntax (`source_display`) for comprehensible
+            /// `step` display. Never reached on the `exec` path.
+            pub fn dovetail_step_report(
+                term: &dyn mettail_runtime::Term,
+                max_iters: usize,
+                max_nodes: usize,
+            ) -> Result<mettail_runtime::RuntimeDovetailRunReport, String> {
+                Self::__dovetail_report_impl(term, max_iters, max_nodes, true)
             }
 
             /// Installable Dovetail compiler stage for this generated language.
