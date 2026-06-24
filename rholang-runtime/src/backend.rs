@@ -1554,6 +1554,12 @@ where
     ) -> Result<Box<dyn mettail_runtime::ReductionStepper>, String> {
         let dovetail_report =
             checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
+        // Tier-3: bracket the lowering so we can collect any held-fold contract sites it records
+        // (rhocalc only; empty for Calculator). The `rhocalc-runtime` cfg is the dependency boundary
+        // that defines the fold-contract types — NOT a behavior gate (off-by-default is the lean
+        // build that lacks the rhocalc lowering entirely).
+        #[cfg(feature = "rhocalc-runtime")]
+        crate::rhocalc_ast::clear_held_fold_sites();
         let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
             format!(
                 "live single-step for language {} could not build an AST invocation from the \
@@ -1572,7 +1578,16 @@ where
                     Some(contracts) => contracts.append(call.clone()),
                     None => call.clone(),
                 };
-                let session = crate::step::StepSession::start(program, Vec::new())?;
+                // The held-fold contract `Definition`s the lifted call targets (empty unless the
+                // term had a fold over a COMM-received value).
+                #[cfg(feature = "rhocalc-runtime")]
+                let fold_defs = crate::fold_contract::fold_definitions_for(
+                    &crate::rhocalc_ast::take_held_fold_sites(),
+                );
+                #[cfg(not(feature = "rhocalc-runtime"))]
+                let fold_defs: Vec<rholang::rust::interpreter::system_processes::Definition> =
+                    Vec::new();
+                let session = crate::step::StepSession::start(program, fold_defs)?;
                 Ok(Box::new(session))
             },
             None => Err(format!(

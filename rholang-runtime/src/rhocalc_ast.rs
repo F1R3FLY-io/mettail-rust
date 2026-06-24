@@ -625,6 +625,24 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         Proc::CastList(value) => lower_list(value.as_ref(), env),
         Proc::CastBag(value) => lower_bag(value.as_ref(), env),
         Proc::CastMap(value) => lower_map(value.as_ref(), env),
+        // Ground width folds (operand statically known — NOT bound by a COMM): run the EXACT native
+        // fold in place (`proc_*_bin` — the rule's own `![{…}]` body), recursively folding nested
+        // ground folds via the operand's own lowering (`int(int(5,8),16) → 5`). A HELD fold (operand
+        // bound by a receive) is lifted earlier in `lower_receive_body`; one reaching here was not in
+        // a receive body, so it stays unsupported. This replaces the prior reliance on the two-stage
+        // `dovetail_normal_term` fallback for ground folds — needed so a term that ALSO contains a
+        // held fold lowers in one pass (the fallback can't, since the held fold stays stuck).
+        Proc::IntBinProc(..)
+        | Proc::UIntBinProc(..)
+        | Proc::FloatBinProc(..)
+        | Proc::FixedBinProc(..) => match try_eval_fold_proc(proc) {
+            // Ground fold: reduced in place to a value leaf via the EXACT native fold (`proc_*_bin`,
+            // nested ground folds and all). A HELD fold (operand bound by a COMM receive) reduces to
+            // `None` here and is instead lifted to a trampoline in `lower_receive_body` before it
+            // reaches this point.
+            Some(folded) => lower_proc(&folded, env),
+            None => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
+        },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
     }
 }
@@ -656,12 +674,72 @@ fn fold_kind_of(proc: &Proc) -> Option<FoldKind> {
     }
 }
 
-/// An operand is *held* iff it lowers to a `Par` that depends on a bound variable (non-empty
-/// `locally_free`) — i.e. it becomes ground only after a COMM binds the variable. A statically
-/// ground operand (empty `locally_free`) is not held (it folds in place / via the D-stage); an
-/// operand that fails to lower is a genuine error (left to the existing `UnsupportedProc` path).
+/// Recursively reduce a *ground* width fold to its value-leaf `Proc` via the EXACT native folds
+/// (`proc_*_bin` — the rules' own `![{…}]` bodies), folding nested ground folds innermost-first
+/// (`int(int(5,8),16) → 5`). Returns `None` if any leaf is not a ground numeric value (e.g. a fold
+/// over a COMM-bound variable, which is instead lifted to a trampoline) or a fold errors
+/// (`Proc::Err`).
+fn try_eval_fold_proc(proc: &Proc) -> Option<Proc> {
+    use mettail_runtime::ProcToNumericInput;
+    match proc {
+        Proc::IntBinProc(a, w)
+        | Proc::UIntBinProc(a, w)
+        | Proc::FloatBinProc(a, w)
+        | Proc::FixedBinProc(a, w) => {
+            let reduced = try_eval_fold_proc(a.as_ref())?;
+            let width = w.as_ref().try_eval()?;
+            let folded = match fold_kind_of(proc)? {
+                FoldKind::Int => mettail_runtime::proc_int_bin::<Proc, i64>(&reduced, width),
+                FoldKind::UInt => mettail_runtime::proc_uint_bin::<Proc, i64>(&reduced, width),
+                FoldKind::Float => mettail_runtime::proc_float_bin::<Proc, i64>(&reduced, width),
+                FoldKind::Fixed => mettail_runtime::proc_fixed_bin::<Proc, i64>(&reduced, width),
+            };
+            (!matches!(folded, Proc::Err)).then_some(folded)
+        },
+        // A ground numeric value leaf reduces to itself (`proc_*_bin` consumes it directly).
+        _ if proc.to_numeric_input().is_some() => Some(proc.clone()),
+        _ => None,
+    }
+}
+
+/// An operand is *held* iff it references a name/proc variable bound in `env` — i.e. it becomes
+/// ground only after a COMM binds that variable. A statically ground operand (e.g. `int(5,8)`) is
+/// not held (it folds in place / via the D-stage); a free var not in `env` is a genuine error (left
+/// to the existing `UnsupportedProc` path). We test the AST, not `locally_free`, because a lowered
+/// bound var carries no `locally_free`.
 fn operand_is_held(operand: &Proc, env: &BoundEnv) -> bool {
-    matches!(lower_proc(operand, env), Ok(par) if !par.locally_free.is_empty())
+    proc_references_bound_var(operand, env)
+}
+
+/// Does `proc` reference a name/proc variable bound in `env`?
+fn proc_references_bound_var(proc: &Proc, env: &BoundEnv) -> bool {
+    match proc {
+        Proc::PDrop(name) => name_references_bound_var(name, env),
+        Proc::IntBinProc(a, _)
+        | Proc::UIntBinProc(a, _)
+        | Proc::FloatBinProc(a, _)
+        | Proc::FixedBinProc(a, _) => proc_references_bound_var(a, env),
+        Proc::POutput(name, payload) => {
+            name_references_bound_var(name, env) || proc_references_bound_var(payload, env)
+        },
+        Proc::PPar(parts) => {
+            parts.iter_elements().any(|part| proc_references_bound_var(part, env))
+        },
+        Proc::PVar(var) => var_is_bound(var, env),
+        _ => false,
+    }
+}
+
+fn name_references_bound_var(name: &Name, env: &BoundEnv) -> bool {
+    match name {
+        Name::NVar(var) => var_is_bound(var, env),
+        Name::NQuote(proc) => proc_references_bound_var(proc, env),
+        _ => false,
+    }
+}
+
+fn var_is_bound(var: &OrdVar, env: &BoundEnv) -> bool {
+    matches!(&var.0, Var::Free(free_var) if env.contains_key(free_var))
 }
 
 /// Find the first (innermost) held fold in `proc`, NOT descending into nested binders
@@ -805,10 +883,24 @@ fn lower_receive_body(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowe
 pub fn lower_rhocalc_term_with_folds(
     term: &dyn Term,
 ) -> Result<(Par, Vec<FoldSpec>), RhocalcAstLowerError> {
-    HELD_FOLD_SITES.with(|sites| sites.borrow_mut().clear());
+    clear_held_fold_sites();
     let par = lower_rhocalc_term(term)?;
-    let specs = HELD_FOLD_SITES.with(|sites| sites.borrow().clone());
-    Ok((par, specs))
+    Ok((par, take_held_fold_sites()))
+}
+
+/// Clear the held-fold session state. Call before a lowering whose fold contracts you intend to
+/// collect with [`take_held_fold_sites`], so stale sites from a prior lowering don't leak. Used by
+/// the wrapper's `start_reduction_stepper` / the exec path, which lower through the invocation
+/// compiler (not [`lower_rhocalc_term_with_folds`] directly).
+pub fn clear_held_fold_sites() {
+    HELD_FOLD_SITES.with(|sites| sites.borrow_mut().clear());
+}
+
+/// Take (and clear) the held-fold sites recorded since the last clear. Empty if the lowering had no
+/// held folds (e.g. Calculator, whose invocation compiler never lifts). The caller materializes the
+/// contracts with [`crate::fold_contract::fold_definitions_for`].
+pub fn take_held_fold_sites() -> Vec<FoldSpec> {
+    HELD_FOLD_SITES.with(|sites| std::mem::take(&mut *sites.borrow_mut()))
 }
 
 fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {

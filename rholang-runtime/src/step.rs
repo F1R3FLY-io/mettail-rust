@@ -352,6 +352,48 @@ mod tests {
     }
 
     #[test]
+    fn held_fold_lowering_emits_one_fold_contract_spec() {
+        // The held fold `int(*(x),8)` lifts (1 fold-spec); the ground send-side `int(5,8)` folds in
+        // place; the lifted call has the original send + receive.
+        let term = RhoCalcLanguage
+            .parse_term(r#"{ (@("c")?x).{ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
+            .expect("parse");
+        let (par, specs) = crate::rhocalc_ast::lower_rhocalc_term_with_folds(term.as_ref())
+            .expect("the held fold lifts, so lowering succeeds");
+        assert_eq!(specs.len(), 1, "one held fold ⇒ one fold-contract spec");
+        assert_eq!(specs[0].kind, crate::fold_contract::FoldKind::Int);
+        assert_eq!(specs[0].width, 8);
+        assert_eq!(par.sends.len(), 1, "the original `@(\"c\")!(5)` send");
+        assert_eq!(par.receives.len(), 1, "the original `@(\"c\")?x` receive");
+    }
+
+    #[test]
+    fn held_fold_over_comm_received_value_reduces_via_trampoline() {
+        // Tier-3 flagship: `int(*(x), 8)` whose operand `x` is bound by the COMM `receive` — stuck
+        // on Dovetail. The lowering lifts it to a fold-contract trampoline; stepping must show the
+        // receive/send COMM AND the fold-contract COMM(s), proving the held fold reduces on the Rho
+        // machine.
+        use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
+        let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
+        let term = RhoCalcLanguage
+            .parse_term(r#"{ (@("c")?x).{ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
+            .expect("parse held-fold term");
+        let mut stepper = language
+            .start_reduction_stepper(term.as_ref())
+            .expect("the held fold lifts to a COMM program, so a stepper starts");
+        let mut steps = Vec::new();
+        while let Some(step) = stepper.next_step().expect("next_step") {
+            steps.push(step);
+        }
+        assert!(
+            steps.len() >= 2,
+            "held-fold term yields the receive COMM + the fold-contract COMM; got {} step(s): {:?}",
+            steps.len(),
+            steps.iter().map(|s| &s.display).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn wrapper_rejects_pure_fold_term_for_stepping() {
         // A pure value/fold lowers to no COMM program ⇒ the wrapper fails to start a stepper, so
         // the REPL falls back to the Dovetail derivation graph (Layer 1).
