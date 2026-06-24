@@ -737,6 +737,26 @@ impl RhoBackendInvocation {
         }
     }
 
+    /// The program's observation channel for the Observe variants (`None` for the call-by-need /
+    /// deferred variants). The reactive single-stepper reads the resting value(s) on this channel
+    /// post-quiescence to surface the program's observable output as terminal `Output` step(s).
+    pub fn out_channel(&self) -> Option<&str> {
+        match self {
+            RhoBackendInvocation::RunAndObserveInts { out_channel }
+            | RhoBackendInvocation::RunAndObserveBools { out_channel }
+            | RhoBackendInvocation::RunAndObserveStrings { out_channel }
+            | RhoBackendInvocation::RunAndObserveRuntimeValues { out_channel }
+            | RhoBackendInvocation::RunWithCallAndObserveInts { out_channel, .. }
+            | RhoBackendInvocation::RunWithCallAndObserveBools { out_channel, .. }
+            | RhoBackendInvocation::RunWithCallAndObserveStrings { out_channel, .. }
+            | RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. } => {
+                Some(out_channel)
+            },
+            RhoBackendInvocation::RunCallByNeedThunk { .. }
+            | RhoBackendInvocation::DeferToDovetailReport => None,
+        }
+    }
+
     async fn execute(self, backend: &PlannedRhoBackend) -> Result<RuntimeBackendReport, String> {
         match self {
             RhoBackendInvocation::RunAndObserveInts { out_channel } => backend
@@ -1636,6 +1656,10 @@ where
                 self.name()
             )
         })?;
+        // The program's observation channel (e.g. RhoCalc's `"OUT"`); the stepper reads its resting
+        // value(s) post-quiescence to surface terminal output step(s). Extracted (owned) before the
+        // `program_par` borrow so it does not conflict with it.
+        let out_channel = invocation.out_channel().map(String::from);
         match invocation.program_par() {
             Some(call) => {
                 // Compose the call with the backend's persistent contracts (e.g. Calculator's E3
@@ -1650,7 +1674,8 @@ where
                 // The held-fold contract `Definition`s the lifted call targets (empty unless the
                 // term had a fold over a COMM-received value).
                 let fold_definitions = drain_pending_fold_definitions();
-                let session = crate::step::StepSession::start(program, fold_definitions)?;
+                let session =
+                    crate::step::StepSession::start(program, fold_definitions, out_channel)?;
                 Ok(Box::new(session))
             },
             None => Err(format!(

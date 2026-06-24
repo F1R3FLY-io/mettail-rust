@@ -638,6 +638,10 @@ pub enum RuntimeReductionKind {
     Bundle,
     /// A method call re-eval.
     Method,
+    /// A value resting on the observation channel at quiescence — the program's observable output.
+    /// Read from the tuplespace post-`inj` and scoped to the configured channel, so (unlike a
+    /// produce-time hook) it surfaces only the truly-resting output, never a consumed internal send.
+    Output,
 }
 
 impl RuntimeReductionKind {
@@ -650,6 +654,7 @@ impl RuntimeReductionKind {
             RuntimeReductionKind::New => "new",
             RuntimeReductionKind::Bundle => "bundle",
             RuntimeReductionKind::Method => "method",
+            RuntimeReductionKind::Output => "output",
         }
     }
 }
@@ -663,6 +668,10 @@ pub struct RuntimeCommEvent {
     pub consumed: Vec<String>,
     /// `"comm.consume"` or `"comm.produce"` — which side observed the COMM.
     pub label: String,
+    /// The firing receive's continuation body (e.g. `*x`), rendered — the receive side of the
+    /// rendezvous, surfaced so both the send and the receive are visible. `None` when the
+    /// continuation is not a `ParBody`.
+    pub continuation: Option<String>,
 }
 
 /// One reduction step in a live Rho-machine COMM trace (the reactive single-stepper).

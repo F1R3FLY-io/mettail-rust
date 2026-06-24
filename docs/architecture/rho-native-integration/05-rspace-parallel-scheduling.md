@@ -45,14 +45,14 @@ PlantUML source:
 
 ## Parallelism Sources
 
-| Source of parallelism | Rho/RSpace mechanism | Why it helps |
-|---|---|---|
-| independent subterms | `P | Q` parallel composition | independent branches can run as independent tasks |
-| independent channels | per-channel RSpace operations | unrelated rewrite families do not serialize globally |
-| multi-premise readiness | atomic joins | rule bodies fire only when all inputs are present |
-| persistent rules | contracts / persistent receives | rules stay installed instead of being re-created by a loop |
-| non-blocking outputs | sends continue immediately | producers do not wait for consumers unless encoded explicitly |
-| replay | event logs | nondeterministic runtime schedules can replay deterministically |
+| Source of parallelism   | Rho/RSpace mechanism            | Why it helps                                                    |
+|-------------------------|---------------------------------|-----------------------------------------------------------------|
+| independent subterms    | `P \| Q` parallel composition   | independent branches can run as independent tasks               |
+| independent channels    | per-channel RSpace operations   | unrelated rewrite families do not serialize globally            |
+| multi-premise readiness | atomic joins                    | rule bodies fire only when all inputs are present               |
+| persistent rules        | contracts / persistent receives | rules stay installed instead of being re-created by a loop      |
+| non-blocking outputs    | sends continue immediately      | producers do not wait for consumers unless encoded explicitly   |
+| replay                  | event logs                      | nondeterministic runtime schedules can replay deterministically |
 
 ## Atomic Joins
 
@@ -111,10 +111,10 @@ and Rocq bridge theorems state fairness explicitly.
 Rholang communication can be schedule-dependent. Dovetail semantics may be
 ambiguous. These are different phenomena.
 
-| Phenomenon | Meaning | Design response |
-|---|---|---|
+| Phenomenon               | Meaning                            | Design response                                            |
+|--------------------------|------------------------------------|------------------------------------------------------------|
 | scheduler nondeterminism | several communications are enabled | replay logs and observation quotients handle runtime order |
-| semantic ambiguity | several valid outcomes exist | represent every outcome as an explicit candidate fact |
+| semantic ambiguity       | several valid outcomes exist       | represent every outcome as an explicit candidate fact      |
 
 The backend must never use scheduler choice to discard semantic alternatives.
 
@@ -203,14 +203,14 @@ actions.
 
 ## Failure Modes and Safeguards
 
-| Risk | Safeguard |
-|---|---|
-| duplicate facts cause nontermination | exact-key seen service |
-| scheduler choice hides alternatives | explicit candidate facts |
-| guard consumes data before failing | RSpace guard/no-commit discipline |
+| Risk                                       | Safeguard                                      |
+|--------------------------------------------|------------------------------------------------|
+| duplicate facts cause nontermination       | exact-key seen service                         |
+| scheduler choice hides alternatives        | explicit candidate facts                       |
+| guard consumes data before failing         | RSpace guard/no-commit discipline              |
 | private channels collide with source names | `new` namespace plus disjoint channel prefixes |
-| replay diverges from original schedule | RSpace replay log |
-| cyclic enumeration is infinite | explicit bounded outcome |
+| replay diverges from original schedule     | RSpace replay log                              |
+| cyclic enumeration is infinite             | explicit bounded outcome                       |
 
 ## Practical Consequence
 

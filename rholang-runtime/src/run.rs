@@ -34,7 +34,7 @@ use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
 /// A quoted-name channel `@"<name>"` (a `Par` holding a single `GString`).
-fn quoted_channel(name: &str) -> Par {
+pub(crate) fn quoted_channel(name: &str) -> Par {
     Par {
         exprs: vec![Expr {
             expr_instance: Some(ExprInstance::GString(name.to_string())),
