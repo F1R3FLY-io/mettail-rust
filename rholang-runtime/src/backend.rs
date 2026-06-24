@@ -2126,6 +2126,7 @@ mod tests {
             MiniLanguage,
             mini_backend(),
             complete_mini_dovetail_report,
+            complete_mini_dovetail_report,
             mini_invocation_from_dovetail,
         )
         .expect("default runtime-report surface should install the Dovetail+Rho wrapper");
@@ -2187,6 +2188,7 @@ mod tests {
             MiniLanguage,
             mini_backend(),
             bounded_mini_dovetail_report,
+            bounded_mini_dovetail_report,
             |_term, _report| Err("invocation should not run after incomplete Dovetail".to_string()),
         )
         .expect("capability installation is separate from per-term Dovetail completeness");
@@ -2210,6 +2212,7 @@ mod tests {
         let err = match install_dovetail_rho_runtime_backend(
             MiniLanguage,
             other_backend,
+            complete_mini_dovetail_report,
             complete_mini_dovetail_report,
             mini_invocation_from_dovetail,
         ) {

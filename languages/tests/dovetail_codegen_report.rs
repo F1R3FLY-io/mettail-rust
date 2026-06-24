@@ -49,17 +49,21 @@ fn generated_dovetail_compiler_stage_matches_language_metadata() {
 }
 
 #[test]
-fn generated_dovetail_report_fails_closed_for_unlowered_binder_rules() {
+fn generated_dovetail_report_lowers_lambda_after_substitution_lowering() {
+    // Before E1 (generalized substitution lowering / β-reduction in the Dovetail e-graph,
+    // commit `e463895c`), a Lambda term failed closed at rule construction because its
+    // substitution/β rules had no lowering. E1 made them lowerable, so a Lambda term now lowers in
+    // the e-graph; a bare free variable has no redex and lowers to itself. This test guards that
+    // E1 lowering stays wired (the prior fail-closed assertion went stale at E1).
     let term = LambdaLanguage
         .parse_term("x")
         .expect("Lambda parses an auto-generated variable term");
 
-    let err = LambdaLanguage::dovetail_report_for(term.as_ref(), 8, 1_024)
-        .expect_err("Lambda beta still requires binder/substitution lowering");
+    let report = LambdaLanguage::dovetail_report_for(term.as_ref(), 8, 1_024)
+        .expect("Lambda lowers in the Dovetail e-graph after substitution lowering (E1)");
 
     assert!(
-        err.contains("needs specialized lowering")
-            && err.contains("substitution patterns require generated substitution lowering"),
-        "unexpected Lambda fail-closed error: {err}",
+        !report.terms.is_empty(),
+        "the lowered Lambda variable report should carry at least one term record: {report:?}",
     );
 }
