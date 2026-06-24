@@ -7,15 +7,17 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use mettail_languages::rhocalc::{
-    Bag, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
+    Bag, Int, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionKind,
 };
+use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use mettail_runtime::{
     Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
     RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed,
@@ -524,7 +526,9 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
                 .map(|channel| lower_name(channel, env))
                 .collect::<Result<Vec<_>, _>>()?;
             let extended_env = extend_env(env, &binders);
-            let body = lower_proc(body.as_ref(), &extended_env)?;
+            // Tier-3: lift any held folds in the receive body (folds over the just-received value)
+            // into Dovetail-backed fold-contract trampolines; otherwise this is `lower_proc`.
+            let body = lower_receive_body(body.as_ref(), &extended_env)?;
 
             let binds = sources
                 .into_iter()
@@ -623,6 +627,188 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         Proc::CastMap(value) => lower_map(value.as_ref(), env),
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
     }
+}
+
+// ── Tier-3 held-fold trampoline lifting ──────────────────────────────────────────────────────────
+//
+// A held fold (e.g. `int(*(x), 8)` whose operand is bound by an enclosing COMM `receive`) cannot be
+// lowered to a Rho primitive and cannot be folded by Dovetail (the operand is free until the COMM
+// fires). Lift it: replace the fold with `*r`, send the operand to a Dovetail-backed fold contract,
+// and bind its reply `r` via `for(@r <- ret){…}`. The contract runs the exact native fold on the
+// now-ground operand. See `crate::fold_contract`.
+
+thread_local! {
+    // Held-fold sites collected during ONE lowering (cleared per `lower_rhocalc_term_with_folds`).
+    // Mirrors the thread-local var-cache pattern in `mettail_runtime::binding` — single-threaded
+    // lowering-session state, no locks.
+    static HELD_FOLD_SITES: std::cell::RefCell<Vec<FoldSpec>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The fold kind of a Proc width-fold constructor, if it is a trampolinable one.
+fn fold_kind_of(proc: &Proc) -> Option<FoldKind> {
+    match proc {
+        Proc::IntBinProc(..) => Some(FoldKind::Int),
+        Proc::UIntBinProc(..) => Some(FoldKind::UInt),
+        Proc::FloatBinProc(..) => Some(FoldKind::Float),
+        Proc::FixedBinProc(..) => Some(FoldKind::Fixed),
+        _ => None,
+    }
+}
+
+/// An operand is *held* iff it lowers to a `Par` that depends on a bound variable (non-empty
+/// `locally_free`) — i.e. it becomes ground only after a COMM binds the variable. A statically
+/// ground operand (empty `locally_free`) is not held (it folds in place / via the D-stage); an
+/// operand that fails to lower is a genuine error (left to the existing `UnsupportedProc` path).
+fn operand_is_held(operand: &Proc, env: &BoundEnv) -> bool {
+    matches!(lower_proc(operand, env), Ok(par) if !par.locally_free.is_empty())
+}
+
+/// Find the first (innermost) held fold in `proc`, NOT descending into nested binders
+/// (`PInputs`/`PNew` — their bodies are lifted separately). Returns `(operand, kind, width)`.
+fn find_held_fold(proc: &Proc, env: &BoundEnv) -> Option<(Proc, FoldKind, i64)> {
+    match proc {
+        Proc::IntBinProc(a, w)
+        | Proc::UIntBinProc(a, w)
+        | Proc::FloatBinProc(a, w)
+        | Proc::FixedBinProc(a, w) => {
+            // Innermost-first: a nested fold inside the operand lifts before this one.
+            if let Some(found) = find_held_fold(a.as_ref(), env) {
+                return Some(found);
+            }
+            if operand_is_held(a.as_ref(), env) {
+                let kind = fold_kind_of(proc)?;
+                let width = w.as_ref().try_eval()?;
+                return Some(((*a.as_ref()).clone(), kind, width));
+            }
+            None
+        },
+        Proc::POutput(_, payload) => find_held_fold(payload.as_ref(), env),
+        Proc::PPar(parts) => parts.iter_elements().find_map(|part| find_held_fold(part, env)),
+        Proc::PInputs(..) | Proc::PNew(..) => None,
+        _ => None,
+    }
+}
+
+/// Rebuild a width-fold constructor with a replaced operand.
+fn rebuild_fold(orig: &Proc, operand: Arc<Proc>, width: Arc<Int>) -> Proc {
+    match orig {
+        Proc::IntBinProc(..) => Proc::IntBinProc(operand, width),
+        Proc::UIntBinProc(..) => Proc::UIntBinProc(operand, width),
+        Proc::FloatBinProc(..) => Proc::FloatBinProc(operand, width),
+        Proc::FixedBinProc(..) => Proc::FixedBinProc(operand, width),
+        _ => orig.clone(),
+    }
+}
+
+/// Replace the first (innermost) held fold in `proc` with `r_drop` (`*r`), mirroring
+/// `find_held_fold`'s traversal. Sets `replaced` once a replacement is made.
+fn replace_held_fold(proc: &Proc, env: &BoundEnv, r_drop: &Proc, replaced: &mut bool) -> Proc {
+    if *replaced {
+        return proc.clone();
+    }
+    match proc {
+        Proc::IntBinProc(a, w)
+        | Proc::UIntBinProc(a, w)
+        | Proc::FloatBinProc(a, w)
+        | Proc::FixedBinProc(a, w) => {
+            let new_a = replace_held_fold(a.as_ref(), env, r_drop, replaced);
+            if *replaced {
+                return rebuild_fold(proc, Arc::new(new_a), w.clone());
+            }
+            if operand_is_held(a.as_ref(), env) {
+                *replaced = true;
+                return r_drop.clone();
+            }
+            proc.clone()
+        },
+        Proc::POutput(name, payload) => Proc::POutput(
+            name.clone(),
+            Arc::new(replace_held_fold(payload.as_ref(), env, r_drop, replaced)),
+        ),
+        Proc::PPar(parts) => Proc::PPar(
+            parts.iter_elements().map(|part| replace_held_fold(part, env, r_drop, replaced)).collect(),
+        ),
+        _ => proc.clone(),
+    }
+}
+
+/// Lower a receive body, lifting each held fold into a Dovetail-backed fold-contract trampoline.
+/// With no held fold this is exactly `lower_proc`. For one it emits
+/// `new ret in { @"<fold>"!(operand, ret) | for(@r <- ret){ body[fold ↦ *r] } }` and records the
+/// `FoldSpec`; the `for` body is lifted recursively (nested folds). All de Bruijn bookkeeping rides
+/// `extend_env`.
+fn lower_receive_body(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    let Some((operand, kind, width)) = find_held_fold(body, env) else {
+        return lower_proc(body, env);
+    };
+    let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
+    HELD_FOLD_SITES.with(|sites| sites.borrow_mut().push(FoldSpec { kind, width, site_index }));
+    let channel = fold_channel(site_index);
+
+    // Fresh result binders: `new ret` (innermost) and the `for`-bound `r`.
+    let ret_var = mettail_runtime::get_or_create_var(format!("__mtl_ret_{site_index}"));
+    let r_var = mettail_runtime::get_or_create_var(format!("__mtl_r_{site_index}"));
+    let r_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(r_var.clone())))));
+
+    let mut replaced = false;
+    let transformed = replace_held_fold(body, env, &r_drop, &mut replaced);
+
+    // `new ret` shifts `env` by 1; the `for` then binds `r` (index 0), `ret` (index 1).
+    let env_new = extend_env(env, &[Binder(ret_var)]);
+    let env_for = extend_env(&env_new, &[Binder(r_var)]);
+
+    // Send `@channel!(operand, ret)` at the `new` level (ret = boundvar 0).
+    let operand_par = lower_proc(&operand, &env_new)?;
+    let ret_channel = new_boundvar_par(0, Vec::new(), false);
+    let send = send_par(channel, vec![operand_par, ret_channel.clone()]);
+
+    // `for(@r <- ret){ <recursively-lifted transformed body> }`.
+    let for_body = lower_receive_body(&transformed, &env_for)?;
+    let bind = ReceiveBind {
+        patterns: vec![new_freevar_par(0, Vec::new())],
+        source: Some(ret_channel),
+        remainder: None,
+        free_count: 1,
+    };
+    let recv_locally_free = receive_locally_free(&[bind.clone()], &for_body, 1);
+    let recv = new_receive_par(
+        vec![bind],
+        for_body,
+        false,
+        false,
+        1,
+        recv_locally_free.clone(),
+        false,
+        recv_locally_free,
+        false,
+    );
+
+    // `new ret { send | recv }`.
+    let inner = send.append(recv);
+    let new_locally_free = filter_and_adjust_bitset(&inner.locally_free, 1);
+    Ok(new_new_par(
+        1,
+        inner,
+        Vec::new(),
+        BTreeMap::new(),
+        new_locally_free.clone(),
+        new_locally_free,
+        false,
+    ))
+}
+
+/// Lower a term to a `Par` PLUS the held-fold contract `Definition` specs its trampolines need. The
+/// `Par` already targets the fold channels; the caller registers the contracts via the runtime's
+/// `extra_system_processes` seam. Equivalent to `lower_rhocalc_term` when the term has no held folds
+/// (empty `Vec`).
+pub fn lower_rhocalc_term_with_folds(
+    term: &dyn Term,
+) -> Result<(Par, Vec<FoldSpec>), RhocalcAstLowerError> {
+    HELD_FOLD_SITES.with(|sites| sites.borrow_mut().clear());
+    let par = lower_rhocalc_term(term)?;
+    let specs = HELD_FOLD_SITES.with(|sites| sites.borrow().clone());
+    Ok((par, specs))
 }
 
 fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
