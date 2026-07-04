@@ -11,6 +11,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::key::SemanticHash;
+use crate::set_automaton::{
+    PatternId, SetAutomaton, SetAutomatonError, SetAutomatonRun, SetAutomatonStats,
+};
 
 /// A pattern over operator labels `L` with named pattern variables.
 #[derive(Clone, Debug)]
@@ -207,6 +210,52 @@ pub struct SatStats {
     pub iterations: usize,
     /// Total merges applied.
     pub total_merges: usize,
+    /// Total set-automaton scans performed by saturation.
+    pub set_automaton_scans: usize,
+    /// Set-automaton scans performed for compiled contiguous rule batches.
+    pub set_automaton_batches: usize,
+    /// Canonical e-classes considered by all saturation set-automaton scans.
+    pub set_automaton_root_classes: usize,
+    /// E-nodes inspected by all saturation set-automaton scans.
+    pub set_automaton_root_nodes: usize,
+    /// Candidate root-pattern checks after symbol/arity dispatch.
+    pub set_automaton_candidate_evaluations: usize,
+    /// Cache misses for compiled pattern states at canonical e-classes.
+    pub set_automaton_state_evaluations: usize,
+    /// Cache hits for compiled pattern states at canonical e-classes.
+    pub set_automaton_state_cache_hits: usize,
+    /// Per-rule searches performed outside a still-valid compiled batch.
+    pub rule_searches: usize,
+    /// Per-rule searches that had to use the recursive AC-capable matcher.
+    pub ac_fallback_searches: usize,
+    /// Compiled batch result sets invalidated by graph growth or merges.
+    pub set_automaton_batch_invalidations: usize,
+}
+
+impl SatStats {
+    fn record_set_automaton_scan(&mut self, stats: SetAutomatonStats) {
+        self.set_automaton_scans += 1;
+        self.set_automaton_root_classes += stats.root_classes;
+        self.set_automaton_root_nodes += stats.root_nodes;
+        self.set_automaton_candidate_evaluations += stats.candidate_evaluations;
+        self.set_automaton_state_evaluations += stats.state_evaluations;
+        self.set_automaton_state_cache_hits += stats.state_cache_hits;
+    }
+
+    fn record_set_automaton_batch(&mut self, stats: SetAutomatonStats) {
+        self.set_automaton_batches += 1;
+        self.record_set_automaton_scan(stats);
+    }
+
+    fn record_rule_search(&mut self, search: &ObservedSearch) {
+        self.rule_searches += 1;
+        if let Some(stats) = search.set_automaton_stats {
+            self.record_set_automaton_scan(stats);
+        }
+        if search.used_ac_fallback {
+            self.ac_fallback_searches += 1;
+        }
+    }
 }
 
 /// Aggregated evidence that a labeled rewrite rule produced at least one
@@ -249,6 +298,122 @@ fn record_rule_firing(rule_firings: &mut Vec<RuleFiring>, label: &Option<String>
     }
 }
 
+#[derive(Clone, Debug)]
+struct PositionalRuleSegment<L> {
+    start: usize,
+    end: usize,
+    automaton: SetAutomaton<L>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct BatchedSegmentMatches {
+    grouped: Vec<Vec<(EClassId, Subst)>>,
+    stats: SetAutomatonStats,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ObservedSearch {
+    matches: Vec<(EClassId, Subst)>,
+    set_automaton_stats: Option<SetAutomatonStats>,
+    used_ac_fallback: bool,
+    budget_hit: bool,
+}
+
+/// Owned, reusable Dovetail saturation program.
+///
+/// `CompiledRuleSet` keeps rewrite rules as data while hoisting the positional
+/// set-automaton compilation out of the saturation loop boundary. Callers that
+/// evaluate the same generated language rules against many input e-graphs can
+/// build one value and reuse it; the legacy slice-based saturation APIs remain
+/// compatibility wrappers around this type.
+#[derive(Clone, Debug)]
+pub struct CompiledRuleSet<L> {
+    rewrite_rules: Vec<RewriteRule<L>>,
+    native_rules: Vec<NativeRule<L>>,
+    structural_segments: Vec<PositionalRuleSegment<L>>,
+    native_segments: Vec<PositionalRuleSegment<L>>,
+}
+
+impl<L: Clone + Eq + std::hash::Hash> CompiledRuleSet<L> {
+    /// Compile structural and native rules into a reusable saturation program.
+    pub fn new(rewrite_rules: Vec<RewriteRule<L>>, native_rules: Vec<NativeRule<L>>) -> Self {
+        let structural_segments = compile_positional_segments(&rewrite_rules, |rule| &rule.lhs);
+        let native_segments = compile_positional_segments(&native_rules, |rule| &rule.lhs);
+        Self { rewrite_rules, native_rules, structural_segments, native_segments }
+    }
+
+    /// Compile a structural-only rule set.
+    pub fn from_rewrites(rewrite_rules: Vec<RewriteRule<L>>) -> Self {
+        Self::new(rewrite_rules, Vec::new())
+    }
+
+    /// Structural rewrite rules in their original order.
+    pub fn rewrite_rules(&self) -> &[RewriteRule<L>] {
+        &self.rewrite_rules
+    }
+
+    /// Native-computed rules in their original order.
+    pub fn native_rules(&self) -> &[NativeRule<L>] {
+        &self.native_rules
+    }
+
+    /// Number of contiguous positional structural rule batches.
+    pub fn structural_segment_count(&self) -> usize {
+        self.structural_segments.len()
+    }
+
+    /// Number of contiguous positional native rule batches.
+    pub fn native_segment_count(&self) -> usize {
+        self.native_segments.len()
+    }
+}
+
+fn pattern_contains_ac<L>(pattern: &Pattern<L>) -> bool {
+    match pattern {
+        Pattern::Var(_) => false,
+        Pattern::App { args, .. } => args.iter().any(pattern_contains_ac),
+        Pattern::AcApp { .. } => true,
+    }
+}
+
+fn compile_positional_segments<T, L>(
+    items: &[T],
+    lhs: impl Fn(&T) -> &Pattern<L>,
+) -> Vec<PositionalRuleSegment<L>>
+where
+    L: Clone + Eq + std::hash::Hash,
+{
+    let mut segments = Vec::new();
+    let mut index = 0usize;
+    while index < items.len() {
+        if pattern_contains_ac(lhs(&items[index])) {
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        index += 1;
+        while index < items.len() && !pattern_contains_ac(lhs(&items[index])) {
+            index += 1;
+        }
+        let end = index;
+
+        let patterns =
+            (start..end).map(|rule_idx| (PatternId(rule_idx), lhs(&items[rule_idx]).clone()));
+        if let Ok(automaton) = SetAutomaton::compile_structural(patterns) {
+            segments.push(PositionalRuleSegment { start, end, automaton });
+        }
+    }
+    segments
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuleApplication {
+    merges: usize,
+    budget_hit: bool,
+    graph_changed: bool,
+}
+
 impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// All `(root e-class, substitution)` matches of `pattern` across the graph.
     ///
@@ -257,12 +422,53 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// budget-gated e-graph growth (the only mutation; positional matching adds
     /// nothing). Pulling AC selections is on-demand and lazy ([`lazy_ac_select`]).
     pub fn search(&mut self, pattern: &Pattern<L>) -> Vec<(EClassId, Subst)> {
+        self.search_observed(pattern).matches
+    }
+
+    fn search_observed(&mut self, pattern: &Pattern<L>) -> ObservedSearch {
+        if let Ok(automaton) = SetAutomaton::compile_structural([(PatternId(0), pattern.clone())]) {
+            let run = automaton.search_egraph(self);
+            return ObservedSearch {
+                set_automaton_stats: Some(run.stats),
+                matches: run
+                    .into_matches()
+                    .into_iter()
+                    .map(|m| (m.root, m.subst))
+                    .collect(),
+                used_ac_fallback: false,
+                budget_hit: false,
+            };
+        }
+
+        let budget_was_hit = self.node_limit_reached();
         let mut out = Vec::new();
         let classes: Vec<EClassId> = self.classes().collect();
         for q in classes {
             self.collect_matches(pattern, q, &Subst::new(), &mut out);
         }
-        out
+        ObservedSearch {
+            matches: out,
+            set_automaton_stats: None,
+            used_ac_fallback: pattern_contains_ac(pattern),
+            budget_hit: !budget_was_hit && self.node_limit_reached(),
+        }
+    }
+
+    /// Match many positional patterns with one set-automaton scan.
+    ///
+    /// This is the shared Dovetail/RhoNet matching boundary for the linear
+    /// fragment: callers compile a whole rule family once, inspect each
+    /// candidate redex root once, and receive pattern-tagged substitutions.
+    /// AC patterns intentionally reject here so callers keep using the lazy,
+    /// budget-aware AC path that can materialize `rest` complements.
+    pub fn search_many_structural<I>(
+        &self,
+        patterns: I,
+    ) -> Result<SetAutomatonRun, SetAutomatonError>
+    where
+        I: IntoIterator<Item = (PatternId, Pattern<L>)>,
+    {
+        Ok(SetAutomaton::compile_structural(patterns)?.search_egraph(self))
     }
 
     fn collect_matches(
@@ -508,6 +714,93 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         }
     }
 
+    fn batched_segment_matches(
+        &self,
+        segment: &PositionalRuleSegment<L>,
+    ) -> BatchedSegmentMatches {
+        let mut grouped = vec![Vec::new(); segment.end - segment.start];
+        let SetAutomatonRun { matches, stats } = segment.automaton.search_egraph(self);
+        for matched in matches {
+            let Some(slot) = matched.pattern.0.checked_sub(segment.start) else {
+                continue;
+            };
+            if let Some(rule_matches) = grouped.get_mut(slot) {
+                rule_matches.push((matched.root, matched.subst));
+            }
+        }
+        BatchedSegmentMatches { grouped, stats }
+    }
+
+    fn apply_structural_matches(
+        &mut self,
+        rule: &RewriteRule<L>,
+        matches: Vec<(EClassId, Subst)>,
+    ) -> RuleApplication {
+        let before_nodes = self.node_count();
+        let mut rule_merges = 0usize;
+        let mut budget_hit = false;
+        for (root, subst) in matches {
+            if !Self::rhs_vars_bound(&rule.rhs, &subst) {
+                // Ill-formed rule for this match: reject before adding
+                // any partial RHS nodes.
+                continue;
+            }
+            if let Some(rhs_id) = self.instantiate(&rule.rhs, &subst) {
+                if self.find(root) != self.find(rhs_id) {
+                    self.merge(root, rhs_id);
+                    rule_merges += 1;
+                }
+            } else if self.node_limit_reached() {
+                budget_hit = true;
+                break;
+            }
+            // else: a budgeted add refused a fresh node without setting
+            // the sticky flag; skip defensively.
+        }
+
+        RuleApplication {
+            merges: rule_merges,
+            budget_hit,
+            graph_changed: rule_merges > 0 || self.node_count() != before_nodes,
+        }
+    }
+
+    fn apply_native_matches(
+        &mut self,
+        rule: &NativeRule<L>,
+        matches: Vec<(EClassId, Subst)>,
+        dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+    ) -> RuleApplication {
+        let before_nodes = self.node_count();
+        let mut rule_merges = 0usize;
+        let mut budget_hit = false;
+        for (root, subst) in matches {
+            match dispatch(rule.op, self, &subst) {
+                Some(result_id) => {
+                    if self.find(root) != self.find(result_id) {
+                        self.merge(root, result_id);
+                        rule_merges += 1;
+                    }
+                },
+                None if self.node_limit_reached() => {
+                    budget_hit = true;
+                    break;
+                },
+                None => {
+                    // The redex does not reduce here (variable / stuck
+                    // child, or unfunded admission); leave it in place,
+                    // faithful to a fold premise with no solution.
+                },
+            }
+        }
+
+        RuleApplication {
+            merges: rule_merges,
+            budget_hit,
+            graph_changed: rule_merges > 0 || self.node_count() != before_nodes,
+        }
+    }
+
     /// Instantiate a RHS pattern under a substitution, adding nodes within the
     /// node budget. Returns `None` if a variable is unbound (ill-formed rule) or
     /// the budget refused a fresh node (then `node_limit_reached()` is set).
@@ -556,7 +849,17 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// empty native-rule set and a dispatcher that fires nothing, so every
     /// existing caller is unchanged.
     pub fn saturate(&mut self, rules: &[RewriteRule<L>], max_iters: usize) -> SatReport {
-        self.saturate_with_native(rules, &[], &|_op, _eg, _subst| None, max_iters)
+        let compiled = CompiledRuleSet::from_rewrites(rules.to_vec());
+        self.saturate_compiled(&compiled, max_iters)
+    }
+
+    /// Equality saturation for an already compiled structural-only rule set.
+    pub fn saturate_compiled(
+        &mut self,
+        compiled: &CompiledRuleSet<L>,
+        max_iters: usize,
+    ) -> SatReport {
+        self.saturate_compiled_with_native(compiled, &|_op, _eg, _subst| None, max_iters)
     }
 
     /// Equality saturation over BOTH structural [`RewriteRule`]s and
@@ -585,76 +888,186 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
         max_iters: usize,
     ) -> SatReport {
+        let compiled = CompiledRuleSet::new(rules.to_vec(), native_rules.to_vec());
+        self.saturate_compiled_with_native(&compiled, dispatch, max_iters)
+    }
+
+    /// Equality saturation for an already compiled structural/native rule set.
+    ///
+    /// The compiled value owns the rules and their positional set automata, so
+    /// callers can reuse it across many input e-graphs without rebuilding the
+    /// root dispatch index each run. AC patterns still execute through the lazy
+    /// matcher because their `rest` complements can grow the e-graph under the
+    /// runtime node budget.
+    pub fn saturate_compiled_with_native(
+        &mut self,
+        compiled: &CompiledRuleSet<L>,
+        dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+        max_iters: usize,
+    ) -> SatReport {
         let mut stats = SatStats::default();
         let mut rule_firings = Vec::new();
+        let rules = compiled.rewrite_rules();
+        let native_rules = compiled.native_rules();
+        let structural_segments = &compiled.structural_segments;
+        let native_segments = &compiled.native_segments;
         for iteration in 0..max_iters {
             stats.iterations = iteration + 1;
             let mut iter_merges = 0usize;
             // ── Structural rules: instantiate the pattern RHS and merge. ──
-            for rule in rules {
-                let matches = self.search(&rule.lhs);
-                let mut rule_merges = 0usize;
-                let mut budget_hit = false;
-                for (root, subst) in matches {
-                    if !Self::rhs_vars_bound(&rule.rhs, &subst) {
-                        // Ill-formed rule for this match: reject before adding
-                        // any partial RHS nodes.
-                        continue;
-                    }
-                    if let Some(rhs_id) = self.instantiate(&rule.rhs, &subst) {
-                        if self.find(root) != self.find(rhs_id) {
-                            self.merge(root, rhs_id);
-                            rule_merges += 1;
+            let mut rule_idx = 0usize;
+            let mut segment_idx = 0usize;
+            while rule_idx < rules.len() {
+                if structural_segments
+                    .get(segment_idx)
+                    .is_some_and(|segment| segment.start == rule_idx)
+                {
+                    let segment = &structural_segments[segment_idx];
+                    let BatchedSegmentMatches { mut grouped, stats: batch_stats } =
+                        self.batched_segment_matches(segment);
+                    stats.record_set_automaton_batch(batch_stats);
+                    let mut batch_valid = true;
+                    for current in segment.start..segment.end {
+                        let matches = if batch_valid {
+                            std::mem::take(&mut grouped[current - segment.start])
+                        } else {
+                            let search = self.search_observed(&rules[current].lhs);
+                            let budget_hit = search.budget_hit;
+                            stats.record_rule_search(&search);
+                            if budget_hit {
+                                return SatReport::new(
+                                    SaturationOutcome::NodeLimit,
+                                    stats,
+                                    rule_firings,
+                                );
+                            }
+                            search.matches
+                        };
+                        let applied = self.apply_structural_matches(&rules[current], matches);
+                        if applied.merges > 0 {
+                            self.rebuild();
                         }
-                    } else if self.node_limit_reached() {
-                        budget_hit = true;
-                        break;
+                        iter_merges += applied.merges;
+                        stats.total_merges += applied.merges;
+                        record_rule_firing(
+                            &mut rule_firings,
+                            &rules[current].label,
+                            applied.merges,
+                        );
+                        if applied.budget_hit {
+                            return SatReport::new(
+                                SaturationOutcome::NodeLimit,
+                                stats,
+                                rule_firings,
+                            );
+                        }
+                        if applied.graph_changed && batch_valid {
+                            stats.set_automaton_batch_invalidations += 1;
+                            batch_valid = false;
+                        }
                     }
-                    // else: a budgeted add refused a fresh node without setting
-                    // the sticky flag; skip defensively.
-                }
-                if rule_merges > 0 {
-                    self.rebuild();
-                }
-                iter_merges += rule_merges;
-                stats.total_merges += rule_merges;
-                record_rule_firing(&mut rule_firings, &rule.label, rule_merges);
-                if budget_hit {
-                    return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                    rule_idx = segment.end;
+                    segment_idx += 1;
+                } else {
+                    let search = self.search_observed(&rules[rule_idx].lhs);
+                    let budget_hit = search.budget_hit;
+                    stats.record_rule_search(&search);
+                    if budget_hit {
+                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                    }
+                    let matches = search.matches;
+                    let applied = self.apply_structural_matches(&rules[rule_idx], matches);
+                    if applied.merges > 0 {
+                        self.rebuild();
+                    }
+                    iter_merges += applied.merges;
+                    stats.total_merges += applied.merges;
+                    record_rule_firing(&mut rule_firings, &rules[rule_idx].label, applied.merges);
+                    if applied.budget_hit {
+                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                    }
+                    rule_idx += 1;
                 }
             }
             // ── Native rules: dispatch computes the funded result, then merge. ──
-            for nrule in native_rules {
-                let matches = self.search(&nrule.lhs);
-                let mut rule_merges = 0usize;
-                let mut budget_hit = false;
-                for (root, subst) in matches {
-                    match dispatch(nrule.op, self, &subst) {
-                        Some(result_id) => {
-                            if self.find(root) != self.find(result_id) {
-                                self.merge(root, result_id);
-                                rule_merges += 1;
+            let mut rule_idx = 0usize;
+            let mut segment_idx = 0usize;
+            while rule_idx < native_rules.len() {
+                if native_segments
+                    .get(segment_idx)
+                    .is_some_and(|segment| segment.start == rule_idx)
+                {
+                    let segment = &native_segments[segment_idx];
+                    let BatchedSegmentMatches { mut grouped, stats: batch_stats } =
+                        self.batched_segment_matches(segment);
+                    stats.record_set_automaton_batch(batch_stats);
+                    let mut batch_valid = true;
+                    for current in segment.start..segment.end {
+                        let matches = if batch_valid {
+                            std::mem::take(&mut grouped[current - segment.start])
+                        } else {
+                            let search = self.search_observed(&native_rules[current].lhs);
+                            let budget_hit = search.budget_hit;
+                            stats.record_rule_search(&search);
+                            if budget_hit {
+                                return SatReport::new(
+                                    SaturationOutcome::NodeLimit,
+                                    stats,
+                                    rule_firings,
+                                );
                             }
-                        },
-                        None if self.node_limit_reached() => {
-                            budget_hit = true;
-                            break;
-                        },
-                        None => {
-                            // The redex does not reduce here (variable / stuck
-                            // child, or unfunded admission); leave it in place,
-                            // faithful to a fold premise with no solution.
-                        },
+                            search.matches
+                        };
+                        let applied =
+                            self.apply_native_matches(&native_rules[current], matches, dispatch);
+                        if applied.merges > 0 {
+                            self.rebuild();
+                        }
+                        iter_merges += applied.merges;
+                        stats.total_merges += applied.merges;
+                        record_rule_firing(
+                            &mut rule_firings,
+                            &native_rules[current].label,
+                            applied.merges,
+                        );
+                        if applied.budget_hit {
+                            return SatReport::new(
+                                SaturationOutcome::NodeLimit,
+                                stats,
+                                rule_firings,
+                            );
+                        }
+                        if applied.graph_changed && batch_valid {
+                            stats.set_automaton_batch_invalidations += 1;
+                            batch_valid = false;
+                        }
                     }
-                }
-                if rule_merges > 0 {
-                    self.rebuild();
-                }
-                iter_merges += rule_merges;
-                stats.total_merges += rule_merges;
-                record_rule_firing(&mut rule_firings, &nrule.label, rule_merges);
-                if budget_hit {
-                    return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                    rule_idx = segment.end;
+                    segment_idx += 1;
+                } else {
+                    let search = self.search_observed(&native_rules[rule_idx].lhs);
+                    let budget_hit = search.budget_hit;
+                    stats.record_rule_search(&search);
+                    if budget_hit {
+                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                    }
+                    let matches = search.matches;
+                    let applied =
+                        self.apply_native_matches(&native_rules[rule_idx], matches, dispatch);
+                    if applied.merges > 0 {
+                        self.rebuild();
+                    }
+                    iter_merges += applied.merges;
+                    stats.total_merges += applied.merges;
+                    record_rule_firing(
+                        &mut rule_firings,
+                        &native_rules[rule_idx].label,
+                        applied.merges,
+                    );
+                    if applied.budget_hit {
+                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                    }
+                    rule_idx += 1;
                 }
             }
             if iter_merges == 0 {
@@ -1178,6 +1591,47 @@ mod tests {
     }
 
     #[test]
+    fn search_many_structural_scans_multiple_patterns() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let b = eg.add(ENode::leaf("b".into()));
+        let _fa = eg.add(ENode::new("f".into(), vec![a]));
+        let _gb = eg.add(ENode::new("g".into(), vec![b]));
+
+        let run = eg
+            .search_many_structural([
+                (PatternId(10), Pattern::app("f".to_string(), vec![Pattern::var("x")])),
+                (PatternId(11), Pattern::app("g".to_string(), vec![Pattern::var("y")])),
+            ])
+            .expect("positional patterns compile");
+
+        assert_eq!(run.matches.len(), 2);
+        assert!(run
+            .matches
+            .iter()
+            .any(|m| { m.pattern == PatternId(10) && m.subst.get("x") == Some(&eg.find(a)) }));
+        assert!(run
+            .matches
+            .iter()
+            .any(|m| { m.pattern == PatternId(11) && m.subst.get("y") == Some(&eg.find(b)) }));
+        assert_eq!(run.stats.root_classes, 4);
+        assert_eq!(run.stats.candidate_evaluations, 2);
+    }
+
+    #[test]
+    fn search_many_structural_rejects_ac_patterns() {
+        let eg = EGraph::<String>::new();
+        let err = eg
+            .search_many_structural([(
+                PatternId(3),
+                Pattern::ac("par".to_string(), vec![Pattern::var("x")], Some("rest".into())),
+            )])
+            .expect_err("AC patterns must stay on lazy budget-aware search");
+
+        assert_eq!(err.unsupported_patterns(), &[PatternId(3)]);
+    }
+
+    #[test]
     fn saturate_simple_rewrite_to_fixpoint() {
         // f(x) -> x. Seed f(a). After saturation: f(a) ~ a.
         let mut eg = EGraph::<String>::new();
@@ -1192,6 +1646,39 @@ mod tests {
         assert_eq!(rep.outcome, SaturationOutcome::Converged, "reaches a fixpoint");
         assert_eq!(rep.rule_firings, vec![RuleFiring { label: Some("unwrap_f".into()), count: 1 }]);
         assert!(eg.equiv(fa, a), "f(a) ~ a after saturation");
+    }
+
+    #[test]
+    fn compiled_rule_set_reuses_positional_automata_across_graphs() {
+        fn seed_graph() -> (EGraph<String>, EClassId, EClassId) {
+            let mut eg = EGraph::<String>::new();
+            let a = eg.add(ENode::leaf("a".into()));
+            let fa = eg.add(ENode::new("f".into(), vec![a]));
+            (eg, a, fa)
+        }
+
+        let rules = vec![RewriteRule {
+            lhs: Pattern::app("f".to_string(), vec![Pattern::var("x")]),
+            rhs: Pattern::var("x"),
+            label: Some("unwrap_f".into()),
+        }];
+        let compiled = CompiledRuleSet::from_rewrites(rules.clone());
+        assert_eq!(compiled.structural_segment_count(), 1);
+        assert_eq!(compiled.native_segment_count(), 0);
+
+        let (mut legacy, legacy_a, legacy_fa) = seed_graph();
+        let legacy_report = legacy.saturate(&rules, 20);
+        assert!(legacy.equiv(legacy_fa, legacy_a));
+
+        let (mut compiled_first, first_a, first_fa) = seed_graph();
+        let first_report = compiled_first.saturate_compiled(&compiled, 20);
+        assert_eq!(first_report, legacy_report);
+        assert!(compiled_first.equiv(first_fa, first_a));
+
+        let (mut compiled_second, second_a, second_fa) = seed_graph();
+        let second_report = compiled_second.saturate_compiled(&compiled, 20);
+        assert_eq!(second_report, legacy_report);
+        assert!(compiled_second.equiv(second_fa, second_a));
     }
 
     #[test]
@@ -1212,6 +1699,99 @@ mod tests {
         assert_eq!(rep.rule_firings, vec![RuleFiring { label: None, count: 1 }]);
         assert!(eg.equiv(a, b));
         assert!(eg.equiv(fa, fb), "congruence: f(a) ~ f(b) after a ~ b");
+    }
+
+    #[test]
+    fn batched_structural_segment_preserves_same_iteration_rebuild_visibility() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let b = eg.add(ENode::leaf("b".into()));
+        let c = eg.add(ENode::leaf("c".into()));
+        let fa = eg.add(ENode::new("f".into(), vec![a]));
+
+        let rules = vec![
+            RewriteRule {
+                lhs: Pattern::leaf("a".to_string()),
+                rhs: Pattern::leaf("b".to_string()),
+                label: Some("a_to_b".into()),
+            },
+            RewriteRule {
+                lhs: Pattern::app("f".to_string(), vec![Pattern::leaf("b".to_string())]),
+                rhs: Pattern::leaf("c".to_string()),
+                label: Some("fb_to_c".into()),
+            },
+        ];
+
+        let rep = eg.saturate(&rules, 1);
+
+        assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
+        assert_eq!(
+            rep.rule_firings,
+            vec![
+                RuleFiring { label: Some("a_to_b".into()), count: 1 },
+                RuleFiring { label: Some("fb_to_c".into()), count: 1 },
+            ]
+        );
+        assert!(eg.equiv(a, b));
+        assert!(eg.equiv(fa, c));
+    }
+
+    #[test]
+    fn saturation_stats_record_set_automaton_batches_and_invalidations() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let _b = eg.add(ENode::leaf("b".into()));
+        let c = eg.add(ENode::leaf("c".into()));
+        let fa = eg.add(ENode::new("f".into(), vec![a]));
+
+        let rules = vec![
+            RewriteRule {
+                lhs: Pattern::leaf("a".to_string()),
+                rhs: Pattern::leaf("b".to_string()),
+                label: Some("a_to_b".into()),
+            },
+            RewriteRule {
+                lhs: Pattern::app("f".to_string(), vec![Pattern::leaf("b".to_string())]),
+                rhs: Pattern::leaf("c".to_string()),
+                label: Some("fb_to_c".into()),
+            },
+        ];
+
+        let rep = eg.saturate(&rules, 1);
+
+        assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
+        assert!(eg.equiv(fa, c), "invalidated batches must rescan later rules");
+        assert_eq!(rep.stats.set_automaton_batches, 1);
+        assert_eq!(rep.stats.set_automaton_batch_invalidations, 1);
+        assert_eq!(rep.stats.rule_searches, 1);
+        assert_eq!(rep.stats.ac_fallback_searches, 0);
+        assert!(rep.stats.set_automaton_scans >= 2);
+        assert!(rep.stats.set_automaton_root_classes > 0);
+        assert!(rep.stats.set_automaton_root_nodes > 0);
+        assert!(rep.stats.set_automaton_candidate_evaluations > 0);
+        assert!(rep.stats.set_automaton_state_evaluations > 0);
+    }
+
+    #[test]
+    fn saturation_stats_record_ac_fallback_searches() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let b = eg.add(ENode::leaf("b".into()));
+        let par = eg.add(ENode::new("par".into(), vec![a, b]));
+        let rules = vec![RewriteRule {
+            lhs: Pattern::ac("par".to_string(), vec![Pattern::var("x")], None),
+            rhs: Pattern::var("x"),
+            label: Some("select_par_child".into()),
+        }];
+
+        let rep = eg.saturate(&rules, 1);
+
+        assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
+        assert!(eg.equiv(par, a) || eg.equiv(par, b));
+        assert_eq!(rep.stats.set_automaton_batches, 0);
+        assert_eq!(rep.stats.set_automaton_scans, 0);
+        assert_eq!(rep.stats.rule_searches, 1);
+        assert_eq!(rep.stats.ac_fallback_searches, 1);
     }
 
     #[test]
@@ -1242,6 +1822,52 @@ mod tests {
         assert_eq!(rep.rule_firings, vec![RuleFiring { label: Some("double".into()), count: 1 }]);
         let add_aa = eg.add(ENode::new("add".into(), vec![a, a]));
         assert!(eg.equiv(dbl, add_aa), "double(a) == add(a, a) after the native rule fires");
+    }
+
+    #[test]
+    fn batched_native_segment_preserves_same_iteration_rebuild_visibility() {
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("a".into()));
+        let b = eg.add(ENode::leaf("b".into()));
+        let c = eg.add(ENode::leaf("c".into()));
+        let fa = eg.add(ENode::new("f".into(), vec![a]));
+
+        let native = vec![
+            NativeRule {
+                lhs: Pattern::leaf("a".to_string()),
+                op: 1,
+                label: Some("native_a_to_b".into()),
+            },
+            NativeRule {
+                lhs: Pattern::app("f".to_string(), vec![Pattern::leaf("b".to_string())]),
+                op: 2,
+                label: Some("native_fb_to_c".into()),
+            },
+        ];
+        let dispatch = |op: NativeOpId, _eg: &mut EGraph<String>, _subst: &Subst| match op {
+            1 => Some(b),
+            2 => Some(c),
+            _ => None,
+        };
+
+        let rep = eg.saturate_with_native(&[], &native, &dispatch, 1);
+
+        assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
+        assert_eq!(
+            rep.rule_firings,
+            vec![
+                RuleFiring {
+                    label: Some("native_a_to_b".into()),
+                    count: 1
+                },
+                RuleFiring {
+                    label: Some("native_fb_to_c".into()),
+                    count: 1
+                },
+            ]
+        );
+        assert!(eg.equiv(a, b));
+        assert!(eg.equiv(fa, c));
     }
 
     #[test]
@@ -1452,6 +2078,123 @@ mod tests {
         result_bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
         let expected = eg.add(ENode::new("par".into(), result_bag));
         assert!(eg.equiv(par, expected), "open(n,A) | n[B] ~> A | B");
+    }
+
+    #[test]
+    fn ac_rest_complement_survives_between_positional_batches() {
+        let mut eg = EGraph::<String>::new();
+        let n = eg.add(ENode::leaf("n".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let vc = eg.add(ENode::leaf("C".into()));
+        let vd = eg.add(ENode::leaf("D".into()));
+        let seed = eg.add(ENode::leaf("seed".into()));
+        let seed_norm = eg.add(ENode::leaf("seed_norm".into()));
+        let observed = eg.add(ENode::leaf("observed_open".into()));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![n, vb]));
+        let mut bag = vec![open, amb, vc, vd];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+
+        let rules = vec![
+            RewriteRule {
+                lhs: Pattern::leaf("seed".to_string()),
+                rhs: Pattern::leaf("seed_norm".to_string()),
+                label: Some("seed_norm".into()),
+            },
+            RewriteRule {
+                lhs: Pattern::ac(
+                    "par".into(),
+                    vec![
+                        Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                        Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                    ],
+                    Some("rest".into()),
+                ),
+                rhs: Pattern::app(
+                    "opened".into(),
+                    vec![Pattern::var("P"), Pattern::var("Q"), Pattern::var("rest")],
+                ),
+                label: Some("open_with_rest".into()),
+            },
+            RewriteRule {
+                lhs: Pattern::app(
+                    "opened".into(),
+                    vec![Pattern::var("P"), Pattern::var("Q"), Pattern::var("R")],
+                ),
+                rhs: Pattern::leaf("observed_open".to_string()),
+                label: Some("observed_open".into()),
+            },
+        ];
+
+        let rep = eg.saturate(&rules, 1);
+
+        assert_eq!(rep.outcome, SaturationOutcome::IterationLimit);
+        assert_eq!(
+            rep.rule_firings,
+            vec![
+                RuleFiring { label: Some("seed_norm".into()), count: 1 },
+                RuleFiring { label: Some("open_with_rest".into()), count: 1 },
+                RuleFiring { label: Some("observed_open".into()), count: 1 },
+            ]
+        );
+        assert!(eg.equiv(seed, seed_norm));
+        assert!(eg.equiv(par, observed), "post-AC positional batch must observe opened node");
+
+        let mut rest = vec![eg.find(vc), eg.find(vd)];
+        rest.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let rest_bag = eg.add(ENode::new("par".into(), rest));
+        let expected_opened = eg.add(ENode::new("opened".into(), vec![va, vb, rest_bag]));
+        assert!(
+            eg.equiv(par, expected_opened),
+            "AC rest must materialize the exact complement par{{C,D}}"
+        );
+        assert_eq!(rep.stats.rule_searches, 1);
+        assert_eq!(rep.stats.ac_fallback_searches, 1);
+        assert!(rep.stats.set_automaton_batches >= 2);
+    }
+
+    #[test]
+    fn ac_rest_complement_budget_refusal_reports_node_limit() {
+        let mut eg = EGraph::<String>::with_config(EGraphConfig { max_nodes: 1 });
+        let n = eg.add(ENode::leaf("n".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let vc = eg.add(ENode::leaf("C".into()));
+        let vd = eg.add(ENode::leaf("D".into()));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![n, vb]));
+        let mut bag = vec![open, amb, vc, vd];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let _par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+
+        let rule = RewriteRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                ],
+                Some("rest".into()),
+            ),
+            rhs: Pattern::app(
+                "opened".into(),
+                vec![Pattern::var("P"), Pattern::var("Q"), Pattern::var("rest")],
+            ),
+            label: Some("open_with_rest".into()),
+        };
+
+        let rep = eg.saturate(&[rule], 20);
+
+        assert_eq!(rep.outcome, SaturationOutcome::NodeLimit);
+        assert!(eg.node_limit_reached());
+        assert!(rep.rule_firings.is_empty());
+        assert_eq!(rep.stats.rule_searches, 1);
+        assert_eq!(rep.stats.ac_fallback_searches, 1);
+        assert_eq!(rep.stats.set_automaton_batches, 0);
     }
 
     #[test]

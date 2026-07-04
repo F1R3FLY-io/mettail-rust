@@ -1,10 +1,10 @@
-//! Inc 1 — Ambient binder-congruence NativeHandler validation.
+//! Inc 1 — Ambient binder-congruence direct-evaluator validation.
 //!
 //! The handler floats `new`s outward (capture-safe via moniker
 //! `unbind`/`Scope::new`). The load-bearing correctness property is FIX-B: the
 //! freshness gate is checked against the ORIGINAL binder, so a `new` whose bound
 //! name also occurs free in an enclosing prefix's NAME is NOT floated (which
-//! would capture it). These tests exercise the handler through the real seam
+//! would capture it). These tests exercise the evaluator through the real seam
 //! (`Language::try_direct_eval`).
 #![cfg(feature = "ambient")]
 

@@ -904,10 +904,14 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
             }
 
             let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
-            let rules = #rules_expr;
-            let __native_rules = #native_rules_expr;
             let __dispatch = #dispatch;
-            let sat = eg.saturate_with_native(&rules, &__native_rules, &__dispatch, __iters);
+            static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
+                ::dovetail::rules::CompiledRuleSet<#enum_id>,
+            > = ::std::sync::OnceLock::new();
+            let __compiled_rules = __DOVETAIL_COMPILED_RULES.get_or_init(|| {
+                ::dovetail::rules::CompiledRuleSet::new(#rules_expr, #native_rules_expr)
+            });
+            let sat = eg.saturate_compiled_with_native(__compiled_rules, &__dispatch, __iters);
             if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
                 return Err(format!(
                     "generated Dovetail saturation for language {} stopped before convergence: {:?}",
@@ -1204,8 +1208,13 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 // Structural rewrite rules: instantiate the RHS pattern on the fresh graph. The
                 // explicit type lets `vec![]` (a language with no structural rewrites, e.g. Lambda)
                 // infer; with rules the element type already matches.
-                let __rules: Vec<::dovetail::rules::RewriteRule<#enum_id>> = #rules_expr;
-                for __rule in &__rules {
+                static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
+                    ::dovetail::rules::CompiledRuleSet<#enum_id>,
+                > = ::std::sync::OnceLock::new();
+                let __compiled_rules = __DOVETAIL_COMPILED_RULES.get_or_init(|| {
+                    ::dovetail::rules::CompiledRuleSet::new(#rules_expr, #native_rules_expr)
+                });
+                for __rule in __compiled_rules.rewrite_rules() {
                     for (__c, __subst) in __eg.search(&__rule.lhs) {
                         if let ::core::option::Option::Some(__rhs_id) =
                             __eg.instantiate(&__rule.rhs, &__subst)
@@ -1218,9 +1227,8 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
 
                 // Native (fold / substitution) rules: the generated dispatcher computes the RHS
                 // class from the matched substitution (the same computation saturation uses).
-                let __native_rules: Vec<::dovetail::rules::NativeRule<#enum_id>> = #native_rules_expr;
                 let __dispatch = #dispatch;
-                for __nrule in &__native_rules {
+                for __nrule in __compiled_rules.native_rules() {
                     for (__c, __subst) in __eg.search(&__nrule.lhs) {
                         if let ::core::option::Option::Some(__rhs_id) =
                             __dispatch(__nrule.op, &mut __eg, &__subst)
@@ -1416,8 +1424,8 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     let helpers = generate_helpers(language, &folds, &substs);
     let (native_rules_expr, dispatch) =
         generate_native_rules_and_dispatch(language, &folds, &substs);
-    // Typed structural rules (congruence is automatic; host-routed Comm/Extrude land in the
-    // dropped `unsupported` — NON-FATAL on the fold path).
+    // Typed structural rules (congruence is automatic; Comm/Extrude rules that belong to the
+    // RhoNativeJoin boundary land in the dropped `unsupported` — NON-FATAL on the fold path).
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
 
     let primary_cat = &language.types.first().expect("language has a type").name;
@@ -1562,10 +1570,14 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                 }
 
                 let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
-                let rules = #rules_expr;
-                let __native_rules = #native_rules_expr;
                 let __dispatch = #dispatch;
-                let sat = eg.saturate_with_native(&rules, &__native_rules, &__dispatch, __iters);
+                static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
+                    ::dovetail::rules::CompiledRuleSet<#enum_id>,
+                > = ::std::sync::OnceLock::new();
+                let __compiled_rules = __DOVETAIL_COMPILED_RULES.get_or_init(|| {
+                    ::dovetail::rules::CompiledRuleSet::new(#rules_expr, #native_rules_expr)
+                });
+                let sat = eg.saturate_compiled_with_native(__compiled_rules, &__dispatch, __iters);
                 if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
                     return Err(format!(
                         "generated Dovetail saturation for language {} stopped before convergence: {:?}",

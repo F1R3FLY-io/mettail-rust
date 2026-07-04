@@ -15,16 +15,14 @@
 
 #![cfg(all(feature = "guarded-rho", feature = "rho-codegen"))]
 
-use std::collections::BTreeSet;
-
 use mettail_languages::guardedrho::GuardedRhoLanguage;
 use mettail_rholang_codegen::guard_quality::{derive_guard_qualities, RhoGuardQuality};
 use mettail_rholang_codegen::{
     audit_rho_default_backend, collect_guard_obligations, lower_language_def,
     plan_rho_default_backend, reconstruct_language_def, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
-    RhoGuardDispositionKind, RhoGuardObligationKind, RhoRejectedRuleDisposition,
-    RhoRejectedRuleDispositionKind,
+    RhoGuardDispositionKind, RhoGuardObligationKind, suggest_rejected_rule_dispositions,
+    RhoRejectedRuleDisposition,
 };
 use mettail_runtime::Language;
 
@@ -40,22 +38,20 @@ fn guarded_rho_def() -> mettail_ast::language::LanguageDef {
         .expect("GuardedRhoLanguage definition_source must reconstruct as a LanguageDef")
 }
 
-/// Exactly-once native-handler dispositions for every rule the scalar lowering
-/// rejects (GuardedRho is a structural language, so all of its constructors are
-/// rejected by the scalar family and covered through a native/Rho-AST boundary).
-fn native_handler_dispositions(
+/// Exactly-once Rho-machine dispositions for every rule the scalar lowering
+/// rejects. GuardedRho is structural, so the production classifier supplies
+/// the verified Rho AST/native-process boundary each rejected constructor needs.
+fn rho_machine_rejected_rule_dispositions(
     def: &mettail_ast::language::LanguageDef,
 ) -> Vec<RhoRejectedRuleDisposition> {
-    lower_language_def(def)
-        .rejected
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<String>>()
-        .into_iter()
-        .map(|label| {
-            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
-        })
-        .collect()
+    let lowering = lower_language_def(def);
+    let dispositions = suggest_rejected_rule_dispositions(def, &lowering);
+    assert_eq!(
+        dispositions.len(),
+        lowering.rejected.len(),
+        "GuardedRho must have one Rho-machine disposition per rejected scalar-lowering rule"
+    );
+    dispositions
 }
 
 /// Gate-compatible dispositions that exactly cover GuardedRho's four guard
@@ -134,7 +130,9 @@ fn guarded_rho_plans_end_to_end_with_all_qualities_non_unknown() {
     );
 
     let requirements = RhoDefaultBackendRequirements {
-        coverage: RhoCoverageEvidence::CoveredRejectedRules(native_handler_dispositions(&def)),
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(
+            rho_machine_rejected_rule_dispositions(&def),
+        ),
         guard_coverage: RhoGuardCoverageEvidence::CoveredGuardObligations(guard_dispositions()),
     };
 

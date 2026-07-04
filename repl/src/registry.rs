@@ -2,9 +2,10 @@ use anyhow::Result;
 use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendCapability};
 use std::collections::HashMap;
 
-// Raw generated language implementations are registered only on the Dovetail-only fallback build
-// (no f1r3node) — there RhoCalc/Calculator, whose production default is the Rho machine, register
-// raw. On the default `rho-languages` build every language is wrapped via `crate::rho_backends`.
+// Raw generated language implementations are registered only on the Dovetail-only non-Rho build
+// (no f1r3node). There RhoCalc/Calculator, whose production default is the Rho machine, register
+// raw because no Rho runtime is linked. On the default `rho-languages` build every language is
+// wrapped via `crate::rho_backends`.
 #[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
 use mettail_languages::calculator::CalculatorLanguage;
 #[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]

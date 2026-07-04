@@ -9,7 +9,7 @@ use syn::Ident;
 
 use crate::grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use crate::language::{
-    AttributeValue, BehavioralPred, BuiltinPredicate, ChannelConfig, CollectionCategory,
+    AttributeValue, BehavioralPred, BuiltinPredicate, ChannelConfig, CollectionCategory, Equation,
     ConnectiveDecl, FreshnessTarget, GuardConfig, LanguageDef, ParamQuantifier, ParamType, PredArg,
     PredicateParam, Premise, Quantifier, RefinementPredicate, RewriteRule, SyncConstraint,
     TheoryRegistration, TokenDef, TreeConstraintExpr, TypedParam,
@@ -22,6 +22,48 @@ pub fn language_definition_fingerprint(language: &LanguageDef) -> String {
     let mut out = String::new();
     write_language(language, &mut out);
     format!("mettail-langdef-v1:{:016x}", fnv1a64(out.as_bytes()))
+}
+
+/// Canonical, span-independent identity text for one rule-spec pattern.
+pub fn pattern_identity(pattern: &Pattern) -> String {
+    let mut out = String::new();
+    write_pattern(pattern, &mut out);
+    out
+}
+
+/// Canonical, span-independent identity text for a premise list.
+pub fn premises_identity(premises: &[Premise]) -> String {
+    let mut out = String::new();
+    write_premises(premises, &mut out);
+    out
+}
+
+/// Canonical, span-independent identity text for a behavioral predicate.
+pub fn behavioral_predicate_identity(pred: &BehavioralPred) -> String {
+    let mut out = String::new();
+    write_behavioral_pred(pred, &mut out);
+    out
+}
+
+/// Canonical, span-independent identity text for one grammar constructor rule.
+pub fn grammar_rule_identity(rule: &GrammarRule) -> String {
+    let mut out = String::new();
+    write_grammar_rule(rule, &mut out);
+    out
+}
+
+/// Canonical, span-independent identity text for one equation.
+pub fn equation_identity(equation: &Equation) -> String {
+    let mut out = String::new();
+    write_equation(equation, &mut out);
+    out
+}
+
+/// Canonical, span-independent identity text for one rewrite rule.
+pub fn rewrite_identity(rewrite: &RewriteRule) -> String {
+    let mut out = String::new();
+    write_rewrite(rewrite, &mut out);
+    out
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -177,15 +219,7 @@ fn write_language(language: &LanguageDef, out: &mut String) {
     }
     out.push_str("];equations[");
     for equation in &language.equations {
-        push_ident(out, &equation.name);
-        out.push(':');
-        write_typed_params(&equation.type_context, out);
-        out.push(':');
-        write_premises(&equation.premises, out);
-        out.push(':');
-        write_pattern(&equation.left, out);
-        out.push('=');
-        write_pattern(&equation.right, out);
+        write_equation(equation, out);
         out.push(';');
     }
     out.push_str("];rewrites[");
@@ -792,6 +826,18 @@ fn write_pattern_term(term: &PatternTerm, out: &mut String) {
             out.push(')');
         },
     }
+}
+
+fn write_equation(equation: &Equation, out: &mut String) {
+    push_ident(out, &equation.name);
+    out.push(':');
+    write_typed_params(&equation.type_context, out);
+    out.push(':');
+    write_premises(&equation.premises, out);
+    out.push(':');
+    write_pattern(&equation.left, out);
+    out.push('=');
+    write_pattern(&equation.right, out);
 }
 
 fn write_rewrite(rewrite: &RewriteRule, out: &mut String) {

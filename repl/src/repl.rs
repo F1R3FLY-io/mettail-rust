@@ -69,7 +69,9 @@ mod tests {
         AscentResults, BackendCapabilityDef, LanguageMetadata, RuntimeBackendArtifact,
         RuntimeBackendReport, RuntimeChannelObservation, RuntimeDovetailCompleteness,
         RuntimeDovetailDerivationEdge, RuntimeDovetailGraphKind, RuntimeDovetailRunReport,
-        RuntimeDovetailTermRecord, RuntimeObservationValue, Term, TermType, VarTypeInfo,
+        RuntimeDovetailTermRecord, RuntimeObservationValue, RuntimeReductionEngine,
+        RuntimeReductionKind, RuntimeReductionStep, RuntimeReductionTrace, Term, TermType,
+        VarTypeInfo,
     };
     use std::fmt;
 
@@ -664,6 +666,58 @@ mod tests {
             .map(|term| term.display.as_str())
             .collect();
         assert_eq!(normal_forms, vec!["root", "other_root"]);
+    }
+
+    #[test]
+    fn runtime_graph_view_keeps_rho_reduction_traces_distinct_from_dovetail_graphs() {
+        let dovetail_report = RuntimeBackendReport::try_dovetail(dovetail_probe_report())
+            .expect("Dovetail report should be shape-valid");
+        let dovetail_graph = runtime_graph_view(&dovetail_report)
+            .expect("Dovetail report should project to a graph");
+        assert_eq!(dovetail_graph.kind, RuntimeGraphKind::DovetailDerivationGraph);
+        assert_eq!(dovetail_graph.kind.edge_relation_name(), "derivation_edges");
+        assert_eq!(dovetail_graph.kind.edge_label(), "derivation dependency");
+        assert!(dovetail_report.as_dovetail().is_some());
+        assert!(dovetail_report.as_reduction_trace().is_none());
+
+        let trace_report = RuntimeBackendReport::reduction_trace(RuntimeReductionTrace::new(vec![
+            RuntimeReductionStep {
+                ordinal: 0,
+                engine: RuntimeReductionEngine::RhoComm,
+                kind: RuntimeReductionKind::Comm,
+                display: "@1!(42)".to_string(),
+                comm: None,
+            },
+            RuntimeReductionStep {
+                ordinal: 1,
+                engine: RuntimeReductionEngine::RhoComm,
+                kind: RuntimeReductionKind::Output,
+                display: "OUT => 42".to_string(),
+                comm: None,
+            },
+        ]));
+        let trace_graph = runtime_graph_view(&trace_report)
+            .expect("Rho reduction trace should project to a graph");
+        assert_eq!(trace_graph.kind, RuntimeGraphKind::RhoReductionTrace);
+        assert_eq!(trace_graph.kind.edge_relation_name(), "reductions");
+        assert_eq!(trace_graph.kind.edge_label(), "next reduction");
+        assert_eq!(trace_graph.entry_id, Some(0));
+        assert_eq!(trace_graph.terms[0].display, "[Rho COMM] @1!(42)");
+        assert_eq!(trace_graph.terms[1].display, "[Rho output] OUT => 42");
+        assert_eq!(trace_graph.edges.len(), 1);
+        assert_eq!(trace_graph.edges[0].from_id, 0);
+        assert_eq!(trace_graph.edges[0].to_id, 1);
+        assert_eq!(trace_graph.edges[0].label.as_deref(), Some("output"));
+        assert_eq!(
+            trace_graph
+                .normal_forms()
+                .iter()
+                .map(|term| term.display.as_str())
+                .collect::<Vec<_>>(),
+            vec!["[Rho output] OUT => 42"]
+        );
+        assert!(trace_report.as_reduction_trace().is_some());
+        assert!(trace_report.as_dovetail().is_none());
     }
 
     #[test]
@@ -2148,12 +2202,12 @@ impl Repl {
             )
         })?;
         // Step mode needs a navigable rewrite/derivation graph; the RhoMachine backend yields
-        // runtime observations, not a graph. When the default backend is RhoMachine and the language
-        // also supports Dovetail, we present the FAITHFUL one-step REWRITE graph (Increment 4): a
+        // runtime observations, not a graph. When the default backend is RhoMachine, ask the
+        // language's dedicated step-report API for the faithful one-step REWRITE graph (Increment 4): a
         // pure-fold / β / AC term (Calculator, Lambda, Ambient) reduces structurally in Dovetail, so
         // `dovetail_step_graph` enumerates real branching successors (`1 + 2 * 3 → 1 + 6 → 7`). A
         // genuine COMM term (RhoCalc `for(x<-@1){*x} | @1!(42)`) has NO Dovetail structural successor
-        // (COMM is host-routed), so its rewrite graph is a single normal-form node — for those we
+        // (COMM is Rho-machine work), so its rewrite graph is a single normal-form node — for those we
         // refine to the live reactive COMM reduction trace (Layer 2), one operational schedule on the
         // real Rho machine. Bail only when neither is available.
         let start_time = Instant::now();
@@ -2161,11 +2215,8 @@ impl Repl {
             print!("Running {} backend (step)... ", backend);
             // (Layer 1) The Dovetail rewrite graph. Keep it iff it shows at least one rewrite step;
             // a trivial single-node graph means the term does not reduce structurally in Dovetail
-            // (a host-routed COMM term), so we prefer the COMM trace below.
-            let dovetail_graph = language
-                .supports_runtime_backend(RuntimeBackend::Dovetail)
-                .then(|| language.run_step_backend_report(term.as_ref()).ok())
-                .flatten();
+            // (for example a COMM term), so we prefer the COMM trace below.
+            let dovetail_graph = language.run_step_backend_report(term.as_ref()).ok();
             let has_rewrite_steps = dovetail_graph
                 .as_ref()
                 .and_then(|report| report.as_dovetail())

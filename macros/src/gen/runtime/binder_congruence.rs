@@ -1,7 +1,8 @@
-//! Inc 1 — Moniker NativeHandler: binder-congruence normal form.
+//! Inc 1 — Moniker binder-congruence direct evaluator: normal form.
 //!
-//! Generates, for a HOST-LESS language with structural-congruence equations
-//! (e.g. Ambient), a capture-safe `binder_congruence_nf` that floats `new`
+//! Generates, for a language without a RhoNativeJoin obligation but with
+//! structural-congruence equations (e.g. Ambient), a capture-safe
+//! `binder_congruence_nf` that floats `new`
 //! binders outward to a canonical normal form. Every move goes through moniker
 //! `Scope::unbind` (freshen + open) → reassemble → `Scope::new` (re-close,
 //! recomputing de-Bruijn coordinates LOCALLY) — NEVER `from_parts_unsafe`, which

@@ -72,6 +72,7 @@ syn = { workspace = true, optional = true }
 # the printer, we run Rholang rendering on a big stack. A properly stack-safe PrettyPrinter is a
 # separate f1r3node PR.
 crossbeam-channel = "0.5"
+async-trait = "0.1"
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive

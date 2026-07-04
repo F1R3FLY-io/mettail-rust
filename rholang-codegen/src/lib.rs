@@ -73,20 +73,22 @@ pub mod guard_quality;
 pub mod invocation;
 pub mod lower;
 pub mod need;
+pub mod rho_net;
 pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
     audit_rho_default_backend, classify_rejected_rules, collect_guard_obligations,
-    plan_rho_default_backend, RhoCoverageEvidence, RhoDefaultBackendAudit, RhoDefaultBackendPlan,
-    RhoDefaultBackendPlanError, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
-    RhoGuardDisposition, RhoGuardDispositionDiagnostic, RhoGuardDispositionKind,
+    plan_rho_default_backend, suggest_rejected_rule_dispositions, RhoCoverageEvidence,
+    RhoDefaultBackendAudit, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
+    RhoGuardDispositionDiagnostic, RhoGuardDispositionKind,
     RhoGuardObligation, RhoGuardObligationKind, RhoRejectedRuleClassification,
     RhoRejectedRuleClassificationReason, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
 };
 pub use dataflow::{
     build_dataflow_call_par, RhoDataflowChild, RhoDataflowError, RhoDataflowNode,
-    RhoFoldDataflowDisposition, RhoFoldDataflowInvocation,
+    RhoFoldDataflowDisposition, RhoFoldDataflowInvocation, RhoFoldDataflowPredicateBlock,
 };
 pub use deadlock::{
     analyze_channel_deadlocks, ChannelDeadlockDiagnostic, ChannelDeadlockReport, ChannelNetwork,
@@ -108,6 +110,10 @@ pub use need::{
     CallByNeedBudget, CallByNeedBudgetBlocker, CallByNeedForce, CallByNeedForceAdmissionRecord,
     CallByNeedInitialState, CallByNeedThunkAst, CallByNeedThunkPlan, CallByNeedThunkPlanError,
     CallByNeedThunkSpec, CallByNeedThunkSpecError,
+};
+pub use rho_net::{
+    RhoNetChannel, RhoNetChannelKind, RhoNetProgram, RhoNetRhsTemplate, RhoNetRule, RhoNetRuleKind,
+    RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

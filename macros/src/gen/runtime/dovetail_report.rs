@@ -1116,8 +1116,12 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
                     ));
                 }
 
-                let rules = #rules;
-                let sat = eg.saturate(&rules, max_iters);
+                static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
+                    ::dovetail::rules::CompiledRuleSet<String>,
+                > = ::std::sync::OnceLock::new();
+                let __compiled_rules = __DOVETAIL_COMPILED_RULES
+                    .get_or_init(|| ::dovetail::rules::CompiledRuleSet::from_rewrites(#rules));
+                let sat = eg.saturate_compiled(__compiled_rules, max_iters);
                 if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
                     return Err(format!(
                         "generated Dovetail saturation for language {} stopped before convergence: {:?}",

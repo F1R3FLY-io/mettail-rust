@@ -15,16 +15,16 @@
 //! This module is called from the predicated types pipeline (Stage 5) when
 //! `TermParam::GuardBody` constructors exist in the language definition.
 //! The emitted `TriState` type is included in the `TokenStream` alongside the
-//! generated runtime — the Dovetail saturation engine and, for host-routed
+//! generated runtime — the Dovetail saturation engine and, for Rho-backed COMM
 //! languages, the Rho-native COMM backend. (The legacy Ascent Datalog runtime
 //! backend was retired in P6.)
 //!
 //! ## Guard Evaluation Paths (post-P6)
 //!
-//! **Host-routed path (Rho-backed COMM):** For a guarded COMM rule in a
+//! **Rho-backed COMM path:** For a guarded COMM rule in a
 //! Rho-backed language, the surviving predicate is enforced at run time by the
-//! host — RSpace structural matching, a Rholang `where` boolean guard, or a
-//! host-routed `RhoNativeJoin`. The compile-time substrate (EBA/SFT) classifies
+//! COMM substrate — RSpace structural matching, a Rholang `where` boolean guard,
+//! or a `RhoNativeJoin` bridge. The compile-time substrate (EBA/SFT) classifies
 //! only and is never re-evaluated at run time (see
 //! `docs/architecture/semantic-predicates/08-runtime-comm-enforcement.md`).
 //!
@@ -120,8 +120,8 @@ pub fn generate_tristate_type() -> TokenStream {
 pub fn generate_guard_codegen(language: &LanguageDef) -> TokenStream {
     // This function no longer emits per-guard evaluation wrapper functions.
     // Post-P6, behavioral predicates are enforced at run time by the
-    // host-routed COMM path (RSpace structural matching, a Rholang `where`
-    // boolean guard, or a host-routed `RhoNativeJoin`) for Rho-backed
+    // Rho-backed COMM path (RSpace structural matching, a Rholang `where`
+    // boolean guard, or a `RhoNativeJoin` bridge) for Rho-backed
     // languages, or lowered to `mettail_runtime::evaluate_pred_with_bindings`
     // for WPDA refinement guards (see `wpda_codegen::refinement` and §8 of
     // `docs/design/predicated-types.md`). The legacy Ascent Datalog JOIN-clause

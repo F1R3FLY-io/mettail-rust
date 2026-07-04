@@ -506,11 +506,10 @@ impl PlannedCallByNeedThunk {
     }
 }
 
-/// Dynamic operation that a Rho-backed generated language wants to execute for
-/// one typed input term.
+/// Dynamic operation that can execute directly on the Rho machine.
 #[cfg(feature = "runtime-report")]
 #[derive(Debug, Clone)]
-pub enum RhoBackendInvocation {
+pub enum RhoMachineInvocation {
     /// Run the planned backend and observe integer values on the channel.
     RunAndObserveInts { out_channel: String },
     /// Run the planned backend and observe boolean values on the channel.
@@ -535,14 +534,39 @@ pub enum RhoBackendInvocation {
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
     RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
-    /// The typed term is covered by a `NativeHandler` disposition (a native
-    /// fold / generated normalization), not a Rho-lowerable contract: its
-    /// production semantics *is* the checked Dovetail report the composed
-    /// wrapper already built, not a Rho execution. `run_backend_report`
-    /// intercepts this variant and returns that report; it is never executed on
-    /// RhoRuntime. This is what lets a flipped language run *every* op —
-    /// Rho-lowerable terms on Rho, native-fold terms via their Dovetail report.
-    DeferToDovetailReport,
+}
+
+/// Dynamic operation selected by a checked Dovetail+Rho backend.
+///
+/// Every executable branch is a [`RhoMachineInvocation`]. The only non-machine
+/// branch is a semantic-predicate block whose observational payload is the
+/// already checked Dovetail report owned by the composed wrapper.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone)]
+pub enum RhoBackendInvocation {
+    RhoMachine(RhoMachineInvocation),
+    DeferToDovetailSemanticPredicate { predicate: String },
+}
+
+#[cfg(feature = "runtime-report")]
+impl From<RhoMachineInvocation> for RhoBackendInvocation {
+    fn from(value: RhoMachineInvocation) -> Self {
+        Self::RhoMachine(value)
+    }
+}
+
+/// Runtime site selected for a compiled [`RhoBackendInvocation`].
+///
+/// This is the audit boundary for the Rho-native migration. `RhoMachine`
+/// variants carry normalized `rhoapi::Par` work injected into the Rho runtime.
+/// `SemanticPredicateHost` is the only non-Rho-machine site: it represents a
+/// semantic-predicate block whose observational payload is the checked Dovetail
+/// report.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoInvocationExecutionSite {
+    RhoMachine,
+    SemanticPredicateHost,
 }
 
 #[cfg(feature = "runtime-report")]
@@ -669,19 +693,19 @@ pub fn build_scalar_contract_invocation(
     abi: &RhoScalarContractAbi,
     arguments: Vec<RhoAstLiteral>,
     out_channel: impl Into<String>,
-) -> Result<RhoBackendInvocation, RhoScalarInvocationError> {
+) -> Result<RhoMachineInvocation, RhoScalarInvocationError> {
     check_scalar_arguments(abi, &arguments)?;
     let out_channel = out_channel.into();
     let call = RhoAstSend::contract_call(abi.rule_label.clone(), arguments, out_channel.clone())?
         .par()
         .clone();
     Ok(match abi.result_type() {
-        RhoScalarType::Int => RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel },
+        RhoScalarType::Int => RhoMachineInvocation::RunWithCallAndObserveInts { call, out_channel },
         RhoScalarType::Bool => {
-            RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel }
+            RhoMachineInvocation::RunWithCallAndObserveBools { call, out_channel }
         },
         RhoScalarType::Str => {
-            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel }
+            RhoMachineInvocation::RunWithCallAndObserveStrings { call, out_channel }
         },
     })
 }
@@ -695,7 +719,7 @@ pub fn build_scalar_contract_invocation(
 #[cfg(feature = "runtime-report")]
 pub fn build_scalar_contract_invocation_from_contract(
     invocation: RhoScalarContractInvocation,
-) -> Result<RhoBackendInvocation, RhoScalarInvocationError> {
+) -> Result<RhoMachineInvocation, RhoScalarInvocationError> {
     build_scalar_contract_invocation(&invocation.abi, invocation.arguments, invocation.out_channel)
 }
 
@@ -709,102 +733,109 @@ pub fn build_scalar_contract_invocation_from_contract(
 #[cfg(feature = "runtime-report")]
 pub fn build_fold_dataflow_invocation_from_contract(
     invocation: RhoFoldDataflowInvocation,
-) -> RhoBackendInvocation {
+) -> RhoMachineInvocation {
     let RhoFoldDataflowInvocation { call, out_channel, result_type } = invocation;
     match result_type {
-        RhoScalarType::Int => RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel },
+        RhoScalarType::Int => RhoMachineInvocation::RunWithCallAndObserveInts { call, out_channel },
         RhoScalarType::Bool => {
-            RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel }
+            RhoMachineInvocation::RunWithCallAndObserveBools { call, out_channel }
         },
         RhoScalarType::Str => {
-            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel }
+            RhoMachineInvocation::RunWithCallAndObserveStrings { call, out_channel }
         },
     }
 }
 
 #[cfg(feature = "runtime-report")]
-impl RhoBackendInvocation {
+impl RhoMachineInvocation {
+    /// Which runtime site executes this invocation.
+    pub fn execution_site(&self) -> RhoInvocationExecutionSite {
+        RhoInvocationExecutionSite::RhoMachine
+    }
+
+    /// True for every [`RhoMachineInvocation`].
+    pub fn is_rho_machine_execution(&self) -> bool {
+        true
+    }
+
     /// The lowered program `Par` this invocation runs on the Rho machine, if any. The
     /// `RunWithCall*` variants carry it (a COMM / dataflow program — exactly what the reactive
-    /// single-stepper `inj`s); the pure-observe / call-by-need / deferred variants do not.
+    /// single-stepper `inj`s); the pure-observe and call-by-need variants do not.
     pub fn program_par(&self) -> Option<&Par> {
         match self {
-            RhoBackendInvocation::RunWithCallAndObserveInts { call, .. }
-            | RhoBackendInvocation::RunWithCallAndObserveBools { call, .. }
-            | RhoBackendInvocation::RunWithCallAndObserveStrings { call, .. }
-            | RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { call, .. } => Some(call),
+            RhoMachineInvocation::RunWithCallAndObserveInts { call, .. }
+            | RhoMachineInvocation::RunWithCallAndObserveBools { call, .. }
+            | RhoMachineInvocation::RunWithCallAndObserveStrings { call, .. }
+            | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, .. } => Some(call),
             _ => None,
         }
     }
 
-    /// The program's observation channel for the Observe variants (`None` for the call-by-need /
-    /// deferred variants). The reactive single-stepper reads the resting value(s) on this channel
-    /// post-quiescence to surface the program's observable output as terminal `Output` step(s).
+    /// The program's observation channel for the Observe variants (`None` for call-by-need).
     pub fn out_channel(&self) -> Option<&str> {
         match self {
-            RhoBackendInvocation::RunAndObserveInts { out_channel }
-            | RhoBackendInvocation::RunAndObserveBools { out_channel }
-            | RhoBackendInvocation::RunAndObserveStrings { out_channel }
-            | RhoBackendInvocation::RunAndObserveRuntimeValues { out_channel }
-            | RhoBackendInvocation::RunWithCallAndObserveInts { out_channel, .. }
-            | RhoBackendInvocation::RunWithCallAndObserveBools { out_channel, .. }
-            | RhoBackendInvocation::RunWithCallAndObserveStrings { out_channel, .. }
-            | RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. } => {
+            RhoMachineInvocation::RunAndObserveInts { out_channel }
+            | RhoMachineInvocation::RunAndObserveBools { out_channel }
+            | RhoMachineInvocation::RunAndObserveStrings { out_channel }
+            | RhoMachineInvocation::RunAndObserveRuntimeValues { out_channel }
+            | RhoMachineInvocation::RunWithCallAndObserveInts { out_channel, .. }
+            | RhoMachineInvocation::RunWithCallAndObserveBools { out_channel, .. }
+            | RhoMachineInvocation::RunWithCallAndObserveStrings { out_channel, .. }
+            | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. } => {
                 Some(out_channel)
             },
-            RhoBackendInvocation::RunCallByNeedThunk { .. }
-            | RhoBackendInvocation::DeferToDovetailReport => None,
+            RhoMachineInvocation::RunCallByNeedThunk { .. } => None,
         }
     }
 
     async fn execute(self, backend: &PlannedRhoBackend) -> Result<RuntimeBackendReport, String> {
         match self {
-            RhoBackendInvocation::RunAndObserveInts { out_channel } => backend
+            RhoMachineInvocation::RunAndObserveInts { out_channel } => backend
                 .run_and_observe_ints(&out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho integer observation report: {err:?}")
                 }),
-            RhoBackendInvocation::RunAndObserveBools { out_channel } => backend
+            RhoMachineInvocation::RunAndObserveBools { out_channel } => backend
                 .run_and_observe_bools(&out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho boolean observation report: {err:?}")
                 }),
-            RhoBackendInvocation::RunAndObserveStrings { out_channel } => backend
+            RhoMachineInvocation::RunAndObserveStrings { out_channel } => backend
                 .run_and_observe_strings(&out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
-            RhoBackendInvocation::RunAndObserveRuntimeValues { out_channel } => backend
+            RhoMachineInvocation::RunAndObserveRuntimeValues { out_channel } => backend
                 .run_and_observe_runtime_values(&out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho runtime value observation report: {err:?}")
                 }),
-            RhoBackendInvocation::RunWithCallAndObserveInts { call, out_channel } => backend
+            RhoMachineInvocation::RunWithCallAndObserveInts { call, out_channel } => backend
                 .run_with_call_and_observe_ints(&call, &out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho integer observation report: {err:?}")
                 }),
-            RhoBackendInvocation::RunWithCallAndObserveBools { call, out_channel } => backend
+            RhoMachineInvocation::RunWithCallAndObserveBools { call, out_channel } => backend
                 .run_with_call_and_observe_bools(&call, &out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| {
                     format!("failed to convert Rho boolean observation report: {err:?}")
                 }),
-            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel } => backend
+            RhoMachineInvocation::RunWithCallAndObserveStrings { call, out_channel } => backend
                 .run_with_call_and_observe_strings(&call, &out_channel)
                 .await?
                 .try_into_runtime_backend_report()
                 .map_err(|err| format!("failed to convert Rho string observation report: {err:?}")),
-            RhoBackendInvocation::RunWithCallAndObserveRuntimeValues { call, out_channel } => {
+            RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, out_channel } => {
                 backend
                     .run_with_call_and_observe_runtime_values(&call, &out_channel)
                     .await?
@@ -813,17 +844,41 @@ impl RhoBackendInvocation {
                         format!("failed to convert Rho runtime value observation report: {err:?}")
                     })
             },
-            RhoBackendInvocation::RunCallByNeedThunk { plan } => {
+            RhoMachineInvocation::RunCallByNeedThunk { plan } => {
                 PlannedCallByNeedThunk::from_plan(*plan)
                     .run_and_observe_need_report()
                     .await
             },
-            RhoBackendInvocation::DeferToDovetailReport => Err(
-                "DeferToDovetailReport is a native-handler disposition resolved by the composed \
-                 runtime wrapper to a checked Dovetail report; it must not be executed on \
-                 RhoRuntime"
-                    .to_string(),
-            ),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl RhoBackendInvocation {
+    pub fn execution_site(&self) -> RhoInvocationExecutionSite {
+        match self {
+            RhoBackendInvocation::RhoMachine(_) => RhoInvocationExecutionSite::RhoMachine,
+            RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => {
+                RhoInvocationExecutionSite::SemanticPredicateHost
+            },
+        }
+    }
+
+    pub fn is_rho_machine_execution(&self) -> bool {
+        self.execution_site() == RhoInvocationExecutionSite::RhoMachine
+    }
+
+    pub fn program_par(&self) -> Option<&Par> {
+        match self {
+            RhoBackendInvocation::RhoMachine(invocation) => invocation.program_par(),
+            RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => None,
+        }
+    }
+
+    pub fn out_channel(&self) -> Option<&str> {
+        match self {
+            RhoBackendInvocation::RhoMachine(invocation) => invocation.out_channel(),
+            RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => None,
         }
     }
 }
@@ -856,7 +911,7 @@ fn drain_pending_fold_definitions() -> Vec<rholang::rust::interpreter::system_pr
 #[cfg(feature = "runtime-report")]
 fn run_rho_invocation_blocking(
     backend: PlannedRhoBackend,
-    invocation: RhoBackendInvocation,
+    invocation: RhoMachineInvocation,
     fold_definitions: Vec<rholang::rust::interpreter::system_processes::Definition>,
 ) -> Result<RuntimeBackendReport, String> {
     let worker = thread::Builder::new()
@@ -1011,7 +1066,7 @@ impl<F> RhoInvocationCompilerStage<F> {
 ///
 /// Formal model: `GeneratedLanguageInstallation.v`, especially the
 /// plan-derived stage lemmas. Source text is not an execution boundary here;
-/// `compiler` must produce a [`RhoBackendInvocation`] carrying `rhoapi::Par`
+/// `compiler` must produce a [`RhoMachineInvocation`] carrying `rhoapi::Par`
 /// values or planned bytecode-ready artifacts.
 #[cfg(feature = "runtime-report")]
 pub fn install_rho_runtime_backend<L, F>(
@@ -1021,7 +1076,7 @@ pub fn install_rho_runtime_backend<L, F>(
 ) -> Result<RhoRuntimeBackedLanguage<L, F>, RhoRuntimeBackedLanguageError>
 where
     L: Language,
-    F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
+    F: Fn(&dyn Term) -> Result<RhoMachineInvocation, String> + Send + Sync,
 {
     let definition_fingerprint = backend.plan().definition_fingerprint().to_string();
     let invocation = RhoInvocationCompilerStage::new(definition_fingerprint, compiler);
@@ -1043,7 +1098,7 @@ where
 ///
 /// Formal model: `GeneratedLanguageInstallation.v`. The implementation also
 /// relies on `DovetailRhoLanguageBackendWrapper.v` for the runtime surface:
-/// `RhoMachine` is default, `Dovetail` is the checked intermediate, and legacy
+/// `RhoMachine` is default, `Dovetail` is an internal checked stage, and legacy
 /// Ascent is not exposed through the wrapped value.
 #[cfg(feature = "runtime-report")]
 pub fn install_dovetail_rho_runtime_backend<L, D, DStep, F>(
@@ -1181,7 +1236,7 @@ where
 impl<L, F> RhoRuntimeBackedLanguage<L, F>
 where
     L: Language,
-    F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
+    F: Fn(&dyn Term) -> Result<RhoMachineInvocation, String> + Send + Sync,
 {
     pub fn new(
         inner: L,
@@ -1231,7 +1286,8 @@ where
     ///
     /// The `dovetail` closure is the language-specific rewrite compiler. The
     /// `invocation` closure receives the already shape-validated, complete
-    /// Dovetail report and must produce a Rho AST invocation, not source text.
+    /// Dovetail report and must produce a strict Rho-default invocation, not
+    /// source text or non-semantic Dovetail execution.
     pub fn new(
         inner: L,
         backend: PlannedRhoBackend,
@@ -1278,7 +1334,7 @@ where
 impl<L, F> Language for RhoRuntimeBackedLanguage<L, F>
 where
     L: Language,
-    F: Fn(&dyn Term) -> Result<RhoBackendInvocation, String> + Send + Sync,
+    F: Fn(&dyn Term) -> Result<RhoMachineInvocation, String> + Send + Sync,
 {
     fn name(&self) -> &'static str {
         self.inner.name()
@@ -1323,32 +1379,17 @@ where
     }
 
     fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
-        let inner_capabilities = self.inner.runtime_backend_capabilities();
-        let mut capabilities = Vec::with_capacity(inner_capabilities.len().saturating_add(1));
-        capabilities.push(RuntimeBackendCapability {
+        vec![RuntimeBackendCapability {
             backend: RuntimeBackend::RhoMachine,
             is_default: true,
-        });
-        capabilities.extend(
-            inner_capabilities
-                .into_iter()
-                .filter(|capability| {
-                    capability.backend != RuntimeBackend::RhoMachine
-                        && capability.backend != RuntimeBackend::Ascent
-                })
-                .map(|mut capability| {
-                    capability.is_default = false;
-                    capability
-                }),
-        );
-        capabilities
+        }]
     }
 
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
         match backend {
             RuntimeBackend::RhoMachine => true,
             RuntimeBackend::Ascent => false,
-            other => self.inner.supports_runtime_backend(other),
+            _ => false,
         }
     }
 
@@ -1373,7 +1414,11 @@ where
                 "legacy Ascent runtime is not exposed by Rho-backed language {}",
                 self.name()
             )),
-            other => self.inner.run_backend_report(other, term),
+            other => Err(format!(
+                "{} backend is not exposed by Rho-backed language {}",
+                other,
+                self.name()
+            )),
         }
     }
 
@@ -1407,7 +1452,11 @@ where
                 "legacy Ascent runtime is not exposed by Rho-backed language {}",
                 self.name()
             )),
-            other => self.inner.run_backend_report_with_facts(other, term, facts),
+            other => Err(format!(
+                "{} backend is not exposed by Rho-backed language {}",
+                other,
+                self.name()
+            )),
         }
     }
 
@@ -1537,21 +1586,15 @@ where
     }
 
     fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
-        vec![
-            RuntimeBackendCapability {
-                backend: RuntimeBackend::RhoMachine,
-                is_default: true,
-            },
-            RuntimeBackendCapability {
-                backend: RuntimeBackend::Dovetail,
-                is_default: false,
-            },
-        ]
+        vec![RuntimeBackendCapability {
+            backend: RuntimeBackend::RhoMachine,
+            is_default: true,
+        }]
     }
 
     fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
         match backend {
-            RuntimeBackend::RhoMachine | RuntimeBackend::Dovetail => true,
+            RuntimeBackend::RhoMachine => true,
             RuntimeBackend::Ascent => false,
             _ => false,
         }
@@ -1575,37 +1618,26 @@ where
                 })?;
                 let fold_definitions = drain_pending_fold_definitions();
                 match invocation {
-                    // Native-handler-dispositioned term: its production semantics is the
-                    // checked Dovetail report (a fold / generated normalization), not a Rho
-                    // execution. Surface that already-built report honestly as a
-                    // Dovetail-shaped result so a flipped language executes *every* op —
-                    // Rho-lowerable terms on Rho, native-fold terms via Dovetail — rather than
-                    // failing closed on the non-lowerable ones.
-                    RhoBackendInvocation::DeferToDovetailReport => {
+                    RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => {
                         RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
                             format!(
-                                "Dovetail native-handler stage for language {} produced malformed report: {err}",
+                                "semantic-predicate Dovetail stage for language {} produced malformed report: {err}",
                                 self.name()
                             )
                         })
                     },
-                    invocation => run_rho_invocation_blocking(
+                    RhoBackendInvocation::RhoMachine(machine_invocation) => run_rho_invocation_blocking(
                         self.backend.clone(),
-                        invocation,
+                        machine_invocation,
                         fold_definitions,
                     ),
                 }
             },
-            RuntimeBackend::Dovetail => {
-                let dovetail_report =
-                    checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
-                RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
-                    format!(
-                        "Dovetail stage for language {} produced malformed report: {err}",
-                        self.name()
-                    )
-                })
-            },
+            RuntimeBackend::Dovetail => Err(format!(
+                "Dovetail is an internal checked stage for Rho-default language {}; execute with \
+                 RhoMachine or use the step report API for derivation evidence",
+                self.name()
+            )),
             RuntimeBackend::Ascent => Err(format!(
                 "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
                 self.name()
@@ -1618,10 +1650,10 @@ where
         }
     }
 
-    /// Step-mode report: identical to `run_backend_report(Dovetail, …)` but runs the generated
+    /// Step-mode report: a dedicated derivation-evidence surface that runs the generated
     /// `dovetail_step_report` (`self.dovetail.step_compiler`) so each term record carries its
     /// reconstructed `source_display` for comprehensible REPL `step` display. Production `exec` uses
-    /// `run_backend_report`/`compiler` and never reaches this path — so `exec` is unaffected.
+    /// `run_backend_report`/`compiler` and cannot select Dovetail as a runtime backend.
     fn run_step_backend_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
         let dovetail_report =
             checked_complete_dovetail_report(&self.inner, term, &self.dovetail.step_compiler)?;
@@ -1633,13 +1665,11 @@ where
         })
     }
 
-    /// Start the reactive single-stepper for a COMM-bearing term: run the Dovetail D-stage (so any
-    /// statically-present fold pre-reduces), build the F-stage invocation, and `inj` its program
-    /// `Par` under a [`crate::step::StepSession`]. A term that lowers to no COMM program (a pure
-    /// value/fold ⇒ `DeferToDovetailReport`, or a pure-observe invocation) has nothing to single-
-    /// step on the Rho machine, so this fails — the REPL then falls back to the Dovetail derivation
-    /// graph (Layer 1). Tier-3 held-fold `Definition`s are threaded in here once lowering emits them
-    /// (empty for now).
+    /// Start the reactive single-stepper for a Rho-machine invocation: run the checked Dovetail
+    /// stage, build the F-stage invocation, and `inj` its program `Par` under a
+    /// [`crate::step::StepSession`]. COMM-bearing programs yield COMM steps, while pure observed
+    /// values run to quiescence and yield terminal `Output` steps. Non-Rho invocations still fail
+    /// here so the REPL can inspect the Dovetail derivation graph.
     fn start_reduction_stepper(
         &self,
         term: &dyn Term,
@@ -1659,9 +1689,15 @@ where
         // The program's observation channel (e.g. RhoCalc's `"OUT"`); the stepper reads its resting
         // value(s) post-quiescence to surface terminal output step(s). Extracted (owned) before the
         // `program_par` borrow so it does not conflict with it.
-        let out_channel = invocation.out_channel().map(String::from);
-        match invocation.program_par() {
-            Some(call) => {
+        match invocation {
+            RhoBackendInvocation::RhoMachine(machine_invocation) => {
+                let out_channel = machine_invocation.out_channel().map(String::from);
+                let call = machine_invocation.program_par().ok_or_else(|| {
+                    format!(
+                        "term has no Rho-machine program to single-step for language {}; inspect the Dovetail derivation graph instead",
+                        self.name()
+                    )
+                })?;
                 // Compose the call with the backend's persistent contracts (e.g. Calculator's E3
                 // `@"AddInt"`/`@"SubInt"`/`@"MulInt"` dataflow contracts) so their COMMs actually
                 // fire — the SAME composition the wrapper's run path uses
@@ -1678,9 +1714,9 @@ where
                     crate::step::StepSession::start(program, fold_definitions, out_channel)?;
                 Ok(Box::new(session))
             },
-            None => Err(format!(
-                "term has no COMM program to single-step on the Rho machine for language {} (it \
-                 reduces entirely in Dovetail); inspect the Dovetail derivation graph instead",
+            RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => Err(format!(
+                "term has no Rho-machine program to single-step for language {}; inspect the \
+                 Dovetail derivation graph instead",
                 self.name()
             )),
         }
@@ -1705,12 +1741,17 @@ where
         facts: &SeedFacts,
     ) -> Result<RuntimeBackendReport, String> {
         match backend {
-            RuntimeBackend::RhoMachine | RuntimeBackend::Dovetail if facts.is_empty() => {
+            RuntimeBackend::RhoMachine if facts.is_empty() => {
                 self.run_backend_report(backend, term)
             },
-            RuntimeBackend::RhoMachine | RuntimeBackend::Dovetail => Err(format!(
+            RuntimeBackend::RhoMachine => Err(format!(
                 "{} backend for language {} does not accept Ascent-shaped seeded facts",
                 backend,
+                self.name()
+            )),
+            RuntimeBackend::Dovetail => Err(format!(
+                "Dovetail is an internal checked stage for Rho-default language {}; execute with \
+                 RhoMachine or use the step report API for derivation evidence",
                 self.name()
             )),
             RuntimeBackend::Ascent => Err(format!(
@@ -2066,7 +2107,7 @@ mod tests {
     }
 
     #[cfg(feature = "runtime-report")]
-    fn mini_invocation(term: &dyn Term) -> Result<RhoBackendInvocation, String> {
+    fn mini_invocation(term: &dyn Term) -> Result<RhoMachineInvocation, String> {
         let term = term
             .as_any()
             .downcast_ref::<MiniTerm>()
@@ -2087,7 +2128,7 @@ mod tests {
         report.assert_complete().map_err(|status| {
             format!("MiniDefaultRho invocation requires a complete Dovetail report, got {status}")
         })?;
-        mini_invocation(term)
+        Ok(RhoBackendInvocation::from(mini_invocation(term)?))
     }
 
     #[test]
@@ -2147,6 +2188,73 @@ mod tests {
 
     #[cfg(feature = "runtime-report")]
     #[test]
+    fn direct_rho_surface_rejects_seeded_facts_and_legacy_backends() {
+        let language = install_rho_runtime_backend(MiniLanguage, mini_backend(), mini_invocation)
+            .expect("default runtime-report surface should install the direct Rho wrapper");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
+        assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
+
+        let capabilities = language.runtime_backend_capabilities();
+        assert_eq!(capabilities.len(), 1);
+        assert_eq!(capabilities[0].backend, RuntimeBackend::RhoMachine);
+        assert!(capabilities[0].is_default);
+
+        let empty_seeded_report = language
+            .run_default_backend_report_with_facts(term.as_ref(), &SeedFacts::new())
+            .expect("empty seed facts are a no-op for a direct Rho wrapper");
+        assert_eq!(empty_seeded_report.backend(), RuntimeBackend::RhoMachine);
+
+        let mut facts = SeedFacts::new();
+        facts.insert("seed".to_string(), vec![vec!["2 + 3".to_string()]]);
+        let seeded_err = language
+            .run_default_backend_report_with_facts(term.as_ref(), &facts)
+            .expect_err("direct Rho wrapper must reject Ascent-shaped facts");
+        assert!(
+            seeded_err.contains("does not accept Ascent-shaped seeded facts"),
+            "{seeded_err}"
+        );
+
+        let dovetail_err = language
+            .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
+            .expect_err("direct Rho wrapper must not expose Dovetail");
+        assert!(dovetail_err.contains("Dovetail backend is not exposed"), "{dovetail_err}");
+
+        let seeded_dovetail_err = language
+            .run_backend_report_with_facts(RuntimeBackend::Dovetail, term.as_ref(), &SeedFacts::new())
+            .expect_err("direct Rho wrapper must not delegate seeded Dovetail requests");
+        assert!(
+            seeded_dovetail_err.contains("Dovetail backend is not exposed"),
+            "{seeded_dovetail_err}"
+        );
+
+        let ascent_report_err = language
+            .run_backend_report(RuntimeBackend::Ascent, term.as_ref())
+            .expect_err("direct Rho wrapper must not expose Ascent reports");
+        assert!(
+            ascent_report_err.contains("legacy Ascent runtime is not exposed"),
+            "{ascent_report_err}"
+        );
+
+        let seeded_ascent_report_err = language
+            .run_backend_report_with_facts(RuntimeBackend::Ascent, term.as_ref(), &facts)
+            .expect_err("direct Rho wrapper must not expose seeded Ascent reports");
+        assert!(
+            seeded_ascent_report_err.contains("legacy Ascent runtime is not exposed"),
+            "{seeded_ascent_report_err}"
+        );
+
+        let ascent_err = language
+            .run_ascent_with_facts(term.as_ref(), &facts)
+            .expect_err("direct Rho wrapper must not expose seeded Ascent");
+        assert!(ascent_err.contains("legacy Ascent runtime is not exposed"), "{ascent_err}");
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
     fn default_surface_installs_dovetail_rho_wrapper_without_oracle_ascent() {
         let language = install_dovetail_rho_runtime_backend(
             MiniLanguage,
@@ -2160,22 +2268,25 @@ mod tests {
 
         assert_eq!(language.default_runtime_backend(), Some(RuntimeBackend::RhoMachine));
         assert!(language.supports_runtime_backend(RuntimeBackend::RhoMachine));
-        assert!(language.supports_runtime_backend(RuntimeBackend::Dovetail));
+        assert!(!language.supports_runtime_backend(RuntimeBackend::Dovetail));
         assert!(!language.supports_runtime_backend(RuntimeBackend::Ascent));
 
         let capabilities = language.runtime_backend_capabilities();
-        assert_eq!(capabilities.len(), 2);
+        assert_eq!(capabilities.len(), 1);
         assert_eq!(capabilities[0].backend, RuntimeBackend::RhoMachine);
         assert!(capabilities[0].is_default);
-        assert_eq!(capabilities[1].backend, RuntimeBackend::Dovetail);
-        assert!(!capabilities[1].is_default);
 
-        let dovetail_report = language
+        let dovetail_err = language
             .run_backend_report(RuntimeBackend::Dovetail, term.as_ref())
-            .expect("wrapper should expose checked Dovetail intermediate");
-        assert_eq!(dovetail_report.backend(), RuntimeBackend::Dovetail);
-        assert_eq!(dovetail_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
-        let RuntimeBackendOutput::Dovetail(dovetail_output) = dovetail_report.into_output() else {
+            .expect_err("Rho-default wrapper must not expose Dovetail as an executable backend");
+        assert!(dovetail_err.contains("Dovetail is an internal checked stage"), "{dovetail_err}");
+
+        let step_report = language
+            .run_step_backend_report(term.as_ref())
+            .expect("wrapper should expose checked Dovetail evidence through the step API");
+        assert_eq!(step_report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(step_report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+        let RuntimeBackendOutput::Dovetail(dovetail_output) = step_report.into_output() else {
             panic!("Dovetail backend must return a Dovetail report");
         };
         assert!(dovetail_output.is_complete());
@@ -2273,6 +2384,92 @@ mod tests {
 
     #[cfg(feature = "runtime-report")]
     #[test]
+    fn direct_rho_wrapper_compiler_type_is_machine_only() {
+        fn assert_machine_only_direct_wrapper<L, F>(_language: &RhoRuntimeBackedLanguage<L, F>)
+        where
+            L: Language,
+            F: Fn(&dyn Term) -> Result<RhoMachineInvocation, String> + Send + Sync,
+        {
+        }
+
+        let language = install_rho_runtime_backend(MiniLanguage, mini_backend(), mini_invocation)
+            .expect("direct Rho wrapper should install with a machine-only compiler");
+        assert_machine_only_direct_wrapper(&language);
+
+        let term = language.parse_term("2 + 3").expect("mini parse");
+        let invocation = mini_invocation(term.as_ref()).expect("mini invocation should lower");
+        assert_eq!(invocation.execution_site(), RhoInvocationExecutionSite::RhoMachine);
+        assert!(invocation.is_rho_machine_execution());
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn backend_invocation_has_no_non_semantic_dovetail_execution_site() {
+        let sites = [
+            RhoMachineInvocation::RunAndObserveInts {
+                out_channel: "OUT".to_string(),
+            }
+            .execution_site(),
+            RhoBackendInvocation::DeferToDovetailSemanticPredicate {
+                predicate: "safe scalar evaluation declined".to_string(),
+            }
+            .execution_site(),
+        ];
+
+        assert_eq!(sites, [RhoInvocationExecutionSite::RhoMachine, RhoInvocationExecutionSite::SemanticPredicateHost]);
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn default_surface_allows_semantic_predicate_deferral() {
+        let language = install_dovetail_rho_runtime_backend(
+            MiniLanguage,
+            mini_backend(),
+            complete_mini_dovetail_report,
+            complete_mini_dovetail_report,
+            |_term, _report| {
+                Ok(RhoBackendInvocation::DeferToDovetailSemanticPredicate {
+                    predicate: "safe scalar evaluation declined".to_string(),
+                })
+            },
+        )
+        .expect("installation is separate from per-term invocation disposition");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("semantic-predicate deferral resolves to the checked Dovetail report");
+
+        assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn default_surface_rejects_semantic_predicate_deferral_before_dovetail_completeness() {
+        let language = install_dovetail_rho_runtime_backend(
+            MiniLanguage,
+            mini_backend(),
+            bounded_mini_dovetail_report,
+            bounded_mini_dovetail_report,
+            |_term, _report| {
+                Ok(RhoBackendInvocation::DeferToDovetailSemanticPredicate {
+                    predicate: "safe scalar evaluation declined".to_string(),
+                })
+            },
+        )
+        .expect("installation is separate from per-term Dovetail completeness");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let err = language
+            .run_default_backend_report(term.as_ref())
+            .expect_err("semantic-predicate deferral must require a complete Dovetail report");
+        assert!(err.contains("produced incomplete report: BoundedByCycleCut"), "{err}");
+        assert!(!err.contains("safe scalar evaluation declined"), "{err}");
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
     fn scalar_contract_invocation_uses_generated_abi_shape() {
         let abi = binary_abi("AddStr", RhoScalarType::Str, RhoScalarType::Str, RhoScalarType::Str);
         let invocation = build_scalar_contract_invocation(
@@ -2286,7 +2483,7 @@ mod tests {
         .expect("valid ABI and arguments should produce a Rho invocation");
 
         match invocation {
-            RhoBackendInvocation::RunWithCallAndObserveStrings { call, out_channel } => {
+            RhoMachineInvocation::RunWithCallAndObserveStrings { call, out_channel } => {
                 assert_eq!(out_channel, "OUT");
                 let send = call
                     .sends
@@ -2305,6 +2502,32 @@ mod tests {
             },
             other => panic!("Str result ABI must select string observation, got {other:?}"),
         }
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn invocation_execution_site_distinguishes_rho_machine_from_semantic_predicate_host() {
+        let abi = binary_abi("AddInt", RhoScalarType::Int, RhoScalarType::Int, RhoScalarType::Int);
+        let invocation = build_scalar_contract_invocation(
+            &abi,
+            vec![RhoAstLiteral::Int(2), RhoAstLiteral::Int(3)],
+            "OUT",
+        )
+        .expect("valid scalar invocation should build");
+
+        assert_eq!(invocation.execution_site(), RhoInvocationExecutionSite::RhoMachine);
+        assert!(invocation.is_rho_machine_execution());
+        assert!(invocation.program_par().is_some());
+        assert_eq!(invocation.out_channel(), Some("OUT"));
+
+        let blocked = RhoBackendInvocation::DeferToDovetailSemanticPredicate {
+            predicate: "safe scalar evaluation declined".to_string(),
+        };
+        assert_eq!(blocked.execution_site(), RhoInvocationExecutionSite::SemanticPredicateHost);
+        assert!(!blocked.is_rho_machine_execution());
+        assert!(blocked.program_par().is_none());
+        assert!(blocked.out_channel().is_none());
+
     }
 
     #[cfg(feature = "runtime-report")]

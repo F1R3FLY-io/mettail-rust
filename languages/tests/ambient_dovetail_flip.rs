@@ -3,7 +3,7 @@
 //! Ambient's structural-congruence EQUATIONS carry the `PNew ^x` binder
 //! (`NewComm`) and freshness side conditions (`ScopeExtrusion`, `InNew`,
 //! `OutNew`, `OpenNew`, `AmbNew`). These are now discharged by the moniker
-//! binder-congruence NativeHandler (float `new`s outward, capture-safe via
+//! binder-congruence direct evaluator (float `new`s outward, capture-safe via
 //! `unbind`/`Scope::new`), composed with the in-engine AC reduction
 //! (`InRule`/`OutRule`/`OpenRule`). The generated compiler therefore produces a
 //! COMPLETE report instead of failing closed on the unlowered equations — the
@@ -15,7 +15,7 @@ use mettail_languages::ambient::AmbientLanguage;
 use mettail_runtime::Language;
 
 #[test]
-fn ambient_dovetail_compiler_flips_via_native_handler_and_in_engine_ac() {
+fn ambient_dovetail_compiler_flips_via_binder_evaluator_and_in_engine_ac() {
     let lang = AmbientLanguage;
     // `{ open(n, 0) | n[0] }`: no `new`, so the handler floats nothing and the
     // `OpenRule` AC reduction `{open(N,P), N[Q], ...rest} ~> {P, Q, ...rest}`
@@ -24,7 +24,7 @@ fn ambient_dovetail_compiler_flips_via_native_handler_and_in_engine_ac() {
         .parse_term("{ open(n, 0) | n [ 0 ] }")
         .expect("Ambient parses an open redex");
     let report = AmbientLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
-        .expect("Ambient now lowers via the binder NativeHandler + in-engine AC reduction");
+        .expect("Ambient now lowers via the binder evaluator + in-engine AC reduction");
     assert!(
         !report.roots.is_empty(),
         "the flipped Ambient Dovetail report must carry at least one root"

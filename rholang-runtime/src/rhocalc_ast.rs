@@ -9,15 +9,14 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use mettail_languages::rhocalc::{
     Bag, Int, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner,
 };
 use mettail_rholang_codegen::{
-    lower_language_def, plan_rho_default_backend, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoRejectedRuleDisposition,
-    RhoRejectedRuleDispositionKind,
+    lower_language_def, plan_rho_default_backend, suggest_rejected_rule_dispositions,
+    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
-use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use mettail_runtime::{
     Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
     RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed,
@@ -60,7 +59,7 @@ pub fn rhocalc_ast_runtime_def() -> mettail_ast::language::LanguageDef {
 
 /// Invocation mapper used by the RhoCalc runtime-backed wrapper helpers.
 pub type RhocalcInvocationMapper =
-    Box<dyn Fn(&dyn Term) -> Result<crate::backend::RhoBackendInvocation, String> + Send + Sync>;
+    Box<dyn Fn(&dyn Term) -> Result<crate::backend::RhoMachineInvocation, String> + Send + Sync>;
 
 /// Rho-default wrapper type used by the RhoCalc helper constructors.
 pub type RhocalcRuntimeBackedLanguage =
@@ -226,10 +225,10 @@ fn rhocalc_invocation_stage(
 pub fn rhocalc_observe_strings_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
-) -> Result<crate::backend::RhoBackendInvocation, String> {
+) -> Result<crate::backend::RhoMachineInvocation, String> {
     let call = lower_rhocalc_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
-    Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveStrings {
+    Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveStrings {
         call,
         out_channel: out_channel.into(),
     })
@@ -240,10 +239,10 @@ pub fn rhocalc_observe_strings_invocation(
 pub fn rhocalc_observe_ints_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
-) -> Result<crate::backend::RhoBackendInvocation, String> {
+) -> Result<crate::backend::RhoMachineInvocation, String> {
     let call = lower_rhocalc_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
-    Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveInts {
+    Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveInts {
         call,
         out_channel: out_channel.into(),
     })
@@ -254,10 +253,10 @@ pub fn rhocalc_observe_ints_invocation(
 pub fn rhocalc_observe_values_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
-) -> Result<crate::backend::RhoBackendInvocation, String> {
+) -> Result<crate::backend::RhoMachineInvocation, String> {
     let call = lower_rhocalc_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
-    Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveRuntimeValues {
+    Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
         call,
         out_channel: out_channel.into(),
     })
@@ -302,25 +301,17 @@ pub fn rho_runtime_backed_rhocalc_values(
     crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
 }
 
-/// Coverage requirements routing every rejected rule through the verified native-handler boundary
-/// (RhoCalc executes every process via the AST-first [`lower_rhocalc_term`] mapper). Labels are
-/// de-duplicated because the same label can recur across categories and `RhoCoverageEvidence`
-/// forbids duplicate dispositions. (Mirrors the `rho_rhocalc_ast` test helper, promoted for the
-/// production wrapper builder.)
-fn rho_native_handler_requirements(
+/// Coverage requirements derived from the language-aware rejected-rule classifier.
+/// Structural constructors are covered by generated Rho AST contracts; native/eval and unsupported
+/// scalar operators are covered by Rho-native system-process rules. Labels are de-duplicated because
+/// the same label can recur across categories and `RhoCoverageEvidence` forbids duplicate
+/// dispositions. (Mirrors the `rho_rhocalc_ast` test helper, promoted for the production wrapper
+/// builder.)
+fn rho_default_coverage_requirements(
     def: &mettail_ast::language::LanguageDef,
 ) -> RhoDefaultBackendRequirements {
     let lowering = lower_language_def(def);
-    let dispositions: Vec<RhoRejectedRuleDisposition> = lowering
-        .rejected
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<String>>()
-        .into_iter()
-        .map(|label| {
-            RhoRejectedRuleDisposition::new(label, RhoRejectedRuleDispositionKind::NativeHandler)
-        })
-        .collect();
+    let dispositions = suggest_rejected_rule_dispositions(def, &lowering);
     RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
         guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
@@ -332,7 +323,7 @@ fn rho_native_handler_requirements(
 /// `RhoCalcLanguage` identity and the wrapper installs on the real RhoCalc.
 pub fn rhocalc_planned_rho_backend() -> Result<crate::backend::PlannedRhoBackend, String> {
     let def = rhocalc_ast_runtime_def();
-    let plan = plan_rho_default_backend(&def, rho_native_handler_requirements(&def))
+    let plan = plan_rho_default_backend(&def, rho_default_coverage_requirements(&def))
         .map_err(|err| format!("RhoCalc Rho-default backend planning failed: {err:?}"))?;
     Ok(crate::backend::PlannedRhoBackend::from_plan(plan))
 }
@@ -343,7 +334,7 @@ const RHOCALC_DOVETAIL_MAX_NODES: usize = 1_000_000;
 
 /// The Dovetail D-stage report producer for RhoCalc (the bare fn
 /// [`crate::backend::install_dovetail_rho_runtime_backend`] wraps): saturate the term to a runtime
-/// report — native folds reduce; COMM/`new` stay host-routed (non-fatal).
+/// report — native folds reduce; COMM/`new` remain Rho-machine work for the invocation stage.
 fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
     RhoCalcLanguage::dovetail_report_for(
         term,
@@ -354,8 +345,8 @@ fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, 
 
 /// The step-only Dovetail producer for RhoCalc — the REPL `step` navigable one-step REWRITE-step
 /// graph (Increment 4): each node is a whole program state in source syntax, each edge a one-step
-/// rewrite successor (structural `Exec`/`QuoteDrop`/`Extrude` + folds; host-routed COMM is NOT in
-/// this graph), and a node with no successor is a normal form. Reached only via the `step` path
+/// rewrite successor (structural `Exec`/`QuoteDrop`/`Extrude` + folds; COMM is not a Dovetail
+/// structural rewrite), and a node with no successor is a normal form. Reached only via the `step` path
 /// (`Language::run_step_backend_report`); production `exec` uses `rhocalc_dovetail_report`.
 fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
     RhoCalcLanguage::dovetail_step_graph(
@@ -365,16 +356,16 @@ fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunRepo
     )
 }
 
-/// Two-stage Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of RhoCalc.
+/// Two-stage checked-Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of
+/// RhoCalc.
 ///
 /// One-way pipeline (no bidirectional bridge; see
 /// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **D-stage**
-/// Dovetail-saturates the whole term (native folds reduce; COMM/`new` stay host-routed); the
+/// Dovetail-saturates the whole term (native folds reduce; COMM/`new` remain for Rho lowering); the
 /// **F-stage** takes the fold-normal term ([`RhoCalcLanguage::dovetail_normal_term`], extension E2),
-/// lowers it to a normalized `Par`, and routes by SHAPE — a term carrying a send/receive/`new` (a
-/// COMM term, e.g. `@("OUT")!(int(1+2,8))` whose embedded fold already reduced to `@("OUT")!(3)`)
-/// runs on the real Rho machine and observes `out_channel`; a pure value/fold (no COMM) defers to
-/// the already-built Dovetail report. Arithmetic reduces in Dovetail; COMM fires on Rholang.
+/// lowers it to a normalized `Par`, and routes every lowerable result through the real Rho machine.
+/// A term carrying a send/receive/`new` runs as that process. A closed pure value/fold with no Rho
+/// effects is wrapped as `@"OUT"!(value)` so the observable result is still produced by RSpace.
 pub fn dovetail_rho_backed_rhocalc(
     out_channel: impl Into<String>,
 ) -> Result<Box<dyn Language>, String> {
@@ -388,8 +379,9 @@ pub fn dovetail_rho_backed_rhocalc(
         // lowers to `@("OUT")!(3)`). ONLY if the original cannot lower (an un-reduced Proc-level
         // fold) do we fold-normalize via Dovetail (E2) and lower that. A stuck term — e.g. a
         // pure-COMM term whose receive does not reduce in Dovetail, where `dovetail_normal_term`
-        // errors "stuck term" — defers to its Dovetail report instead of failing. (Calling
-        // `dovetail_normal_term` unconditionally is WRONG for exactly that pure-COMM case.)
+        // errors "stuck term" — now fails the Rho-default invocation instead of falling back to a
+        // Dovetail backend report. Calling `dovetail_normal_term` unconditionally is wrong for
+        // exactly that pure-COMM case.
         let call = match lower_rhocalc_term(term) {
             Ok(par) => par,
             Err(_) => match RhoCalcLanguage::dovetail_normal_term(
@@ -397,25 +389,27 @@ pub fn dovetail_rho_backed_rhocalc(
                 RHOCALC_DOVETAIL_MAX_ITERS,
                 RHOCALC_DOVETAIL_MAX_NODES,
             ) {
-                Ok(normal) => match lower_rhocalc_term(normal.as_ref()) {
-                    Ok(par) => par,
-                    Err(_) => {
-                        return Ok(crate::backend::RhoBackendInvocation::DeferToDovetailReport)
-                    },
+                Ok(normal) => lower_rhocalc_term(normal.as_ref()).map_err(|err| {
+                    format!("RhoCalc normal form could not be lowered to the Rho machine: {err:?}")
+                })?,
+                Err(err) => {
+                    return Err(format!(
+                        "RhoCalc term could not be lowered directly or normalized for Rho-machine execution: {err}"
+                    ))
                 },
-                Err(_) => return Ok(crate::backend::RhoBackendInvocation::DeferToDovetailReport),
             },
         };
-        if call.sends.is_empty() && call.receives.is_empty() && call.news.is_empty() {
-            // No COMM/`new` (a pure value/fold): nothing to run on the Rho machine — the Dovetail
-            // report is the result.
-            Ok(crate::backend::RhoBackendInvocation::DeferToDovetailReport)
+        let call = if call_has_runtime_effects(&call) {
+            call
         } else {
-            Ok(crate::backend::RhoBackendInvocation::RunWithCallAndObserveRuntimeValues {
-                call,
-                out_channel: out_channel.clone(),
-            })
-        }
+            observe_pure_value_call(call, &out_channel)
+        };
+        Ok(crate::backend::RhoBackendInvocation::from(
+            crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
+            call,
+            out_channel: out_channel.clone(),
+            },
+        ))
     };
     let language = crate::backend::install_dovetail_rho_runtime_backend(
         RhocalcAstRuntimeLanguage,
@@ -426,6 +420,17 @@ pub fn dovetail_rho_backed_rhocalc(
     )
     .map_err(|err| format!("RhoCalc Dovetail+Rho backend install failed: {err:?}"))?;
     Ok(Box::new(language))
+}
+
+fn call_has_runtime_effects(call: &Par) -> bool {
+    !call.sends.is_empty() || !call.receives.is_empty() || !call.news.is_empty()
+}
+
+fn observe_pure_value_call(value: Par, out_channel: &str) -> Par {
+    send_par(
+        new_gstring_par(out_channel.to_string(), Vec::new(), false),
+        vec![value],
+    )
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.
@@ -643,9 +648,9 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // fold in place (`proc_*_bin` — the rule's own `![{…}]` body), recursively folding nested
         // ground folds via the operand's own lowering (`int(int(5,8),16) → 5`). A HELD fold (operand
         // bound by a receive) is lifted earlier in `lower_receive_body`; one reaching here was not in
-        // a receive body, so it stays unsupported. This replaces the prior reliance on the two-stage
-        // `dovetail_normal_term` fallback for ground folds — needed so a term that ALSO contains a
-        // held fold lowers in one pass (the fallback can't, since the held fold stays stuck).
+        // a receive body, so it stays unsupported. This replaces the prior reliance on a two-stage
+        // Dovetail normal-term pass for ground folds — needed so a term that ALSO contains a held
+        // fold lowers in one pass (the Dovetail pass intentionally leaves the held fold stuck).
         Proc::IntBinProc(..)
         | Proc::UIntBinProc(..)
         | Proc::FloatBinProc(..)
@@ -736,9 +741,9 @@ fn proc_references_bound_var(proc: &Proc, env: &BoundEnv) -> bool {
         Proc::POutput(name, payload) => {
             name_references_bound_var(name, env) || proc_references_bound_var(payload, env)
         },
-        Proc::PPar(parts) => {
-            parts.iter_elements().any(|part| proc_references_bound_var(part, env))
-        },
+        Proc::PPar(parts) => parts
+            .iter_elements()
+            .any(|part| proc_references_bound_var(part, env)),
         Proc::PVar(var) => var_is_bound(var, env),
         _ => false,
     }
@@ -776,7 +781,9 @@ fn find_held_fold(proc: &Proc, env: &BoundEnv) -> Option<(Proc, FoldKind, i64)> 
             None
         },
         Proc::POutput(_, payload) => find_held_fold(payload.as_ref(), env),
-        Proc::PPar(parts) => parts.iter_elements().find_map(|part| find_held_fold(part, env)),
+        Proc::PPar(parts) => parts
+            .iter_elements()
+            .find_map(|part| find_held_fold(part, env)),
         Proc::PInputs(..) | Proc::PNew(..) => None,
         _ => None,
     }
@@ -819,7 +826,10 @@ fn replace_held_fold(proc: &Proc, env: &BoundEnv, r_drop: &Proc, replaced: &mut 
             Arc::new(replace_held_fold(payload.as_ref(), env, r_drop, replaced)),
         ),
         Proc::PPar(parts) => Proc::PPar(
-            parts.iter_elements().map(|part| replace_held_fold(part, env, r_drop, replaced)).collect(),
+            parts
+                .iter_elements()
+                .map(|part| replace_held_fold(part, env, r_drop, replaced))
+                .collect(),
         ),
         _ => proc.clone(),
     }
@@ -835,7 +845,11 @@ fn lower_receive_body(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowe
         return lower_proc(body, env);
     };
     let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
-    HELD_FOLD_SITES.with(|sites| sites.borrow_mut().push(FoldSpec { kind, width, site_index }));
+    HELD_FOLD_SITES.with(|sites| {
+        sites
+            .borrow_mut()
+            .push(FoldSpec { kind, width, site_index })
+    });
     let channel = fold_channel(site_index);
 
     // Fresh result binders: `new ret` (innermost) and the `for`-bound `r`.

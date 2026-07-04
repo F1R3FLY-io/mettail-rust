@@ -1,20 +1,20 @@
-//! Reactive, lock-free, back-pressured **single-step COMM stepper** for the Rho machine — the
+//! Reactive, back-pressured **single-step COMM stepper** for the Rho machine — the
 //! `step` command's live evidence when a language's default backend is `RhoMachine`, and the
 //! runtime-observation half of the MeTTaIL/OSLF cost-accounting integration.
 //!
 //! ## How it works
 //!
 //! A [`StepSession`] spawns a dedicated **worker thread** that builds an in-memory f1r3node
-//! `RhoRuntime`, installs a [`StepObserver`] on the base `RSpace` (the lock-free COMM emit seam),
-//! and runs `inj` to quiescence under a **deterministic** seed. The observer and the reducer's
+//! `RhoRuntime`, wraps its live `RSpace` in a [`SteppingSpace`] observer, and runs `inj` to
+//! quiescence under a **deterministic** seed. The observer and the reducer's
 //! back-pressure gate cooperate so the reduction advances **exactly one COMM per
 //! [`StepSession::next_step`]** (pay-as-you-go — works for divergent Rholang; dropping the session
 //! aborts the worker mid-flight). The two halves are decoupled:
 //!
-//! - **EMIT** (`observe_comm`, on the worker, possibly under a tuplespace lock): clones the raw COMM
-//!   payload and `try_send`s it — never blocks, never renders.
-//! - **GATE** (`StepGate`, an async pause at a reducer boundary that holds no lock): the worker
-//!   parks after each committed COMM; `next_step` releases one permit to advance.
+//! - **EMIT** (`produce`/`consume`, on the worker): clones the successful COMM result and sends it
+//!   to the driver without rendering.
+//! - **GATE** (`StepGate`, a synchronous permit): the worker parks after each committed COMM;
+//!   `next_step` releases one permit to advance.
 //! - **RENDER** (the driver, on a dedicated **large-stack** thread): turns the raw payload `Par`s
 //!   into strings via f1r3node's `PrettyPrinter`. The printer is recursive and not yet stack-safe;
 //!   running it on a big stack is an interim measure (a stack-safe printer is a separate f1r3node
@@ -24,11 +24,12 @@
 //! so a trace reproduces bit-identically.
 #![cfg(feature = "runtime-report")]
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
+use async_trait::async_trait;
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
@@ -42,11 +43,18 @@ use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::pretty_printer::PrettyPrinter;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
 use rholang::rust::interpreter::system_processes::Definition;
-use rspace_plus_plus::rspace::logging::{ReductionKind, StepCommObserver, StepGate};
+use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
+use rspace_plus_plus::rspace::errors::RSpaceError;
+use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
+use rspace_plus_plus::rspace::rspace_interface::{
+    ISpace, MaybeConsumeResult, MaybeProduceResult,
+};
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
-use rspace_plus_plus::rspace::trace::event::COMM;
+use rspace_plus_plus::rspace::trace::event::Produce;
+use rspace_plus_plus::rspace::trace::Log;
 
 use mettail_runtime::{
     ReductionStepper, RuntimeCommEvent, RuntimeReductionEngine, RuntimeReductionKind,
@@ -65,11 +73,10 @@ const FIXED_SEED: &[u8] =
 const RENDER_STACK_SIZE: usize = 256 * 1024 * 1024;
 
 /// Bounded capacity of the COMM-event channel. The back-pressure gate keeps the worker at most one
-/// COMM ahead of the driver, so a comfortable bound is never reached — it only provides slack so
-/// the lock-free `try_send` in `observe_comm` cannot lose an event.
+/// COMM ahead of the driver, so a comfortable bound is never reached.
 const STEP_QUEUE_CAP: usize = 4096;
 
-/// A committed COMM, raw (un-rendered). The observer pushes this lock-free off the reduction thread;
+/// A committed COMM, raw (un-rendered). The live-space wrapper pushes this off the reduction thread;
 /// the driver renders the `Par`s later, on a large stack.
 struct RawCommEvent {
     ordinal: u64,
@@ -81,14 +88,6 @@ struct RawCommEvent {
     continuation: Option<Par>,
 }
 
-/// A committed non-COMM structural reduction, raw (un-rendered). The observer pushes this lock-free
-/// off the reduction thread; the driver renders the `redex` Par later, on a large stack.
-struct RawReductionEvent {
-    ordinal: u64,
-    kind: ReductionKind,
-    redex: Par,
-}
-
 /// A value resting on the observation channel at quiescence — the program's observable output, read
 /// from the tuplespace AFTER `inj` (not a reducer hook). The driver renders `value` on the large stack.
 struct RawOutputEvent {
@@ -97,19 +96,61 @@ struct RawOutputEvent {
     value: Par,
 }
 
-/// One emitted step on the single ordered channel — a COMM rendezvous, a non-COMM structural
-/// reduction, or a terminal observable output. All carry the same monotone ordinal stream (assigned
-/// by the observer), so the driver reads them in emit order; the single-permit gate serializes the
-/// reduction emits one at a time, and the output emits follow once `inj` reaches quiescence.
+/// One emitted step on the single ordered channel — a COMM rendezvous or a terminal observable
+/// output. All carry the same monotone ordinal stream (assigned by the observer), so the driver
+/// reads them in emit order; the single-permit gate serializes COMM emits one at a time, and the
+/// output emits follow once `inj` reaches quiescence.
 enum RawStepEvent {
     Comm(RawCommEvent),
-    Reduction(RawReductionEvent),
     Output(RawOutputEvent),
 }
 
-/// The COMM observer the stepper installs on the `RSpace`. `observe_comm` clones the payload and
-/// pushes it (non-blocking); `step_gate` hands the reducer the shared back-pressure gate so it
-/// pauses after each committed COMM.
+struct StepGateState {
+    permits: u64,
+    aborted: bool,
+}
+
+/// Synchronous one-permit gate used by the live-space wrapper.
+struct StepGate {
+    state: Mutex<StepGateState>,
+    cvar: Condvar,
+}
+
+impl StepGate {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(StepGateState { permits: 0, aborted: false }),
+            cvar: Condvar::new(),
+        }
+    }
+
+    fn release_one(&self) {
+        let mut state = self.state.lock().expect("step gate lock");
+        state.permits = state.permits.saturating_add(1);
+        self.cvar.notify_one();
+    }
+
+    fn abort(&self) {
+        let mut state = self.state.lock().expect("step gate lock");
+        state.aborted = true;
+        self.cvar.notify_all();
+    }
+
+    fn wait_for_release(&self) -> bool {
+        let mut state = self.state.lock().expect("step gate lock");
+        while state.permits == 0 && !state.aborted {
+            state = self.cvar.wait(state).expect("step gate condvar wait");
+        }
+        if state.permits > 0 {
+            state.permits -= 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Shared event emitter used by the live-space wrapper and post-quiescence output reader.
 struct StepObserver {
     sender: Sender<RawStepEvent>,
     gate: Arc<StepGate>,
@@ -117,6 +158,26 @@ struct StepObserver {
 }
 
 impl StepObserver {
+    fn emit_comm(
+        &self,
+        label: &'static str,
+        channels: Vec<Par>,
+        consumed: Vec<ListParWithRandom>,
+        continuation: TaggedContinuation,
+    ) {
+        let ordinal = self.ordinal.fetch_add(1, Ordering::Relaxed);
+        let event = RawStepEvent::Comm(RawCommEvent {
+            ordinal,
+            label: label.to_string(),
+            channels,
+            consumed,
+            continuation: tagged_continuation_body(&continuation),
+        });
+        if self.sender.send(event).is_err() || !self.gate.wait_for_release() {
+            panic!("rho stepper aborted");
+        }
+    }
+
     /// Emit a terminal observable-output step — a value resting on the configured output channel at
     /// quiescence. Called by the worker AFTER `inj` returns (NOT by the reducer), so it self-numbers
     /// on the same shared ordinal stream (after all reductions) and pushes non-blocking. No gate
@@ -124,53 +185,164 @@ impl StepObserver {
     fn emit_output(&self, channel: String, value: Par) {
         let ordinal = self.ordinal.fetch_add(1, Ordering::Relaxed);
         let _ =
-            self.sender.try_send(RawStepEvent::Output(RawOutputEvent { ordinal, channel, value }));
+            self.sender
+                .try_send(RawStepEvent::Output(RawOutputEvent { ordinal, channel, value }));
     }
 }
 
-impl StepCommObserver<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StepObserver {
-    fn observe_comm(
+#[derive(Clone)]
+struct SteppingSpace {
+    inner: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    observer: Arc<StepObserver>,
+}
+
+impl SteppingSpace {
+    fn emit_if_comm(
         &self,
-        channels: &[Par],
-        consumed: &[ListParWithRandom],
-        _patterns: &[BindPattern],
-        continuation: &TaggedContinuation,
-        _comm: &COMM,
-        label: &str,
+        label: &'static str,
+        result: &MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) {
-        let ordinal = self.ordinal.fetch_add(1, Ordering::Relaxed);
-        // The receive side of the rendezvous: the firing waiting-continuation's body (`*x`, …). Carry
-        // it raw; the driver renders it on the large stack so both sides of the COMM are visible.
-        let continuation = match &continuation.tagged_cont {
-            Some(TaggedCont::ParBody(body)) => body.body.clone(),
-            _ => None,
-        };
-        let event = RawStepEvent::Comm(RawCommEvent {
-            ordinal,
-            label: label.to_string(),
-            channels: channels.to_vec(),
-            consumed: consumed.to_vec(),
-            continuation,
-        });
-        // Non-blocking: never block under the tuplespace lock. The gate keeps us ≤1 step ahead of
-        // the driver, so the bounded queue cannot fill in practice; if it ever did, dropping the
-        // event is strictly safer than stalling the reducer.
-        let _ = self.sender.try_send(event);
+        if let Some((continuation, matched)) = result {
+            self.observer.emit_comm(
+                label,
+                continuation.channels.clone(),
+                matched
+                    .iter()
+                    .map(|item| item.matched_datum.clone())
+                    .collect(),
+                continuation.continuation.clone(),
+            );
+        }
+    }
+}
+
+#[async_trait]
+impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for SteppingSpace {
+    async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
+        self.inner.create_checkpoint().await
     }
 
-    fn observe_reduction(&self, redex: &Par, kind: ReductionKind) {
-        // Self-number on the SAME monotone ordinal stream as `observe_comm`, so COMM and structural
-        // reductions interleave in one ordered sequence (the single-permit gate serializes emits).
-        // Clone the redex (cheap, and only this installed observer runs) and push non-blocking off
-        // the reduction thread; rendering happens later on a large stack.
-        let ordinal = self.ordinal.fetch_add(1, Ordering::Relaxed);
-        let event =
-            RawStepEvent::Reduction(RawReductionEvent { ordinal, kind, redex: redex.clone() });
-        let _ = self.sender.try_send(event);
+    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+        self.inner.get_data(channel).await
     }
 
-    fn step_gate(&self) -> Option<Arc<StepGate>> {
-        Some(self.gate.clone())
+    async fn get_waiting_continuations(
+        &self,
+        channels: Vec<Par>,
+    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+        self.inner.get_waiting_continuations(channels).await
+    }
+
+    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+        self.inner.get_joins(channel).await
+    }
+
+    async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
+        self.inner.remove_all_data(channel).await
+    }
+
+    async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
+        self.inner.remove_all_continuations(channels).await
+    }
+
+    async fn clear(&self) -> Result<(), RSpaceError> { self.inner.clear().await }
+
+    async fn get_root(&self) -> Blake2b256Hash { self.inner.get_root().await }
+
+    async fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
+        self.inner.reset(root).await
+    }
+
+    async fn consume_result(
+        &self,
+        channel: Vec<Par>,
+        pattern: Vec<BindPattern>,
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
+        self.inner.consume_result(channel, pattern).await
+    }
+
+    async fn to_map(
+        &self,
+    ) -> HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>> {
+        self.inner.to_map().await
+    }
+
+    async fn create_soft_checkpoint(
+        &self,
+    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+        self.inner.create_soft_checkpoint().await
+    }
+
+    async fn take_event_log(&self) -> Log { self.inner.take_event_log().await }
+
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    ) -> Result<(), RSpaceError> {
+        self.inner.revert_to_soft_checkpoint(checkpoint).await
+    }
+
+    async fn consume(
+        &self,
+        channels: Vec<Par>,
+        patterns: Vec<BindPattern>,
+        continuation: TaggedContinuation,
+        persist: bool,
+        peeks: BTreeSet<i32>,
+    ) -> Result<MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>, RSpaceError>
+    {
+        let result = self
+            .inner
+            .consume(channels, patterns, continuation, persist, peeks)
+            .await?;
+        self.emit_if_comm("comm.consume", &result);
+        Ok(result)
+    }
+
+    async fn produce(
+        &self,
+        channel: Par,
+        data: ListParWithRandom,
+        persist: bool,
+    ) -> Result<MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>, RSpaceError>
+    {
+        let result = self.inner.produce(channel, data, persist).await?;
+        self.emit_if_comm(
+            "comm.produce",
+            &result
+                .as_ref()
+                .map(|(continuation, matched, _)| (continuation.clone(), matched.clone())),
+        );
+        Ok(result)
+    }
+
+    async fn install(
+        &self,
+        channels: Vec<Par>,
+        patterns: Vec<BindPattern>,
+        continuation: TaggedContinuation,
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
+        self.inner.install(channels, patterns, continuation).await
+    }
+
+    async fn rig_and_reset(
+        &self,
+        start_root: Blake2b256Hash,
+        log: Log,
+    ) -> Result<(), RSpaceError> {
+        self.inner.rig_and_reset(start_root, log).await
+    }
+
+    async fn rig(&self, log: Log) -> Result<(), RSpaceError> { self.inner.rig(log).await }
+
+    async fn check_replay_data(&self) -> Result<(), RSpaceError> {
+        self.inner.check_replay_data().await
+    }
+
+    async fn is_replay(&self) -> bool { self.inner.is_replay().await }
+
+    async fn update_produce(&self, produce: Produce) {
+        self.inner.update_produce(produce).await
     }
 }
 
@@ -189,7 +361,7 @@ pub struct StepSession {
 impl StepSession {
     /// Start a stepper for a lowered `Par` plus its Tier-3 fold-contract `Definition`s (empty `Vec`
     /// for a pure-COMM term — Tier 3 fills it for held-fold terms). Spawns the worker thread, which
-    /// builds an in-memory `RhoRuntime` with the COMM observer installed and runs `inj` under the
+    /// builds an in-memory `RhoRuntime` with the COMM observer wrapper and runs `inj` under the
     /// deterministic seed. Returns immediately; the worker runs to the first COMM and pauses on the
     /// gate. A term with no COMMs simply runs to quiescence, and the first `next_step` returns
     /// `None`. `out_channel`, when `Some`, is the program's observation channel: after `inj` reaches
@@ -203,13 +375,21 @@ impl StepSession {
     ) -> Result<StepSession, String> {
         let (sender, receiver) = bounded::<RawStepEvent>(STEP_QUEUE_CAP);
         let gate = Arc::new(StepGate::new());
-        let observer =
-            Arc::new(StepObserver { sender, gate: gate.clone(), ordinal: AtomicU64::new(0) });
+        let observer = Arc::new(StepObserver {
+            sender,
+            gate: gate.clone(),
+            ordinal: AtomicU64::new(0),
+        });
         let worker = std::thread::Builder::new()
             .name("mettail-rho-stepper".to_string())
             .spawn(move || run_stepped_inj(par, observer, fold_defs, out_channel))
             .map_err(|e| format!("spawn stepper worker thread: {e}"))?;
-        Ok(StepSession { receiver, gate, worker: Some(worker), done: false })
+        Ok(StepSession {
+            receiver,
+            gate,
+            worker: Some(worker),
+            done: false,
+        })
     }
 
     fn join_worker(&mut self) -> Result<(), String> {
@@ -255,8 +435,8 @@ impl Drop for StepSession {
     }
 }
 
-/// The worker body: build an in-memory `RhoRuntime` with the COMM observer installed on its
-/// `RSpace`, then run `inj` under the deterministic seed. On error, revert the soft checkpoint.
+/// The worker body: build an in-memory `RhoRuntime` over a live-space COMM observer, then run `inj`
+/// under the deterministic seed. On error, revert the soft checkpoint.
 /// Returns when the reduction reaches quiescence (or errors); dropping the runtime here drops the
 /// observer's `Sender`, which the driver reads as completion.
 fn run_stepped_inj(
@@ -271,21 +451,26 @@ fn run_stepped_inj(
         .map_err(|e| format!("stepper tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let mut kvm = InMemoryStoreManager::new();
-        let store = kvm.r_space_stores().await.map_err(|e| format!("in-mem store: {e:?}"))?;
-        let mut space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
-            RSpace::create(store, Arc::new(Box::new(Matcher))).map_err(|e| format!("rspace: {e:?}"))?;
-        // Install the COMM observer (+ shared back-pressure gate) BEFORE building the runtime, so the
-        // reducer's `self.space.step_gate()` sees it and pauses after each COMM.
-        // Keep a handle for the post-quiescence output emit before the cast moves this Arc into the
-        // space (the reducer reaches the installed observer through `self.space`).
+        let store = kvm
+            .r_space_stores()
+            .await
+            .map_err(|e| format!("in-mem store: {e:?}"))?;
+        let inner_space =
+            RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create(
+                store,
+                Arc::new(Box::new(Matcher)),
+            )
+            .map_err(|e| format!("rspace: {e:?}"))?;
         let output_observer = observer.clone();
-        space.set_step_observer(Some(observer
-            as Arc<dyn StepCommObserver<Par, BindPattern, ListParWithRandom, TaggedContinuation>>));
+        let space = SteppingSpace {
+            inner: inner_space,
+            observer,
+        };
         let mut rho_runtime = create_rho_runtime(
             space,
             Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
             false,                    // init_registry: not needed
-            &mut fold_defs,           // Tier-3 fold-contract Definitions (empty for pure-COMM terms)
+            &mut fold_defs, // Tier-3 fold-contract Definitions (empty for pure-COMM terms)
             ExternalServices::noop(), // inert — no AI/gRPC/Chroma
         )
         .await;
@@ -317,8 +502,15 @@ fn run_stepped_inj(
     })
 }
 
-/// Render a raw step (COMM rendezvous or non-COMM structural reduction) into a
-/// [`RuntimeReductionStep`] (rendering happens on a large stack).
+fn tagged_continuation_body(continuation: &TaggedContinuation) -> Option<Par> {
+    match &continuation.tagged_cont {
+        Some(TaggedCont::ParBody(body)) => body.body.clone(),
+        _ => None,
+    }
+}
+
+/// Render a raw step (COMM rendezvous or terminal output) into a [`RuntimeReductionStep`]
+/// (rendering happens on a large stack).
 fn render_step(raw: RawStepEvent) -> RuntimeReductionStep {
     match raw {
         RawStepEvent::Comm(raw) => {
@@ -330,20 +522,12 @@ fn render_step(raw: RawStepEvent) -> RuntimeReductionStep {
                 engine: RuntimeReductionEngine::RhoComm,
                 kind: RuntimeReductionKind::Comm,
                 display,
-                comm: Some(RuntimeCommEvent { channels, consumed, label: raw.label, continuation }),
-            }
-        },
-        RawStepEvent::Reduction(raw) => {
-            // The redex Par is the process the reducer is about to evaluate (the dereferenced
-            // process, the matched case body, …); render it on the large stack. The kind (the node
-            // label) supplies the "what kind of step" context.
-            let display = render_redex(&raw.redex);
-            RuntimeReductionStep {
-                ordinal: raw.ordinal,
-                engine: RuntimeReductionEngine::RhoComm,
-                kind: map_reduction_kind(raw.kind),
-                display,
-                comm: None,
+                comm: Some(RuntimeCommEvent {
+                    channels,
+                    consumed,
+                    label: raw.label,
+                    continuation,
+                }),
             }
         },
         RawStepEvent::Output(raw) => {
@@ -358,18 +542,6 @@ fn render_step(raw: RawStepEvent) -> RuntimeReductionStep {
                 comm: None,
             }
         },
-    }
-}
-
-/// Map the fork's `ReductionKind` to the runtime-neutral `RuntimeReductionKind` (1:1).
-fn map_reduction_kind(kind: ReductionKind) -> RuntimeReductionKind {
-    match kind {
-        ReductionKind::Deref => RuntimeReductionKind::Deref,
-        ReductionKind::Match => RuntimeReductionKind::Match,
-        ReductionKind::If => RuntimeReductionKind::If,
-        ReductionKind::New => RuntimeReductionKind::New,
-        ReductionKind::Bundle => RuntimeReductionKind::Bundle,
-        ReductionKind::Method => RuntimeReductionKind::Method,
     }
 }
 
@@ -444,7 +616,7 @@ fn format_comm(
 mod tests {
     use super::*;
     use crate::rhocalc_ast::lower_rhocalc_term;
-    use mettail_languages::rhocalc::RhoCalcLanguage;
+    use mettail_languages::rhocalc::{Int, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner};
     use mettail_runtime::Language;
 
     /// The flagship COMM term: a receive on `@"c"` and a matching send carrying the process
@@ -468,44 +640,45 @@ mod tests {
         steps
     }
 
+    fn pure_int_fold_term(value: i64, width: i64) -> RhoCalcTerm {
+        RhoCalcTerm(RhoCalcTermInner::Proc(Proc::IntBinProc(
+            Arc::new(Proc::CastInt(Arc::new(Int::NumLit(value)))),
+            Arc::new(Int::NumLit(width)),
+        )))
+    }
+
     #[test]
-    fn comm_term_yields_comm_deref_output_steps() {
-        // The per-reduction stepper observes EVERY meaningful reduction AND the program's observable
-        // output: the flagship term reduces by one COMM rendezvous, then the receive's continuation
-        // `*(x)` dereferences to the send `@("OUT")!("p")`, which finally produces on `@"OUT"` ⇒
-        // `OUT observes "p"`. Engine is `RhoComm` throughout; the COMM carries its event payload (and
-        // the receive's continuation in its display), the deref and output do not.
+    fn comm_term_yields_comm_and_output_steps() {
+        // Current f1r3node no longer exposes a separate structural-reduction hook. The stepper
+        // records live COMM results at the RSpace boundary and the terminal `OUT` observation
+        // produced by the continuation.
         let steps = drive(lower(COMM_SRC));
         let kinds: Vec<RuntimeReductionKind> = steps.iter().map(|s| s.kind).collect();
         assert_eq!(
             kinds,
-            vec![
-                RuntimeReductionKind::Comm,
-                RuntimeReductionKind::Deref,
-                RuntimeReductionKind::Output,
-            ],
-            "COMM, dereference, then the OUT output; got {kinds:?}",
+            vec![RuntimeReductionKind::Comm, RuntimeReductionKind::Output],
+            "COMM, then the OUT output; got {kinds:?}",
         );
         for (index, step) in steps.iter().enumerate() {
             assert_eq!(step.ordinal, index as u64, "ordinals must be dense and monotone");
             assert_eq!(step.engine, RuntimeReductionEngine::RhoComm, "all Rho-machine steps");
         }
         let comm = &steps[0];
-        let comm_event = comm.comm.as_ref().expect("the COMM step carries its event payload");
-        assert!(comm.display.starts_with("COMM["), "COMM rendered as a COMM line: {}", comm.display);
+        let comm_event = comm
+            .comm
+            .as_ref()
+            .expect("the COMM step carries its event payload");
+        assert!(
+            comm.display.starts_with("COMM["),
+            "COMM rendered as a COMM line: {}",
+            comm.display
+        );
         assert!(
             comm_event.continuation.is_some() && comm.display.contains("cont"),
             "the COMM step surfaces the receive's continuation: {}",
             comm.display,
         );
-        let deref = &steps[1];
-        assert!(deref.comm.is_none(), "a structural reduction has no COMM payload");
-        assert!(
-            deref.display.contains("OUT") && deref.display.contains('p'),
-            "the deref yields the OUT send: {}",
-            deref.display,
-        );
-        let output = &steps[2];
+        let output = &steps[1];
         assert!(output.comm.is_none(), "the output step has no COMM payload");
         assert!(
             output.display.contains("OUT") && output.display.contains("observes"),
@@ -525,7 +698,12 @@ mod tests {
 
     #[test]
     fn trace_is_deterministic_under_the_fixed_seed() {
-        let displays = |par: Par| drive(par).into_iter().map(|s| s.display).collect::<Vec<_>>();
+        let displays = |par: Par| {
+            drive(par)
+                .into_iter()
+                .map(|s| s.display)
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
             displays(lower(COMM_SRC)),
             displays(lower(COMM_SRC)),
@@ -539,9 +717,12 @@ mod tests {
         // runs the D-stage + F-stage lowering and hands back a live stepper over the program Par.
         use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
         let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
-        let term = RhoCalcLanguage.parse_term(COMM_SRC).expect("parse COMM term");
-        let mut stepper =
-            language.start_reduction_stepper(term.as_ref()).expect("wrapper starts a stepper");
+        let term = RhoCalcLanguage
+            .parse_term(COMM_SRC)
+            .expect("parse COMM term");
+        let mut stepper = language
+            .start_reduction_stepper(term.as_ref())
+            .expect("wrapper starts a stepper");
         let mut count = 0usize;
         while stepper.next_step().expect("next_step").is_some() {
             count += 1;
@@ -592,15 +773,28 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_rejects_pure_fold_term_for_stepping() {
-        // A pure value/fold lowers to no COMM program ⇒ the wrapper fails to start a stepper, so
-        // the REPL falls back to the Dovetail derivation graph (Layer 1).
+    fn wrapper_pure_fold_term_steps_to_output_only() {
+        // A pure value/fold has no COMM rendezvous, but the production wrapper now observes it via a
+        // Rho output send instead of returning a Dovetail report.
         use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
         let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
-        let term = RhoCalcLanguage.parse_term("int(1+2, 8)").expect("parse fold term");
+        let term = pure_int_fold_term(5, 8);
+        let mut stepper = language
+            .start_reduction_stepper(&term)
+            .expect("pure fold has a Rho observation program");
+        let first = stepper
+            .next_step()
+            .expect("first step must not error")
+            .expect("pure fold emits one terminal output step");
+        assert_eq!(first.kind, RuntimeReductionKind::Output);
         assert!(
-            language.start_reduction_stepper(term.as_ref()).is_err(),
-            "a pure-fold term has no COMM program to single-step"
+            first.display.contains("OUT") && first.display.contains("5"),
+            "pure fold output should observe 5 on OUT: {}",
+            first.display
+        );
+        assert!(
+            stepper.next_step().expect("second step must not error").is_none(),
+            "pure fold has no COMM step after its terminal output"
         );
     }
 

@@ -41,5 +41,6 @@ pub mod key;
 pub mod report;
 pub mod rules;
 mod scc;
+pub mod set_automaton;
 pub mod space;
 pub mod wta;

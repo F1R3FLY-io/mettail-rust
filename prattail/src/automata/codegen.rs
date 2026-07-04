@@ -1991,7 +1991,8 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
         }
 
         // Find smallest offset d where no entries collide.
-        // Use occupancy bitmap to jump past fully-occupied words.
+        // Use the occupancy bitmap to jump directly to the next offset that
+        // can satisfy the colliding entry instead of probing every offset.
         let first_class = entries[0].0;
         let mut d: usize = 0;
         'search: loop {
@@ -2010,25 +2011,27 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
             let word_idx = first_idx >> 6;
             let bit_idx = first_idx & 63;
             if word_idx < occupied.len() && (occupied[word_idx] >> bit_idx) & 1 != 0 {
-                d += 1;
+                d = next_unoccupied_slot(&occupied, first_idx).saturating_sub(first_class);
                 continue;
             }
 
             // Check for collisions on remaining entries
             let mut collides = false;
+            let mut next_d = d + 1;
             for &(class_id, _) in entries.iter().skip(1) {
                 let idx = d + class_id;
                 let w = idx >> 6;
                 let b = idx & 63;
                 if w < occupied.len() && (occupied[w] >> b) & 1 != 0 {
                     collides = true;
+                    next_d = next_unoccupied_slot(&occupied, idx).saturating_sub(class_id);
                     break;
                 }
             }
             if !collides {
                 break 'search;
             }
-            d += 1;
+            d = next_d;
         }
 
         // Place this row at offset d and mark occupied bits
@@ -2063,6 +2066,34 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     check.truncate(pad_to);
 
     CombTable { base, default, next, check }
+}
+
+fn next_unoccupied_slot(occupied: &[u64], from: usize) -> usize {
+    let mut word_idx = from >> 6;
+    let bit_idx = from & 63;
+    if word_idx >= occupied.len() {
+        return from;
+    }
+
+    let lower_bits = if bit_idx == 0 {
+        0
+    } else {
+        (1u64 << bit_idx) - 1
+    };
+    let mut free_bits = !occupied[word_idx] & !lower_bits;
+    if free_bits != 0 {
+        return (word_idx << 6) + free_bits.trailing_zeros() as usize;
+    }
+
+    word_idx += 1;
+    while word_idx < occupied.len() {
+        free_bits = !occupied[word_idx];
+        if free_bits != 0 {
+            return (word_idx << 6) + free_bits.trailing_zeros() as usize;
+        }
+        word_idx += 1;
+    }
+    occupied.len() << 6
 }
 
 /// AL01: Repack sparse rows into gaps left by the initial greedy comb compression.
@@ -3624,6 +3655,25 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════
     // Comb (row displacement) compression tests
     // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_next_unoccupied_slot_skips_full_words() {
+        let occupied = [!0u64, !0u64, 0b0111u64];
+
+        assert_eq!(next_unoccupied_slot(&occupied, 0), 131);
+        assert_eq!(next_unoccupied_slot(&occupied, 64), 131);
+        assert_eq!(next_unoccupied_slot(&occupied, 131), 131);
+        assert_eq!(next_unoccupied_slot(&occupied, 132), 132);
+    }
+
+    #[test]
+    fn test_next_unoccupied_slot_returns_end_when_bitmap_is_full() {
+        let occupied = [!0u64, !0u64];
+
+        assert_eq!(next_unoccupied_slot(&occupied, 0), 128);
+        assert_eq!(next_unoccupied_slot(&occupied, 127), 128);
+        assert_eq!(next_unoccupied_slot(&occupied, 128), 128);
+    }
 
     #[test]
     fn test_comb_empty_dfa() {

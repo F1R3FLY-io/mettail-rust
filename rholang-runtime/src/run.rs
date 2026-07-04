@@ -296,10 +296,10 @@ async fn build_runtime() -> Result<impl RhoRuntime, String> {
     let mut extra_system_processes = take_pending_fold_definitions();
     Ok(create_rho_runtime(
         space,
-        Arc::new(HashMap::new()),     // mergeable tags: none (single-node eval)
-        false,                        // init_registry: not needed for pure arithmetic
-        &mut extra_system_processes,  // held-fold trampoline contracts (usually none)
-        ExternalServices::noop(),     // inert — no ChromaDB/SBERT/OpenAI
+        Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
+        false,                    // init_registry: not needed for pure arithmetic
+        &mut extra_system_processes, // held-fold trampoline contracts (usually none)
+        ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
     )
     .await)
 }

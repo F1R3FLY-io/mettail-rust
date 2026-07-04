@@ -8,8 +8,8 @@
 //! |------------|---------------------------------|-----------------|
 //! | Lambda     | Dovetail (generic)              | β-redex reduces (E1); normal form displays itself |
 //! | Ambient    | Dovetail (generic)              | AC redex (open/in/extrusion) reduces |
-//! | RhoCalc    | Dovetail + Rholang (two-stage)  | COMM → Rho machine; folds → Dovetail; mixed → pre-fold then Rho |
-//! | Calculator | Dovetail + Rholang (two-stage)  | scalar expr tree → Rho dataflow (E3); non-scalar/÷0/overflow → Dovetail |
+//! | RhoCalc    | Dovetail + Rholang (two-stage)  | COMM / observed pure values → Rho machine; mixed → pre-fold then Rho |
+//! | Calculator | Dovetail + Rholang (two-stage)  | scalar expr tree → Rho dataflow (E3); non-scalar → rejected at Rho-default boundary; partial arithmetic → semantic predicate |
 //!
 //! Lambda/Ambient need only `bundled-languages` (the generic
 //! [`mettail_dovetail_runtime::dovetail_backed`], no f1r3node); RhoCalc/Calculator need
@@ -42,15 +42,14 @@ pub fn ambient_backed() -> Result<Box<dyn Language>> {
 #[cfg(feature = "rho-languages")]
 mod rho {
     use anyhow::{anyhow, Result};
-    use std::collections::BTreeSet;
 
     use mettail_languages::calculator::CalculatorLanguage;
     use mettail_runtime::{Language, RuntimeDovetailRunReport, Term};
 
     use mettail_rholang_codegen::{
         lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-        RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoFoldDataflowDisposition,
-        RhoGuardCoverageEvidence, RhoRejectedRuleDisposition, RhoRejectedRuleDispositionKind,
+        suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+        RhoFoldDataflowDisposition, RhoGuardCoverageEvidence,
     };
     use mettail_rholang_runtime::{
         build_fold_dataflow_invocation_from_contract, dovetail_rho_backed_rhocalc,
@@ -71,8 +70,9 @@ mod rho {
 
     /// Build the Calculator [`PlannedRhoBackend`] from its REAL reconstructed augmented
     /// `LanguageDef` (so the plan's fingerprint matches `CalculatorLanguage` and the wrapper
-    /// installs on it). Every rule the scalar lowering rejects (BigInt / collections / casts / …)
-    /// is dispositioned through the verified native-handler boundary — those terms run on Dovetail.
+    /// installs on it). Rejected rules are dispositioned by the shared language-aware classifier:
+    /// structural constructors use generated Rho AST contracts, while native/eval and unsupported
+    /// scalar operators use Rho-native system processes.
     fn calculator_planned_rho_backend() -> Result<PlannedRhoBackend> {
         let source = CalculatorLanguage
             .metadata()
@@ -81,19 +81,7 @@ mod rho {
         let def = reconstruct_language_def(&source)
             .map_err(|err| anyhow!("reconstruct Calculator LanguageDef: {err:?}"))?;
         let lowering = lower_language_def(&def);
-        let dispositions: Vec<RhoRejectedRuleDisposition> = lowering
-            .rejected
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<String>>()
-            .into_iter()
-            .map(|label| {
-                RhoRejectedRuleDisposition::new(
-                    label,
-                    RhoRejectedRuleDispositionKind::NativeHandler,
-                )
-            })
-            .collect();
+        let dispositions = suggest_rejected_rule_dispositions(&def, &lowering);
         let requirements = RhoDefaultBackendRequirements {
             coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
             guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
@@ -117,18 +105,31 @@ mod rho {
     }
 
     /// The Calculator F-stage: lower the term's scalar expression tree to a Rholang dataflow (E3)
-    /// and run it on the Rho machine, or defer to Dovetail for a non-scalar / free-var / `÷0` /
-    /// overflow term. The Dovetail report is the completeness gate + the Defer-fallback payload.
+    /// and run it on the Rho machine. Non-scalar/free-var terms are rejected at the Rho-default
+    /// boundary; partial arithmetic such as `÷0`/overflow is surfaced as a
+    /// semantic-predicate block so the runtime audit does not confuse it with
+    /// ordinary Rho-machine work.
     fn calculator_invocation(
         term: &dyn Term,
         report: &RuntimeDovetailRunReport,
     ) -> Result<RhoBackendInvocation, String> {
         match CalculatorLanguage::rho_fold_dataflow_invocation_from_dovetail_to(term, report, OUT)?
         {
-            RhoFoldDataflowDisposition::Run(invocation) => {
-                Ok(build_fold_dataflow_invocation_from_contract(invocation))
+            RhoFoldDataflowDisposition::Run(invocation) => Ok(
+                RhoBackendInvocation::from(build_fold_dataflow_invocation_from_contract(
+                    invocation,
+                )),
+            ),
+            RhoFoldDataflowDisposition::Defer => Err(
+                "Calculator term is not lowerable to Rho scalar dataflow; Rho-default execution \
+                 admits only Rho-machine work or semantic-predicate blocks"
+                    .to_string(),
+            ),
+            RhoFoldDataflowDisposition::BlockedBySemanticPredicate(reason) => {
+                Ok(RhoBackendInvocation::DeferToDovetailSemanticPredicate {
+                    predicate: reason.to_string(),
+                })
             },
-            RhoFoldDataflowDisposition::Defer => Ok(RhoBackendInvocation::DeferToDovetailReport),
         }
     }
 

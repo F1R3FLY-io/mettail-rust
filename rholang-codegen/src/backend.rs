@@ -5,7 +5,7 @@
 //! checks exact coverage, artifact validation, and deadlock diagnostics, and
 //! either returns a concrete Rho-default backend plan or all blockers.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::language::{BehavioralPred, GuardConfig, LanguageDef, Premise, RewriteRule};
@@ -15,13 +15,17 @@ use models::rhoapi::Par;
 use crate::flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
 use crate::guard_quality::{derive_guard_qualities, RhoGuardDispositionQuality};
 use crate::lower::{lower_language_def, RhoLowering};
+use crate::rho_net::{RhoNetProgram, RhoNetRuleKind, RhoNetValidationError};
 use crate::validate::{RhoValidationError, ValidatedRhoProgram};
 
 /// Runtime disposition kind for a rule not lowered by the scalar Rho AST
 /// generator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RhoRejectedRuleDispositionKind {
-    /// Covered by a verified native system process or host-side handler.
+    /// Covered by a verified native system process installed as Rho-machine
+    /// work, not by host-side rewrite execution.
+    RhoNativeSystemProcess,
+    /// Covered by a verified host-side semantic-predicate handler.
     NativeHandler,
     /// Covered by a verified external contract supplied by the host runtime.
     ExternalContract,
@@ -233,19 +237,13 @@ pub fn guard_disposition_covers(
         ),
         StructuralPattern => matches!(
             disposition_kind,
-            DovetailCoreStructural
-                | SymbolicFiniteTransducer
-                | RhoNativeJoin
-                | NativeHandler
-                | ExternalContract
+            DovetailCoreStructural | SymbolicFiniteTransducer | RhoNativeJoin
         ),
         TheoryRegistration => matches!(
             disposition_kind,
-            EffectiveBooleanAlgebra | SymbolicFiniteTransducer | NativeHandler | ExternalContract
+            EffectiveBooleanAlgebra | SymbolicFiniteTransducer
         ),
-        RhoNativeJoinObligation => {
-            matches!(disposition_kind, RhoNativeJoin | NativeHandler | ExternalContract)
-        },
+        RhoNativeJoinObligation => matches!(disposition_kind, RhoNativeJoin),
     }
 }
 
@@ -453,7 +451,7 @@ impl RhoRejectedRuleDisposition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RhoRejectedRuleClassificationReason {
     /// The rule carries user Rust evaluation code or an explicit HOL fold/step
-    /// mode, so it belongs behind a verified native handler boundary.
+    /// mode, so it belongs in a verified Rho native system process.
     NativeEvaluation,
     /// The rejected constructor is mentioned by an equation or rewrite pattern,
     /// so it participates in non-scalar source semantics that need a Rho AST
@@ -464,7 +462,7 @@ pub enum RhoRejectedRuleClassificationReason {
     /// Rholang expression contract.
     StructuredSyntax,
     /// The rule has scalar-operator shape but no exact scalar Rholang
-    /// expression lowering. A host/runtime contract may still cover it.
+    /// expression lowering. A generated Rho native process can still cover it.
     UnsupportedScalarOperator,
     /// The rule is a plain constructor outside the scalar-expression lowering
     /// subset. It is a candidate for generated Rho AST structural handling.
@@ -506,25 +504,78 @@ impl RhoRejectedRuleClassification {
     }
 }
 
+fn disposition_priority(kind: RhoRejectedRuleDispositionKind) -> u8 {
+    match kind {
+        RhoRejectedRuleDispositionKind::RhoNativeSystemProcess => 3,
+        RhoRejectedRuleDispositionKind::RhoAstContract => 2,
+        RhoRejectedRuleDispositionKind::NativeHandler
+        | RhoRejectedRuleDispositionKind::ExternalContract => 1,
+    }
+}
+
+fn merge_classified_rejected_rule_dispositions<'a>(
+    classifications: impl IntoIterator<Item = &'a RhoRejectedRuleClassification>,
+) -> Vec<RhoRejectedRuleDisposition> {
+    let mut dispositions = BTreeMap::<String, RhoRejectedRuleDispositionKind>::new();
+    let mut order = Vec::<String>::new();
+    for classification in classifications {
+        let Some(disposition) = classification.to_disposition() else {
+            continue;
+        };
+        let rule = disposition.rule;
+        dispositions
+            .entry(rule.clone())
+            .and_modify(|kind| {
+                if disposition_priority(disposition.kind) > disposition_priority(*kind) {
+                    *kind = disposition.kind;
+                }
+            })
+            .or_insert_with(|| {
+                order.push(rule);
+                disposition.kind
+            });
+    }
+
+    order
+        .into_iter()
+        .filter_map(|rule| {
+            dispositions
+                .remove(&rule)
+                .map(|kind| RhoRejectedRuleDisposition::new(rule, kind))
+        })
+        .collect()
+}
+
 /// Invalid rejected-rule coverage diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoRejectedRuleDispositionDiagnostic {
     MissingRuleId,
     DuplicateRuleDisposition { rule: String },
+    UnsupportedExecutionBoundary {
+        rule: String,
+        kind: RhoRejectedRuleDispositionKind,
+    },
+    IncompatibleRuleDisposition {
+        rule: String,
+        expected: RhoRejectedRuleDispositionKind,
+        actual: RhoRejectedRuleDispositionKind,
+    },
+    MissingRhoAstContract { rule: String },
+    MissingRhoNativeSystemProcess { rule: String },
 }
 
 /// Coverage evidence for rules not lowered by the scalar Rho AST generator.
 ///
 /// A default Rho backend may not ignore `RhoLowering::rejected`. Either every
-/// rule lowered to Rholang AST, or every rejected rule is covered by an
-/// explicit external/native/Rho handler contract that passed the separate
-/// coverage audit.
+/// rule lowered to Rholang AST, or every rejected rule is covered by an explicit
+/// Rho-machine contract/process that passed the separate coverage audit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoCoverageEvidence {
     /// The backend is acceptable only when `RhoLowering::rejected` is empty.
     AllRulesLowered,
-    /// Rejected rules are acceptable only when these dispositions
-    /// name exactly the rejected rule set and every disposition is well-formed.
+    /// Rejected rules are acceptable only when these dispositions name exactly
+    /// the rejected rule set and every disposition is a Rho-machine execution
+    /// boundary.
     CoveredRejectedRules(Vec<RhoRejectedRuleDisposition>),
 }
 
@@ -565,13 +616,28 @@ impl RhoCoverageEvidence {
             .collect()
     }
 
-    fn invalid_dispositions(&self) -> Vec<RhoRejectedRuleDispositionDiagnostic> {
+    fn invalid_dispositions(
+        &self,
+        lowering: &RhoLowering,
+        rho_net_program: &RhoNetProgram,
+        expected_dispositions: &[RhoRejectedRuleDisposition],
+    ) -> Vec<RhoRejectedRuleDispositionDiagnostic> {
         let mut diagnostics = Vec::new();
         let mut seen = BTreeSet::new();
         let mut duplicate_reported = BTreeSet::new();
+        let rejected = lowering
+            .rejected
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let expected_kinds = expected_dispositions
+            .iter()
+            .map(|disposition| (disposition.rule.as_str(), disposition.kind))
+            .collect::<BTreeMap<_, _>>();
 
         for disposition in self.covered_dispositions() {
-            if disposition.rule.trim().is_empty() {
+            let missing_rule_id = disposition.rule.trim().is_empty();
+            if missing_rule_id {
                 diagnostics.push(RhoRejectedRuleDispositionDiagnostic::MissingRuleId);
             } else if !seen.insert(disposition.rule.as_str())
                 && duplicate_reported.insert(disposition.rule.as_str())
@@ -580,15 +646,88 @@ impl RhoCoverageEvidence {
                     rule: disposition.rule.clone(),
                 });
             }
+
+            let supported_rho_default_boundary =
+                rejected_rule_disposition_covers_rho_default(disposition.kind);
+            if !supported_rho_default_boundary {
+                diagnostics.push(
+                    RhoRejectedRuleDispositionDiagnostic::UnsupportedExecutionBoundary {
+                        rule: disposition.rule.clone(),
+                        kind: disposition.kind,
+                    },
+                );
+            }
+
+            let disposition_matches_expected = if !missing_rule_id
+                && rejected.contains(disposition.rule.as_str())
+                && supported_rho_default_boundary
+            {
+                match expected_kinds.get(disposition.rule.as_str()).copied() {
+                    Some(expected) if expected != disposition.kind => {
+                        diagnostics.push(
+                            RhoRejectedRuleDispositionDiagnostic::IncompatibleRuleDisposition {
+                                rule: disposition.rule.clone(),
+                                expected,
+                                actual: disposition.kind,
+                            },
+                        );
+                        false
+                    },
+                    _ => true,
+                }
+            } else {
+                true
+            };
+
+            if !missing_rule_id
+                && rejected.contains(disposition.rule.as_str())
+                && disposition_matches_expected
+            {
+                match disposition.kind {
+                    RhoRejectedRuleDispositionKind::RhoAstContract => {
+                        if !rho_net_program.has_labeled_rule_kind(
+                            &disposition.rule,
+                            RhoNetRuleKind::StructuralConstructor,
+                        ) {
+                            diagnostics.push(
+                                RhoRejectedRuleDispositionDiagnostic::MissingRhoAstContract {
+                                    rule: disposition.rule.clone(),
+                                },
+                            );
+                        }
+                    },
+                    RhoRejectedRuleDispositionKind::RhoNativeSystemProcess => {
+                        if !rho_net_program.has_labeled_rule_kind(
+                            &disposition.rule,
+                            RhoNetRuleKind::NativeSystemProcess,
+                        ) {
+                            diagnostics.push(
+                                RhoRejectedRuleDispositionDiagnostic::MissingRhoNativeSystemProcess {
+                                    rule: disposition.rule.clone(),
+                                },
+                            );
+                        }
+                    },
+                    RhoRejectedRuleDispositionKind::NativeHandler
+                    | RhoRejectedRuleDispositionKind::ExternalContract => {},
+                }
+            }
         }
 
         diagnostics
     }
 
-    fn exactly_covers(&self, lowering: &RhoLowering) -> bool {
+    fn exactly_covers(
+        &self,
+        lowering: &RhoLowering,
+        rho_net_program: &RhoNetProgram,
+        expected_dispositions: &[RhoRejectedRuleDisposition],
+    ) -> bool {
         self.uncovered_rejections(lowering).is_empty()
             && self.extraneous_dispositions(lowering).is_empty()
-            && self.invalid_dispositions().is_empty()
+            && self
+                .invalid_dispositions(lowering, rho_net_program, expected_dispositions)
+                .is_empty()
     }
 
     fn accepted_dispositions(&self) -> Vec<RhoRejectedRuleDisposition> {
@@ -597,6 +736,14 @@ impl RhoCoverageEvidence {
             Self::CoveredRejectedRules(dispositions) => dispositions.clone(),
         }
     }
+}
+
+fn rejected_rule_disposition_covers_rho_default(kind: RhoRejectedRuleDispositionKind) -> bool {
+    matches!(
+        kind,
+        RhoRejectedRuleDispositionKind::RhoAstContract
+            | RhoRejectedRuleDispositionKind::RhoNativeSystemProcess
+    )
 }
 
 fn collect_referenced_constructor_labels(def: &LanguageDef) -> HashSet<String> {
@@ -672,7 +819,7 @@ fn classify_rejected_rule(
     if rule.rust_code.is_some() || rule.eval_mode.is_some() {
         return RhoRejectedRuleClassification::new(
             label,
-            Some(RhoRejectedRuleDispositionKind::NativeHandler),
+            Some(RhoRejectedRuleDispositionKind::RhoNativeSystemProcess),
             RhoRejectedRuleClassificationReason::NativeEvaluation,
         );
     }
@@ -696,7 +843,7 @@ fn classify_rejected_rule(
     if rule_has_scalar_operator_shape(rule) {
         return RhoRejectedRuleClassification::new(
             label,
-            Some(RhoRejectedRuleDispositionKind::ExternalContract),
+            Some(RhoRejectedRuleDispositionKind::RhoNativeSystemProcess),
             RhoRejectedRuleClassificationReason::UnsupportedScalarOperator,
         );
     }
@@ -745,6 +892,21 @@ pub fn classify_rejected_rules(
         .collect()
 }
 
+/// Derive deterministic, de-duplicated rejected-rule dispositions from the
+/// language-aware classifier.
+///
+/// This is advisory coverage material for callers that are about to invoke the
+/// exact [`RhoCoverageEvidence::CoveredRejectedRules`] gate. Duplicate labels
+/// are merged deterministically, preferring Rho-machine-native process coverage
+/// over structural Rho AST contracts when a label is reused with mixed shapes.
+pub fn suggest_rejected_rule_dispositions(
+    def: &LanguageDef,
+    lowering: &RhoLowering,
+) -> Vec<RhoRejectedRuleDisposition> {
+    let classifications = classify_rejected_rules(def, lowering);
+    merge_classified_rejected_rule_dispositions(&classifications)
+}
+
 /// Readiness audit for installing a `LanguageDef` as a Rho-default backend.
 ///
 /// This is a diagnostic artifact, not acceptance evidence. It exposes the
@@ -774,10 +936,7 @@ impl RhoDefaultBackendAudit {
     /// returned disposition count against `lowering.rejected.len()` before using
     /// the result as coverage input.
     pub fn suggested_rejected_rule_dispositions(&self) -> Vec<RhoRejectedRuleDisposition> {
-        self.rejected_rule_classifications
-            .iter()
-            .filter_map(RhoRejectedRuleClassification::to_disposition)
-            .collect()
+        merge_classified_rejected_rule_dispositions(&self.rejected_rule_classifications)
     }
 
     /// Whether every rejected rule has an advisory disposition.
@@ -837,6 +996,7 @@ pub struct RhoDefaultBackendRequirements {
 pub struct RhoDefaultBackendPlan {
     pub lowering: RhoLowering,
     pub validated_program: ValidatedRhoProgram,
+    pub rho_net_program: RhoNetProgram,
     pub rejected_rule_dispositions: Vec<RhoRejectedRuleDisposition>,
     pub guard_obligation_dispositions: Vec<RhoGuardDisposition>,
     /// Substrate quality tags for the language's guard obligations, derived by
@@ -876,6 +1036,11 @@ impl RhoDefaultBackendPlan {
         &self.validated_program
     }
 
+    /// Validated RhoNet planning artifact for the covered lowered subset.
+    pub fn rho_net_program(&self) -> &RhoNetProgram {
+        &self.rho_net_program
+    }
+
     /// Normalized AST to inject into the host Rho runtime, when available.
     pub fn ast_par(&self) -> Option<&Par> {
         self.program().ast_par()
@@ -899,6 +1064,7 @@ pub struct RhoDefaultBackendPlanError {
     pub extraneous_guard_dispositions: Box<[String]>,
     pub invalid_guard_dispositions: Box<[RhoGuardDispositionDiagnostic]>,
     pub validation_errors: Box<[RhoValidationError]>,
+    pub rho_net_validation_errors: Box<[RhoNetValidationError]>,
 }
 
 /// Lower `def` and build the Rho-default backend plan if every flip gate passes.
@@ -909,9 +1075,19 @@ pub fn plan_rho_default_backend(
     let lowering = lower_language_def(def);
     let validated_program = ValidatedRhoProgram::try_from(lowering.program.clone());
     let validation_errors = validated_program.clone().err().unwrap_or_default();
+    let rho_net_program = RhoNetProgram::from_language_def(def, &lowering);
+    let rho_net_validation_errors = rho_net_program
+        .validate_rho_native_contract()
+        .err()
+        .unwrap_or_default();
+    let rejected_rule_classifications = classify_rejected_rules(def, &lowering);
+    let expected_rejected_rule_dispositions =
+        merge_classified_rejected_rule_dispositions(&rejected_rule_classifications);
     let uncovered_rejections = requirements.coverage.uncovered_rejections(&lowering);
     let extraneous_dispositions = requirements.coverage.extraneous_dispositions(&lowering);
-    let invalid_dispositions = requirements.coverage.invalid_dispositions();
+    let invalid_dispositions = requirements
+        .coverage
+        .invalid_dispositions(&lowering, &rho_net_program, &expected_rejected_rule_dispositions);
     let guard_obligations = collect_guard_obligations(def);
     let uncovered_guard_obligations = requirements
         .guard_coverage
@@ -922,7 +1098,11 @@ pub fn plan_rho_default_backend(
     let invalid_guard_dispositions = requirements
         .guard_coverage
         .invalid_dispositions(&guard_obligations);
-    let coverage_passed = requirements.coverage.exactly_covers(&lowering)
+    let coverage_passed = requirements.coverage.exactly_covers(
+        &lowering,
+        &rho_net_program,
+        &expected_rejected_rule_dispositions,
+    )
         && requirements
             .guard_coverage
             .exactly_covers(&guard_obligations);
@@ -957,7 +1137,8 @@ pub fn plan_rho_default_backend(
     let decision = decide_rho_flip(
         RhoFlipGates {
             coverage_passed,
-            artifact_validated: validation_errors.is_empty(),
+            artifact_validated: validation_errors.is_empty()
+                && rho_net_validation_errors.is_empty(),
         },
         &lowering.deadlock_report,
         guard_quality_blockers,
@@ -973,6 +1154,7 @@ pub fn plan_rho_default_backend(
             guard_obligation_dispositions,
             guard_obligation_qualities,
             validated_program,
+            rho_net_program,
             lowering,
         })
     } else {
@@ -986,6 +1168,7 @@ pub fn plan_rho_default_backend(
             extraneous_guard_dispositions: extraneous_guard_dispositions.into_boxed_slice(),
             invalid_guard_dispositions: invalid_guard_dispositions.into_boxed_slice(),
             validation_errors: validation_errors.into_boxed_slice(),
+            rho_net_validation_errors: rho_net_validation_errors.into_boxed_slice(),
         })
     }
 }
@@ -1137,8 +1320,11 @@ mod tests {
         }
     }
 
-    fn native_disposition(rule: &str) -> RhoRejectedRuleDisposition {
-        RhoRejectedRuleDisposition::new(rule, RhoRejectedRuleDispositionKind::NativeHandler)
+    fn rho_native_process_disposition(rule: &str) -> RhoRejectedRuleDisposition {
+        RhoRejectedRuleDisposition::new(
+            rule,
+            RhoRejectedRuleDispositionKind::RhoNativeSystemProcess,
+        )
     }
 
     fn rho_ast_disposition(rule: &str) -> RhoRejectedRuleDisposition {
@@ -1173,6 +1359,8 @@ mod tests {
         assert_eq!(plan.lowering.rejected, Vec::<String>::new());
         assert_eq!(plan.rejected_rule_dispositions, Vec::new());
         assert_eq!(plan.ast_par().expect("plan must carry AST").receives.len(), 3);
+        assert_eq!(plan.rho_net_program().rules.len(), 6);
+        assert_eq!(plan.rho_net_program().validate_rho_native_contract(), Ok(()));
         assert!(plan.text_annotation().contains("contract @\"AddInt\""));
     }
 
@@ -1188,12 +1376,12 @@ mod tests {
             vec![
                 RhoRejectedRuleClassification {
                     rule: "PowInt".to_string(),
-                    suggested_kind: Some(RhoRejectedRuleDispositionKind::ExternalContract),
+                    suggested_kind: Some(RhoRejectedRuleDispositionKind::RhoNativeSystemProcess),
                     reason: RhoRejectedRuleClassificationReason::UnsupportedScalarOperator,
                 },
                 RhoRejectedRuleClassification {
                     rule: "AddBigInt".to_string(),
-                    suggested_kind: Some(RhoRejectedRuleDispositionKind::ExternalContract),
+                    suggested_kind: Some(RhoRejectedRuleDispositionKind::RhoNativeSystemProcess),
                     reason: RhoRejectedRuleClassificationReason::UnsupportedScalarOperator,
                 },
             ]
@@ -1206,7 +1394,7 @@ mod tests {
             disposition,
             RhoRejectedRuleDisposition::new(
                 "PowInt",
-                RhoRejectedRuleDispositionKind::ExternalContract
+                RhoRejectedRuleDispositionKind::RhoNativeSystemProcess
             )
         );
     }
@@ -1240,8 +1428,8 @@ mod tests {
                 .map(|disposition| (disposition.rule.as_str(), disposition.kind))
                 .collect::<Vec<_>>(),
             vec![
-                ("PowInt", RhoRejectedRuleDispositionKind::ExternalContract),
-                ("AddBigInt", RhoRejectedRuleDispositionKind::ExternalContract),
+                ("PowInt", RhoRejectedRuleDispositionKind::RhoNativeSystemProcess),
+                ("AddBigInt", RhoRejectedRuleDispositionKind::RhoNativeSystemProcess),
             ]
         );
         assert!(
@@ -1289,7 +1477,7 @@ mod tests {
             let classification = classification(&classifications, rule);
             assert_eq!(
                 classification.suggested_kind,
-                Some(RhoRejectedRuleDispositionKind::NativeHandler)
+                Some(RhoRejectedRuleDispositionKind::RhoNativeSystemProcess)
             );
             assert_eq!(
                 classification.reason,
@@ -1383,11 +1571,34 @@ mod tests {
         // …but NOT by the other leg's classical / reject-safe mechanism.
         assert!(!guard_disposition_covers(StructuralPattern, EffectiveBooleanAlgebra));
         assert!(!guard_disposition_covers(BehavioralPredicate, DovetailCoreStructural));
-        // The host-routed join and native handler cover BOTH legs (the GuardedRho
-        // host path discharges the whole mixed guard at COMM time).
-        for disposition in [RhoNativeJoin, NativeHandler] {
-            assert!(guard_disposition_covers(StructuralPattern, disposition));
+        // Rho-native guarded joins can discharge both legs at COMM time as
+        // Rho-machine work.
+        assert!(guard_disposition_covers(StructuralPattern, RhoNativeJoin));
+        assert!(guard_disposition_covers(BehavioralPredicate, RhoNativeJoin));
+
+        // Host-native evidence is semantic-predicate-only under the Rho-default
+        // boundary: it may conservatively decide behavioral predicates, but it
+        // cannot stand in for structural matching or channel scheduling.
+        assert!(!guard_disposition_covers(StructuralPattern, NativeHandler));
+        assert!(guard_disposition_covers(BehavioralPredicate, NativeHandler));
+    }
+
+    #[test]
+    fn host_guard_dispositions_are_semantic_predicate_only() {
+        use RhoGuardDispositionKind::{ExternalContract, NativeHandler};
+        use RhoGuardObligationKind::{
+            BehavioralPredicate, RhoNativeJoin as RhoNativeJoinObligation, StructuralPattern,
+            TheoryRegistration,
+        };
+
+        for disposition in [NativeHandler, ExternalContract] {
             assert!(guard_disposition_covers(BehavioralPredicate, disposition));
+            assert!(!guard_disposition_covers(StructuralPattern, disposition));
+            assert!(!guard_disposition_covers(TheoryRegistration, disposition));
+            assert!(!guard_disposition_covers(
+                RhoNativeJoinObligation,
+                disposition
+            ));
         }
     }
 
@@ -1595,8 +1806,8 @@ mod tests {
         let plan = plan_rho_default_backend(
             &parse(PARTIAL_FRAGMENT),
             passing_requirements(RhoCoverageEvidence::CoveredRejectedRules(vec![
-                native_disposition("PowInt"),
-                native_disposition("AddBigInt"),
+                rho_native_process_disposition("PowInt"),
+                rho_native_process_disposition("AddBigInt"),
             ])),
         )
         .expect("explicitly covered rejected rules may pass the default-backend gate");
@@ -1605,8 +1816,104 @@ mod tests {
         assert_eq!(plan.lowering.rejected, vec!["PowInt", "AddBigInt"]);
         assert_eq!(
             plan.rejected_rule_dispositions,
-            vec![native_disposition("PowInt"), native_disposition("AddBigInt")]
+            vec![
+                rho_native_process_disposition("PowInt"),
+                rho_native_process_disposition("AddBigInt"),
+            ]
         );
+        assert_eq!(plan.rho_net_program().rules.len(), 6);
+        assert_eq!(plan.rho_net_program().rules[0].label.as_deref(), Some("AddInt"));
+        assert!(plan
+            .rho_net_program()
+            .has_labeled_rule_kind("PowInt", RhoNetRuleKind::NativeSystemProcess));
+        assert!(plan
+            .rho_net_program()
+            .has_labeled_rule_kind("AddBigInt", RhoNetRuleKind::NativeSystemProcess));
+    }
+
+    #[test]
+    fn default_backend_plan_rejects_non_rho_rejected_rule_coverage() {
+        let err = plan_rho_default_backend(
+            &parse(PARTIAL_FRAGMENT),
+            passing_requirements(RhoCoverageEvidence::CoveredRejectedRules(vec![
+                RhoRejectedRuleDisposition::new(
+                    "PowInt",
+                    RhoRejectedRuleDispositionKind::NativeHandler,
+                ),
+                RhoRejectedRuleDisposition::new(
+                    "AddBigInt",
+                    RhoRejectedRuleDispositionKind::ExternalContract,
+                ),
+            ])),
+        )
+        .expect_err("host/external rejected-rule coverage must not pass Rho default");
+
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&[]));
+        assert_eq!(
+            err.invalid_dispositions,
+            boxed(vec![
+                RhoRejectedRuleDispositionDiagnostic::UnsupportedExecutionBoundary {
+                    rule: "PowInt".to_string(),
+                    kind: RhoRejectedRuleDispositionKind::NativeHandler,
+                },
+                RhoRejectedRuleDispositionDiagnostic::UnsupportedExecutionBoundary {
+                    rule: "AddBigInt".to_string(),
+                    kind: RhoRejectedRuleDispositionKind::ExternalContract,
+                },
+            ])
+        );
+        assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
+    }
+
+    #[test]
+    fn default_backend_plan_rejects_ast_contract_claim_for_native_rule() {
+        let err = plan_rho_default_backend(
+            &parse(PARTIAL_FRAGMENT),
+            passing_requirements(RhoCoverageEvidence::CoveredRejectedRules(vec![
+                rho_ast_disposition("PowInt"),
+                rho_native_process_disposition("AddBigInt"),
+            ])),
+        )
+        .expect_err("native/eval rejected rules must not be claimed as structural AST contracts");
+
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&[]));
+        assert_eq!(
+            err.invalid_dispositions,
+            boxed(vec![RhoRejectedRuleDispositionDiagnostic::IncompatibleRuleDisposition {
+                rule: "PowInt".to_string(),
+                expected: RhoRejectedRuleDispositionKind::RhoNativeSystemProcess,
+                actual: RhoRejectedRuleDispositionKind::RhoAstContract,
+            }])
+        );
+        assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
+    }
+
+    #[test]
+    fn default_backend_plan_rejects_native_process_claim_for_structural_rule() {
+        let err = plan_rho_default_backend(
+            &parse(MINIRHO_FOR_FRAGMENT),
+            passing_requirements(RhoCoverageEvidence::CoveredRejectedRules(vec![
+                rho_native_process_disposition("PZero"),
+                rho_ast_disposition("PPar"),
+                rho_ast_disposition("POutput"),
+                rho_ast_disposition("PFor"),
+            ])),
+        )
+        .expect_err("structural constructors must not be claimed as native system processes");
+
+        assert_eq!(err.uncovered_rejections, boxed_strings(&[]));
+        assert_eq!(err.extraneous_dispositions, boxed_strings(&[]));
+        assert_eq!(
+            err.invalid_dispositions,
+            boxed(vec![RhoRejectedRuleDispositionDiagnostic::IncompatibleRuleDisposition {
+                rule: "PZero".to_string(),
+                expected: RhoRejectedRuleDispositionKind::RhoAstContract,
+                actual: RhoRejectedRuleDispositionKind::RhoNativeSystemProcess,
+            }])
+        );
+        assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
     }
 
     #[test]
@@ -1614,9 +1921,9 @@ mod tests {
         let err = plan_rho_default_backend(
             &parse(PARTIAL_FRAGMENT),
             passing_requirements(RhoCoverageEvidence::CoveredRejectedRules(vec![
-                native_disposition("PowInt"),
-                native_disposition("AddBigInt"),
-                native_disposition("MissingRule"),
+                rho_native_process_disposition("PowInt"),
+                rho_native_process_disposition("AddBigInt"),
+                rho_native_process_disposition("MissingRule"),
             ])),
         )
         .expect_err("coverage must exactly match rejected rules");
@@ -1635,9 +1942,9 @@ mod tests {
         let err = plan_rho_default_backend(
             &parse(PARTIAL_FRAGMENT),
             passing_requirements(RhoCoverageEvidence::CoveredRejectedRules(vec![
-                native_disposition("PowInt"),
-                native_disposition("AddBigInt"),
-                native_disposition("AddBigInt"),
+                rho_native_process_disposition("PowInt"),
+                rho_native_process_disposition("AddBigInt"),
+                rho_native_process_disposition("AddBigInt"),
             ])),
         )
         .expect_err("duplicate disposition claims must block the default-backend gate");

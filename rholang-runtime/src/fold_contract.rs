@@ -125,7 +125,9 @@ impl FoldSpec {
 /// The unforgeable held-fold contract channel for a site index (two-byte private name `[0xF0, n]`).
 pub fn fold_channel(site_index: u8) -> Par {
     Par::default().with_unforgeables(vec![GUnforgeable {
-        unf_instance: Some(GPrivateBody(GPrivate { id: vec![MTL_FOLD_CHANNEL_TAG, site_index] })),
+        unf_instance: Some(GPrivateBody(GPrivate {
+            id: vec![MTL_FOLD_CHANNEL_TAG, site_index],
+        })),
     }])
 }
 
@@ -147,7 +149,10 @@ pub fn fold_definition(spec: &FoldSpec) -> Definition {
             let space = ctx.space.clone();
             let dispatcher = ctx.dispatcher.clone();
             Box::new(move |args: (Vec<ListParWithRandom>, bool, Vec<Par>)| {
-                let cc = ContractCall { space: space.clone(), dispatcher: dispatcher.clone() };
+                let cc = ContractCall {
+                    space: space.clone(),
+                    dispatcher: dispatcher.clone(),
+                };
                 Box::pin(async move {
                     let Some((produce, _is_replay, _previous, payload)) = cc.unapply(args) else {
                         return Err(InterpreterError::IllegalArgumentError(
@@ -165,7 +170,8 @@ pub fn fold_definition(spec: &FoldSpec) -> Definition {
                     let output = vec![result];
                     produce(&output, ack).await?;
                     Ok(output)
-                }) as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+                })
+                    as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
             })
         }),
     }
@@ -206,7 +212,9 @@ mod tests {
 
     fn gint_par(value: i64) -> Par {
         Par {
-            exprs: vec![Expr { expr_instance: Some(ExprInstance::GInt(value)) }],
+            exprs: vec![Expr {
+                expr_instance: Some(ExprInstance::GInt(value)),
+            }],
             ..Default::default()
         }
     }
@@ -232,11 +240,7 @@ mod tests {
         // int(5, 8) = 5 — the exact `proc_int_bin` reduction, lowered back to GInt(5).
         let result = fold_eval(&gint_par(5), FoldKind::Int, 8).expect("int(5,8) folds");
         match result.exprs.as_slice() {
-            [expr] => assert_eq!(
-                expr.expr_instance,
-                Some(ExprInstance::GInt(5)),
-                "int(5,8) → 5"
-            ),
+            [expr] => assert_eq!(expr.expr_instance, Some(ExprInstance::GInt(5)), "int(5,8) → 5"),
             other => panic!("expected a single GInt result, got {other:?}"),
         }
     }

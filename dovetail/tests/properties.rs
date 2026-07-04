@@ -1,9 +1,10 @@
 mod support;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use dovetail::egraph::{EGraph, EGraphConfig, ENode};
-use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome};
+use dovetail::rules::{Pattern, RewriteRule, SaturationOutcome, Subst};
+use dovetail::set_automaton::PatternId;
 use dovetail::space::{Fired, InMemSpace, Match, TupleSpace};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
@@ -35,6 +36,134 @@ fn env_cases(var: &str, default: u32) -> u32 {
         .and_then(|raw| raw.parse::<u32>().ok())
         .filter(|cases| *cases > 0)
         .unwrap_or(default)
+}
+
+type MatchObservation = (u32, Vec<(String, u32)>);
+
+fn normalize_match(eg: &EGraph<String>, root: dovetail::egraph::EClassId, subst: &Subst) -> MatchObservation {
+    let mut bindings: Vec<(String, u32)> = subst
+        .iter()
+        .map(|(name, &class)| (name.clone(), eg.find(class).0))
+        .collect();
+    bindings.sort();
+    (eg.find(root).0, bindings)
+}
+
+fn recursive_positional_matches(
+    eg: &EGraph<String>,
+    pattern: &Pattern<String>,
+) -> BTreeSet<MatchObservation> {
+    let mut out = Vec::new();
+    for class in eg.classes() {
+        collect_positional_matches(eg, pattern, eg.find(class), &Subst::new(), &mut out);
+    }
+    out.into_iter()
+        .map(|(root, subst)| normalize_match(eg, root, &subst))
+        .collect()
+}
+
+fn collect_positional_matches(
+    eg: &EGraph<String>,
+    pattern: &Pattern<String>,
+    class: dovetail::egraph::EClassId,
+    subst: &Subst,
+    out: &mut Vec<(dovetail::egraph::EClassId, Subst)>,
+) {
+    let class = eg.find(class);
+    match pattern {
+        Pattern::Var(name) => match subst.get(name) {
+            Some(&existing) if eg.find(existing) == class => out.push((class, subst.clone())),
+            Some(_) => {},
+            None => {
+                let mut next = subst.clone();
+                next.insert(name.clone(), class);
+                out.push((class, next));
+            },
+        },
+        Pattern::App { op, args } => {
+            let candidates: Vec<Vec<_>> = eg
+                .nodes(class)
+                .iter()
+                .filter(|node| node.op == *op && node.children.len() == args.len())
+                .map(|node| node.children.clone())
+                .collect();
+            for children in candidates {
+                collect_positional_children(eg, args, &children, subst, class, out);
+            }
+        },
+        Pattern::AcApp { .. } => unreachable!("property generator only emits positional patterns"),
+    }
+}
+
+fn collect_positional_children(
+    eg: &EGraph<String>,
+    patterns: &[Pattern<String>],
+    children: &[dovetail::egraph::EClassId],
+    subst: &Subst,
+    root: dovetail::egraph::EClassId,
+    out: &mut Vec<(dovetail::egraph::EClassId, Subst)>,
+) {
+    if patterns.is_empty() {
+        out.push((root, subst.clone()));
+        return;
+    }
+
+    let mut child_matches = Vec::new();
+    collect_positional_matches(eg, &patterns[0], children[0], subst, &mut child_matches);
+    for (_, child_subst) in child_matches {
+        collect_positional_children(eg, &patterns[1..], &children[1..], &child_subst, root, out);
+    }
+}
+
+fn matching_property_graph(seed: u64) -> EGraph<String> {
+    let mut eg = EGraph::<String>::new();
+    let a = eg.add(ENode::leaf("a".into()));
+    let b = eg.add(ENode::leaf("b".into()));
+    let c = eg.add(ENode::leaf("c".into()));
+    let d = eg.add(ENode::leaf("d".into()));
+    let f_a = eg.add(ENode::new("f".into(), vec![a]));
+    let f_b = eg.add(ENode::new("f".into(), vec![b]));
+    let g_a = eg.add(ENode::new("g".into(), vec![a]));
+    let pair_ab = eg.add(ENode::new("pair".into(), vec![a, b]));
+    let pair_ba = eg.add(ENode::new("pair".into(), vec![b, a]));
+    let pair_cd = eg.add(ENode::new("pair".into(), vec![c, d]));
+    let _wrap_pair = eg.add(ENode::new("wrap".into(), vec![pair_ab]));
+    let _pair_nested = eg.add(ENode::new("pair".into(), vec![f_a, g_a]));
+
+    if seed & 0b0001 != 0 {
+        eg.merge(a, b);
+    }
+    if seed & 0b0010 != 0 {
+        eg.merge(f_a, g_a);
+    }
+    if seed & 0b0100 != 0 {
+        eg.merge(pair_ab, pair_ba);
+    }
+    if seed & 0b1000 != 0 {
+        eg.merge(f_b, pair_cd);
+    }
+    eg.rebuild();
+    eg
+}
+
+fn op_name_strategy(names: &'static [&'static str]) -> impl Strategy<Value = String> {
+    prop::sample::select(names).prop_map(str::to_owned)
+}
+
+fn positional_pattern_strategy() -> impl Strategy<Value = Pattern<String>> {
+    let var = prop::sample::select(&["x", "y", "z"]).prop_map(Pattern::var);
+    let leaf = op_name_strategy(&["a", "b", "c", "d", "missing_leaf"]).prop_map(Pattern::leaf);
+    prop_oneof![var, leaf].prop_recursive(3, 24, 3, |inner| {
+        let unary = (op_name_strategy(&["f", "g", "wrap", "missing_unary"]), inner.clone())
+            .prop_map(|(op, child)| Pattern::app(op, vec![child]));
+        let binary = (
+            op_name_strategy(&["pair", "missing_binary"]),
+            inner.clone(),
+            inner,
+        )
+            .prop_map(|(op, left, right)| Pattern::app(op, vec![left, right]));
+        prop_oneof![unary, binary]
+    })
 }
 
 #[test]
@@ -126,6 +255,33 @@ fn prop_budgeted_saturation_never_overshoots_and_reports_refusal() {
             Ok(())
         })
         .expect("budgeted saturation property failed");
+}
+
+#[test]
+fn prop_set_automaton_matches_recursive_positional_oracle() {
+    let strategy = (positional_pattern_strategy(), any::<u64>());
+    let mut runner = TestRunner::new(Config {
+        cases: env_cases("PROPTEST_CASES", 256),
+        ..Config::default()
+    });
+
+    runner
+        .run(&strategy, |(pattern, seed)| {
+            let eg = matching_property_graph(seed);
+            let run = eg
+                .search_many_structural([(PatternId(0), pattern.clone())])
+                .expect("property generator emits only positional patterns");
+            let actual: BTreeSet<_> = run
+                .matches
+                .iter()
+                .map(|matched| normalize_match(&eg, matched.root, &matched.subst))
+                .collect();
+            let expected = recursive_positional_matches(&eg, &pattern);
+
+            prop_assert_eq!(actual, expected, "pattern {:?}, seed {}", pattern, seed);
+            Ok(())
+        })
+        .expect("set automaton positional equivalence property failed");
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

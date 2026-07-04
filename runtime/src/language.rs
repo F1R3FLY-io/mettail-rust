@@ -1296,10 +1296,7 @@ pub trait Language: Send + Sync {
     /// ordered trace as a report — the non-interactive / test-facing surface (the REPL drives the
     /// stepper live instead). Capped so a divergent term cannot hang this convenience driver; the
     /// cap is far beyond any terminating Rho program the bundled languages produce.
-    fn run_reduction_trace_report(
-        &self,
-        term: &dyn Term,
-    ) -> Result<RuntimeBackendReport, String> {
+    fn run_reduction_trace_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
         const SAFETY_CAP: usize = 100_000;
         let mut stepper = self.start_reduction_stepper(term)?;
         let mut steps = Vec::new();

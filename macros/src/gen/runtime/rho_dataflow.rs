@@ -10,15 +10,14 @@
 //! and the accumulated node list is assembled into a closed `call` `Par` by the runtime-free
 //! [`mettail_rholang_codegen::build_dataflow_call_par`].
 //!
-//! ## Defer gate (parity with Dovetail)
-//! A term routes to Dovetail (not Rho) — [`RhoFoldDataflowDisposition::Defer`] — when it is not
-//! fully Rho-lowerable (a non-scalar op / free variable / a literal of the wrong kind: the recursive
-//! collector returns `None`) OR when it does not safely evaluate (the generated `try_eval()` returns
-//! `None`: integer overflow, `÷0`, `%0`). Deferring on `try_eval == None` gives behavioral PARITY
-//! with the Dovetail backend (whose `safe_*` arithmetic likewise declines those), and prevents
-//! emitting a contract call that would hard-error inside the Rho reducer (`EDiv` by zero, `EPlus`
-//! overflow) where Dovetail merely leaves the redex unreduced. The single `try_eval()` call is the
-//! canonical safe-evaluator — no operator threading or re-implemented arithmetic is needed.
+//! ## Defer and semantic-predicate gates
+//! A term returns [`RhoFoldDataflowDisposition::Defer`] when its shape is not fully Rho-lowerable (a
+//! non-scalar op / free variable / a literal of the wrong kind: the recursive collector returns
+//! `None`). A structurally lowerable term whose generated `try_eval()` returns `None` (integer
+//! overflow, `÷0`, `%0`) returns [`RhoFoldDataflowDisposition::BlockedBySemanticPredicate`].
+//! Splitting these cases lets runtime planning keep true semantic predicates separate from shape
+//! rejection while still avoiding unguarded Rho expressions that would hard-error inside the
+//! reducer.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -175,19 +174,22 @@ fn root_fn(category: &str, scalar_type: RhoScalarType) -> TokenStream {
             let mut nodes = ::std::vec::Vec::new();
             let __root = match #collect(node, &mut nodes) {
                 ::core::option::Option::Some(child) => child,
-                // Not fully Rho-lowerable (non-scalar op / free var / wrong literal) ⇒ run on Dovetail.
+                // Not fully Rho-lowerable (non-scalar op / free var / wrong literal) ⇒ rejected by
+                // the Rho-default runtime wrapper rather than routed through Dovetail execution.
                 ::core::option::Option::None => {
                     return ::core::result::Result::Ok(
                         ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer,
                     );
                 },
             };
-            // Defer if the term does not safely evaluate (overflow / ÷0 / %0): the Rho contract path
-            // is unguarded and would hard-error where Dovetail's safe arithmetic declines. `try_eval`
-            // is the canonical safe-evaluator (checked_*), so this is exact behavioral parity.
+            // A structurally Rho-lowerable term can still be blocked by a semantic predicate:
+            // overflow / ÷0 / %0 would hard-error in the unguarded Rho expression, while the
+            // generated safe evaluator declines it.
             if node.try_eval().is_none() {
                 return ::core::result::Result::Ok(
-                    ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer,
+                    ::mettail_rholang_codegen::RhoFoldDataflowDisposition::BlockedBySemanticPredicate(
+                        ::mettail_rholang_codegen::RhoFoldDataflowPredicateBlock::SafeEvaluationDeclined,
+                    ),
                 );
             }
             let call = ::mettail_rholang_codegen::build_dataflow_call_par(&nodes, &__root, out_channel)
@@ -298,6 +300,17 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
                 quote! { #inner_enum::#category_ident(value) => #root(value, out_channel), }
             })
             .collect();
+        let all_declared_types_covered = language.types.iter().all(|ty| {
+            let ty_name = ty.name.to_string();
+            root_categories.contains(ty_name.as_str())
+        });
+        let fallback_arm = if all_declared_types_covered {
+            quote! {}
+        } else {
+            quote! {
+                _ => ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer),
+            }
+        };
         quote! {
             fn __mettail_rho_dataflow_dispatch(
                 inner: &#inner_enum,
@@ -306,18 +319,34 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
                 match inner {
                     #(#inner_arms)*
                     #inner_enum::Ambiguous(alternatives) => {
+                        let mut __mettail_semantic_predicate_block = ::core::option::Option::None;
                         for alternative in alternatives {
-                            if let ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Run(invocation) =
-                                __mettail_rho_dataflow_dispatch(alternative, out_channel)?
-                            {
-                                return ::core::result::Result::Ok(
-                                    ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Run(invocation),
-                                );
+                            match __mettail_rho_dataflow_dispatch(alternative, out_channel)? {
+                                ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Run(invocation) => {
+                                    return ::core::result::Result::Ok(
+                                        ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Run(invocation),
+                                    );
+                                },
+                                ::mettail_rholang_codegen::RhoFoldDataflowDisposition::BlockedBySemanticPredicate(reason) => {
+                                    if __mettail_semantic_predicate_block.is_none() {
+                                        __mettail_semantic_predicate_block = ::core::option::Option::Some(reason);
+                                    }
+                                },
+                                ::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer => {},
                             }
                         }
-                        ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer)
+                        match __mettail_semantic_predicate_block {
+                            ::core::option::Option::Some(reason) => {
+                                ::core::result::Result::Ok(
+                                    ::mettail_rholang_codegen::RhoFoldDataflowDisposition::BlockedBySemanticPredicate(reason),
+                                )
+                            },
+                            ::core::option::Option::None => {
+                                ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer)
+                            },
+                        }
                     },
-                    _ => ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer),
+                    #fallback_arm
                 }
             }
 
@@ -356,7 +385,9 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
         impl #language_struct {
             /// Lower this language's generated typed AST scalar expression tree into a Rholang
             /// dataflow invocation (one contract call per node, wired through intermediate channels),
-            /// or [`RhoFoldDataflowDisposition::Defer`] for a term that must run on Dovetail.
+            /// [`RhoFoldDataflowDisposition::Defer`] for a non-lowerable term, or
+            /// [`RhoFoldDataflowDisposition::BlockedBySemanticPredicate`] for a lowerable term
+            /// blocked by a semantic predicate such as safe arithmetic.
             ///
             /// Generalizes [`Self::rho_scalar_contract_invocation_to`] (one node) to a nested tree.
             pub fn rho_fold_dataflow_invocation_to(
@@ -369,7 +400,8 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
             }
 
             /// As [`Self::rho_fold_dataflow_invocation_to`], after asserting the Dovetail report is
-            /// complete (the F-stage precondition; the report is the Defer fallback payload).
+            /// complete (the F-stage precondition; semantic-predicate deferral can carry that
+            /// checked report as evidence).
             pub fn rho_fold_dataflow_invocation_from_dovetail_to(
                 term: &dyn mettail_runtime::Term,
                 report: &mettail_runtime::RuntimeDovetailRunReport,

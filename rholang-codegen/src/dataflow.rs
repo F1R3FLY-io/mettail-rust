@@ -75,15 +75,35 @@ pub struct RhoFoldDataflowInvocation {
     pub result_type: RhoScalarType,
 }
 
-/// The three-valued outcome of attempting to lower a fold expression to a Rho dataflow. `Defer` is
-/// NOT an error: it means "this term must run on Dovetail instead" (a non-scalar / free-variable /
-/// `÷0` / overflow term whose Rho contract would hard-error where Dovetail safely defers). The
-/// macro emitter maps `Defer ↦ RhoBackendInvocation::DeferToDovetailReport`, `Run ↦
-/// RunWithCallAndObserve*`.
+/// Semantic-predicate reason that prevented a generated fold-dataflow expression from being emitted
+/// as an unconditional Rho contract graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhoFoldDataflowPredicateBlock {
+    /// The generated safe evaluator declined the term (for example integer overflow, division by
+    /// zero, or modulo by zero), so the partial operation's guard must be handled as a semantic
+    /// predicate rather than as an unguarded Rho expression.
+    SafeEvaluationDeclined,
+}
+
+impl core::fmt::Display for RhoFoldDataflowPredicateBlock {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::SafeEvaluationDeclined => write!(f, "safe scalar evaluation declined"),
+        }
+    }
+}
+
+/// The outcome of attempting to lower a fold expression to a Rho dataflow.
+///
+/// `Defer` now means the shape is not fully Rho-lowerable (for example a non-scalar operation or
+/// free variable). `BlockedBySemanticPredicate` means the shape is Rho-lowerable, but a semantic
+/// predicate such as safe arithmetic declined it. That distinction is what lets the runtime audit
+/// keep shape rejection separate from the paper's allowed semantic-predicate boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RhoFoldDataflowDisposition {
     Run(RhoFoldDataflowInvocation),
     Defer,
+    BlockedBySemanticPredicate(RhoFoldDataflowPredicateBlock),
 }
 
 /// A structural inconsistency in a [`RhoDataflowNode`] list — a generator bug, surfaced as a hard

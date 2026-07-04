@@ -250,6 +250,19 @@ fn no_match_expr(language_name: &str) -> TokenStream {
 fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPlan]) -> TokenStream {
     let name = &language.name;
     let inner_enum = format_ident!("{}TermInner", name);
+    let root_categories: BTreeSet<&str> = plans
+        .iter()
+        .map(|plan| plan.result_category.as_str())
+        .collect();
+    let all_declared_types_covered = language.types.iter().all(|ty| {
+        let ty_name = ty.name.to_string();
+        root_categories.contains(ty_name.as_str())
+    });
+    let fallback_arm = if all_declared_types_covered {
+        quote! {}
+    } else {
+        quote! { _ => None, }
+    };
     let mut inner_arms = Vec::new();
     for (category, arms) in category_match_arms(plans) {
         let category_ident = ident(&category);
@@ -277,7 +290,7 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
                             __mettail_rho_try_scalar_inner(alternative, out_channel)
                         })
                 },
-                _ => None,
+                #fallback_arm
             }
         }
     }

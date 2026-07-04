@@ -1,0 +1,1321 @@
+//! RhoNet execution-plan model for Rho-native MeTTaIL runtime semantics.
+//!
+//! This is a typed planning artifact, not a runtime interpreter. It records the
+//! contract the production refactor is moving toward: every non-semantic-
+//! predicate rule is represented as Rho-machine work, while semantic predicates
+//! are the only external execution obligations allowed to remain.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use mettail_ast::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
+use mettail_ast::identity::{
+    behavioral_predicate_identity, equation_identity, grammar_rule_identity,
+    language_definition_fingerprint, pattern_identity, premises_identity, rewrite_identity,
+};
+use mettail_ast::language::{
+    BehavioralPred, ChannelConfig, Equation, GuardConfig, LanguageDef, Premise, RewriteRule,
+};
+
+use crate::lower::RhoLowering;
+
+/// Stable channel name used by generated RhoNet rules.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RhoNetChannel {
+    pub name: String,
+    pub kind: RhoNetChannelKind,
+}
+
+impl RhoNetChannel {
+    pub fn new(name: impl Into<String>, kind: RhoNetChannelKind) -> Self {
+        Self { name: name.into(), kind }
+    }
+
+    /// Reflected term-location channel from the `knotted-topoi` semantics.
+    pub fn location(path: impl Into<String>) -> Self {
+        Self::new(format!("loc:{}", path.into()), RhoNetChannelKind::Location)
+    }
+
+    /// Reflected set-automaton trace/state channel.
+    pub fn set_automaton_trace(trace: impl Into<String>) -> Self {
+        Self::new(format!("sa:{}", trace.into()), RhoNetChannelKind::SetAutomatonTrace)
+    }
+
+    /// Name-consistency channel used for non-linear pattern variables.
+    pub fn consistency(name: impl Into<String>) -> Self {
+        Self::new(format!("eq:{}", name.into()), RhoNetChannelKind::Consistency)
+    }
+
+    /// User/runtime observation channel.
+    pub fn observation(name: impl Into<String>) -> Self {
+        Self::new(format!("obs:{}", name.into()), RhoNetChannelKind::Observation)
+    }
+}
+
+/// Role of a channel in the lowered RhoNet program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoNetChannelKind {
+    Location,
+    SetAutomatonTrace,
+    Consistency,
+    Observation,
+}
+
+/// Class of generated Rho-machine rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoNetRuleKind {
+    StructuralConstructor,
+    BaseRewrite,
+    ContextualRewrite,
+    StructuralCongruence,
+    NativeFold,
+    NativeSystemProcess,
+    Comm,
+}
+
+/// A semantic predicate obligation referenced by RhoNet guards.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RhoNetSemanticPredicate {
+    pub id: String,
+    pub quality: RhoNetSemanticPredicateQuality,
+}
+
+impl RhoNetSemanticPredicate {
+    pub fn new(id: impl Into<String>, quality: RhoNetSemanticPredicateQuality) -> Self {
+        Self { id: id.into(), quality }
+    }
+}
+
+/// Admission quality for a semantic predicate obligation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoNetSemanticPredicateQuality {
+    ExactDecidable,
+    RejectSafeApprox,
+    TrustedNativeGuard,
+    RuntimeObservation,
+}
+
+/// Reusable RHS artifact template. Later lowering turns this into normalized
+/// `rhoapi::Par`; this type intentionally stores only identity/provenance.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RhoNetRhsTemplate {
+    pub id: String,
+    pub fingerprint: String,
+}
+
+impl RhoNetRhsTemplate {
+    pub fn new(id: impl Into<String>, fingerprint: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            fingerprint: fingerprint.into(),
+        }
+    }
+}
+
+/// One generated Rho-machine rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetRule {
+    pub id: String,
+    pub label: Option<String>,
+    pub kind: RhoNetRuleKind,
+    pub input_channels: Vec<String>,
+    pub output_channel: String,
+    pub semantic_predicate_guards: Vec<String>,
+    pub rhs_template: String,
+}
+
+impl RhoNetRule {
+    pub fn new(
+        id: impl Into<String>,
+        kind: RhoNetRuleKind,
+        input_channels: Vec<String>,
+        output_channel: impl Into<String>,
+        rhs_template: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: None,
+            kind,
+            input_channels,
+            output_channel: output_channel.into(),
+            semantic_predicate_guards: Vec::new(),
+            rhs_template: rhs_template.into(),
+        }
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_semantic_predicate_guard(mut self, guard: impl Into<String>) -> Self {
+        self.semantic_predicate_guards.push(guard.into());
+        self
+    }
+}
+
+/// Complete RhoNet planning artifact for one generated language/runtime.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RhoNetProgram {
+    pub language_fingerprint: String,
+    pub channels: Vec<RhoNetChannel>,
+    pub semantic_predicates: Vec<RhoNetSemanticPredicate>,
+    pub rhs_templates: Vec<RhoNetRhsTemplate>,
+    pub rules: Vec<RhoNetRule>,
+}
+
+impl RhoNetProgram {
+    pub fn new(language_fingerprint: impl Into<String>) -> Self {
+        Self {
+            language_fingerprint: language_fingerprint.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Build the RhoNet planning view for scalar contracts that already lowered
+    /// to normalized Rho AST.
+    ///
+    /// This does not claim rejected rules are covered. It records the covered
+    /// scalar-native-fold subset as Rho-machine work, while the existing
+    /// coverage gate remains responsible for every rejected rule and semantic
+    /// predicate obligation.
+    pub fn from_scalar_lowering(lowering: &RhoLowering) -> Self {
+        let mut program = Self::new(lowering.definition_fingerprint());
+        program.add_scalar_lowering(lowering);
+        program
+    }
+
+    /// Build the RhoNet planning view from the full language definition plus
+    /// the already-normalized scalar lowering.
+    ///
+    /// Scalar contracts become native-fold Rho-machine rules. Rejected native
+    /// folds/operators that are admitted by backend coverage become explicit
+    /// native system-process rules. Grammar constructors, equations, base
+    /// rewrites, contextual rewrites, and declared joins are represented as Rho-machine graph rules with
+    /// set-automaton trace inputs and location outputs. Behavioral semantic
+    /// predicates remain explicit guard obligations; structural premises are
+    /// modeled as Rho-machine consistency inputs instead of host fallback work.
+    pub fn from_language_def(def: &LanguageDef, lowering: &RhoLowering) -> Self {
+        let mut program = Self::new(language_definition_fingerprint(def));
+        program.add_scalar_lowering(lowering);
+        program.add_constructor_rules(&def.terms);
+        program.add_native_system_process_rules(&def.terms, lowering);
+        program.add_term_guard_predicates(def);
+        if let Some(guard_config) = def.guard_config.as_ref() {
+            program.add_guard_config(guard_config);
+        }
+        program.add_equations(&def.equations);
+        program.add_rewrites(&def.rewrites);
+        if let Some(channels) = def.guard_config.as_ref().and_then(|guards| guards.channels.as_ref())
+        {
+            program.add_join_patterns(channels);
+        }
+        program
+    }
+
+    fn add_scalar_lowering(&mut self, lowering: &RhoLowering) {
+        for abi in &lowering.scalar_contract_abi {
+            let input = RhoNetChannel::set_automaton_trace(format!("scalar/{}", abi.rule_label));
+            let output = RhoNetChannel::location(format!("scalar/{}/result", abi.rule_label));
+            let rhs = RhoNetRhsTemplate::new(
+                format!("rhs:{}", abi.rule_label),
+                format!("{}:{}", self.language_fingerprint, abi.rule_label),
+            );
+            let rule = RhoNetRule::new(
+                format!("rule:{}", abi.rule_label),
+                RhoNetRuleKind::NativeFold,
+                vec![input.name.clone()],
+                output.name.clone(),
+                rhs.id.clone(),
+            )
+            .with_label(abi.rule_label.clone());
+
+            self.push_channel(input);
+            self.push_channel(output);
+            self.push_rhs_template(rhs);
+            self.rules.push(rule);
+        }
+    }
+
+    fn add_constructor_rules(&mut self, terms: &[GrammarRule]) {
+        for (index, term) in terms.iter().enumerate() {
+            let label = term.label.to_string();
+            let syntax = RhoNetChannel::set_automaton_trace(format!(
+                "term/{index}/{label}/syntax"
+            ));
+            let output = RhoNetChannel::location(format!("term/{index}/{label}/value"));
+            let rhs = RhoNetRhsTemplate::new(
+                format!("rhs:term:{index}:{label}"),
+                format!(
+                    "{}:{}",
+                    self.language_fingerprint,
+                    fingerprint_fragment("term", &grammar_rule_identity(term))
+                ),
+            );
+            let mut inputs = vec![syntax.name.clone()];
+            self.push_channel(syntax);
+            self.add_constructor_child_inputs(index, &label, term, &mut inputs);
+
+            let rule = RhoNetRule::new(
+                format!("rule:term:{index}:{label}"),
+                RhoNetRuleKind::StructuralConstructor,
+                inputs,
+                output.name.clone(),
+                rhs.id.clone(),
+            )
+            .with_label(label);
+
+            self.push_channel(output);
+            self.push_rhs_template(rhs);
+            self.rules.push(rule);
+        }
+    }
+
+    fn add_native_system_process_rules(&mut self, terms: &[GrammarRule], lowering: &RhoLowering) {
+        let rejected = lowering
+            .rejected
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        for (index, term) in terms.iter().enumerate() {
+            let label = term.label.to_string();
+            if !rejected.contains(label.as_str()) || !term_requires_native_system_process(term) {
+                continue;
+            }
+
+            let constructed = RhoNetChannel::location(format!("term/{index}/{label}/value"));
+            let dispatch = RhoNetChannel::set_automaton_trace(format!(
+                "native/{index}/{label}/dispatch"
+            ));
+            let output = RhoNetChannel::location(format!("native/{index}/{label}/result"));
+            let rhs = RhoNetRhsTemplate::new(
+                format!("rhs:native:{index}:{label}"),
+                format!(
+                    "{}:{}",
+                    self.language_fingerprint,
+                    fingerprint_fragment("native", &grammar_rule_identity(term))
+                ),
+            );
+            let rule = RhoNetRule::new(
+                format!("rule:native:{index}:{label}"),
+                RhoNetRuleKind::NativeSystemProcess,
+                vec![constructed.name.clone(), dispatch.name.clone()],
+                output.name.clone(),
+                rhs.id.clone(),
+            )
+            .with_label(label);
+
+            self.push_channel(constructed);
+            self.push_channel(dispatch);
+            self.push_channel(output);
+            self.push_rhs_template(rhs);
+            self.rules.push(rule);
+        }
+    }
+
+    fn add_constructor_child_inputs(
+        &mut self,
+        index: usize,
+        label: &str,
+        term: &GrammarRule,
+        inputs: &mut Vec<String>,
+    ) {
+        if let Some(params) = term.term_context.as_ref() {
+            self.add_constructor_term_param_inputs(index, label, params, inputs);
+            return;
+        }
+
+        for (item_index, item) in term.items.iter().enumerate() {
+            match item {
+                GrammarItem::NonTerminal { ident, .. } => {
+                    let channel = RhoNetChannel::location(format!(
+                        "term/{index}/{label}/item/{item_index}/{ident}"
+                    ));
+                    inputs.push(channel.name.clone());
+                    self.push_channel(channel);
+                },
+                GrammarItem::Binder { category } => {
+                    let channel = RhoNetChannel::location(format!(
+                        "term/{index}/{label}/binder/{item_index}/{category}"
+                    ));
+                    inputs.push(channel.name.clone());
+                    self.push_channel(channel);
+                },
+                GrammarItem::Collection { element_type, .. } => {
+                    let channel = RhoNetChannel::location(format!(
+                        "term/{index}/{label}/collection/{item_index}/{element_type}"
+                    ));
+                    inputs.push(channel.name.clone());
+                    self.push_channel(channel);
+                },
+                GrammarItem::Terminal(_) => {},
+            }
+        }
+    }
+
+    fn add_constructor_term_param_inputs(
+        &mut self,
+        index: usize,
+        label: &str,
+        params: &[TermParam],
+        inputs: &mut Vec<String>,
+    ) {
+        for param in params {
+            match param {
+                TermParam::Simple { name, .. } => {
+                    let channel =
+                        RhoNetChannel::location(format!("term/{index}/{label}/param/{name}"));
+                    inputs.push(channel.name.clone());
+                    self.push_channel(channel);
+                },
+                TermParam::Abstraction { binder, body, .. } => {
+                    let binder_channel = RhoNetChannel::location(format!(
+                        "term/{index}/{label}/binder-param/{binder}"
+                    ));
+                    let body_channel =
+                        RhoNetChannel::location(format!("term/{index}/{label}/param/{body}"));
+                    inputs.push(binder_channel.name.clone());
+                    inputs.push(body_channel.name.clone());
+                    self.push_channel(binder_channel);
+                    self.push_channel(body_channel);
+                },
+                TermParam::MultiAbstraction { binder, body, .. } => {
+                    let binder_channel = RhoNetChannel::location(format!(
+                        "term/{index}/{label}/multi-binder-param/{binder}"
+                    ));
+                    let body_channel =
+                        RhoNetChannel::location(format!("term/{index}/{label}/param/{body}"));
+                    inputs.push(binder_channel.name.clone());
+                    inputs.push(body_channel.name.clone());
+                    self.push_channel(binder_channel);
+                    self.push_channel(body_channel);
+                },
+                TermParam::GuardBody { .. } => {},
+                TermParam::Optional { params } => {
+                    self.add_constructor_term_param_inputs(index, label, params, inputs);
+                },
+            }
+        }
+    }
+
+    fn add_equations(&mut self, equations: &[Equation]) {
+        for (index, equation) in equations.iter().enumerate() {
+            let name = equation.name.to_string();
+            let input = self.pattern_trace_channel(&equation.left);
+            let output =
+                RhoNetChannel::location(format!("equation/{index}/{name}/structural-result"));
+            let rhs = RhoNetRhsTemplate::new(
+                format!("rhs:equation:{index}:{name}"),
+                format!(
+                    "{}:{}",
+                    self.language_fingerprint,
+                    fingerprint_fragment("equation", &equation_identity(equation))
+                ),
+            );
+
+            let mut inputs = vec![input.name.clone()];
+            let semantic_guards =
+                self.add_premise_inputs("equation", &name, &equation.premises, &mut inputs);
+            let mut rule = RhoNetRule::new(
+                format!("rule:equation:{index}:{name}"),
+                RhoNetRuleKind::StructuralCongruence,
+                inputs,
+                output.name.clone(),
+                rhs.id.clone(),
+            )
+            .with_label(name);
+            for guard in semantic_guards {
+                rule = rule.with_semantic_predicate_guard(guard);
+            }
+
+            self.push_channel(input);
+            self.push_channel(output);
+            self.push_rhs_template(rhs);
+            self.rules.push(rule);
+        }
+    }
+
+    fn add_rewrites(&mut self, rewrites: &[RewriteRule]) {
+        for (index, rewrite) in rewrites.iter().enumerate() {
+            let name = rewrite.name.to_string();
+            let input = self.pattern_trace_channel(&rewrite.left);
+            let output = RhoNetChannel::location(format!("rewrite/{index}/{name}/rhs"));
+            let rhs = RhoNetRhsTemplate::new(
+                format!("rhs:rewrite:{index}:{name}"),
+                format!(
+                    "{}:{}",
+                    self.language_fingerprint,
+                    fingerprint_fragment("rewrite", &rewrite_identity(rewrite))
+                ),
+            );
+            let kind = if rewrite.is_congruence_rule() {
+                RhoNetRuleKind::ContextualRewrite
+            } else {
+                RhoNetRuleKind::BaseRewrite
+            };
+
+            let mut inputs = vec![input.name.clone()];
+            let semantic_guards =
+                self.add_premise_inputs("rewrite", &name, &rewrite.premises, &mut inputs);
+            let mut rule = RhoNetRule::new(
+                format!("rule:rewrite:{index}:{name}"),
+                kind,
+                inputs,
+                output.name.clone(),
+                rhs.id.clone(),
+            )
+            .with_label(name);
+            for guard in semantic_guards {
+                rule = rule.with_semantic_predicate_guard(guard);
+            }
+
+            self.push_channel(input);
+            self.push_channel(output);
+            self.push_rhs_template(rhs);
+            self.rules.push(rule);
+        }
+    }
+
+    fn add_join_patterns(&mut self, channels: &ChannelConfig) {
+        for channel in &channels.channel_categories {
+            self.push_channel(RhoNetChannel::location(format!(
+                "channel/{}",
+                channel.category
+            )));
+        }
+
+        for join in &channels.join_patterns {
+            let label = join.label.to_string();
+            let mut inputs = Vec::new();
+            let mut signature = String::new();
+            for param in &join.channel_params {
+                let input = RhoNetChannel::location(format!(
+                    "join/{label}/input/{}:{}",
+                    param.param_name, param.category
+                ));
+                signature.push_str(&format!("{}:{};", param.param_name, param.category));
+                inputs.push(input.name.clone());
+                self.push_channel(input);
+            }
+            let output = RhoNetChannel::location(format!("join/{label}/continuation"));
+            let rhs = RhoNetRhsTemplate::new(
+                format!("rhs:join:{label}"),
+                format!(
+                    "{}:{}",
+                    self.language_fingerprint,
+                    fingerprint_fragment("join", &signature)
+                ),
+            );
+            let rule = RhoNetRule::new(
+                format!("rule:join:{label}"),
+                RhoNetRuleKind::Comm,
+                inputs,
+                output.name.clone(),
+                rhs.id.clone(),
+            )
+            .with_label(label);
+
+            self.push_channel(output);
+            self.push_rhs_template(rhs);
+            self.rules.push(rule);
+        }
+    }
+
+    fn add_guard_config(&mut self, guard_config: &GuardConfig) {
+        match guard_config.builtin_predicates.as_ref() {
+            Some(predicates) => {
+                for predicate in predicates {
+                    self.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                        format!("predicate:{}", predicate.name),
+                        RhoNetSemanticPredicateQuality::RejectSafeApprox,
+                    ));
+                }
+            },
+            None => {
+                self.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                    "predicate:standard-builtins",
+                    RhoNetSemanticPredicateQuality::RejectSafeApprox,
+                ));
+            },
+        }
+
+        for theory in &guard_config.theories {
+            self.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                format!("theory:{}", theory.name),
+                RhoNetSemanticPredicateQuality::ExactDecidable,
+            ));
+        }
+    }
+
+    fn add_term_guard_predicates(&mut self, def: &LanguageDef) {
+        for rule in &def.terms {
+            self.add_term_guard_predicates_for_rule(rule);
+        }
+    }
+
+    fn add_term_guard_predicates_for_rule(&mut self, rule: &GrammarRule) {
+        fn walk(
+            program: &mut RhoNetProgram,
+            label: &str,
+            params: &[TermParam],
+        ) {
+            for param in params {
+                match param {
+                    TermParam::GuardBody { name } => {
+                        program.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                            format!("term:{label}:guard:{name}"),
+                            RhoNetSemanticPredicateQuality::RuntimeObservation,
+                        ));
+                    },
+                    TermParam::Optional { params } => walk(program, label, params),
+                    TermParam::Simple { .. }
+                    | TermParam::Abstraction { .. }
+                    | TermParam::MultiAbstraction { .. } => {},
+                }
+            }
+        }
+
+        if let Some(params) = rule.term_context.as_ref() {
+            walk(self, &rule.label.to_string(), params);
+        }
+    }
+
+    fn add_premise_inputs(
+        &mut self,
+        owner_kind: &str,
+        owner_name: &str,
+        premises: &[Premise],
+        inputs: &mut Vec<String>,
+    ) -> Vec<String> {
+        let mut semantic_guards = Vec::new();
+        for (index, premise) in premises.iter().enumerate() {
+            self.add_premise_input(owner_kind, owner_name, index, premise, inputs, &mut semantic_guards);
+        }
+        semantic_guards
+    }
+
+    fn add_premise_input(
+        &mut self,
+        owner_kind: &str,
+        owner_name: &str,
+        index: usize,
+        premise: &Premise,
+        inputs: &mut Vec<String>,
+        semantic_guards: &mut Vec<String>,
+    ) {
+        match premise {
+            Premise::Freshness(_) => self.push_consistency_input(
+                format!("{owner_kind}/{owner_name}/freshness/{index}"),
+                premise,
+                inputs,
+            ),
+            Premise::RelationQuery { .. } => self.push_consistency_input(
+                format!("{owner_kind}/{owner_name}/relation/{index}"),
+                premise,
+                inputs,
+            ),
+            Premise::SyntheticInjGuard { .. } => self.push_consistency_input(
+                format!("{owner_kind}/{owner_name}/synthetic-injection/{index}"),
+                premise,
+                inputs,
+            ),
+            Premise::Congruence { source, target } => {
+                let channel = RhoNetChannel::location(format!(
+                    "{owner_kind}/{owner_name}/contextual-premise/{index}/{source}-to-{target}"
+                ));
+                inputs.push(channel.name.clone());
+                self.push_channel(channel);
+            },
+            Premise::ForAll { body, .. } => {
+                self.push_consistency_input(
+                    format!("{owner_kind}/{owner_name}/forall/{index}"),
+                    premise,
+                    inputs,
+                );
+                self.add_premise_input(
+                    owner_kind,
+                    owner_name,
+                    index,
+                    body,
+                    inputs,
+                    semantic_guards,
+                );
+            },
+            Premise::BehavioralGuard(pred) => {
+                let id = format!("{owner_kind}:{owner_name}:guard:{index}");
+                if behavioral_predicate_has_structural_component(pred) {
+                    let channel = RhoNetChannel::consistency(format!(
+                        "{owner_kind}/{owner_name}/structural-guard/{index}/{}",
+                        fingerprint_fragment("behavioral", &behavioral_predicate_identity(pred))
+                    ));
+                    inputs.push(channel.name.clone());
+                    self.push_channel(channel);
+                } else {
+                    self.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                        id.clone(),
+                        semantic_predicate_quality(pred),
+                    ));
+                    semantic_guards.push(id);
+                }
+            },
+        }
+    }
+
+    fn push_consistency_input(
+        &mut self,
+        name: String,
+        premise: &Premise,
+        inputs: &mut Vec<String>,
+    ) {
+        let channel = RhoNetChannel::consistency(format!(
+            "{}/{}",
+            name,
+            fingerprint_fragment("premise", &premises_identity(std::slice::from_ref(premise)))
+        ));
+        inputs.push(channel.name.clone());
+        self.push_channel(channel);
+    }
+
+    fn pattern_trace_channel(&self, pattern: &mettail_ast::pattern::Pattern) -> RhoNetChannel {
+        RhoNetChannel::set_automaton_trace(format!(
+            "pattern/{}",
+            fingerprint_fragment("lhs", &pattern_identity(pattern))
+        ))
+    }
+
+    fn push_channel(&mut self, channel: RhoNetChannel) {
+        if !self.channels.iter().any(|existing| existing.name == channel.name) {
+            self.channels.push(channel);
+        }
+    }
+
+    fn push_semantic_predicate(&mut self, predicate: RhoNetSemanticPredicate) {
+        if !self
+            .semantic_predicates
+            .iter()
+            .any(|existing| existing.id == predicate.id)
+        {
+            self.semantic_predicates.push(predicate);
+        }
+    }
+
+    fn push_rhs_template(&mut self, template: RhoNetRhsTemplate) {
+        if !self
+            .rhs_templates
+            .iter()
+            .any(|existing| existing.id == template.id)
+        {
+            self.rhs_templates.push(template);
+        }
+    }
+
+    pub fn validate_rho_native_contract(&self) -> Result<(), Vec<RhoNetValidationError>> {
+        let mut diagnostics = Vec::new();
+        if self.language_fingerprint.trim().is_empty() {
+            diagnostics.push(RhoNetValidationError::MissingLanguageFingerprint);
+        }
+
+        let channel_map = collect_unique(
+            self.channels.iter().map(|channel| channel.name.as_str()),
+            RhoNetValidationError::DuplicateChannel,
+        );
+        let predicate_map = collect_unique(
+            self.semantic_predicates
+                .iter()
+                .map(|predicate| predicate.id.as_str()),
+            RhoNetValidationError::DuplicateSemanticPredicate,
+        );
+        let template_map = collect_unique(
+            self.rhs_templates
+                .iter()
+                .map(|template| template.id.as_str()),
+            RhoNetValidationError::DuplicateRhsTemplate,
+        );
+        let rule_map = collect_unique(
+            self.rules.iter().map(|rule| rule.id.as_str()),
+            RhoNetValidationError::DuplicateRule,
+        );
+
+        diagnostics.extend(channel_map.diagnostics);
+        diagnostics.extend(predicate_map.diagnostics);
+        diagnostics.extend(template_map.diagnostics);
+        diagnostics.extend(rule_map.diagnostics);
+
+        for channel in &self.channels {
+            if channel.name.trim().is_empty() {
+                diagnostics.push(RhoNetValidationError::EmptyChannelName);
+            }
+        }
+        for predicate in &self.semantic_predicates {
+            if predicate.id.trim().is_empty() {
+                diagnostics.push(RhoNetValidationError::EmptySemanticPredicateId);
+            }
+        }
+        for template in &self.rhs_templates {
+            if template.id.trim().is_empty() {
+                diagnostics.push(RhoNetValidationError::EmptyRhsTemplateId);
+            }
+            if template.fingerprint.trim().is_empty() {
+                diagnostics.push(RhoNetValidationError::EmptyRhsTemplateFingerprint {
+                    template: template.id.clone(),
+                });
+            }
+        }
+
+        for rule in &self.rules {
+            if rule.id.trim().is_empty() {
+                diagnostics.push(RhoNetValidationError::EmptyRuleId);
+            }
+            if rule.input_channels.is_empty() {
+                diagnostics
+                    .push(RhoNetValidationError::RuleWithoutInputs { rule: rule.id.clone() });
+            }
+            if rule.output_channel.trim().is_empty() {
+                diagnostics
+                    .push(RhoNetValidationError::RuleWithoutOutput { rule: rule.id.clone() });
+            }
+            if rule.rhs_template.trim().is_empty() {
+                diagnostics
+                    .push(RhoNetValidationError::RuleWithoutRhsTemplate { rule: rule.id.clone() });
+            }
+
+            for channel in &rule.input_channels {
+                if !channel_map.values.contains(channel.as_str()) {
+                    diagnostics.push(RhoNetValidationError::UnknownInputChannel {
+                        rule: rule.id.clone(),
+                        channel: channel.clone(),
+                    });
+                }
+            }
+            if !channel_map.values.contains(rule.output_channel.as_str()) {
+                diagnostics.push(RhoNetValidationError::UnknownOutputChannel {
+                    rule: rule.id.clone(),
+                    channel: rule.output_channel.clone(),
+                });
+            }
+            if !template_map.values.contains(rule.rhs_template.as_str()) {
+                diagnostics.push(RhoNetValidationError::UnknownRhsTemplate {
+                    rule: rule.id.clone(),
+                    template: rule.rhs_template.clone(),
+                });
+            }
+            for guard in &rule.semantic_predicate_guards {
+                if !predicate_map.values.contains(guard.as_str()) {
+                    diagnostics.push(RhoNetValidationError::UnknownSemanticPredicateGuard {
+                        rule: rule.id.clone(),
+                        predicate: guard.clone(),
+                    });
+                }
+            }
+        }
+
+        if diagnostics.is_empty() {
+            Ok(())
+        } else {
+            Err(diagnostics)
+        }
+    }
+
+    pub fn has_labeled_rule_kind(&self, label: &str, kind: RhoNetRuleKind) -> bool {
+        self.rules
+            .iter()
+            .any(|rule| rule.kind == kind && rule.label.as_deref() == Some(label))
+    }
+}
+
+/// Validation error for the Rho-native execution-plan contract.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoNetValidationError {
+    MissingLanguageFingerprint,
+    DuplicateChannel(String),
+    DuplicateSemanticPredicate(String),
+    DuplicateRhsTemplate(String),
+    DuplicateRule(String),
+    EmptyChannelName,
+    EmptySemanticPredicateId,
+    EmptyRhsTemplateId,
+    EmptyRhsTemplateFingerprint { template: String },
+    EmptyRuleId,
+    RuleWithoutInputs { rule: String },
+    RuleWithoutOutput { rule: String },
+    RuleWithoutRhsTemplate { rule: String },
+    UnknownInputChannel { rule: String, channel: String },
+    UnknownOutputChannel { rule: String, channel: String },
+    UnknownRhsTemplate { rule: String, template: String },
+    UnknownSemanticPredicateGuard { rule: String, predicate: String },
+}
+
+struct UniqueIndex<'a> {
+    values: BTreeSet<&'a str>,
+    diagnostics: Vec<RhoNetValidationError>,
+}
+
+fn collect_unique<'a>(
+    names: impl Iterator<Item = &'a str>,
+    duplicate: fn(String) -> RhoNetValidationError,
+) -> UniqueIndex<'a> {
+    let mut counts = BTreeMap::<&'a str, usize>::new();
+    for name in names {
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    let mut values = BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for (name, count) in counts {
+        values.insert(name);
+        if count > 1 {
+            diagnostics.push(duplicate(name.to_string()));
+        }
+    }
+    UniqueIndex { values, diagnostics }
+}
+
+fn fingerprint_fragment(prefix: &str, text: &str) -> String {
+    format!("{prefix}:{:016x}", fnv1a64(text.as_bytes()))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn behavioral_predicate_has_structural_component(pred: &BehavioralPred) -> bool {
+    match pred {
+        BehavioralPred::AcMatch { .. } => true,
+        BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
+            behavioral_predicate_has_structural_component(body)
+        },
+        BehavioralPred::And(left, right)
+        | BehavioralPred::Or(left, right)
+        | BehavioralPred::Implies(left, right) => {
+            behavioral_predicate_has_structural_component(left)
+                || behavioral_predicate_has_structural_component(right)
+        },
+        BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => false,
+    }
+}
+
+fn semantic_predicate_quality(pred: &BehavioralPred) -> RhoNetSemanticPredicateQuality {
+    match pred {
+        BehavioralPred::Top => RhoNetSemanticPredicateQuality::ExactDecidable,
+        BehavioralPred::Quantified { bound: None, .. } => {
+            RhoNetSemanticPredicateQuality::RuntimeObservation
+        },
+        BehavioralPred::RelationQuery { .. }
+        | BehavioralPred::Quantified { .. }
+        | BehavioralPred::And(_, _)
+        | BehavioralPred::Or(_, _)
+        | BehavioralPred::Not(_)
+        | BehavioralPred::Implies(_, _) => RhoNetSemanticPredicateQuality::RejectSafeApprox,
+        BehavioralPred::AcMatch { .. } => RhoNetSemanticPredicateQuality::ExactDecidable,
+    }
+}
+
+fn term_requires_native_system_process(term: &GrammarRule) -> bool {
+    term.rust_code.is_some() || term.eval_mode.is_some() || rule_has_scalar_operator_shape(term)
+}
+
+fn rule_has_scalar_operator_shape(rule: &GrammarRule) -> bool {
+    let Some(pattern) = &rule.syntax_pattern else {
+        return false;
+    };
+    matches!(
+        pattern.as_slice(),
+        [SyntaxExpr::Param(_), SyntaxExpr::Literal(_), SyntaxExpr::Param(_)]
+            | [SyntaxExpr::Literal(_), SyntaxExpr::Param(_)]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lower::lower_language_def;
+    use mettail_ast::language::{BehavioralPred, LanguageDef, PredArg, Premise, RewriteRule};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
+
+    const SCALAR_FRAGMENT: &str = r#"
+        name: RhoNetScalarFrag,
+        types {
+            ![i32] as Int
+            ![bool] as Bool
+        }
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ;
+            EqInt . a:Int, b:Int |- a "==" b : Bool ;
+        }
+    "#;
+
+    const MINIRHO_FOR_FRAGMENT: &str = r#"
+        name: MiniRhoFor,
+        options {
+            emit_simulator: false,
+            emit_blockly: false,
+        },
+        types {
+            Proc
+            Name
+        },
+        terms {
+            PZero . |- "0" : Proc ;
+
+            PPar . ps:HashBag(Proc)
+                |- "{" ps.*sep("|") "}" : Proc ;
+
+            POutput . n:Name, q:Name
+                |- n "!" "(" q ")" : Proc ;
+
+            PFor . n:Name, ^x.p:[Name -> Proc]
+                |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+        },
+        equations {},
+        rewrites {
+            Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest})
+                ~> (PPar {(eval cont Q), ...rest});
+
+            ParCong . | S ~> T
+                |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+        }
+    "#;
+
+    const GUARDED_SCALAR_FRAGMENT: &str = r#"
+        name: GuardedScalar,
+        types {
+            Proc
+            Name
+            ![i64] as Int
+            ![bool] as Bool
+        },
+        guards {
+            gt . x: Int, y: Int |- x ">" y ;
+            theories {
+                arithmetic = PresburgerAlgebra for [Int];
+            }
+            channels {
+                channel Name;
+                join PGuardedInput(ch: Name);
+            }
+        },
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ;
+            PGuardedInput . n:Name, ?guard:Guard, ^x.p:[Name -> Proc]
+                |- "for" "(" x "<-" n "where" guard ")" "{" p "}" : Proc ;
+        }
+    "#;
+
+    const NATIVE_PROCESS_FRAGMENT: &str = r#"
+        name: NativeProcessFrag,
+        types {
+            ![i64] as Int
+            ![mettail_runtime::CanonicalBigInt] as BigInt
+        },
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ;
+            PowInt . a:Int, b:Int |- a "^" b : Int ;
+            FactInt . a:Int |- a "!" : Int ![factorial(a)] step;
+            AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ;
+        }
+    "#;
+
+    fn ident(name: &str) -> syn::Ident {
+        syn::parse_str(name).expect("test identifier must parse")
+    }
+
+    fn var_pattern(name: &str) -> Pattern {
+        Pattern::Term(PatternTerm::Var(ident(name)))
+    }
+
+    #[test]
+    fn valid_program_admits_only_rho_rules_with_semantic_predicate_guards() {
+        let in_channel = RhoNetChannel::set_automaton_trace("root/f/0").name;
+        let out_channel = RhoNetChannel::location("root").name;
+        let mut program = RhoNetProgram::new("lang-fp");
+        program.channels =
+            vec![RhoNetChannel::set_automaton_trace("root/f/0"), RhoNetChannel::location("root")];
+        program.semantic_predicates = vec![RhoNetSemanticPredicate::new(
+            "guard:is-ground",
+            RhoNetSemanticPredicateQuality::RejectSafeApprox,
+        )];
+        program.rhs_templates = vec![RhoNetRhsTemplate::new("rhs:add", "rhs-fp")];
+        program.rules = vec![RhoNetRule::new(
+            "rule:add",
+            RhoNetRuleKind::NativeFold,
+            vec![in_channel],
+            out_channel,
+            "rhs:add",
+        )
+        .with_label("AddInt")
+        .with_semantic_predicate_guard("guard:is-ground")];
+
+        assert_eq!(program.validate_rho_native_contract(), Ok(()));
+    }
+
+    #[test]
+    fn scalar_lowering_derives_valid_rhonet_program() {
+        let def =
+            syn::parse_str::<LanguageDef>(SCALAR_FRAGMENT).expect("scalar fragment must parse");
+        let lowering = lower_language_def(&def);
+        assert_eq!(lowering.lowered, ["AddInt", "EqInt"]);
+        assert!(lowering.rejected.is_empty());
+
+        let rho_net = RhoNetProgram::from_scalar_lowering(&lowering);
+
+        assert_eq!(rho_net.language_fingerprint, lowering.definition_fingerprint());
+        assert_eq!(rho_net.rules.len(), 2);
+        assert_eq!(rho_net.channels.len(), 4);
+        assert_eq!(rho_net.rhs_templates.len(), 2);
+        assert_eq!(rho_net.validate_rho_native_contract(), Ok(()));
+        assert!(rho_net
+            .rules
+            .iter()
+            .all(|rule| rule.kind == RhoNetRuleKind::NativeFold));
+    }
+
+    #[test]
+    fn language_def_planning_derives_base_and_contextual_rewrite_rules() {
+        let def =
+            syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
+        let lowering = lower_language_def(&def);
+        let rho_net = RhoNetProgram::from_language_def(&def, &lowering);
+
+        let rewrite_rules = rho_net
+            .rules
+            .iter()
+            .filter(|rule| {
+                matches!(
+                    rule.kind,
+                    RhoNetRuleKind::BaseRewrite | RhoNetRuleKind::ContextualRewrite
+                )
+            })
+            .collect::<Vec<_>>();
+        let constructor_rules = rho_net
+            .rules
+            .iter()
+            .filter(|rule| rule.kind == RhoNetRuleKind::StructuralConstructor)
+            .collect::<Vec<_>>();
+
+        assert_eq!(constructor_rules.len(), 4);
+        assert!(constructor_rules
+            .iter()
+            .any(|rule| rule.label.as_deref() == Some("PFor")
+                && rule.input_channels.iter().any(|channel| channel.contains("/param/p"))));
+        assert_eq!(rewrite_rules.len(), 2);
+        assert!(rewrite_rules.iter().any(|rule| {
+            rule.label.as_deref() == Some("Comm") && rule.kind == RhoNetRuleKind::BaseRewrite
+        }));
+        assert!(rewrite_rules.iter().any(|rule| {
+            rule.label.as_deref() == Some("ParCong")
+                && rule.kind == RhoNetRuleKind::ContextualRewrite
+                && rule
+                    .input_channels
+                    .iter()
+                    .any(|channel| channel.contains("contextual-premise"))
+        }));
+        assert_eq!(rho_net.validate_rho_native_contract(), Ok(()));
+    }
+
+    #[test]
+    fn language_def_planning_derives_native_system_process_rules() {
+        let def =
+            syn::parse_str::<LanguageDef>(NATIVE_PROCESS_FRAGMENT).expect("fragment must parse");
+        let lowering = lower_language_def(&def);
+        assert_eq!(lowering.lowered, vec!["AddInt"]);
+        assert_eq!(lowering.rejected, vec!["PowInt", "FactInt", "AddBigInt"]);
+
+        let rho_net = RhoNetProgram::from_language_def(&def, &lowering);
+        let native_rules = rho_net
+            .rules
+            .iter()
+            .filter(|rule| rule.kind == RhoNetRuleKind::NativeSystemProcess)
+            .collect::<Vec<_>>();
+
+        assert_eq!(native_rules.len(), 3);
+        for label in ["PowInt", "FactInt", "AddBigInt"] {
+            let rule = native_rules
+                .iter()
+                .find(|rule| rule.label.as_deref() == Some(label))
+                .unwrap_or_else(|| panic!("{label} must have a Rho native system-process rule"));
+            assert!(rule
+                .input_channels
+                .iter()
+                .any(|channel| channel.contains("/dispatch")));
+        }
+        assert!(!rho_net.has_labeled_rule_kind("AddInt", RhoNetRuleKind::NativeSystemProcess));
+        assert_eq!(rho_net.validate_rho_native_contract(), Ok(()));
+    }
+
+    #[test]
+    fn language_def_planning_derives_declared_join_comm_rules() {
+        let def =
+            syn::parse_str::<LanguageDef>(GUARDED_SCALAR_FRAGMENT).expect("fragment must parse");
+        let lowering = lower_language_def(&def);
+        let rho_net = RhoNetProgram::from_language_def(&def, &lowering);
+
+        let join_rule = rho_net
+            .rules
+            .iter()
+            .find(|rule| rule.id == "rule:join:PGuardedInput")
+            .expect("declared join must become a RhoNet COMM rule");
+
+        assert_eq!(join_rule.kind, RhoNetRuleKind::Comm);
+        assert_eq!(join_rule.input_channels.len(), 1);
+        assert!(join_rule.input_channels[0].contains("join/PGuardedInput/input/ch:Name"));
+        let predicate_quality = |id: &str| {
+            rho_net
+                .semantic_predicates
+                .iter()
+                .find(|predicate| predicate.id == id)
+                .unwrap_or_else(|| panic!("missing semantic predicate {id}"))
+                .quality
+        };
+        assert_eq!(
+            predicate_quality("term:PGuardedInput:guard:guard"),
+            RhoNetSemanticPredicateQuality::RuntimeObservation
+        );
+        assert_eq!(
+            predicate_quality("predicate:gt"),
+            RhoNetSemanticPredicateQuality::RejectSafeApprox
+        );
+        assert_eq!(
+            predicate_quality("theory:arithmetic"),
+            RhoNetSemanticPredicateQuality::ExactDecidable
+        );
+        assert_eq!(rho_net.validate_rho_native_contract(), Ok(()));
+    }
+
+    #[test]
+    fn language_def_planning_splits_semantic_and_structural_behavioral_guards() {
+        let mut def =
+            syn::parse_str::<LanguageDef>(SCALAR_FRAGMENT).expect("fragment must parse");
+        def.rewrites.push(RewriteRule {
+            name: ident("SemanticGuarded"),
+            type_context: Vec::new(),
+            premises: vec![Premise::BehavioralGuard(BehavioralPred::RelationQuery {
+                relation_name: ident("ok"),
+                args: vec![PredArg::Var(ident("x"))],
+                negated: false,
+            })],
+            left: var_pattern("x"),
+            right: var_pattern("x"),
+            is_auto_injected: false,
+        });
+        def.rewrites.push(RewriteRule {
+            name: ident("StructuralGuarded"),
+            type_context: Vec::new(),
+            premises: vec![Premise::BehavioralGuard(BehavioralPred::AcMatch {
+                bag: ident("xs"),
+                elements: vec![ident("x")],
+                rest: Some(ident("rest")),
+            })],
+            left: var_pattern("x"),
+            right: var_pattern("x"),
+            is_auto_injected: false,
+        });
+        let lowering = lower_language_def(&def);
+        let rho_net = RhoNetProgram::from_language_def(&def, &lowering);
+
+        let semantic_rule = rho_net
+            .rules
+            .iter()
+            .find(|rule| rule.label.as_deref() == Some("SemanticGuarded"))
+            .expect("semantic-guarded rewrite must be planned");
+        let structural_rule = rho_net
+            .rules
+            .iter()
+            .find(|rule| rule.label.as_deref() == Some("StructuralGuarded"))
+            .expect("structural-guarded rewrite must be planned");
+
+        assert_eq!(
+            semantic_rule.semantic_predicate_guards,
+            vec!["rewrite:SemanticGuarded:guard:0".to_string()]
+        );
+        assert!(rho_net
+            .semantic_predicates
+            .iter()
+            .any(|predicate| predicate.id == "rewrite:SemanticGuarded:guard:0"));
+        assert!(structural_rule.semantic_predicate_guards.is_empty());
+        assert!(structural_rule
+            .input_channels
+            .iter()
+            .any(|channel| channel.contains("structural-guard")));
+        assert_eq!(rho_net.validate_rho_native_contract(), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_unknown_channels_templates_and_guards() {
+        let mut program = RhoNetProgram::new("lang-fp");
+        program.channels = vec![RhoNetChannel::location("root")];
+        program.rhs_templates = vec![RhoNetRhsTemplate::new("rhs:ok", "rhs-fp")];
+        program.rules = vec![RhoNetRule::new(
+            "rule:bad",
+            RhoNetRuleKind::BaseRewrite,
+            vec!["sa:missing".to_string()],
+            "loc:missing",
+            "rhs:missing",
+        )
+        .with_semantic_predicate_guard("guard:missing")];
+
+        let errors = program
+            .validate_rho_native_contract()
+            .expect_err("missing dependencies must reject");
+
+        assert!(errors.contains(&RhoNetValidationError::UnknownInputChannel {
+            rule: "rule:bad".to_string(),
+            channel: "sa:missing".to_string(),
+        }));
+        assert!(errors.contains(&RhoNetValidationError::UnknownOutputChannel {
+            rule: "rule:bad".to_string(),
+            channel: "loc:missing".to_string(),
+        }));
+        assert!(errors.contains(&RhoNetValidationError::UnknownRhsTemplate {
+            rule: "rule:bad".to_string(),
+            template: "rhs:missing".to_string(),
+        }));
+        assert!(errors.contains(&RhoNetValidationError::UnknownSemanticPredicateGuard {
+            rule: "rule:bad".to_string(),
+            predicate: "guard:missing".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validation_reports_duplicate_ids() {
+        let mut program = RhoNetProgram::new("lang-fp");
+        program.channels = vec![RhoNetChannel::location("root"), RhoNetChannel::location("root")];
+        program.semantic_predicates = vec![
+            RhoNetSemanticPredicate::new("guard", RhoNetSemanticPredicateQuality::ExactDecidable),
+            RhoNetSemanticPredicate::new(
+                "guard",
+                RhoNetSemanticPredicateQuality::RuntimeObservation,
+            ),
+        ];
+        program.rhs_templates =
+            vec![RhoNetRhsTemplate::new("rhs", "fp1"), RhoNetRhsTemplate::new("rhs", "fp2")];
+        program.rules = vec![
+            RhoNetRule::new(
+                "rule",
+                RhoNetRuleKind::Comm,
+                vec!["loc:root".to_string()],
+                "loc:root",
+                "rhs",
+            ),
+            RhoNetRule::new(
+                "rule",
+                RhoNetRuleKind::Comm,
+                vec!["loc:root".to_string()],
+                "loc:root",
+                "rhs",
+            ),
+        ];
+
+        let errors = program
+            .validate_rho_native_contract()
+            .expect_err("duplicates must reject");
+
+        assert!(errors.contains(&RhoNetValidationError::DuplicateChannel("loc:root".to_string())));
+        assert!(errors
+            .contains(&RhoNetValidationError::DuplicateSemanticPredicate("guard".to_string())));
+        assert!(errors.contains(&RhoNetValidationError::DuplicateRhsTemplate("rhs".to_string())));
+        assert!(errors.contains(&RhoNetValidationError::DuplicateRule("rule".to_string())));
+    }
+}

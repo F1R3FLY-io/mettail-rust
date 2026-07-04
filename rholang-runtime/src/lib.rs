@@ -55,15 +55,14 @@ pub mod run;
 #[cfg(feature = "runtime-report")]
 pub mod step;
 #[cfg(feature = "runtime-report")]
-pub use step::StepSession;
-#[cfg(feature = "runtime-report")]
 pub use backend::{
     build_fold_dataflow_invocation_from_contract, build_scalar_contract_invocation,
-    build_scalar_contract_invocation_from_contract,
-    install_dovetail_rho_runtime_backend, install_rho_runtime_backend, DovetailCompilerStage,
-    DovetailRhoRuntimeBackedLanguage, IntoRuntimeObservationValue, RhoBackendInvocation,
-    RhoInvocationCompilerStage, RhoRuntimeBackedLanguage, RhoRuntimeBackedLanguageError,
-    RhoScalarInvocationError, RhoScalarInvocationLiteralType, RuntimeReportConversionError,
+    build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
+    install_rho_runtime_backend, DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage,
+    IntoRuntimeObservationValue, RhoBackendInvocation, RhoInvocationCompilerStage,
+    RhoInvocationExecutionSite, RhoMachineInvocation, RhoRuntimeBackedLanguage,
+    RhoRuntimeBackedLanguageError, RhoScalarInvocationError, RhoScalarInvocationLiteralType,
+    RuntimeReportConversionError,
 };
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
@@ -74,9 +73,9 @@ pub use rhocalc_ast::{
     dovetail_rho_backed_rhocalc, lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term,
     rho_runtime_backed_rhocalc_ints, rho_runtime_backed_rhocalc_strings,
     rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, rhocalc_observe_ints_invocation,
-    rhocalc_observe_strings_invocation, rhocalc_observe_values_invocation, rhocalc_planned_rho_backend,
-    RhocalcAstLowerError, RhocalcAstRuntimeLanguage, RhocalcInvocationMapper,
-    RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
+    rhocalc_observe_strings_invocation, rhocalc_observe_values_invocation,
+    rhocalc_planned_rho_backend, RhocalcAstLowerError, RhocalcAstRuntimeLanguage,
+    RhocalcInvocationMapper, RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{
@@ -105,3 +104,5 @@ pub use run::{
     run_rholang_source_sequence_for_oracle_and_read_ints,
     run_rholang_source_sequence_for_oracle_and_read_strings,
 };
+#[cfg(feature = "runtime-report")]
+pub use step::StepSession;

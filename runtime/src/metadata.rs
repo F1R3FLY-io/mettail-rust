@@ -46,6 +46,28 @@ pub trait LanguageMetadata: 'static + Send + Sync {
         None
     }
 
+    /// Derived automata-facing model for parser/runtime planning.
+    ///
+    /// This is the stable metadata boundary that parser tables, Dovetail rule
+    /// inventories, and RhoNet planning can share without reparsing display
+    /// strings or depending on generated Rust control flow. Generated metadata
+    /// implementations may override it later with denser tables; the default is
+    /// intentionally derived from the existing static metadata slices so every
+    /// current language has a sound model immediately.
+    fn automata_model(&self) -> LanguageAutomataModel {
+        LanguageAutomataModel {
+            definition_fingerprint: self.definition_fingerprint(),
+            categories: self.types(),
+            terms: self.terms(),
+            equations: self.equations(),
+            rewrites: self.rewrites(),
+            builtin_predicates: self.builtin_predicates(),
+            theories: self.theories(),
+            channels: self.channels(),
+            join_patterns: self.join_patterns(),
+        }
+    }
+
     /// Type definitions (first is primary)
     fn types(&self) -> &'static [TypeDef];
 
@@ -166,6 +188,53 @@ pub struct BackendCapabilityDef {
 }
 
 pub const NO_RUNTIME_BACKEND_CAPABILITIES: &[BackendCapabilityDef] = &[];
+
+/// Runtime-neutral automata model derived from generated language metadata.
+///
+/// The model deliberately stores references to the existing generated metadata
+/// slices. It is therefore cheap to construct, object-safe through
+/// [`LanguageMetadata::automata_model`], and stable enough for downstream
+/// planner code to depend on while denser parser/Rho tables are introduced.
+#[derive(Debug, Clone, Copy)]
+pub struct LanguageAutomataModel {
+    pub definition_fingerprint: Option<&'static str>,
+    pub categories: &'static [TypeDef],
+    pub terms: &'static [TermDef],
+    pub equations: &'static [EquationDef],
+    pub rewrites: &'static [RewriteDef],
+    pub builtin_predicates: &'static [BuiltinPredicateDef],
+    pub theories: &'static [TheoryDef],
+    pub channels: &'static [ChannelDef],
+    pub join_patterns: &'static [JoinPatternDef],
+}
+
+impl LanguageAutomataModel {
+    /// Number of semantic rules that can contribute to runtime rewriting.
+    pub fn semantic_rule_count(&self) -> usize {
+        self.equations.len() + self.rewrites.len()
+    }
+
+    /// Number of declared guard/predicate obligations visible from metadata.
+    pub fn guard_surface_count(&self) -> usize {
+        self.builtin_predicates.len()
+            + self.theories.len()
+            + self.channels.len()
+            + self.join_patterns.len()
+    }
+
+    /// Whether any runtime semantic rule is guarded.
+    pub fn has_guarded_runtime_rules(&self) -> bool {
+        self.equations.iter().any(|equation| equation.is_guarded)
+            || self.rewrites.iter().any(|rewrite| rewrite.is_guarded)
+    }
+
+    /// Whether the model has enough identity data for fingerprint-checked
+    /// backend plans.
+    pub fn has_definition_identity(&self) -> bool {
+        self.definition_fingerprint
+            .is_some_and(|fingerprint| !fingerprint.trim().is_empty())
+    }
+}
 
 /// Definition of a type (category) in the language
 #[derive(Debug, Clone, Copy)]
@@ -485,6 +554,20 @@ mod guard_metadata_tests {
     }];
     static RICH_CONNECTIVES: &[ConnectiveDef] =
         &[ConnectiveDef { role: "and", keywords: &["and", "∧"] }];
+    static RICH_EQUATIONS: &[EquationDef] = &[EquationDef {
+        conditions: &[],
+        lhs: "lhs",
+        rhs: "rhs",
+        is_guarded: false,
+    }];
+    static RICH_REWRITES: &[RewriteDef] = &[RewriteDef {
+        name: Some("step"),
+        conditions: &[],
+        premise: None,
+        lhs: "redex",
+        rhs: "contractum",
+        is_guarded: true,
+    }];
     static RICH_BACKENDS: &[BackendCapabilityDef] = &[
         BackendCapabilityDef {
             backend: RuntimeBackend::RhoMachine,
@@ -500,6 +583,9 @@ mod guard_metadata_tests {
         fn name(&self) -> &'static str {
             "Rich"
         }
+        fn definition_fingerprint(&self) -> Option<&'static str> {
+            Some("rich-fingerprint")
+        }
         fn types(&self) -> &'static [TypeDef] {
             std::slice::from_ref(&RICH_TYPE)
         }
@@ -507,10 +593,10 @@ mod guard_metadata_tests {
             &[]
         }
         fn equations(&self) -> &'static [EquationDef] {
-            &[]
+            RICH_EQUATIONS
         }
         fn rewrites(&self) -> &'static [RewriteDef] {
-            &[]
+            RICH_REWRITES
         }
         fn builtin_predicates(&self) -> &'static [BuiltinPredicateDef] {
             RICH_PREDS
@@ -551,5 +637,29 @@ mod guard_metadata_tests {
         assert_eq!(m.runtime_backends(), RICH_BACKENDS);
         assert_eq!(m.runtime_backends()[0].backend, RuntimeBackend::RhoMachine);
         assert!(m.runtime_backends()[0].is_default);
+    }
+
+    #[test]
+    fn default_automata_model_is_derived_from_metadata() {
+        let m = MinimalMeta;
+        let model = m.automata_model();
+        assert_eq!(model.categories.len(), 1);
+        assert_eq!(model.categories[0].name, "T");
+        assert_eq!(model.semantic_rule_count(), 0);
+        assert_eq!(model.guard_surface_count(), 0);
+        assert!(!model.has_guarded_runtime_rules());
+        assert!(!model.has_definition_identity());
+    }
+
+    #[test]
+    fn rich_automata_model_preserves_identity_rules_and_guard_surfaces() {
+        let m = RichMeta;
+        let model = m.automata_model();
+        assert_eq!(model.definition_fingerprint, Some("rich-fingerprint"));
+        assert_eq!(model.semantic_rule_count(), 2);
+        assert_eq!(model.guard_surface_count(), 4);
+        assert!(model.has_guarded_runtime_rules());
+        assert!(model.has_definition_identity());
+        assert_eq!(model.rewrites[0].name, Some("step"));
     }
 }

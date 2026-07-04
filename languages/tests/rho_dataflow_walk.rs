@@ -11,7 +11,9 @@
 #![cfg(all(feature = "calculator", feature = "rho-codegen"))]
 
 use mettail_languages::calculator::CalculatorLanguage;
-use mettail_rholang_codegen::RhoFoldDataflowDisposition;
+use mettail_rholang_codegen::{
+    RhoFoldDataflowDisposition, RhoFoldDataflowPredicateBlock,
+};
 use mettail_runtime::Language;
 
 #[test]
@@ -34,25 +36,23 @@ fn nested_scalar_expression_classifies_as_run_with_dataflow_shape() {
                 "the assembled dataflow call must be a closed term"
             );
         },
-        RhoFoldDataflowDisposition::Defer => {
-            panic!("a nested all-scalar expression must lower to a Rho dataflow, not Defer")
-        },
+        other => panic!("a nested all-scalar expression must lower to a Rho dataflow, got {other:?}"),
     }
 }
 
 #[test]
-fn division_by_zero_classifies_as_defer() {
+fn division_by_zero_classifies_as_semantic_predicate_block() {
     // `5 / 0` is structurally lowerable (DivInt has a Rho contract) but `try_eval` declines
-    // (safe_div → None), so the walk Defers to Dovetail rather than emit an unguarded `EDiv` that
-    // would hard-error in the Rho reducer. This is behavioral parity with Dovetail's safe arithmetic.
+    // (safe_div → None), so the walk reports a semantic-predicate block rather than emit an
+    // unguarded `EDiv` that would hard-error in the Rho reducer.
     let lang = CalculatorLanguage;
     let term = lang.parse_term("5 / 0").expect("parse division by zero");
-    assert!(
-        matches!(
-            CalculatorLanguage::rho_fold_dataflow_invocation_to(term.as_ref(), "OUT")
-                .expect("walk must not hard-error"),
-            RhoFoldDataflowDisposition::Defer
+    assert_eq!(
+        CalculatorLanguage::rho_fold_dataflow_invocation_to(term.as_ref(), "OUT")
+            .expect("walk must not hard-error"),
+        RhoFoldDataflowDisposition::BlockedBySemanticPredicate(
+            RhoFoldDataflowPredicateBlock::SafeEvaluationDeclined
         ),
-        "5 / 0 must Defer (try_eval declines; the Rho `/` contract is unguarded)"
+        "5 / 0 must be blocked by the safe-arithmetic semantic predicate"
     );
 }
