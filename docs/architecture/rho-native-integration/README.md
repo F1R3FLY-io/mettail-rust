@@ -65,6 +65,7 @@ For implementers:
 3. [RSpace Parallel Scheduling](05-rspace-parallel-scheduling.md)
 4. [Verification and Rollout](07-verification-and-rollout.md)
 5. [Production Runtime Backend Completion Guide](08-production-runtime-backend-completion.md)
+6. [Runtime Invocation Migration](12-runtime-invocation-migration.md)
 
 For reviewers checking claims and citations:
 
@@ -216,6 +217,7 @@ runtime values are normalized AST artifacts, and the executable form is
 | [09 — Term-Level Reduction Split](09-term-level-reduction-split.md) | How do Dovetail folds and Rholang COMM compose in one term, and where is the boundary? |
 | [10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md) | When does a reduction run sequentially vs trampoline, and how does the Tier-3 held-fold contract close the boundary? |
 | [11 — Reactive COMM Stepper](11-reactive-comm-stepper.md) | How does `step` single-step COMM reductions on the Rho machine, lock-free and zero-cost when off? |
+| [12 — Runtime Invocation Migration](12-runtime-invocation-migration.md) | How do downstream crates migrate from the legacy `RhoBackendInvocation` constructors to the `RhoMachineInvocation` / `RhoBackendInvocation` split? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 
