@@ -16,6 +16,7 @@ use crate::flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates
 use crate::guard_quality::{derive_guard_qualities, RhoGuardDispositionQuality};
 use crate::lower::{lower_language_def, RhoLowering};
 use crate::rho_net::{RhoNetProgram, RhoNetRuleKind, RhoNetValidationError};
+use crate::rho_net_lower::RhoNetLowered;
 use crate::validate::{RhoValidationError, ValidatedRhoProgram};
 
 /// Runtime disposition kind for a rule not lowered by the scalar Rho AST
@@ -1013,6 +1014,13 @@ pub struct RhoDefaultBackendPlan {
     /// `definition_fingerprint`, or any runtime gate field — proof/quality
     /// attribution stays external (commit `6d20b82d`).
     pub guard_obligation_qualities: Vec<RhoGuardDispositionQuality>,
+    /// Rho-native execution plan lowered from `rho_net_program` under the
+    /// set-automaton-assisted model: `NativeFold`/`BaseRewrite` rules carry
+    /// concrete `rhoapi::Par` contracts, while deferred/out-of-scope rule
+    /// families are surfaced fail-closed. This is stored and exposed for the
+    /// runtime injection bridge; it does NOT tighten the flip gate this slice
+    /// (scalar languages still flip regardless of lowering diagnostics).
+    pub rho_net_lowered: RhoNetLowered,
 }
 
 impl RhoDefaultBackendPlan {
@@ -1044,6 +1052,18 @@ impl RhoDefaultBackendPlan {
     /// Validated RhoNet planning artifact for the covered lowered subset.
     pub fn rho_net_program(&self) -> &RhoNetProgram {
         &self.rho_net_program
+    }
+
+    /// Rho-native execution plan lowered from the RhoNet planning artifact
+    /// (materialized `Par` contracts plus fail-closed diagnostics).
+    pub fn rho_net_lowered(&self) -> &RhoNetLowered {
+        &self.rho_net_lowered
+    }
+
+    /// The installable Rho program: every materialized RhoNet contract `Par`
+    /// (`NativeFold` + `BaseRewrite`) parallel-composed into one process.
+    pub fn installed_rho_net_program_par(&self) -> Par {
+        self.rho_net_lowered.installed_program_par()
     }
 
     /// Normalized AST to inject into the host Rho runtime, when available.
@@ -1081,6 +1101,10 @@ pub fn plan_rho_default_backend(
     let validated_program = ValidatedRhoProgram::try_from(lowering.program.clone());
     let validation_errors = validated_program.clone().err().unwrap_or_default();
     let rho_net_program = RhoNetProgram::from_language_def(def, &lowering);
+    // Lower the RhoNet planning artifact to concrete Rho AST under the
+    // set-automaton-assisted model. Stored + exposed for the runtime bridge; the
+    // flip gate is deliberately NOT tightened on lowering diagnostics this slice.
+    let rho_net_lowered = rho_net_program.lower_to_par(def, &lowering);
     let rho_net_validation_errors = rho_net_program
         .validate_rho_native_contract()
         .err()
@@ -1161,6 +1185,7 @@ pub fn plan_rho_default_backend(
             guard_obligation_qualities,
             validated_program,
             rho_net_program,
+            rho_net_lowered,
             lowering,
         })
     } else {

@@ -74,6 +74,7 @@ pub mod invocation;
 pub mod lower;
 pub mod need;
 pub mod rho_net;
+pub mod rho_net_lower;
 pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
@@ -114,6 +115,9 @@ pub use need::{
 pub use rho_net::{
     RhoNetChannel, RhoNetChannelKind, RhoNetProgram, RhoNetRhsTemplate, RhoNetRule, RhoNetRuleKind,
     RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
+};
+pub use rho_net_lower::{
+    RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

@@ -609,3 +609,30 @@ pub fn lower_language_def(def: &LanguageDef) -> RhoLowering {
         deadlock_report,
     }
 }
+
+/// Return a standalone `Par` containing exactly the persistent scalar contract
+/// whose receive binds on `GString(label)`.
+///
+/// `lower_language_def` parallel-composes every generated operator contract into
+/// one `program` `Par`; this locates the single contract for the native-fold
+/// rule `label` by its stable `GString(label)` receive source (the shape set by
+/// [`contract_ast`]) and returns it as its own closed `Par`. The `rho_net_lower`
+/// walk reuses this to lower a `NativeFold` RhoNet rule to the already-proven
+/// scalar contract artifact instead of re-synthesizing it, so the Rho-native
+/// execution plan and the scalar backend share one contract shape. Returns
+/// `None` when no lowered contract binds on `label` (the caller surfaces this as
+/// `MissingScalarContract`).
+pub(crate) fn scalar_contract_par_for(lowering: &RhoLowering, label: &str) -> Option<Par> {
+    let program = lowering.ast_par()?;
+    let source = new_gstring_par(label.to_string(), Vec::new(), false);
+    program
+        .receives
+        .iter()
+        .find(|receive| {
+            receive
+                .binds
+                .iter()
+                .any(|bind| bind.source.as_ref() == Some(&source))
+        })
+        .map(|receive| Par::default().with_receives(vec![receive.clone()]))
+}

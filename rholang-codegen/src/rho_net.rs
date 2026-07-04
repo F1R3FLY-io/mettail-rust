@@ -18,6 +18,38 @@ use mettail_ast::language::{
 
 use crate::lower::RhoLowering;
 
+/// Stable rule identifiers for generated RhoNet rules.
+///
+/// These format helpers are the single source of truth for the six rule-id
+/// namespaces. They are called from [`RhoNetProgram::from_language_def`] (which
+/// builds the planning artifact) AND from the `rho_net_lower` walk (which
+/// re-derives the same identifiers to align its lowered `Par` artifacts against
+/// `program.rules`). Keeping one definition each guarantees the two walks cannot
+/// drift apart on the id shape.
+pub(crate) fn rule_id_scalar(label: &str) -> String {
+    format!("rule:{label}")
+}
+
+pub(crate) fn rule_id_term(index: usize, label: &str) -> String {
+    format!("rule:term:{index}:{label}")
+}
+
+pub(crate) fn rule_id_native(index: usize, label: &str) -> String {
+    format!("rule:native:{index}:{label}")
+}
+
+pub(crate) fn rule_id_equation(index: usize, name: &str) -> String {
+    format!("rule:equation:{index}:{name}")
+}
+
+pub(crate) fn rule_id_rewrite(index: usize, name: &str) -> String {
+    format!("rule:rewrite:{index}:{name}")
+}
+
+pub(crate) fn rule_id_join(label: &str) -> String {
+    format!("rule:join:{label}")
+}
+
 /// Stable channel name used by generated RhoNet rules.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RhoNetChannel {
@@ -224,7 +256,7 @@ impl RhoNetProgram {
                 format!("{}:{}", self.language_fingerprint, abi.rule_label),
             );
             let rule = RhoNetRule::new(
-                format!("rule:{}", abi.rule_label),
+                rule_id_scalar(&abi.rule_label),
                 RhoNetRuleKind::NativeFold,
                 vec![input.name.clone()],
                 output.name.clone(),
@@ -257,7 +289,7 @@ impl RhoNetProgram {
             self.add_constructor_child_inputs(index, &label, term, &mut inputs);
 
             let rule = RhoNetRule::new(
-                format!("rule:term:{index}:{label}"),
+                rule_id_term(index, &label),
                 RhoNetRuleKind::StructuralConstructor,
                 inputs,
                 output.name.clone(),
@@ -296,7 +328,7 @@ impl RhoNetProgram {
                 ),
             );
             let rule = RhoNetRule::new(
-                format!("rule:native:{index}:{label}"),
+                rule_id_native(index, &label),
                 RhoNetRuleKind::NativeSystemProcess,
                 vec![constructed.name.clone(), dispatch.name.clone()],
                 output.name.clone(),
@@ -416,7 +448,7 @@ impl RhoNetProgram {
             let semantic_guards =
                 self.add_premise_inputs("equation", &name, &equation.premises, &mut inputs);
             let mut rule = RhoNetRule::new(
-                format!("rule:equation:{index}:{name}"),
+                rule_id_equation(index, &name),
                 RhoNetRuleKind::StructuralCongruence,
                 inputs,
                 output.name.clone(),
@@ -457,7 +489,7 @@ impl RhoNetProgram {
             let semantic_guards =
                 self.add_premise_inputs("rewrite", &name, &rewrite.premises, &mut inputs);
             let mut rule = RhoNetRule::new(
-                format!("rule:rewrite:{index}:{name}"),
+                rule_id_rewrite(index, &name),
                 kind,
                 inputs,
                 output.name.clone(),
@@ -503,7 +535,7 @@ impl RhoNetProgram {
                 ),
             );
             let rule = RhoNetRule::new(
-                format!("rule:join:{label}"),
+                rule_id_join(&label),
                 RhoNetRuleKind::Comm,
                 inputs,
                 output.name.clone(),
@@ -885,7 +917,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn behavioral_predicate_has_structural_component(pred: &BehavioralPred) -> bool {
+pub(crate) fn behavioral_predicate_has_structural_component(pred: &BehavioralPred) -> bool {
     match pred {
         BehavioralPred::AcMatch { .. } => true,
         BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
@@ -917,7 +949,7 @@ fn semantic_predicate_quality(pred: &BehavioralPred) -> RhoNetSemanticPredicateQ
     }
 }
 
-fn term_requires_native_system_process(term: &GrammarRule) -> bool {
+pub(crate) fn term_requires_native_system_process(term: &GrammarRule) -> bool {
     term.rust_code.is_some() || term.eval_mode.is_some() || rule_has_scalar_operator_shape(term)
 }
 
