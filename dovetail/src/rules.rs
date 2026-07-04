@@ -339,7 +339,12 @@ impl<L: Clone + Eq + std::hash::Hash> CompiledRuleSet<L> {
     pub fn new(rewrite_rules: Vec<RewriteRule<L>>, native_rules: Vec<NativeRule<L>>) -> Self {
         let structural_segments = compile_positional_segments(&rewrite_rules, |rule| &rule.lhs);
         let native_segments = compile_positional_segments(&native_rules, |rule| &rule.lhs);
-        Self { rewrite_rules, native_rules, structural_segments, native_segments }
+        Self {
+            rewrite_rules,
+            native_rules,
+            structural_segments,
+            native_segments,
+        }
     }
 
     /// Compile a structural-only rule set.
@@ -714,10 +719,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         }
     }
 
-    fn batched_segment_matches(
-        &self,
-        segment: &PositionalRuleSegment<L>,
-    ) -> BatchedSegmentMatches {
+    fn batched_segment_matches(&self, segment: &PositionalRuleSegment<L>) -> BatchedSegmentMatches {
         let mut grouped = vec![Vec::new(); segment.end - segment.start];
         let SetAutomatonRun { matches, stats } = segment.automaton.search_egraph(self);
         for matched in matches {
@@ -2135,9 +2137,18 @@ mod tests {
         assert_eq!(
             rep.rule_firings,
             vec![
-                RuleFiring { label: Some("seed_norm".into()), count: 1 },
-                RuleFiring { label: Some("open_with_rest".into()), count: 1 },
-                RuleFiring { label: Some("observed_open".into()), count: 1 },
+                RuleFiring {
+                    label: Some("seed_norm".into()),
+                    count: 1
+                },
+                RuleFiring {
+                    label: Some("open_with_rest".into()),
+                    count: 1
+                },
+                RuleFiring {
+                    label: Some("observed_open".into()),
+                    count: 1
+                },
             ]
         );
         assert!(eg.equiv(seed, seed_norm));

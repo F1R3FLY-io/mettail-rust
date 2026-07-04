@@ -47,10 +47,8 @@ use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
-use rspace_plus_plus::rspace::rspace_interface::{
-    ISpace, MaybeConsumeResult, MaybeProduceResult,
-};
 use rspace_plus_plus::rspace::rspace::RSpace;
+use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::Produce;
@@ -245,9 +243,13 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
         self.inner.remove_all_continuations(channels).await
     }
 
-    async fn clear(&self) -> Result<(), RSpaceError> { self.inner.clear().await }
+    async fn clear(&self) -> Result<(), RSpaceError> {
+        self.inner.clear().await
+    }
 
-    async fn get_root(&self) -> Blake2b256Hash { self.inner.get_root().await }
+    async fn get_root(&self) -> Blake2b256Hash {
+        self.inner.get_root().await
+    }
 
     async fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         self.inner.reset(root).await
@@ -273,7 +275,9 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
         self.inner.create_soft_checkpoint().await
     }
 
-    async fn take_event_log(&self) -> Log { self.inner.take_event_log().await }
+    async fn take_event_log(&self) -> Log {
+        self.inner.take_event_log().await
+    }
 
     async fn revert_to_soft_checkpoint(
         &self,
@@ -289,8 +293,10 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
         continuation: TaggedContinuation,
         persist: bool,
         peeks: BTreeSet<i32>,
-    ) -> Result<MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>, RSpaceError>
-    {
+    ) -> Result<
+        MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
         let result = self
             .inner
             .consume(channels, patterns, continuation, persist, peeks)
@@ -304,8 +310,10 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
         channel: Par,
         data: ListParWithRandom,
         persist: bool,
-    ) -> Result<MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>, RSpaceError>
-    {
+    ) -> Result<
+        MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
         let result = self.inner.produce(channel, data, persist).await?;
         self.emit_if_comm(
             "comm.produce",
@@ -325,21 +333,21 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
         self.inner.install(channels, patterns, continuation).await
     }
 
-    async fn rig_and_reset(
-        &self,
-        start_root: Blake2b256Hash,
-        log: Log,
-    ) -> Result<(), RSpaceError> {
+    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError> {
         self.inner.rig_and_reset(start_root, log).await
     }
 
-    async fn rig(&self, log: Log) -> Result<(), RSpaceError> { self.inner.rig(log).await }
+    async fn rig(&self, log: Log) -> Result<(), RSpaceError> {
+        self.inner.rig(log).await
+    }
 
     async fn check_replay_data(&self) -> Result<(), RSpaceError> {
         self.inner.check_replay_data().await
     }
 
-    async fn is_replay(&self) -> bool { self.inner.is_replay().await }
+    async fn is_replay(&self) -> bool {
+        self.inner.is_replay().await
+    }
 
     async fn update_produce(&self, produce: Produce) {
         self.inner.update_produce(produce).await
@@ -462,10 +470,7 @@ fn run_stepped_inj(
             )
             .map_err(|e| format!("rspace: {e:?}"))?;
         let output_observer = observer.clone();
-        let space = SteppingSpace {
-            inner: inner_space,
-            observer,
-        };
+        let space = SteppingSpace { inner: inner_space, observer };
         let mut rho_runtime = create_rho_runtime(
             space,
             Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
@@ -793,7 +798,10 @@ mod tests {
             first.display
         );
         assert!(
-            stepper.next_step().expect("second step must not error").is_none(),
+            stepper
+                .next_step()
+                .expect("second step must not error")
+                .is_none(),
             "pure fold has no COMM step after its terminal output"
         );
     }

@@ -19,9 +19,9 @@ use mettail_languages::guardedrho::GuardedRhoLanguage;
 use mettail_rholang_codegen::guard_quality::{derive_guard_qualities, RhoGuardQuality};
 use mettail_rholang_codegen::{
     audit_rho_default_backend, collect_guard_obligations, lower_language_def,
-    plan_rho_default_backend, reconstruct_language_def, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
-    RhoGuardDispositionKind, RhoGuardObligationKind, suggest_rejected_rule_dispositions,
+    plan_rho_default_backend, reconstruct_language_def, suggest_rejected_rule_dispositions,
+    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    RhoGuardDisposition, RhoGuardDispositionKind, RhoGuardObligationKind,
     RhoRejectedRuleDisposition,
 };
 use mettail_runtime::Language;

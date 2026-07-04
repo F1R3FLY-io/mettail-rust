@@ -9,10 +9,10 @@ use syn::Ident;
 
 use crate::grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use crate::language::{
-    AttributeValue, BehavioralPred, BuiltinPredicate, ChannelConfig, CollectionCategory, Equation,
-    ConnectiveDecl, FreshnessTarget, GuardConfig, LanguageDef, ParamQuantifier, ParamType, PredArg,
-    PredicateParam, Premise, Quantifier, RefinementPredicate, RewriteRule, SyncConstraint,
-    TheoryRegistration, TokenDef, TreeConstraintExpr, TypedParam,
+    AttributeValue, BehavioralPred, BuiltinPredicate, ChannelConfig, CollectionCategory,
+    ConnectiveDecl, Equation, FreshnessTarget, GuardConfig, LanguageDef, ParamQuantifier,
+    ParamType, PredArg, PredicateParam, Premise, Quantifier, RefinementPredicate, RewriteRule,
+    SyncConstraint, TheoryRegistration, TokenDef, TreeConstraintExpr, TypedParam,
 };
 use crate::pattern::{Pattern, PatternTerm};
 use crate::types::{CollectionType, EvalMode, TypeExpr};

@@ -2224,7 +2224,11 @@ mod tests {
         assert!(dovetail_err.contains("Dovetail backend is not exposed"), "{dovetail_err}");
 
         let seeded_dovetail_err = language
-            .run_backend_report_with_facts(RuntimeBackend::Dovetail, term.as_ref(), &SeedFacts::new())
+            .run_backend_report_with_facts(
+                RuntimeBackend::Dovetail,
+                term.as_ref(),
+                &SeedFacts::new(),
+            )
             .expect_err("direct Rho wrapper must not delegate seeded Dovetail requests");
         assert!(
             seeded_dovetail_err.contains("Dovetail backend is not exposed"),
@@ -2406,17 +2410,21 @@ mod tests {
     #[test]
     fn backend_invocation_has_no_non_semantic_dovetail_execution_site() {
         let sites = [
-            RhoMachineInvocation::RunAndObserveInts {
-                out_channel: "OUT".to_string(),
-            }
-            .execution_site(),
+            RhoMachineInvocation::RunAndObserveInts { out_channel: "OUT".to_string() }
+                .execution_site(),
             RhoBackendInvocation::DeferToDovetailSemanticPredicate {
                 predicate: "safe scalar evaluation declined".to_string(),
             }
             .execution_site(),
         ];
 
-        assert_eq!(sites, [RhoInvocationExecutionSite::RhoMachine, RhoInvocationExecutionSite::SemanticPredicateHost]);
+        assert_eq!(
+            sites,
+            [
+                RhoInvocationExecutionSite::RhoMachine,
+                RhoInvocationExecutionSite::SemanticPredicateHost
+            ]
+        );
     }
 
     #[cfg(feature = "runtime-report")]
@@ -2527,7 +2535,6 @@ mod tests {
         assert!(!blocked.is_rho_machine_execution());
         assert!(blocked.program_par().is_none());
         assert!(blocked.out_channel().is_none());
-
     }
 
     #[cfg(feature = "runtime-report")]

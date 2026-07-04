@@ -205,7 +205,10 @@ impl RhoNetProgram {
         }
         program.add_equations(&def.equations);
         program.add_rewrites(&def.rewrites);
-        if let Some(channels) = def.guard_config.as_ref().and_then(|guards| guards.channels.as_ref())
+        if let Some(channels) = def
+            .guard_config
+            .as_ref()
+            .and_then(|guards| guards.channels.as_ref())
         {
             program.add_join_patterns(channels);
         }
@@ -239,9 +242,7 @@ impl RhoNetProgram {
     fn add_constructor_rules(&mut self, terms: &[GrammarRule]) {
         for (index, term) in terms.iter().enumerate() {
             let label = term.label.to_string();
-            let syntax = RhoNetChannel::set_automaton_trace(format!(
-                "term/{index}/{label}/syntax"
-            ));
+            let syntax = RhoNetChannel::set_automaton_trace(format!("term/{index}/{label}/syntax"));
             let output = RhoNetChannel::location(format!("term/{index}/{label}/value"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:term:{index}:{label}"),
@@ -283,9 +284,8 @@ impl RhoNetProgram {
             }
 
             let constructed = RhoNetChannel::location(format!("term/{index}/{label}/value"));
-            let dispatch = RhoNetChannel::set_automaton_trace(format!(
-                "native/{index}/{label}/dispatch"
-            ));
+            let dispatch =
+                RhoNetChannel::set_automaton_trace(format!("native/{index}/{label}/dispatch"));
             let output = RhoNetChannel::location(format!("native/{index}/{label}/result"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:native:{index}:{label}"),
@@ -477,10 +477,7 @@ impl RhoNetProgram {
 
     fn add_join_patterns(&mut self, channels: &ChannelConfig) {
         for channel in &channels.channel_categories {
-            self.push_channel(RhoNetChannel::location(format!(
-                "channel/{}",
-                channel.category
-            )));
+            self.push_channel(RhoNetChannel::location(format!("channel/{}", channel.category)));
         }
 
         for join in &channels.join_patterns {
@@ -553,11 +550,7 @@ impl RhoNetProgram {
     }
 
     fn add_term_guard_predicates_for_rule(&mut self, rule: &GrammarRule) {
-        fn walk(
-            program: &mut RhoNetProgram,
-            label: &str,
-            params: &[TermParam],
-        ) {
+        fn walk(program: &mut RhoNetProgram, label: &str, params: &[TermParam]) {
             for param in params {
                 match param {
                     TermParam::GuardBody { name } => {
@@ -588,7 +581,14 @@ impl RhoNetProgram {
     ) -> Vec<String> {
         let mut semantic_guards = Vec::new();
         for (index, premise) in premises.iter().enumerate() {
-            self.add_premise_input(owner_kind, owner_name, index, premise, inputs, &mut semantic_guards);
+            self.add_premise_input(
+                owner_kind,
+                owner_name,
+                index,
+                premise,
+                inputs,
+                &mut semantic_guards,
+            );
         }
         semantic_guards
     }
@@ -683,7 +683,11 @@ impl RhoNetProgram {
     }
 
     fn push_channel(&mut self, channel: RhoNetChannel) {
-        if !self.channels.iter().any(|existing| existing.name == channel.name) {
+        if !self
+            .channels
+            .iter()
+            .any(|existing| existing.name == channel.name)
+        {
             self.channels.push(channel);
         }
     }
@@ -1074,8 +1078,7 @@ mod tests {
 
     #[test]
     fn language_def_planning_derives_base_and_contextual_rewrite_rules() {
-        let def =
-            syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
+        let def = syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
         let lowering = lower_language_def(&def);
         let rho_net = RhoNetProgram::from_language_def(&def, &lowering);
 
@@ -1083,10 +1086,7 @@ mod tests {
             .rules
             .iter()
             .filter(|rule| {
-                matches!(
-                    rule.kind,
-                    RhoNetRuleKind::BaseRewrite | RhoNetRuleKind::ContextualRewrite
-                )
+                matches!(rule.kind, RhoNetRuleKind::BaseRewrite | RhoNetRuleKind::ContextualRewrite)
             })
             .collect::<Vec<_>>();
         let constructor_rules = rho_net
@@ -1099,7 +1099,10 @@ mod tests {
         assert!(constructor_rules
             .iter()
             .any(|rule| rule.label.as_deref() == Some("PFor")
-                && rule.input_channels.iter().any(|channel| channel.contains("/param/p"))));
+                && rule
+                    .input_channels
+                    .iter()
+                    .any(|channel| channel.contains("/param/p"))));
         assert_eq!(rewrite_rules.len(), 2);
         assert!(rewrite_rules.iter().any(|rule| {
             rule.label.as_deref() == Some("Comm") && rule.kind == RhoNetRuleKind::BaseRewrite
@@ -1186,8 +1189,7 @@ mod tests {
 
     #[test]
     fn language_def_planning_splits_semantic_and_structural_behavioral_guards() {
-        let mut def =
-            syn::parse_str::<LanguageDef>(SCALAR_FRAGMENT).expect("fragment must parse");
+        let mut def = syn::parse_str::<LanguageDef>(SCALAR_FRAGMENT).expect("fragment must parse");
         def.rewrites.push(RewriteRule {
             name: ident("SemanticGuarded"),
             type_context: Vec::new(),

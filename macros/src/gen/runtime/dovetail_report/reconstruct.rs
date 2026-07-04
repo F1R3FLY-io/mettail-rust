@@ -50,8 +50,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-use super::op_enum::{op_enum_ident, op_variant_ident};
 use super::coll_type_is_ac_bag;
+use super::op_enum::{op_enum_ident, op_variant_ident};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 
 /// The from-derivation reconstruction fn name for a category (snake-cased to match the

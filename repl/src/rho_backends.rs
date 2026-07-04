@@ -115,11 +115,9 @@ mod rho {
     ) -> Result<RhoBackendInvocation, String> {
         match CalculatorLanguage::rho_fold_dataflow_invocation_from_dovetail_to(term, report, OUT)?
         {
-            RhoFoldDataflowDisposition::Run(invocation) => Ok(
-                RhoBackendInvocation::from(build_fold_dataflow_invocation_from_contract(
-                    invocation,
-                )),
-            ),
+            RhoFoldDataflowDisposition::Run(invocation) => Ok(RhoBackendInvocation::from(
+                build_fold_dataflow_invocation_from_contract(invocation),
+            )),
             RhoFoldDataflowDisposition::Defer => Err(
                 "Calculator term is not lowerable to Rho scalar dataflow; Rho-default execution \
                  admits only Rho-machine work or semantic-predicate blocks"

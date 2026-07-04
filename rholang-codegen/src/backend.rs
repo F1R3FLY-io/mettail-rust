@@ -239,10 +239,9 @@ pub fn guard_disposition_covers(
             disposition_kind,
             DovetailCoreStructural | SymbolicFiniteTransducer | RhoNativeJoin
         ),
-        TheoryRegistration => matches!(
-            disposition_kind,
-            EffectiveBooleanAlgebra | SymbolicFiniteTransducer
-        ),
+        TheoryRegistration => {
+            matches!(disposition_kind, EffectiveBooleanAlgebra | SymbolicFiniteTransducer)
+        },
         RhoNativeJoinObligation => matches!(disposition_kind, RhoNativeJoin),
     }
 }
@@ -550,7 +549,9 @@ fn merge_classified_rejected_rule_dispositions<'a>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoRejectedRuleDispositionDiagnostic {
     MissingRuleId,
-    DuplicateRuleDisposition { rule: String },
+    DuplicateRuleDisposition {
+        rule: String,
+    },
     UnsupportedExecutionBoundary {
         rule: String,
         kind: RhoRejectedRuleDispositionKind,
@@ -560,8 +561,12 @@ pub enum RhoRejectedRuleDispositionDiagnostic {
         expected: RhoRejectedRuleDispositionKind,
         actual: RhoRejectedRuleDispositionKind,
     },
-    MissingRhoAstContract { rule: String },
-    MissingRhoNativeSystemProcess { rule: String },
+    MissingRhoAstContract {
+        rule: String,
+    },
+    MissingRhoNativeSystemProcess {
+        rule: String,
+    },
 }
 
 /// Coverage evidence for rules not lowered by the scalar Rho AST generator.
@@ -1085,9 +1090,11 @@ pub fn plan_rho_default_backend(
         merge_classified_rejected_rule_dispositions(&rejected_rule_classifications);
     let uncovered_rejections = requirements.coverage.uncovered_rejections(&lowering);
     let extraneous_dispositions = requirements.coverage.extraneous_dispositions(&lowering);
-    let invalid_dispositions = requirements
-        .coverage
-        .invalid_dispositions(&lowering, &rho_net_program, &expected_rejected_rule_dispositions);
+    let invalid_dispositions = requirements.coverage.invalid_dispositions(
+        &lowering,
+        &rho_net_program,
+        &expected_rejected_rule_dispositions,
+    );
     let guard_obligations = collect_guard_obligations(def);
     let uncovered_guard_obligations = requirements
         .guard_coverage
@@ -1102,10 +1109,9 @@ pub fn plan_rho_default_backend(
         &lowering,
         &rho_net_program,
         &expected_rejected_rule_dispositions,
-    )
-        && requirements
-            .guard_coverage
-            .exactly_covers(&guard_obligations);
+    ) && requirements
+        .guard_coverage
+        .exactly_covers(&guard_obligations);
 
     // Predicate-substrate quality tags for every induced guard obligation. The
     // substrate ([`derive_guard_qualities`]) classifies HOW STRONG each guard's
@@ -1595,10 +1601,7 @@ mod tests {
             assert!(guard_disposition_covers(BehavioralPredicate, disposition));
             assert!(!guard_disposition_covers(StructuralPattern, disposition));
             assert!(!guard_disposition_covers(TheoryRegistration, disposition));
-            assert!(!guard_disposition_covers(
-                RhoNativeJoinObligation,
-                disposition
-            ));
+            assert!(!guard_disposition_covers(RhoNativeJoinObligation, disposition));
         }
     }
 

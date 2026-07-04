@@ -81,10 +81,10 @@ pub use backend::{
     plan_rho_default_backend, suggest_rejected_rule_dispositions, RhoCoverageEvidence,
     RhoDefaultBackendAudit, RhoDefaultBackendPlan, RhoDefaultBackendPlanError,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoGuardDisposition,
-    RhoGuardDispositionDiagnostic, RhoGuardDispositionKind,
-    RhoGuardObligation, RhoGuardObligationKind, RhoRejectedRuleClassification,
-    RhoRejectedRuleClassificationReason, RhoRejectedRuleDisposition,
-    RhoRejectedRuleDispositionDiagnostic, RhoRejectedRuleDispositionKind,
+    RhoGuardDispositionDiagnostic, RhoGuardDispositionKind, RhoGuardObligation,
+    RhoGuardObligationKind, RhoRejectedRuleClassification, RhoRejectedRuleClassificationReason,
+    RhoRejectedRuleDisposition, RhoRejectedRuleDispositionDiagnostic,
+    RhoRejectedRuleDispositionKind,
 };
 pub use dataflow::{
     build_dataflow_call_par, RhoDataflowChild, RhoDataflowError, RhoDataflowNode,

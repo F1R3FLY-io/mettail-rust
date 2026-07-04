@@ -2192,7 +2192,11 @@ impl Repl {
         // already-reduced normal form (it would report "0 rewrites, already a normal form"). This
         // mirrors the step-mode choice above to use `substitute_env_preserve_structure` (no
         // constant folding) rather than `substitute_env`.
-        let term = if step_mode { term } else { language.normalize_term(term.as_ref()) };
+        let term = if step_mode {
+            term
+        } else {
+            language.normalize_term(term.as_ref())
+        };
 
         // Execute using the language's selected backend.
         let backend = language.selected_default_runtime_backend().ok_or_else(|| {
@@ -2230,9 +2234,15 @@ impl Repl {
             } else {
                 // (Layer 2) The reactive COMM reduction trace: the live single-stepper drives the
                 // Rho machine and records each committed COMM, projected as a navigable linear chain.
-                let trace =
-                    language.run_reduction_trace_report(term.as_ref()).ok().filter(|report| {
-                        report.as_reduction_trace().map(|trace| trace.step_count()).unwrap_or(0) >= 1
+                let trace = language
+                    .run_reduction_trace_report(term.as_ref())
+                    .ok()
+                    .filter(|report| {
+                        report
+                            .as_reduction_trace()
+                            .map(|trace| trace.step_count())
+                            .unwrap_or(0)
+                            >= 1
                     });
                 match (trace, dovetail_graph) {
                     (Some(report), _) => report,
@@ -2434,7 +2444,11 @@ impl Repl {
             RuntimeBackendOutput::Dovetail(dovetail_report) => {
                 let is_rewrite_graph =
                     dovetail_report.graph_kind == RuntimeDovetailGraphKind::Rewrite;
-                let edge_noun = if is_rewrite_graph { "rewrite edge" } else { "derivation edge" };
+                let edge_noun = if is_rewrite_graph {
+                    "rewrite edge"
+                } else {
+                    "derivation edge"
+                };
 
                 println!();
                 println!("Computed:");
@@ -2447,11 +2461,7 @@ impl Repl {
                     println!("  - {} root(s)", dovetail_report.roots.len());
                     println!("  - {} term record(s)", dovetail_report.terms.len());
                 }
-                println!(
-                    "  - {} {}(s)",
-                    dovetail_report.derivation_edges.len(),
-                    edge_noun
-                );
+                println!("  - {} {}(s)", dovetail_report.derivation_edges.len(), edge_noun);
                 println!();
 
                 let display = dovetail_report_display(dovetail_report);
@@ -2545,8 +2555,11 @@ impl Repl {
                 println!("{}", format_term_pretty(&current.display).cyan());
                 println!();
 
-                let remaining =
-                    graph.edges.iter().filter(|edge| edge.from_id == current.id).count();
+                let remaining = graph
+                    .edges
+                    .iter()
+                    .filter(|edge| edge.from_id == current.id)
+                    .count();
                 if remaining > 0 {
                     println!(
                         "  Use {} to advance to the next reduction ({} remaining).",

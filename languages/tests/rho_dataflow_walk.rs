@@ -11,9 +11,7 @@
 #![cfg(all(feature = "calculator", feature = "rho-codegen"))]
 
 use mettail_languages::calculator::CalculatorLanguage;
-use mettail_rholang_codegen::{
-    RhoFoldDataflowDisposition, RhoFoldDataflowPredicateBlock,
-};
+use mettail_rholang_codegen::{RhoFoldDataflowDisposition, RhoFoldDataflowPredicateBlock};
 use mettail_runtime::Language;
 
 #[test]
@@ -36,7 +34,9 @@ fn nested_scalar_expression_classifies_as_run_with_dataflow_shape() {
                 "the assembled dataflow call must be a closed term"
             );
         },
-        other => panic!("a nested all-scalar expression must lower to a Rho dataflow, got {other:?}"),
+        other => {
+            panic!("a nested all-scalar expression must lower to a Rho dataflow, got {other:?}")
+        },
     }
 }
 

@@ -40,7 +40,11 @@ fn env_cases(var: &str, default: u32) -> u32 {
 
 type MatchObservation = (u32, Vec<(String, u32)>);
 
-fn normalize_match(eg: &EGraph<String>, root: dovetail::egraph::EClassId, subst: &Subst) -> MatchObservation {
+fn normalize_match(
+    eg: &EGraph<String>,
+    root: dovetail::egraph::EClassId,
+    subst: &Subst,
+) -> MatchObservation {
     let mut bindings: Vec<(String, u32)> = subst
         .iter()
         .map(|(name, &class)| (name.clone(), eg.find(class).0))
@@ -156,11 +160,7 @@ fn positional_pattern_strategy() -> impl Strategy<Value = Pattern<String>> {
     prop_oneof![var, leaf].prop_recursive(3, 24, 3, |inner| {
         let unary = (op_name_strategy(&["f", "g", "wrap", "missing_unary"]), inner.clone())
             .prop_map(|(op, child)| Pattern::app(op, vec![child]));
-        let binary = (
-            op_name_strategy(&["pair", "missing_binary"]),
-            inner.clone(),
-            inner,
-        )
+        let binary = (op_name_strategy(&["pair", "missing_binary"]), inner.clone(), inner)
             .prop_map(|(op, left, right)| Pattern::app(op, vec![left, right]));
         prop_oneof![unary, binary]
     })

@@ -138,9 +138,7 @@ pub(crate) fn is_substitution_rewrite(
         // shape where `term` is a bare scope `Var` and there is one replacement, mirroring the
         // MultiSubst arity-1 case (the general 2-arg `(eval <var> <arg>)` always parses to a
         // MultiSubst; the 3-arg `Subst` is the legacy form).
-        PatternTerm::Subst { term, replacement, .. } => {
-            (term.as_ref(), vec![replacement.as_ref()])
-        },
+        PatternTerm::Subst { term, replacement, .. } => (term.as_ref(), vec![replacement.as_ref()]),
         _ => return None,
     };
 
@@ -225,12 +223,9 @@ fn find_binder_scope(
             if let Some(cat) = language.category_of_constructor(constructor) {
                 for variant in collect_category_variants(cat, language) {
                     match variant {
-                        VariantKind::Binder {
-                            label,
-                            binder_cat,
-                            body_cat,
-                            ..
-                        } if &label == constructor => {
+                        VariantKind::Binder { label, binder_cat, body_cat, .. }
+                            if &label == constructor =>
+                        {
                             return Some(BinderScope {
                                 binder_label: label,
                                 binder_cat: cat.clone(),
@@ -239,12 +234,9 @@ fn find_binder_scope(
                                 multi: false,
                             });
                         },
-                        VariantKind::MultiBinder {
-                            label,
-                            binder_cat,
-                            body_cat,
-                            ..
-                        } if &label == constructor => {
+                        VariantKind::MultiBinder { label, binder_cat, body_cat, .. }
+                            if &label == constructor =>
+                        {
                             return Some(BinderScope {
                                 binder_label: label,
                                 binder_cat: cat.clone(),
@@ -354,11 +346,9 @@ pub(crate) fn needs_normal_term(language: &LanguageDef) -> bool {
         .iter()
         .any(|rw| pattern_contains_substitution(&rw.right));
 
-    let has_structural_rewrite_or_equation = language
-        .rewrites
-        .iter()
-        .any(|rw| !rw.is_congruence_rule())
-        || !language.equations.is_empty();
+    let has_structural_rewrite_or_equation =
+        language.rewrites.iter().any(|rw| !rw.is_congruence_rule())
+            || !language.equations.is_empty();
 
     let declares_rho_backend = language
         .guard_config
@@ -1423,7 +1413,13 @@ mod tests {
         let sr = is_substitution_rewrite(&language, rewrite(&language, "Beta"))
             .expect("Beta must be detected as a substitution rewrite");
         assert_eq!(sr.scope_var.to_string(), "fun");
-        assert_eq!(sr.repl_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(), vec!["arg"]);
+        assert_eq!(
+            sr.repl_vars
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
+            vec!["arg"]
+        );
         assert_eq!(sr.binder_label.to_string(), "Lam");
         assert_eq!(sr.binder_cat.to_string(), "Term");
         assert_eq!(sr.binder_var_cat.to_string(), "Term");
@@ -1562,7 +1558,13 @@ mod tests {
             "cross-category: bound-variable category differs from body category — the dispatcher \
              must select `substitute_name`, not `substitute_proc`"
         );
-        assert_eq!(sr.repl_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(
+            sr.repl_vars
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
+            vec!["a"]
+        );
         assert_eq!(sr.head_label.to_string(), "Send");
     }
 }

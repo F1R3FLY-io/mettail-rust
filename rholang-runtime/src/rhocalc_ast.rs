@@ -406,8 +406,8 @@ pub fn dovetail_rho_backed_rhocalc(
         };
         Ok(crate::backend::RhoBackendInvocation::from(
             crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
-            call,
-            out_channel: out_channel.clone(),
+                call,
+                out_channel: out_channel.clone(),
             },
         ))
     };
@@ -427,10 +427,7 @@ fn call_has_runtime_effects(call: &Par) -> bool {
 }
 
 fn observe_pure_value_call(value: Par, out_channel: &str) -> Par {
-    send_par(
-        new_gstring_par(out_channel.to_string(), Vec::new(), false),
-        vec![value],
-    )
+    send_par(new_gstring_par(out_channel.to_string(), Vec::new(), false), vec![value])
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.

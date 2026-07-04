@@ -638,7 +638,8 @@ fn subst_dispatch_arm(s: &SubstRule) -> TokenStream {
 
     // 4. unbind + substitute (single vs multi).
     let subst_body = if sr.multi {
-        let multi_subst = format_ident!("multi_substitute_{}", to_snake(&sr.binder_var_cat.to_string()));
+        let multi_subst =
+            format_ident!("multi_substitute_{}", to_snake(&sr.binder_var_cat.to_string()));
         let arity = sr.repl_vars.len();
         quote! {
             let (__binders, __body) = __scope.unbind();
