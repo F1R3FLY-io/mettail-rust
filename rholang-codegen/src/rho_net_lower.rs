@@ -33,7 +33,10 @@ use mettail_ast::language::{LanguageDef, Premise, RewriteRule};
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use models::create_bit_vector;
 use models::rhoapi::{Par, Receive, ReceiveBind};
-use models::rust::utils::{new_boundvar_par, new_freevar_par, new_gstring_par, new_send_par};
+use models::rust::rholang::implicits::GPrivateBuilder;
+use models::rust::utils::{
+    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_send_par, union,
+};
 use syn::Ident;
 
 use crate::lower::{scalar_contract_par_for, RhoLowering};
@@ -60,10 +63,12 @@ pub enum UnsupportedFamily {
     MultiLambda,
     /// A `subst`/`multisubst` node.
     Substitution,
-    /// A constructor application on the RHS. Reflecting a general MeTTaIL term
-    /// into a Rho `Par` value is not defined this slice (see the reflection-ABI
-    /// investigation), so a constructor RHS fails closed.
-    ConstructorRhsNotYetReflectable,
+    /// A RHS variable with no binding occurrence in the LHS. It has no σ-tuple
+    /// slot, so a flat receiver cannot supply its value; the rewrite is ill-formed
+    /// for σ-receiver lowering and fails closed rather than emit a dangling De
+    /// Bruijn index. (A constructor RHS is now reflected — see
+    /// [`reflect_term_par`] — so it is no longer an unsupported family.)
+    DanglingRhsVariable,
     /// A rewrite premise that the flat σ-receiver cannot enforce (freshness,
     /// relation query, universal quantification, a structural behavioral guard,
     /// ...). Dovetail carries structural matching into σ and semantic-predicate
@@ -83,6 +88,11 @@ pub enum RhoNetLoweredRule {
     NativeFold { rule_id: String, par: Par },
     /// A base rewrite lowered to a flat σ-receiver contract.
     BaseRewrite { rule_id: String, par: Par },
+    /// A grammar structural constructor. In model b a constructor is realized
+    /// inline via RHS term reflection (see [`reflect_term_par`]), never as a
+    /// standalone installed contract, so this classification contributes no `Par`
+    /// (like [`Self::CongruenceClosure`]) — recognized, not fail-closed.
+    StructuralConstructor { rule_id: String },
     /// A structural-congruence equation (compile-time e-graph closure).
     CongruenceClosure { rule_id: String },
     /// A congruence (contextual) rewrite — deferred to the next slice.
@@ -101,6 +111,7 @@ impl RhoNetLoweredRule {
         match self {
             Self::NativeFold { rule_id, .. }
             | Self::BaseRewrite { rule_id, .. }
+            | Self::StructuralConstructor { rule_id }
             | Self::CongruenceClosure { rule_id }
             | Self::ContextualRewrite { rule_id }
             | Self::Comm { rule_id }
@@ -221,20 +232,22 @@ pub(crate) fn lower(
     for rule in &program.rules {
         let lowered = match rule.kind {
             RhoNetRuleKind::NativeFold => lower_native_fold(rule, lowering, &mut errors),
-            // A grammar constructor is realized in model b by inline RHS
-            // reflection, not as a standalone Rho contract; reflection is not
-            // yet defined, so it fails closed.
-            RhoNetRuleKind::StructuralConstructor => Some(RhoNetLoweredRule::Unsupported {
-                rule_id: rule.id.clone(),
-                family: UnsupportedFamily::ConstructorRhsNotYetReflectable,
-            }),
+            // A grammar constructor is realized in model b by inline RHS term
+            // reflection (see `reflect_term_par`), not as a standalone Rho
+            // contract, so it contributes no `Par` — recognized, never
+            // fail-closed and never silently dropped.
+            RhoNetRuleKind::StructuralConstructor => {
+                Some(RhoNetLoweredRule::StructuralConstructor { rule_id: rule.id.clone() })
+            },
             RhoNetRuleKind::NativeSystemProcess => {
                 Some(RhoNetLoweredRule::NativeSystemProcess { rule_id: rule.id.clone() })
             },
             RhoNetRuleKind::StructuralCongruence => {
                 Some(RhoNetLoweredRule::CongruenceClosure { rule_id: rule.id.clone() })
             },
-            RhoNetRuleKind::BaseRewrite => lower_base_rewrite(rule, &rewrite_by_id, &mut errors),
+            RhoNetRuleKind::BaseRewrite => {
+                lower_base_rewrite(rule, &rewrite_by_id, &program.language_fingerprint, &mut errors)
+            },
             RhoNetRuleKind::ContextualRewrite => {
                 lower_contextual_rewrite(rule, &rewrite_by_id, &mut errors)
             },
@@ -308,6 +321,7 @@ fn lower_native_fold(
 fn lower_base_rewrite(
     rule: &RhoNetRule,
     rewrite_by_id: &HashMap<String, &RewriteRule>,
+    language_fingerprint: &str,
     errors: &mut Vec<RhoNetLoweringError>,
 ) -> Option<RhoNetLoweredRule> {
     let Some(rewrite) = rewrite_by_id.get(rule.id.as_str()) else {
@@ -335,7 +349,7 @@ fn lower_base_rewrite(
         Err(family) => return Some(record_unsupported(rule, family, errors)),
     };
     let k = vars.len();
-    let rhs_par = match lower_rhs(&rewrite.right, &vars, k) {
+    let rhs_par = match lower_rhs(&rewrite.right, &vars, k, language_fingerprint) {
         Ok(par) => par,
         Err(family) => return Some(record_unsupported(rule, family, errors)),
     };
@@ -462,20 +476,73 @@ fn collect_lhs_vars_term(
 }
 
 /// Lower the RHS pattern to a `Par`, substituting each LHS variable reference
-/// with its σ-tuple De Bruijn index. Structured RHS nodes fail closed exactly
-/// like the LHS (a constructor application additionally needs term reflection,
-/// deferred this slice).
-pub(crate) fn lower_rhs(rhs: &Pattern, vars: &[Ident], k: usize) -> Result<Par, UnsupportedFamily> {
-    match rhs {
+/// with its σ-tuple De Bruijn index and reflecting each constructor application
+/// to its tagged-`EList` term value (see [`reflect_term_par`]). Binder,
+/// collection, and substitution RHS nodes fail closed exactly like the LHS.
+pub(crate) fn lower_rhs(
+    rhs: &Pattern,
+    vars: &[Ident],
+    k: usize,
+    language_fingerprint: &str,
+) -> Result<Par, UnsupportedFamily> {
+    reflect_term_par(rhs, vars, k, language_fingerprint)
+}
+
+/// The nominal unforgeable ABI tag identifying a reflected constructor term:
+/// `mettail.term.{fingerprint}.{label}`, deterministic per
+/// `(language_fingerprint, constructor_label)`. Being carried by a `GPrivate`
+/// unforgeable (not a `GString`), it is collision-free with any user `GString`
+/// term data. Mirrors the rhocalc bag ABI tag ([`crate::RHOCALC_BAG_ABI_TAG`]).
+fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -> String {
+    format!("mettail.term.{language_fingerprint}.{constructor_label}")
+}
+
+/// Reflect an RHS pattern term to a normalized `Par` value under the constructor
+/// reflection ABI:
+///
+/// ```text
+/// ⟦f(t₁,…,tₙ)⟧ = EList[ GPrivate(reflect_tag(f)), ⟦t₁⟧, …, ⟦tₙ⟧ ]
+/// ```
+///
+/// A LHS-bound variable reflects to its σ-tuple De Bruijn index (the slice-1
+/// `lower_rhs` index logic: first-occurrence formal `i` → `BoundVar(k − i)`). The
+/// `GPrivate` head tag is built exactly like the rhocalc bag ABI tag via
+/// [`GPrivateBuilder::new_par_from_string`], and the `EList`'s `locally_free` is
+/// the union of the tag's and every child's — mirroring `lower_rhocalc`'s bag
+/// construction. The decoder counterpart (a future `decode_reflected_term`) will
+/// live beside `rholang_runtime::run::par_as_runtime_observation_value`; it is
+/// not part of this codegen slice.
+///
+/// Binder / collection / substitution nodes and a dangling RHS variable (one with
+/// no LHS binding) fail closed with their [`UnsupportedFamily`].
+fn reflect_term_par(
+    pattern: &Pattern,
+    vars: &[Ident],
+    k: usize,
+    language_fingerprint: &str,
+) -> Result<Par, UnsupportedFamily> {
+    match pattern {
         Pattern::Term(PatternTerm::Var(name)) => match vars.iter().position(|var| var == name) {
             Some(index) => Ok(new_boundvar_par(rhs_var_index(k, index), Vec::new(), false)),
             // A RHS variable not bound by the LHS has no σ-tuple slot; the
             // rewrite is ill-formed for a flat receiver. Fail closed rather than
             // emit a dangling De Bruijn index.
-            None => Err(UnsupportedFamily::ConstructorRhsNotYetReflectable),
+            None => Err(UnsupportedFamily::DanglingRhsVariable),
         },
-        Pattern::Term(PatternTerm::Apply { .. }) => {
-            Err(UnsupportedFamily::ConstructorRhsNotYetReflectable)
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+                language_fingerprint,
+                &constructor.to_string(),
+            ));
+            let mut elements = Vec::with_capacity(args.len() + 1);
+            let mut locally_free = tag.locally_free.clone();
+            elements.push(tag);
+            for arg in args {
+                let child = reflect_term_par(arg, vars, k, language_fingerprint)?;
+                locally_free = union(locally_free, child.locally_free.clone());
+                elements.push(child);
+            }
+            Ok(new_elist_par(elements, locally_free.clone(), false, None, locally_free, false))
         },
         Pattern::Term(PatternTerm::Lambda { .. }) => Err(UnsupportedFamily::LambdaBinder),
         Pattern::Term(PatternTerm::MultiLambda { .. }) => Err(UnsupportedFamily::MultiLambda),
@@ -490,22 +557,17 @@ pub(crate) fn lower_rhs(rhs: &Pattern, vars: &[Ident], k: usize) -> Result<Par, 
 
 /// P2 defensive detector (independent of the constructive walk): report the
 /// first out-of-scope family in a rewrite's LHS/RHS patterns. Constructor
-/// applications and variables are the supported LHS shapes; a variable is the
-/// only fully-supported RHS shape (a constructor RHS needs reflection).
+/// applications and variables are the supported shapes on BOTH sides; a
+/// constructor RHS is now reflected ([`reflect_term_par`]), so the RHS is scanned
+/// by the same binder/collection/substitution family detector as the LHS (which
+/// recurses through constructor args). A dangling RHS variable is caught by the
+/// constructive walk, not this family-only detector.
 pub(crate) fn rewrite_pattern_unsupported(
     left: &Pattern,
     right: &Pattern,
 ) -> Option<UnsupportedFamily> {
-    if let Some(family) = pattern_binder_or_collection_family(left) {
-        return Some(family);
-    }
-    match right {
-        Pattern::Term(PatternTerm::Var(_)) => None,
-        Pattern::Term(PatternTerm::Apply { .. }) => {
-            Some(UnsupportedFamily::ConstructorRhsNotYetReflectable)
-        },
-        other => pattern_binder_or_collection_family(other),
-    }
+    pattern_binder_or_collection_family(left)
+        .or_else(|| pattern_binder_or_collection_family(right))
 }
 
 fn pattern_binder_or_collection_family(pattern: &Pattern) -> Option<UnsupportedFamily> {
@@ -686,6 +748,28 @@ mod tests {
         (rule, lowered.errors().to_vec())
     }
 
+    /// Like [`lower_single_rewrite`] but returns the whole lowering (needed for
+    /// its `language_fingerprint`, from which reflected `GPrivate` tags are
+    /// reconstructed) alongside the rewrite's derived rule id.
+    fn lower_single_rewrite_full(rewrite: RewriteRule) -> (RhoNetLowered, String) {
+        let name = rewrite.name.to_string();
+        let mut def = scalar_def();
+        def.rewrites.push(rewrite);
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        (lowered, rule_id_rewrite(0, &name))
+    }
+
+    /// Extract the `EList` body of a single-expr `Par` (panicking unless the Par
+    /// is exactly one plain `EList` expression).
+    fn elist_body(par: &Par) -> &models::rhoapi::EList {
+        match par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()) {
+            Some(ExprInstance::EListBody(list)) => list,
+            other => panic!("expected an EList body, got {other:?}"),
+        }
+    }
+
     #[test]
     fn native_fold_reuses_scalar_contract_par() {
         let def = scalar_def();
@@ -776,7 +860,8 @@ mod tests {
     fn lower_rhs_variable_uses_first_occurrence_de_bruijn_index() {
         let vars = vec![ident("a"), ident("b"), ident("c")]; // k = 3
         // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
-        let par = lower_rhs(&var_pattern("b"), &vars, 3).expect("bound RHS variable");
+        // The fingerprint is unused for a bare variable RHS.
+        let par = lower_rhs(&var_pattern("b"), &vars, 3, "fp").expect("bound RHS variable");
         assert_eq!(boundvar_index(&par), Some(2));
         assert_eq!(rhs_var_index(3, 0), 3);
         assert_eq!(rhs_var_index(3, 2), 1);
@@ -888,29 +973,192 @@ mod tests {
         ));
     }
 
+    /// `Swap(a, b) ~> Pair(b, a)`: the reflected σ-receiver body sends the tagged
+    /// `EList[ GPrivate("mettail.term.{fp}.Pair"), BoundVar(1), BoundVar(2) ]` —
+    /// the RHS order `(b, a)` using the LHS first-occurrence σ-tuple indices.
     #[test]
-    fn constructor_rhs_rewrite_is_unsupported_reflection() {
-        // Foo(x) ~> Bar(x): the LHS lowers (vars = [x]) but the constructor RHS
-        // needs term reflection, which is deferred.
-        let (rule, errors) = lower_single_rewrite(RewriteRule {
-            name: ident("CtorRhs"),
+    fn base_rewrite_reflects_constructor_rhs_to_tagged_elist() {
+        let (lowered, id) = lower_single_rewrite_full(RewriteRule {
+            name: ident("Swap"),
             type_context: Vec::new(),
             premises: Vec::new(),
-            left: apply("Foo", vec![var_pattern("x")]),
-            right: apply("Bar", vec![var_pattern("x")]),
+            left: apply("Swap", vec![var_pattern("a"), var_pattern("b")]),
+            right: apply("Pair", vec![var_pattern("b"), var_pattern("a")]),
+            is_auto_injected: false,
+        });
+
+        let par = lowered
+            .rules()
+            .iter()
+            .find_map(|rule| match rule {
+                RhoNetLoweredRule::BaseRewrite { rule_id, par } if *rule_id == id => Some(par),
+                _ => None,
+            })
+            .expect("Swap must lower to a BaseRewrite σ-receiver");
+
+        // k = 2 LHS variables (a, b) + 1 out channel ⇒ bind_count 3.
+        let receive = &par.receives[0];
+        assert_eq!(receive.bind_count, 3);
+        let body = receive.body.as_ref().expect("σ-receiver body");
+        let send = &body.sends[0];
+        assert_eq!(
+            boundvar_index(send.chan.as_ref().expect("send channel")),
+            Some(0),
+            "out channel must be BoundVar(0)"
+        );
+
+        // Payload is the reflected Pair term: EList[ GPrivate(tag), b, a ].
+        assert_eq!(send.data.len(), 1);
+        let elist = elist_body(&send.data[0]);
+        assert_eq!(elist.ps.len(), 3, "head tag + two children");
+
+        let expected_tag = GPrivateBuilder::new_par_from_string(format!(
+            "mettail.term.{}.Pair",
+            lowered.language_fingerprint
+        ));
+        assert_eq!(elist.ps[0], expected_tag, "head is the unforgeable Pair reflection tag");
+
+        // RHS order (b, a): b = rhs_var_index(2, 1) = 1, a = rhs_var_index(2, 0) = 2.
+        assert_eq!(rhs_var_index(2, 1), 1);
+        assert_eq!(rhs_var_index(2, 0), 2);
+        assert_eq!(boundvar_index(&elist.ps[1]), Some(1), "first child is b");
+        assert_eq!(boundvar_index(&elist.ps[2]), Some(2), "second child is a");
+
+        assert!(lowered.errors().is_empty(), "a reflectable constructor RHS must not error");
+    }
+
+    /// `Wrap(x) ~> Outer(Inner(x))`: a nested constructor RHS reflects to a nested
+    /// tagged `EList`; the inner `Inner(x)` is `[GPrivate("…Inner"), BoundVar(1)]`
+    /// embedded as the sole child of `[GPrivate("…Outer"), …]`.
+    #[test]
+    fn base_rewrite_reflects_nested_constructor_rhs() {
+        let (lowered, id) = lower_single_rewrite_full(RewriteRule {
+            name: ident("Wrap"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply("Wrap", vec![var_pattern("x")]),
+            right: apply("Outer", vec![apply("Inner", vec![var_pattern("x")])]),
+            is_auto_injected: false,
+        });
+
+        let par = lowered
+            .rules()
+            .iter()
+            .find_map(|rule| match rule {
+                RhoNetLoweredRule::BaseRewrite { rule_id, par } if *rule_id == id => Some(par),
+                _ => None,
+            })
+            .expect("Wrap must lower to a BaseRewrite σ-receiver");
+
+        let send = &par.receives[0].body.as_ref().expect("σ-receiver body").sends[0];
+        let outer = elist_body(&send.data[0]);
+        assert_eq!(outer.ps.len(), 2, "outer head tag + one child");
+        assert_eq!(
+            outer.ps[0],
+            GPrivateBuilder::new_par_from_string(format!(
+                "mettail.term.{}.Outer",
+                lowered.language_fingerprint
+            )),
+            "outer head is the unforgeable Outer reflection tag"
+        );
+
+        let inner = elist_body(&outer.ps[1]);
+        assert_eq!(inner.ps.len(), 2, "inner head tag + one child");
+        assert_eq!(
+            inner.ps[0],
+            GPrivateBuilder::new_par_from_string(format!(
+                "mettail.term.{}.Inner",
+                lowered.language_fingerprint
+            )),
+            "inner head is the unforgeable Inner reflection tag"
+        );
+        // x = rhs_var_index(1, 0) = 1.
+        assert_eq!(rhs_var_index(1, 0), 1);
+        assert_eq!(boundvar_index(&inner.ps[1]), Some(1), "inner child is x");
+
+        assert!(lowered.errors().is_empty());
+    }
+
+    /// `Id(x) ~> y`: a RHS variable with no LHS binding has no σ-tuple slot, so the
+    /// rewrite fails closed even though the LHS itself lowers.
+    #[test]
+    fn dangling_rhs_variable_is_unsupported() {
+        let (rule, errors) = lower_single_rewrite(RewriteRule {
+            name: ident("Dangle"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply("Id", vec![var_pattern("x")]),
+            right: var_pattern("y"),
             is_auto_injected: false,
         });
         assert_eq!(
             rule,
             RhoNetLoweredRule::Unsupported {
-                rule_id: "rule:rewrite:0:CtorRhs".to_string(),
-                family: UnsupportedFamily::ConstructorRhsNotYetReflectable,
+                rule_id: "rule:rewrite:0:Dangle".to_string(),
+                family: UnsupportedFamily::DanglingRhsVariable,
             }
         );
         assert!(errors.contains(&RhoNetLoweringError::UnsupportedFamily {
-            rule_id: "rule:rewrite:0:CtorRhs".to_string(),
-            family: UnsupportedFamily::ConstructorRhsNotYetReflectable,
+            rule_id: "rule:rewrite:0:Dangle".to_string(),
+            family: UnsupportedFamily::DanglingRhsVariable,
         }));
+    }
+
+    /// Fail-closed still holds through reflection: a collection nested inside a
+    /// constructor RHS is caught while recursing into the constructor's args.
+    #[test]
+    fn collection_inside_constructor_rhs_is_unsupported() {
+        let (rule, _) = lower_single_rewrite(RewriteRule {
+            name: ident("CollRhs"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply("Id", vec![var_pattern("x")]),
+            right: apply(
+                "Wrap",
+                vec![Pattern::Collection {
+                    coll_type: None,
+                    elements: vec![var_pattern("x")],
+                    rest: None,
+                }],
+            ),
+            is_auto_injected: false,
+        });
+        assert!(matches!(
+            rule,
+            RhoNetLoweredRule::Unsupported { family: UnsupportedFamily::CollectionAc, .. }
+        ));
+    }
+
+    /// Every grammar term produces a `StructuralConstructor` rule; in model b the
+    /// constructor is realized inline via RHS reflection, so it is recognized (not
+    /// fail-closed) and contributes no installed `Par`.
+    #[test]
+    fn structural_constructor_rule_is_recognized_without_par() {
+        let def = scalar_def();
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+
+        let rule = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == "rule:term:0:AddInt")
+            .expect("AddInt term must lower to a structural-constructor rule");
+        assert_eq!(
+            *rule,
+            RhoNetLoweredRule::StructuralConstructor {
+                rule_id: "rule:term:0:AddInt".to_string()
+            }
+        );
+        assert_eq!(rule.par(), None, "a structural constructor contributes no installed Par");
+        assert!(
+            !lowered.errors().iter().any(|error| matches!(
+                error,
+                RhoNetLoweringError::UnsupportedFamily { rule_id, .. }
+                    if rule_id == "rule:term:0:AddInt"
+            )),
+            "a structural constructor is recognized, not fail-closed"
+        );
     }
 
     #[test]
@@ -1031,10 +1279,24 @@ mod tests {
             ),
             Some(UnsupportedFamily::CollectionAc)
         );
-        // Constructor RHS.
+        // Constructor RHS of bound variables is now reflectable ⇒ supported.
         assert_eq!(
             rewrite_pattern_unsupported(&var_pattern("x"), &apply("Bar", vec![var_pattern("x")])),
-            Some(UnsupportedFamily::ConstructorRhsNotYetReflectable)
+            None
+        );
+        // ...but a binder nested inside a constructor RHS still fails closed.
+        assert_eq!(
+            rewrite_pattern_unsupported(
+                &var_pattern("x"),
+                &apply(
+                    "Bar",
+                    vec![Pattern::Term(PatternTerm::Lambda {
+                        binder: ident("y"),
+                        body: Box::new(var_pattern("x")),
+                    })],
+                ),
+            ),
+            Some(UnsupportedFamily::LambdaBinder)
         );
         // Lambda nested inside an LHS constructor.
         assert_eq!(
