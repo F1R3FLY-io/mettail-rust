@@ -9,7 +9,7 @@
 //! map; the `Match` seam ≈ the spatial matcher). dovetail ships only the trait
 //! plus an in-memory default; it takes NO dependency on any reified-rspace API.
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 use std::hash::Hash;
 
 /// The spatial-match seam: decide whether pattern `P` consumes datum `A`, and
@@ -75,8 +75,8 @@ where
     /// A new in-memory space with the given matcher.
     pub fn new(matcher: M) -> Self {
         InMemSpace {
-            data: HashMap::new(),
-            conts: HashMap::new(),
+            data: HashMap::default(),
+            conts: HashMap::default(),
             matcher,
         }
     }

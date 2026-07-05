@@ -59,7 +59,7 @@ fn recursive_positional_matches(
 ) -> BTreeSet<MatchObservation> {
     let mut out = Vec::new();
     for class in eg.classes() {
-        collect_positional_matches(eg, pattern, eg.find(class), &Subst::new(), &mut out);
+        collect_positional_matches(eg, pattern, eg.find(class), &Subst::default(), &mut out);
     }
     out.into_iter()
         .map(|(root, subst)| normalize_match(eg, root, &subst))

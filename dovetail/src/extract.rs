@@ -31,7 +31,8 @@
 //! cyclic exhaustion.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use crate::hash::{HashMap, HashSet};
+use std::collections::BinaryHeap;
 use std::rc::Rc;
 
 use rigail::Semiring;
@@ -183,9 +184,9 @@ impl<L, W> Default for ClassState<L, W> {
             exhausted: false,
             on_stack: false,
             built: Vec::new(),
-            built_keys: HashSet::new(),
+            built_keys: HashSet::default(),
             cand: BinaryHeap::new(),
-            seen: HashSet::new(),
+            seen: HashSet::default(),
         }
     }
 }
@@ -212,7 +213,7 @@ where
         Extractor {
             egraph,
             weigh,
-            state: HashMap::new(),
+            state: HashMap::default(),
             cycle_cut: false,
             use_heuristic: false,
             inside: None,
@@ -499,7 +500,7 @@ fn derivation_has_class_cycle<L, W>(root: &Rc<Derivation<L, W>>) -> bool {
         Exit(EClassId),
     }
 
-    let mut active = HashSet::new();
+    let mut active = HashSet::default();
     let mut stack = vec![Frame::Enter(root.clone())];
     while let Some(frame) = stack.pop() {
         match frame {

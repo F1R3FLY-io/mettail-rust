@@ -19,7 +19,7 @@
 //! Carries the budget hooks from commit b56e1e5 (`try_add_with_budget`,
 //! `rebuild_exact_indices`, `node_limit_reached`).
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 
 use crate::key::{write_framed, ContentKey, SemanticHash};
 
@@ -202,9 +202,9 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
     /// A new e-graph with default configuration.
     pub fn new() -> Self {
         EGraph {
-            classes: HashMap::new(),
+            classes: HashMap::default(),
             union_find: UnionFind::new(),
-            memo: HashMap::new(),
+            memo: HashMap::default(),
             pending: Vec::new(),
             config: EGraphConfig::default(),
             node_count: 0,
@@ -373,7 +373,7 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
             }
 
             // Re-canonicalize all memo entries, merging congruent duplicates.
-            let mut new_memo: HashMap<ENode<L>, EClassId> = HashMap::new();
+            let mut new_memo: HashMap<ENode<L>, EClassId> = HashMap::default();
             let old_memo = std::mem::take(&mut self.memo);
             for (enode, id) in old_memo {
                 let canon_node = enode.canonicalize(&self.union_find);
@@ -445,7 +445,7 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
     fn rebuild_exact_indices(&mut self) {
         let uf_snapshot = self.union_find.clone();
         for class in self.classes.values_mut() {
-            let mut seen: HashMap<ENode<L>, ()> = HashMap::new();
+            let mut seen: HashMap<ENode<L>, ()> = HashMap::default();
             let mut canonical_nodes = Vec::with_capacity(class.nodes.len());
             for enode in class.nodes.drain(..) {
                 let canonical = enode.canonicalize(&uf_snapshot);
@@ -457,7 +457,7 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
             class.parents.clear();
         }
 
-        let mut memo: HashMap<ENode<L>, EClassId> = HashMap::new();
+        let mut memo: HashMap<ENode<L>, EClassId> = HashMap::default();
         let mut parent_edges: Vec<(EClassId, ENode<L>, EClassId)> = Vec::new();
         let mut live_nodes = 0usize;
         let class_ids: Vec<EClassId> = self.classes.keys().copied().collect();
@@ -478,7 +478,7 @@ impl<L: Clone + Eq + std::hash::Hash> EGraph<L> {
             }
         }
 
-        let mut seen_parent_edges: HashMap<(EClassId, ENode<L>, EClassId), ()> = HashMap::new();
+        let mut seen_parent_edges: HashMap<(EClassId, ENode<L>, EClassId), ()> = HashMap::default();
         for (child, enode, parent) in parent_edges {
             if seen_parent_edges
                 .insert((child, enode.clone(), parent), ())

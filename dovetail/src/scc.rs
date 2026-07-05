@@ -8,7 +8,7 @@
 //! hold). SCCs are returned in reverse-topological order (leaf SCCs first), so a
 //! parent SCC's out-of-SCC children are already closed when it is solved.
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 
 use crate::egraph::{EClassId, EGraph};
 

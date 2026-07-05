@@ -14,7 +14,7 @@
 //! inside-weight computation. Cyclic e-class weight closure uses rigail's
 //! Newton-SCC solver after deterministic SCC decomposition.
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 use std::marker::PhantomData;
 
 use rigail::{solve_scc_weights_newton, PackingFactored, Semiring, StarSemiring};

@@ -54,6 +54,61 @@ core surface.
    `PositionalSetAutomatonSound.v` `reuse_is_per_node_deterministic`) should be
    verified to apply on the RhoNet lowering path too.
 
+## Profile — `dovetail_saturation/add` (perf, dwarf call-graph, 1999 Hz, CCD0)
+
+Self-time (`perf report --sort=overhead,symbol`), captured 2026-07-05:
+
+| Symbol | Self % |
+|---|---|
+| `dovetail::wta::compute_inside_closed` (WTA inside weights) | 12.1 |
+| `RandomState::hash_one::<EClassId>` + `Sip13 Hasher::write` | **~16.2** (9.8 + 6.4) |
+| `EGraph::nodes` | 6.1 |
+| `Extractor::compose` + `Extractor::kth_raw` | 8.2 |
+| `dovetail::scc::tarjan_sccs` | 3.6 |
+| `malloc` + `cfree` | 6.3 |
+| `SetAutomaton::search_egraph` | 3.0 |
+| `hashbrown … reserve_rehash` (EClassId set) | 1.9 |
+| `CalculatorDovetailOp::clone` | 1.6 |
+
+**Bottleneck #1 (actionable, safe): `EClassId` hashing uses the default `RandomState`
+(SipHash-1-3) — ~16% of saturation.** `EClassId` is a small-integer newtype used as an
+internal e-graph key; it needs no DoS resistance. Switching the e-graph's
+`EClassId`-keyed maps/sets to a fast integer hasher (FxHash / `BuildHasherDefault`) is
+the classic Rust win. **Hypothesis: FxHash cuts ≥10% off saturation wall-time with zero
+behavior change; gate with a t-test (criterion `--baseline`).**
+
+**Bottleneck #2 (deeper): WTA inside-weight (12%) + extraction (8%) + node iteration
+(6%) dominate the rest** — consistent with the `1+2` result value being re-cast into
+many numeric e-classes (Int/UInt/Float/BigInt/BigRat/Fixed) that the weighting +
+extractor then traverse. This is the demand-gated-saturation / cast-explosion axis
+(#2054/#2055) — larger, separate change.
+
+## Optimization O1 — FxHash for e-graph keys (APPLIED, 2026-07-05)
+
+**Hypothesis (from Bottleneck #1):** replacing the default `RandomState` (SipHash-1-3)
+with FxHash on the e-graph's `EClassId`/`ENode` keys cuts ≥10 % off saturation
+wall-time with zero behavior change.
+
+**Change:** added an inline FxHasher (`dovetail/src/hash.rs`, no new dependency —
+dovetail keeps `rigail` as its only external dep) and pointed the e-graph, extractor,
+WTA, SCC, set-automaton, and rules maps/sets at it (`crate::hash::{HashMap, HashSet}`).
+
+**Result (criterion `--baseline`, same rig, t-test):**
+
+| Benchmark | SipHash | FxHash | Δ | p |
+|---|---|---|---|---|
+| `dovetail_saturation/add` | 2.40 ms | **1.456 ms** | **−40.0 %** | 0.00 |
+| `dovetail_saturation/nested` | 119.1 µs | **83.2 µs** | **−30.0 %** | 0.00 |
+| `dovetail_saturation/deep` | 535.1 µs | **401.1 µs** | **−24.7 %** | 0.00 |
+| `rho_net_lowering/swapdemo` | 16.07 µs | 16.30 µs | +0.1 % | 0.80 (no change) |
+| `rho_net_lowering/calculator` | 4.99 ms | 4.98 ms | −0.1 % | 0.49 (no change) |
+
+**Verdict: CONFIRMED and exceeds hypothesis** — 24–40 % faster saturation, all p < 0.05;
+the two lowering benches (which never touch e-graph hashing) are statistically
+unchanged, confirming the win is targeted and side-effect-free. Correctness: all 113
+`dovetail` tests pass (including the positional-oracle property test), so hash-order
+independence holds — the swap changes only speed, not results.
+
 ## Coverage vs #2053 scope
 
 | Area | Baseline |

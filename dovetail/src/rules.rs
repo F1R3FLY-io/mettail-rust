@@ -7,7 +7,7 @@
 //! best-first. **Nothing is pruned during saturation**; node and iteration
 //! limits are explicit [`SaturationOutcome`] values, never silent.
 
-use std::collections::{HashMap, HashSet};
+use crate::hash::{HashMap, HashSet};
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::key::SemanticHash;
@@ -480,7 +480,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         let mut out = Vec::new();
         let classes: Vec<EClassId> = self.classes().collect();
         for q in classes {
-            self.collect_matches(pattern, q, &Subst::new(), &mut out);
+            self.collect_matches(pattern, q, &Subst::default(), &mut out);
         }
         ObservedSearch {
             matches: out,
@@ -713,7 +713,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         let mut stack: Vec<(EClassId, HashSet<EClassId>)> = children
             .iter()
             .rev()
-            .map(|&c| (self.find(c), HashSet::new()))
+            .map(|&c| (self.find(c), HashSet::default()))
             .collect();
         while let Some((class, ancestors)) = stack.pop() {
             let class = self.find(class);
@@ -1277,7 +1277,7 @@ mod dv0_probe {
     /// Every canonical node key currently live in the e-graph (across all classes).
     /// Used to isolate the SATURATION-ADDED population: `added = after \ seed`.
     fn all_node_keys(eg: &EGraph<String>) -> HashSet<ContentKey> {
-        let mut keys: HashSet<ContentKey> = HashSet::new();
+        let mut keys: HashSet<ContentKey> = HashSet::default();
         for cls in eg.classes() {
             for n in eg.nodes(cls) {
                 let child_classes: Vec<EClassId> = n.children.iter().map(|&c| eg.find(c)).collect();
@@ -1288,8 +1288,8 @@ mod dv0_probe {
     }
 
     fn reachable_node_keys(eg: &EGraph<String>, roots: &[EClassId]) -> HashSet<ContentKey> {
-        let mut marked: HashSet<ContentKey> = HashSet::new();
-        let mut seen_classes: HashSet<EClassId> = HashSet::new();
+        let mut marked: HashSet<ContentKey> = HashSet::default();
+        let mut seen_classes: HashSet<EClassId> = HashSet::default();
         let mut stack: Vec<EClassId> = roots.iter().map(|&r| eg.find(r)).collect();
         while let Some(cls) = stack.pop() {
             let cls = eg.find(cls);
@@ -1398,7 +1398,7 @@ mod dv0_probe {
         // ── 1-best/k-best EXTRACTION (timed): the INFLATED legacy measure. The
         //    admissible 0̄-inside skip + a real cost weight make `kth` stop early.
         let t1 = Instant::now();
-        let mut marked: HashSet<ContentKey> = HashSet::new();
+        let mut marked: HashSet<ContentKey> = HashSet::default();
         let mut nf_count = 0usize;
         {
             let mut ex = Extractor::new(&eg, weigh).with_heuristic();
@@ -1428,7 +1428,7 @@ mod dv0_probe {
         // reachability as a faithful production-shape proxy (not an over/under-count).
         let prod_chkd_in_added = if depth_terms <= 4 {
             let mut prod_ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(0.0));
-            let mut pm: HashSet<ContentKey> = HashSet::new();
+            let mut pm: HashSet<ContentKey> = HashSet::default();
             for &root in &roots {
                 let checked = prod_ex.derivations(eg.find(root)).collect_checked();
                 for d in &checked.value {
@@ -1507,7 +1507,7 @@ mod dv0_probe {
         let added = added_keys.len();
 
         let t1 = Instant::now();
-        let mut marked: HashSet<ContentKey> = HashSet::new();
+        let mut marked: HashSet<ContentKey> = HashSet::default();
         let mut nf_count = 0usize;
         {
             // Flat weight: every node costs 1 (no arithmetic leaf values here).
@@ -1529,7 +1529,7 @@ mod dv0_probe {
         // Full-stream constant-zero collect_checked cross-check (bags are bounded here).
         let prod_chkd_in_added = {
             let mut prod_ex = Extractor::new(&eg, |_: &ENode<String>| TropicalWeight(0.0));
-            let mut pm: HashSet<ContentKey> = HashSet::new();
+            let mut pm: HashSet<ContentKey> = HashSet::default();
             for &root in &roots {
                 let checked = prod_ex.derivations(eg.find(root)).collect_checked();
                 for d in &checked.value {

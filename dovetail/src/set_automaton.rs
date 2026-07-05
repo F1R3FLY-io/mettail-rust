@@ -7,7 +7,7 @@
 //! Associative-commutative (`AcApp`) patterns remain on the existing lazy AC
 //! path because matching them may materialize budget-gated rest complements.
 
-use std::collections::{HashMap, HashSet};
+use crate::hash::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -110,7 +110,7 @@ impl<L> Default for PatternCompiler<L> {
     fn default() -> Self {
         Self {
             states: Vec::new(),
-            interned: HashMap::new(),
+            interned: HashMap::default(),
         }
     }
 }
@@ -163,7 +163,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
     {
         let mut entries = Vec::new();
         let mut variable_roots = Vec::new();
-        let mut app_roots: HashMap<RootKey<L>, Vec<usize>> = HashMap::new();
+        let mut app_roots: HashMap<RootKey<L>, Vec<usize>> = HashMap::default();
         let mut unsupported = Vec::new();
         let mut compiler = PatternCompiler::default();
 
@@ -205,8 +205,8 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
     /// Scan the e-graph once at candidate redex roots and return every match.
     pub fn search_egraph(&self, eg: &EGraph<L>) -> SetAutomatonRun {
         let mut run = SetAutomatonRun::default();
-        let mut cache = HashMap::<(StateId, EClassId), CachedSubsts>::new();
-        let mut visited_roots = HashSet::new();
+        let mut cache = HashMap::<(StateId, EClassId), CachedSubsts>::default();
+        let mut visited_roots = HashSet::default();
         for class in eg.classes() {
             let root = eg.find(class);
             if !visited_roots.insert(root) {
@@ -218,7 +218,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
                 self.extend_entry_matches(eg, entry_idx, root, &mut cache, &mut run);
             }
 
-            let mut dispatched_keys = HashSet::new();
+            let mut dispatched_keys = HashSet::default();
             for node in eg.nodes(root) {
                 run.stats.root_nodes += 1;
                 let key = RootKey {
@@ -276,7 +276,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
         stats.state_evaluations += 1;
         let matches = match &self.states[state_id.0] {
             PatternState::Var(name) => {
-                let mut subst = Subst::new();
+                let mut subst = Subst::default();
                 subst.insert(name.clone(), class);
                 cached_substs(vec![subst])
             },
@@ -303,7 +303,7 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
             .iter()
             .filter(|node| node.op == *op && node.children.len() == args.len())
         {
-            let mut partial = vec![Subst::new()];
+            let mut partial = vec![Subst::default()];
             for (&arg_state, &child) in args.iter().zip(&node.children) {
                 let child_matches = self.eval_state(eg, arg_state, child, cache, stats);
                 if child_matches.is_empty() {
@@ -514,7 +514,7 @@ mod tests {
             .expect("root variable pattern compiles");
 
         let run = automaton.search_egraph(&eg);
-        let mut roots = HashSet::new();
+        let mut roots = HashSet::default();
         for matched in &run.matches {
             roots.insert(matched.root);
         }

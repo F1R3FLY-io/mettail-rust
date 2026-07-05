@@ -7,7 +7,7 @@
 //! exact [`ContentKey`] identity, deterministic root order, derivation-tree
 //! structure, and terminal [`ExtractionCompleteness`].
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 use std::rc::Rc;
 
 use crate::egraph::{EClassId, EGraph, ENode};
@@ -153,7 +153,7 @@ where
         rewrite_justifications: Vec::new(),
         completeness: extraction.completeness,
     };
-    let mut seen: HashMap<ContentKey, usize> = HashMap::new();
+    let mut seen: HashMap<ContentKey, usize> = HashMap::default();
 
     for root in &extraction.value {
         report.roots.push(root.key.clone());
