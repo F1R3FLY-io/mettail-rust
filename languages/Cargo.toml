@@ -227,6 +227,10 @@ name = "parse_bench"
 harness = false
 
 [[bench]]
+name = "rho_native_bench"
+harness = false
+
+[[bench]]
 name = "bench_infix"
 harness = false
 
