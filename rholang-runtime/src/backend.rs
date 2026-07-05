@@ -557,6 +557,16 @@ pub enum RhoMachineInvocation {
     /// Run the planned backend with a dynamic `rhoapi::Par` call and observe
     /// closed Rho ground values on the channel.
     RunWithCallAndObserveRuntimeValues { call: Par, out_channel: String },
+    /// Run this backend's INSTALLED Rho-net program (its base-rewrite σ-receivers)
+    /// composed with a dynamic σ-injection `call`, and observe closed Rho ground
+    /// values on the channel (the Epic 4 injection bridge).
+    ///
+    /// Unlike [`RunWithCallAndObserveRuntimeValues`](Self::RunWithCallAndObserveRuntimeValues),
+    /// which composes the call against the scalar `program()` and therefore never
+    /// installs the σ-receivers, this composes against
+    /// `installed_rho_net_program_par()` so a Dovetail-report-derived σ injection
+    /// actually fires its receiver and lands the reflected RHS on the out channel.
+    RunRhoNetWithCallAndObserveRuntimeValues { call: Par, out_channel: String },
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
     RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
@@ -772,6 +782,24 @@ pub fn build_fold_dataflow_invocation_from_contract(
     }
 }
 
+/// Build a typed Rho backend invocation from a codegen-owned **Rho-net σ-injection**
+/// description (Epic 4).
+///
+/// The `call` `Par` is the closed σ-injection assembled by
+/// `<Lang>::rho_net_invocation_from_dovetail_to` (via
+/// [`mettail_rholang_codegen::term_contract_call`] over reflected σ arguments). This
+/// adapter selects the `RunRhoNet…` observation shape, which composes the call against
+/// the backend's INSTALLED σ-receiver program (not the scalar `program()`), so the
+/// fired base rewrite's σ-receiver actually reduces the injection. It is the Rho-net
+/// analogue of [`build_fold_dataflow_invocation_from_contract`].
+#[cfg(feature = "runtime-report")]
+pub fn build_rho_net_injection_invocation_from_contract(
+    invocation: mettail_rholang_codegen::RhoNetInjectionInvocation,
+) -> RhoMachineInvocation {
+    let mettail_rholang_codegen::RhoNetInjectionInvocation { call, out_channel } = invocation;
+    RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, out_channel }
+}
+
 #[cfg(feature = "runtime-report")]
 impl RhoMachineInvocation {
     /// Which runtime site executes this invocation.
@@ -792,7 +820,10 @@ impl RhoMachineInvocation {
             RhoMachineInvocation::RunWithCallAndObserveInts { call, .. }
             | RhoMachineInvocation::RunWithCallAndObserveBools { call, .. }
             | RhoMachineInvocation::RunWithCallAndObserveStrings { call, .. }
-            | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, .. } => Some(call),
+            | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, .. }
+            | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, .. } => {
+                Some(call)
+            },
             _ => None,
         }
     }
@@ -807,7 +838,8 @@ impl RhoMachineInvocation {
             | RhoMachineInvocation::RunWithCallAndObserveInts { out_channel, .. }
             | RhoMachineInvocation::RunWithCallAndObserveBools { out_channel, .. }
             | RhoMachineInvocation::RunWithCallAndObserveStrings { out_channel, .. }
-            | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. } => {
+            | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. }
+            | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { out_channel, .. } => {
                 Some(out_channel)
             },
             RhoMachineInvocation::RunCallByNeedThunk { .. } => None,
@@ -864,6 +896,18 @@ impl RhoMachineInvocation {
             RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, out_channel } => {
                 backend
                     .run_with_call_and_observe_runtime_values(&call, &out_channel)
+                    .await?
+                    .try_into_runtime_backend_report()
+                    .map_err(|err| {
+                        format!("failed to convert Rho runtime value observation report: {err:?}")
+                    })
+            },
+            RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, out_channel } => {
+                // The Epic 4 composition fix: run the INSTALLED σ-receiver program
+                // (`installed_rho_net_program_par`) ∥ call so the base-rewrite
+                // σ-receiver actually fires, rather than the scalar `program()`.
+                backend
+                    .run_rho_net_with_call_and_observe_runtime_values(&call, &out_channel)
                     .await?
                     .try_into_runtime_backend_report()
                     .map_err(|err| {

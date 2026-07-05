@@ -116,7 +116,13 @@ Section LanguageDefInventory.
     {| inventory_name := "extmath"; inventory_requirements := arithmetic_rewrite_surface |};
     {| inventory_name := "importedmath"; inventory_requirements := arithmetic_rewrite_surface |};
     {| inventory_name := "mixedmath"; inventory_requirements := arithmetic_rewrite_surface |};
-    {| inventory_name := "refinementsmoke"; inventory_requirements := refinement_surface |}
+    {| inventory_name := "refinementsmoke"; inventory_requirements := refinement_surface |};
+    (* SwapDemo (Epic 4 R-5 σ-injection demo language): a single directional base
+       rewrite `Swap(x, y) ~> Pair(y, x)` — no equations, binders, collections, or
+       premises — so it classifies to exactly {DirectionalRewrite}. Its requirement
+       is already covered (every arithmetic/process language carries it), so all
+       coverage proofs below hold unchanged. *)
+    {| inventory_name := "swapdemo"; inventory_requirements := [ ReqDirectionalRewrite ] |}
   ].
 
   Definition flat_inventory : list RewriteRequirement :=

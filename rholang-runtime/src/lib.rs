@@ -56,7 +56,8 @@ pub mod run;
 pub mod step;
 #[cfg(feature = "runtime-report")]
 pub use backend::{
-    build_fold_dataflow_invocation_from_contract, build_scalar_contract_invocation,
+    build_fold_dataflow_invocation_from_contract,
+    build_rho_net_injection_invocation_from_contract, build_scalar_contract_invocation,
     build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
     install_rho_runtime_backend, DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage,
     IntoRuntimeObservationValue, RhoBackendInvocation, RhoInvocationCompilerStage,

@@ -25,7 +25,7 @@ name = "mettail_rholang_runtime"
 # default `cargo nextest --workspace`. `rhocalc-runtime` transitively enables
 # `runtime-report`. The opt-in feature names below are retained only so a
 # `--no-default-features` build can still drop the heavy generated-language surface.
-default = ["rhocalc-runtime", "source-oracle"]
+default = ["rhocalc-runtime", "source-oracle", "swap-demo-runtime"]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
@@ -42,6 +42,17 @@ rhocalc-runtime = [
     # `RhoCalcLanguage::dovetail_report_for` / `dovetail_normal_term` (E2), which are emitted only
     # under the language crate's `dovetail-codegen` feature.
     "mettail-languages/dovetail-codegen",
+]
+# Pulls in the generated `SwapDemo` language for the Epic 4 (R-5) end-to-end
+# dovetail-driven Rho σ-injection equivalence test (`rho_net_equivalence`). Needs
+# the generated `dovetail_report_for` (σ population, `dovetail-codegen`) and the
+# generated `rho_net_invocation_from_dovetail_to` F-function (`rho-codegen`).
+swap-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/swap-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
 ]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.
@@ -101,6 +112,11 @@ required-features = ["runtime-report"]
 name = "rho_net_injection_demo"
 path = "tests/rho_net_injection_demo.rs"
 required-features = ["runtime-report"]
+
+[[test]]
+name = "rho_net_equivalence"
+path = "tests/rho_net_equivalence.rs"
+required-features = ["swap-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"

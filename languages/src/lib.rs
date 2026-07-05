@@ -39,6 +39,8 @@ pub mod optsmoke;
 pub mod refinementsmoke;
 #[cfg(feature = "rhocalc")]
 pub mod rhocalc;
+#[cfg(feature = "swap-demo")]
+pub mod swapdemo;
 
 // Composition test languages — module order matters for proc-macro registry population.
 // fragments and base_lang must compile before their consumers.

@@ -528,6 +528,101 @@ impl GroundTerm {
     }
 }
 
+/// A codegen-owned Rho-net σ-injection call, ready for the runtime to run against
+/// a language's INSTALLED σ-receiver program.
+///
+/// This is the Rho-net analogue of [`crate::RhoFoldDataflowInvocation`]: the
+/// generated `<Lang>::rho_net_invocation_from_dovetail_to` builds the closed
+/// injection `call` `Par` (via [`term_contract_call`] over reflected σ arguments),
+/// and a runtime adapter normalizes it into a `RhoMachineInvocation` that runs
+/// `installed_rho_net_program_par() ∥ call` and observes `out_channel`. Kept in
+/// codegen (no `mettail-rholang-runtime` dependency), exactly like the
+/// fold-dataflow path, so generated language crates stay substrate-neutral.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RhoNetInjectionInvocation {
+    /// The closed σ-injection `call` `Par`: `channel!(⟦σ₀⟧, …, ⟦σ_{k-1}⟧, @out_channel)`.
+    pub call: Par,
+    /// The quoted channel the σ-receiver's reflected RHS rests on.
+    pub out_channel: String,
+}
+
+/// One base-rewrite σ-receiver injection site derived from a `LanguageDef`: the
+/// rule's bare label, its σ-receiver source channel, and the LHS first-occurrence
+/// variable order the receiver consumes σ arguments in.
+///
+/// A runtime σ-injection F-function (`rho_net_invocation_from_dovetail_to`) reads a
+/// rewrite firing's justification from the Dovetail report, matches its bare rule
+/// label to a site, reorders the report's (name-sorted) σ into
+/// [`lhs_var_order`](Self::lhs_var_order), reflects each σ sub-term to a ground
+/// `Par`, and sends the reflected arguments on [`channel`](Self::channel). Only
+/// rewrites that actually lowered to a σ-receiver ([`RhoNetLoweredRule::BaseRewrite`])
+/// are surfaced, so a site is always executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetInjectionSite {
+    /// The bare source rewrite label (the σ-receiver rule's label, e.g. `SwapStep`).
+    pub rule_label: String,
+    /// The σ-receiver source channel (`RhoNetRule::input_channels.first()`).
+    pub channel: String,
+    /// The LHS first-occurrence variable order the σ-receiver binds σ arguments in
+    /// (the order [`lower_lhs_vars`] collects them).
+    pub lhs_var_order: Vec<String>,
+}
+
+/// Derive every base-rewrite σ-receiver injection site for a language — the sites a
+/// runtime σ-injection F-function targets.
+///
+/// Builds the same [`RhoNetProgram`] + [`RhoNetLowered`] the σ-receiver contracts
+/// are compiled from, keeps only the rewrites that lowered to a
+/// [`RhoNetLoweredRule::BaseRewrite`] σ-receiver, and reports each one's bare rule
+/// label, source channel, and LHS first-occurrence variable order. The channel is
+/// content-derived from the LHS pattern (see `RhoNetProgram::pattern_trace_channel`),
+/// not the language fingerprint, so a site derived here matches the channel the
+/// installed σ-receiver was compiled with for the same rewrite.
+pub fn rho_net_injection_sites(def: &LanguageDef) -> Vec<RhoNetInjectionSite> {
+    let lowering = crate::lower::lower_language_def(def);
+    let program = RhoNetProgram::from_language_def(def, &lowering);
+    let lowered = program.lower_to_par(def, &lowering);
+
+    let rule_by_id: HashMap<&str, &RhoNetRule> =
+        program.rules.iter().map(|rule| (rule.id.as_str(), rule)).collect();
+    let rewrite_by_id: HashMap<String, &RewriteRule> = def
+        .rewrites
+        .iter()
+        .enumerate()
+        .map(|(index, rewrite)| (rule_id_rewrite(index, &rewrite.name.to_string()), rewrite))
+        .collect();
+
+    let mut sites = Vec::new();
+    for lowered_rule in lowered.rules() {
+        let RhoNetLoweredRule::BaseRewrite { rule_id, .. } = lowered_rule else {
+            continue;
+        };
+        let Some(program_rule) = rule_by_id.get(rule_id.as_str()) else {
+            continue;
+        };
+        let Some(channel) = program_rule.input_channels.first() else {
+            continue;
+        };
+        let Some(rule_label) = program_rule.label.as_deref() else {
+            continue;
+        };
+        let Some(rewrite) = rewrite_by_id.get(rule_id) else {
+            continue;
+        };
+        // A `BaseRewrite` lowered iff `lower_lhs_vars` succeeded, so this cannot
+        // fail; a defensive `continue` keeps the derivation total.
+        let Ok(vars) = lower_lhs_vars(&rewrite.left) else {
+            continue;
+        };
+        sites.push(RhoNetInjectionSite {
+            rule_label: rule_label.to_string(),
+            channel: channel.clone(),
+            lhs_var_order: vars.iter().map(|var| var.to_string()).collect(),
+        });
+    }
+    sites
+}
+
 /// Reflect a GROUND constructor term to a normalized `Par` value under the SAME
 /// constructor reflection ABI as the internal RHS reflector `reflect_term_par`:
 ///
@@ -1164,6 +1259,58 @@ mod tests {
         assert_eq!(boundvar_index(&inner.ps[1]), Some(1), "inner child is x");
 
         assert!(lowered.errors().is_empty());
+    }
+
+    /// The Swap→Pair base rewrite surfaces exactly one injection site whose channel
+    /// equals the σ-receiver's source channel and whose LHS variable order is the
+    /// first-occurrence order (a, b) the receiver binds σ arguments in.
+    #[test]
+    fn rho_net_injection_sites_surface_base_rewrite_channel_and_var_order() {
+        let mut def = scalar_def();
+        def.rewrites.push(RewriteRule {
+            name: ident("Swap"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply("Swap", vec![var_pattern("a"), var_pattern("b")]),
+            right: apply("Pair", vec![var_pattern("b"), var_pattern("a")]),
+            is_auto_injected: false,
+        });
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+
+        // The σ-receiver's source channel, resolved exactly as the runtime injection
+        // must reproduce it (the base rewrite's first input channel).
+        let base_rewrite_id = rule_id_rewrite(0, "Swap");
+        let expected_channel = program
+            .rules
+            .iter()
+            .find(|rule| rule.id == base_rewrite_id)
+            .and_then(|rule| rule.input_channels.first())
+            .expect("Swap base rewrite must have a source channel")
+            .clone();
+        assert!(lowered.rules().iter().any(|rule| matches!(
+            rule,
+            RhoNetLoweredRule::BaseRewrite { rule_id, .. } if *rule_id == base_rewrite_id
+        )));
+
+        let sites = rho_net_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "one base-rewrite σ-receiver ⇒ one injection site");
+        assert_eq!(
+            sites[0],
+            RhoNetInjectionSite {
+                rule_label: "Swap".to_string(),
+                channel: expected_channel,
+                lhs_var_order: vec!["a".to_string(), "b".to_string()],
+            }
+        );
+    }
+
+    /// A scalar-only language (no base rewrites) surfaces no injection sites, so a
+    /// non-rho-net language emits no σ-injection F-function match arms.
+    #[test]
+    fn rho_net_injection_sites_are_empty_without_base_rewrites() {
+        assert!(rho_net_injection_sites(&scalar_def()).is_empty());
     }
 
     /// `Id(x) ~> y`: a RHS variable with no LHS binding has no σ-tuple slot, so the

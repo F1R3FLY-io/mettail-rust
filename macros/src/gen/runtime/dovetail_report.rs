@@ -1062,6 +1062,90 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         quote! {}
     };
 
+    // Epic 4 (R-4): a language whose rewrites lower to a base-rewrite σ-receiver is
+    // a "rho-net-rewrite" language — its Dovetail report additionally carries the
+    // resolved σ provenance a runtime Rho σ-injection reads. Every other language
+    // (scalar / rhocalc-typed-path / no base rewrite) keeps `rewrite_justifications`
+    // empty, so its report stays byte-identical. The decision is made here, at
+    // generation time, from the same σ-receiver derivation the runtime uses.
+    let populate_rewrite_justifications =
+        !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty();
+    let report_projection: TokenStream = if populate_rewrite_justifications {
+        quote! {
+            // Bare-ify a generated e-graph op / rule label to its source identity:
+            // the THIRD "::"-delimited segment — the constructor / rule NAME slot —
+            // NOT the last segment (a blind rsplit would wrongly take the literal
+            // value "42" out of "{lang}::{cat}::IntLit::42"). This targets the label
+            // slot per node-kind: nullary/regular/collection/binder ops are exactly
+            // "{lang}::{cat}::{ctor}" (segment 2 = ctor); a var/literal leaf appends
+            // a "::{value:?}" suffix (segment 2 is still the ctor); a rewrite label
+            // is "{lang}::rewrite::{name}" (segment 2 = name).
+            fn __mettail_bareify_label(__label: &str) -> String {
+                __label.split("::").nth(2).unwrap_or(__label).to_string()
+            }
+            fn __mettail_bareify_subterm(
+                __subterm: &mut mettail_runtime::RuntimeReflectedSubterm,
+            ) {
+                __subterm.constructor = __mettail_bareify_label(&__subterm.constructor);
+                for __child in &mut __subterm.children {
+                    __mettail_bareify_subterm(__child);
+                }
+            }
+            fn __mettail_bareify_rewrite_justifications(
+                __justifications: &mut Vec<mettail_runtime::RuntimeRewriteJustification>,
+            ) {
+                for __justification in __justifications.iter_mut() {
+                    __justification.rule_label = __mettail_bareify_label(&__justification.rule_label);
+                    for (_, __subterm) in __justification.sigma.iter_mut() {
+                        __mettail_bareify_subterm(__subterm);
+                    }
+                }
+            }
+
+            let mut report = ::dovetail::report::report_from_extraction_with_rule_firings(
+                ::dovetail::extract::Extraction {
+                    value: __derivations,
+                    completeness: __completeness,
+                },
+                sat.rule_firings,
+            );
+            // Resolve σ while the e-graph is still live, under the SAME constant cost
+            // model the roots were extracted with (`sat.rule_firings` is moved above,
+            // but the distinct `rewrite_justifications` field is still available).
+            report.rewrite_justifications = ::dovetail::report::resolve_rewrite_justifications(
+                &eg,
+                &sat.rewrite_justifications,
+                |_| ::rigail::TropicalWeight(0.0),
+            );
+            let mut runtime_report = ::mettail_dovetail_runtime::project_dovetail_report(&report);
+            // R-4 owns the bare-ification: the projected σ carries the generated
+            // "{lang}::{cat}::{ctor}" op labels and the "{lang}::rewrite::{name}" rule
+            // label; a runtime σ-injection reflects each constructor as
+            // `mettail.term.{fp}.{ctor}` and matches the fired rule to its bare
+            // σ-receiver label, so both must be bare source identities.
+            __mettail_bareify_rewrite_justifications(&mut runtime_report.rewrite_justifications);
+            runtime_report
+                .validate_shape()
+                .map_err(|err| format!("generated Dovetail report for language {} is malformed: {err}", #language_lit))?;
+            Ok(runtime_report)
+        }
+    } else {
+        quote! {
+            let report = ::dovetail::report::report_from_extraction_with_rule_firings(
+                ::dovetail::extract::Extraction {
+                    value: __derivations,
+                    completeness: __completeness,
+                },
+                sat.rule_firings,
+            );
+            let runtime_report = ::mettail_dovetail_runtime::project_dovetail_report(&report);
+            runtime_report
+                .validate_shape()
+                .map_err(|err| format!("generated Dovetail report for language {} is malformed: {err}", #language_lit))?;
+            Ok(runtime_report)
+        }
+    };
+
     quote! {
         #[cfg(feature = "dovetail-codegen")]
         impl #language_struct {
@@ -1137,18 +1221,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
                     }
                 }
 
-                let report = ::dovetail::report::report_from_extraction_with_rule_firings(
-                    ::dovetail::extract::Extraction {
-                        value: __derivations,
-                        completeness: __completeness,
-                    },
-                    sat.rule_firings,
-                );
-                let runtime_report = ::mettail_dovetail_runtime::project_dovetail_report(&report);
-                runtime_report
-                    .validate_shape()
-                    .map_err(|err| format!("generated Dovetail report for language {} is malformed: {err}", #language_lit))?;
-                Ok(runtime_report)
+                #report_projection
             }
 
             /// Installable Dovetail compiler stage for this generated language.
@@ -1206,6 +1279,47 @@ mod tests {
         assert!(tokens.contains("AToB"));
         assert!(tokens.contains("funded_best"));
         assert!(unsupported.is_empty(), "unexpected unsupported rules: {unsupported:?}");
+    }
+
+    #[test]
+    fn scalar_report_producer_stays_empty_of_rewrite_justifications() {
+        // (R-4 guard) A scalar-only language has no base-rewrite σ-receiver, so its
+        // generated report producer never resolves σ provenance — its report is
+        // byte-identical to before R-4 (`rewrite_justifications` stays empty).
+        let language = parse(
+            r#"
+                name: ScalarReportGuard,
+                types { ![i32] as Int }
+                terms { AddInt . a:Int, b:Int |- a "+" b : Int ; }
+            "#,
+        );
+        let tokens = generate_dovetail_report(&language).to_string();
+        assert!(tokens.contains("dovetail_report_for"));
+        assert!(!tokens.contains("resolve_rewrite_justifications"));
+        assert!(!tokens.contains("bareify_rewrite_justifications"));
+    }
+
+    #[test]
+    fn base_rewrite_report_producer_populates_and_bareifies_sigma() {
+        // (R-4) A base-rewrite σ-receiver language DOES resolve + bare-ify σ so a
+        // runtime Rho σ-injection can read it.
+        let language = parse(
+            r#"
+                name: SwapReportGuard,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                }
+                equations {}
+                rewrites { SwapStep . |- (Swap x y) ~> (Pair y x) ; }
+            "#,
+        );
+        let tokens = generate_dovetail_report(&language).to_string();
+        assert!(tokens.contains("resolve_rewrite_justifications"));
+        assert!(tokens.contains("__mettail_bareify_rewrite_justifications"));
     }
 
     #[test]

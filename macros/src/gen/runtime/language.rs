@@ -76,6 +76,11 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         "rho_fold_dataflow",
         crate::gen::runtime::rho_dataflow::generate_rho_fold_dataflow(language),
     );
+    let rho_net_invocation_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "rho_net_invocation",
+        crate::gen::runtime::rho_invocation::generate_rho_net_invocation(language),
+    );
     let dovetail_report_include = crate::logic::writer::spill_and_include(
         &lang_key,
         "dovetail_report",
@@ -93,6 +98,7 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         #language_trait_impl_include
         #rho_scalar_invocation_include
         #rho_fold_dataflow_include
+        #rho_net_invocation_include
         #dovetail_report_include
         #numeric_cast_adapter_include
     }

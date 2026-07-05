@@ -445,6 +445,174 @@ pub fn generate_rho_scalar_invocation(language: &LanguageDef) -> TokenStream {
     }
 }
 
+/// Generate the opt-in `rho_net_invocation_from_dovetail_to` helper: the Rho-net
+/// σ-injection F-function.
+///
+/// It reads a rewrite firing's justification from an already complete Dovetail
+/// report (whose σ constructor labels the report producer bare-ified to their
+/// source form), matches the fired rule to a base-rewrite σ-receiver
+/// [injection site](mettail_rholang_codegen::RhoNetInjectionSite), reorders the σ
+/// into the receiver's first-occurrence LHS variable order, reflects each matched
+/// sub-term to a ground `Par`, and assembles the σ-injection
+/// [`RhoNetInjectionInvocation`](mettail_rholang_codegen::RhoNetInjectionInvocation)
+/// the runtime runs against the installed σ-receiver program. This mirrors
+/// [`generate_rho_fold_dataflow`](crate::gen::runtime::rho_dataflow::generate_rho_fold_dataflow):
+/// codegen-typed output, no `mettail-rholang-runtime` dependency.
+pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
+    let name = &language.name;
+    let language_struct = format_ident!("{}Language", name);
+    let language_name = name.to_string();
+    let language_lit = lit(&language_name);
+
+    let sites = mettail_rholang_codegen::rho_net_injection_sites(language);
+
+    let body = if sites.is_empty() {
+        // No base-rewrite σ-receiver: the helper exists for a uniform surface but
+        // always fails closed (there is nothing to inject).
+        quote! {
+            report.assert_complete().map_err(|status| {
+                ::std::format!(
+                    "Rho-net injection for language {} requires a complete Dovetail report, got {}",
+                    #language_lit, status,
+                )
+            })?;
+            let _ = (term, out_channel);
+            ::core::result::Result::Err(::std::format!(
+                "language {} has no Rho-net σ-receiver injection sites",
+                #language_lit,
+            ))
+        }
+    } else {
+        let site_arms: Vec<TokenStream> = sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                let vars: Vec<LitStr> = site.lhs_var_order.iter().map(|var| lit(var)).collect();
+                quote! {
+                    #label => (#channel, &[#(#vars),*][..]),
+                }
+            })
+            .collect();
+
+        quote! {
+            report.assert_complete().map_err(|status| {
+                ::std::format!(
+                    "Rho-net injection for language {} requires a complete Dovetail report, got {}",
+                    #language_lit, status,
+                )
+            })?;
+            let _ = term;
+            let out_channel = out_channel.as_ref();
+
+            // Rebuild a runtime-neutral σ sub-term into a codegen ground term (same
+            // `{ constructor, children }` shape). The report producer already
+            // bare-ified each constructor to its source label, so reflection tags it
+            // identically to the σ-receiver's compiled RHS constructors.
+            fn __mettail_rho_net_to_ground(
+                subterm: &mettail_runtime::RuntimeReflectedSubterm,
+            ) -> ::mettail_rholang_codegen::GroundTerm {
+                ::mettail_rholang_codegen::GroundTerm::new(
+                    subterm.constructor.clone(),
+                    subterm.children.iter().map(__mettail_rho_net_to_ground).collect(),
+                )
+            }
+
+            // The reflection fingerprint MUST equal the one the installed σ-receiver
+            // was compiled with. The install boundary requires
+            // `metadata().definition_fingerprint() == plan.definition_fingerprint()`,
+            // and the σ-receiver reflects its RHS constructors with that plan
+            // fingerprint, so reading it from metadata here cannot drift.
+            let __fingerprint = <#language_struct as mettail_runtime::Language>::metadata(
+                &#language_struct,
+            )
+            .definition_fingerprint()
+            .ok_or_else(|| {
+                ::std::format!(
+                    "language {} has no definition fingerprint for Rho-net σ reflection",
+                    #language_lit,
+                )
+            })?;
+
+            // MVP: the first (single) rewrite firing. A term with no firing has
+            // nothing to inject.
+            let __justification = report.rewrite_justifications.first().ok_or_else(|| {
+                ::std::format!(
+                    "Rho-net injection for language {} has no rewrite justification to fire",
+                    #language_lit,
+                )
+            })?;
+
+            let (__channel, __var_order): (&str, &[&str]) =
+                match __justification.rule_label.as_str() {
+                    #(#site_arms)*
+                    __other => {
+                        return ::core::result::Result::Err(::std::format!(
+                            "Rho-net injection for language {} has no σ-receiver for fired rule {}",
+                            #language_lit, __other,
+                        ));
+                    },
+                };
+
+            // Reorder the report's (name-sorted) σ into the σ-receiver's
+            // first-occurrence LHS variable order and reflect each sub-term.
+            let mut __args = ::std::vec::Vec::with_capacity(__var_order.len());
+            for __var in __var_order {
+                let __subterm = __justification
+                    .sigma
+                    .iter()
+                    .find(|(__name, _)| __name.as_str() == *__var)
+                    .map(|(_, __subterm)| __subterm)
+                    .ok_or_else(|| {
+                        ::std::format!(
+                            "Rho-net injection for language {} is missing σ binding for LHS variable {}",
+                            #language_lit, __var,
+                        )
+                    })?;
+                let __ground = __mettail_rho_net_to_ground(__subterm);
+                __args.push(::mettail_rholang_codegen::reflect_ground_term_par(
+                    &__ground,
+                    __fingerprint,
+                ));
+            }
+
+            let __call =
+                ::mettail_rholang_codegen::term_contract_call(__channel, __args, out_channel);
+            ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
+                call: __call,
+                out_channel: out_channel.to_string(),
+            })
+        }
+    };
+
+    quote! {
+        #[cfg(feature = "rho-codegen")]
+        impl #language_struct {
+            /// Build a Rho-net σ-injection from an already complete, shape-validated
+            /// Dovetail report: read the first rewrite firing's justification, reorder
+            /// its σ into the fired σ-receiver's first-occurrence LHS variable order,
+            /// reflect each matched sub-term to a ground `Par`, and assemble the
+            /// injection `call` the runtime runs against the installed σ-receiver
+            /// program (`installed_rho_net_program_par() ∥ call`).
+            ///
+            /// Rho-net analogue of
+            /// [`Self::rho_fold_dataflow_invocation_from_dovetail_to`]; returns codegen
+            /// types (`RhoNetInjectionInvocation`) so the language crate takes no Rho
+            /// runtime dependency.
+            pub fn rho_net_invocation_from_dovetail_to(
+                term: &dyn mettail_runtime::Term,
+                report: &mettail_runtime::RuntimeDovetailRunReport,
+                out_channel: impl ::core::convert::AsRef<str>,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::RhoNetInjectionInvocation,
+                ::std::string::String,
+            > {
+                #body
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,5 +670,53 @@ mod tests {
         assert!(tokens.contains("has no lowered Rho scalar contract invocation plan"));
         assert!(!tokens.contains("Int :: AddInt"));
         assert!(!tokens.contains("Str :: EqStr"));
+    }
+
+    #[test]
+    fn generated_rho_net_invocation_emits_site_match_and_reflection() {
+        let language = parse(
+            r#"
+                name: SwapNetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    SwapStep . |- (Swap x y) ~> (Pair y x) ;
+                }
+            "#,
+        );
+        let tokens = generate_rho_net_invocation(&language).to_string();
+        assert!(tokens.contains("rho_net_invocation_from_dovetail_to"));
+        assert!(tokens.contains("RhoNetInjectionInvocation"));
+        assert!(tokens.contains("term_contract_call"));
+        assert!(tokens.contains("reflect_ground_term_par"));
+        // The fired rule's bare label keys the σ-receiver channel + var-order lookup.
+        assert!(tokens.contains("\"SwapStep\""));
+        // The out-of-scope fallback fails closed (no silent no-op).
+        assert!(tokens.contains("for fired rule"));
+    }
+
+    #[test]
+    fn generated_rho_net_invocation_without_base_rewrites_fails_closed() {
+        let language = parse(
+            r#"
+                name: ScalarNetGen,
+                types {
+                    ![i32] as Int
+                }
+                terms {
+                    AddInt . a:Int, b:Int |- a "+" b : Int ;
+                }
+            "#,
+        );
+        let tokens = generate_rho_net_invocation(&language).to_string();
+        assert!(tokens.contains("rho_net_invocation_from_dovetail_to"));
+        assert!(tokens.contains("injection sites"));
+        assert!(!tokens.contains("term_contract_call"));
     }
 }

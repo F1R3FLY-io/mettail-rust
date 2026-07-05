@@ -33,6 +33,7 @@ all-languages = [
     "optsmoke",
     "refinementsmoke",
     "rhocalc",
+    "swap-demo",
 ]
 ambient = []
 appsubst = []
@@ -50,6 +51,7 @@ led-test = []
 optsmoke = []
 refinementsmoke = []
 rhocalc = []
+swap-demo = []
 ## Expose public proptest strategies for generating random well-formed terms.
 ## External crates can depend on `mettail-languages/strategies` and use
 ## `arb_{cat}(max_depth)` to generate terms for property-based testing.
