@@ -7,6 +7,34 @@ root with a 32 GB cgroup memory cap:
 make -C formal check-capped
 ```
 
+## Verification Artifact Inventory
+
+Every mechanized artifact relevant to Dovetail, the WPDA parser generator, the
+RhoNet lowering, and the runtime wrappers, by tool and concern. All Rocq suites are
+zero-admission (enforced by `rocq-critical-zero-admission`; ~154 `.v` across the 16
+`formal/rocq` categories plus the relocated Dovetail Rocq tree).
+
+| Tool | Location | Count | Primary concern (Dovetail / WPDA / RhoNet / wrappers) |
+|---|---|---|---|
+| Rocq — rho_bridge | `formal/rocq/rho_bridge/theories` | 42 | **RhoNet + wrappers**: install-boundary (`RhoLoweringTotalOrRejects`), host-obligation boundary (`RhoHostObligationBoundary`), COMM correspondence (`LinearCommCorrespondence`, `CommReductionCorrespondence`, `EndToEndCommCorrespondence`), flip gate, backend wrappers, artifact boundary, escrow/purse settlement |
+| Rocq — prattail_wpda_runtime | `formal/rocq/prattail_wpda_runtime/theories` | 33 | **WPDA**: walker/recovery/dispatch models, lex-fork, cohort quotient, EOI delimiter windows |
+| Rocq — symbolic_algebra | `formal/rocq/symbolic_algebra/theories` | 15 | predicate substrate: Heyting / effective-Boolean-algebra / guard-tier classification |
+| Rocq — codegen_optimizations | `formal/rocq/codegen_optimizations/theories` | 13 | generated-codegen soundness, disjoint-first |
+| Rocq — advanced_automata | `formal/rocq/advanced_automata/theories` | 12 | **positional set automaton** (`PositionalSetAutomatonSound`), MSO / register / PATA equivalence |
+| Rocq — ascent_optimizations | `formal/rocq/ascent_optimizations/theories` | 7 | retired-Ascent-era optimization proofs |
+| Rocq — trampoline | `formal/rocq/trampoline/theories` | 7 | Tier-3 held-fold trampoline soundness |
+| Rocq — sft | `formal/rocq/sft/theories` | 6 | symbolic finite transducers |
+| Rocq — mathematical_analyses | `formal/rocq/mathematical_analyses/theories` | 6 | KAT soundness / analyses |
+| Rocq — rule_consolidation | `formal/rocq/rule_consolidation/theories` | 5 | **Dovetail** disjoint-pattern consolidation |
+| Rocq — egraph | `formal/rocq/egraph/theories` | 3 | **Dovetail** e-graph saturation |
+| Rocq — lattice / logict / predicate_dispatch / presburger / unification | `formal/rocq/*/theories` | 1 each | supporting theories |
+| Rocq — Dovetail suite | `dovetail/formal/rocq/theories/{ExactKeys,Extraction,InsideWeights,Lowering,Refinement,Requirements,Rigail,Saturation}` | (subdirs) | **Dovetail** engine: exact keys, extraction + weights, lowering, cyclic boundary, requirement inventory |
+| TLA+ / Apalache | `formal/tla/{rho_machine,prattail_wpda,rho_settlement}` | 3 | Rho-machine COMM scheduling, WPDA control domain, per-purse settlement commutation |
+| mCRL2 + Maude | `formal/process/` (generated from `rho_comm_slice.json`) | — | Rho COMM schedule / guarded-join non-consumption |
+| Why3 + Creusot | `why3-dovetail-budget`, `creusot-dovetail-budget` | — | **Dovetail** budget obligations |
+| Sage | — | 0 | not present — planned RhoNet small-state exploration (#2049) |
+| Wolfram | — | 0 | not present — planned (#2049) |
+
 `make -C formal check` routes through the same capped target, so the default
 formal verification entry point is protected as well. `check-capped` uses
 `systemd-run --user` with `MemoryAccounting=yes`,
