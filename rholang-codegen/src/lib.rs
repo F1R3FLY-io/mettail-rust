@@ -129,8 +129,8 @@ pub use rho_net::{
 };
 pub use rho_net_lower::{
     reflect_ground_term_par, rho_net_injection_sites, term_contract_call, GroundTerm,
-    RhoNetInjectionInvocation, RhoNetInjectionSite, RhoNetLowered, RhoNetLoweredRule,
-    RhoNetLoweringError, UnsupportedFamily,
+    RhoNetInjectionInvocation, RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered,
+    RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

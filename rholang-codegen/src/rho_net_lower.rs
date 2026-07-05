@@ -131,8 +131,11 @@ impl RhoNetLoweredRule {
 }
 
 /// A diagnostic recorded during lowering. These are surfaced (never silently
-/// dropped) but do NOT tighten the flip gate this slice.
-#[derive(Debug, Clone, PartialEq)]
+/// dropped); a non-empty set makes the σ-receiver program fail closed at the
+/// install boundary ([`RhoNetLowered::installed_program_par`], Epic 4 #2011),
+/// so an unsupported lowering is caught at install time, never after partial
+/// execution on the Rho machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoNetLoweringError {
     /// A rewrite/equation whose source construct is out of scope this slice.
     UnsupportedFamily { rule_id: String, family: UnsupportedFamily },
@@ -145,6 +148,44 @@ pub enum RhoNetLoweringError {
     /// A rule's input channel name could not be resolved to a Rho name.
     ChannelResolution { channel: String },
 }
+
+/// Why a lowered RhoNet program cannot be installed as an executable σ-receiver
+/// program (Epic 4 #2011).
+///
+/// Installing an incomplete program would silently drop unlowered work and no-op
+/// at runtime; [`RhoNetLowered::installed_program_par`] returns this instead, so an
+/// unsupported / not-yet-lowered rule is caught at INSTALL time — never after
+/// partial execution on the Rho machine. Formal model:
+/// `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
+/// (`Section RhoNetInstallBoundary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoNetInstallError {
+    /// Lowering recorded fail-closed diagnostics; the program is incomplete.
+    LoweringErrors(Vec<RhoNetLoweringError>),
+    /// A recognized-but-not-yet-executable rule family (`ContextualRewrite` /
+    /// `Comm` / `NativeSystemProcess` / `Unsupported`) whose contract the installed
+    /// program would silently omit.
+    UnmaterializedRule { rule_id: String, family: &'static str },
+}
+
+impl std::fmt::Display for RhoNetInstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RhoNetInstallError::LoweringErrors(errors) => write!(
+                f,
+                "RhoNet σ-receiver program is not installable: {} lowering diagnostic(s): {errors:?}",
+                errors.len()
+            ),
+            RhoNetInstallError::UnmaterializedRule { rule_id, family } => write!(
+                f,
+                "RhoNet σ-receiver program is not installable: rule {rule_id} is an unlowered {family} \
+                 family that the installed program would silently drop"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RhoNetInstallError {}
 
 /// The lowered Rho-native execution plan for one `RhoNetProgram`.
 #[derive(Debug, Clone, PartialEq)]
@@ -169,13 +210,50 @@ impl RhoNetLowered {
     }
 
     /// Parallel-compose every materialized contract `Par` (`NativeFold` +
-    /// `BaseRewrite`) into a single installable Rho program. Classifications
-    /// with no `Par` contribute nothing.
-    pub fn installed_program_par(&self) -> Par {
-        self.rules.iter().fold(Par::default(), |program, rule| match rule.par() {
+    /// `BaseRewrite`) into a single installable Rho program — FAIL-CLOSED at the
+    /// install boundary (Epic 4 #2011).
+    ///
+    /// Rather than silently dropping unlowered work (the pre-#2011 behavior, which
+    /// produced a partial σ-receiver program that no-ops at runtime), this returns
+    /// `Err` so an incomplete lowering is caught at INSTALL time, never after
+    /// partial execution on the Rho machine:
+    ///
+    /// * [`RhoNetInstallError::LoweringErrors`] if lowering recorded any diagnostic
+    ///   (e.g. an `Unsupported` family), and
+    /// * [`RhoNetInstallError::UnmaterializedRule`] if any rule is a
+    ///   recognized-but-not-yet-lowered family (`ContextualRewrite` / `Comm` /
+    ///   `NativeSystemProcess` / `Unsupported`) that [`RhoNetLoweredRule::par`]
+    ///   would silently omit.
+    ///
+    /// `StructuralConstructor` / `CongruenceClosure` legitimately contribute no
+    /// `Par` (inline RHS reflection / compile-time e-graph closure) and never block
+    /// the install. Formal model:
+    /// `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
+    /// (`Section RhoNetInstallBoundary`).
+    pub fn installed_program_par(&self) -> Result<Par, RhoNetInstallError> {
+        if !self.errors.is_empty() {
+            return Err(RhoNetInstallError::LoweringErrors(self.errors.clone()));
+        }
+        for rule in &self.rules {
+            let family = match rule {
+                RhoNetLoweredRule::ContextualRewrite { .. } => "ContextualRewrite",
+                RhoNetLoweredRule::Comm { .. } => "Comm",
+                RhoNetLoweredRule::NativeSystemProcess { .. } => "NativeSystemProcess",
+                RhoNetLoweredRule::Unsupported { .. } => "Unsupported",
+                RhoNetLoweredRule::NativeFold { .. }
+                | RhoNetLoweredRule::BaseRewrite { .. }
+                | RhoNetLoweredRule::StructuralConstructor { .. }
+                | RhoNetLoweredRule::CongruenceClosure { .. } => continue,
+            };
+            return Err(RhoNetInstallError::UnmaterializedRule {
+                rule_id: rule.rule_id().to_string(),
+                family,
+            });
+        }
+        Ok(self.rules.iter().fold(Par::default(), |program, rule| match rule.par() {
             Some(par) => program.append(par.clone()),
             None => program,
-        })
+        }))
     }
 }
 
@@ -974,9 +1052,83 @@ mod tests {
         assert_eq!(native, &expected);
 
         // A scalar-only language lowers with no diagnostics, and the installed
-        // program is exactly the two native-fold contracts.
+        // program is exactly the two native-fold contracts (installs cleanly).
         assert!(lowered.errors().is_empty(), "scalar-only lowering must not error");
-        assert_eq!(lowered.installed_program_par().receives.len(), 2);
+        assert_eq!(
+            lowered
+                .installed_program_par()
+                .expect("a diagnostic-free native-fold program installs")
+                .receives
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn install_boundary_fails_closed_on_lowering_errors() {
+        // A lowering diagnostic (e.g. an unsupported family) makes the σ-receiver
+        // program non-installable — caught at INSTALL time, never after partial
+        // execution on the Rho machine (Epic 4 #2011).
+        let lowered = RhoNetLowered {
+            language_fingerprint: "test-fp".to_string(),
+            rules: vec![RhoNetLoweredRule::Unsupported {
+                rule_id: "rule:rewrite:0:BadAc".to_string(),
+                family: UnsupportedFamily::CollectionAc,
+            }],
+            errors: vec![RhoNetLoweringError::UnsupportedFamily {
+                rule_id: "rule:rewrite:0:BadAc".to_string(),
+                family: UnsupportedFamily::CollectionAc,
+            }],
+        };
+        match lowered.installed_program_par() {
+            Err(RhoNetInstallError::LoweringErrors(errors)) => assert_eq!(errors.len(), 1),
+            other => panic!("expected LoweringErrors, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn install_boundary_fails_closed_on_unmaterialized_deferred_family() {
+        // A recognized-but-deferred family (`Comm`) carries no `par` and no error;
+        // installing it would silently drop the rule, so the boundary fails closed
+        // and names the offending family (Epic 4 #2011).
+        let lowered = RhoNetLowered {
+            language_fingerprint: "test-fp".to_string(),
+            rules: vec![
+                RhoNetLoweredRule::BaseRewrite {
+                    rule_id: "rule:rewrite:0:Ok".to_string(),
+                    par: Par::default(),
+                },
+                RhoNetLoweredRule::Comm { rule_id: "rule:rewrite:1:Join".to_string() },
+            ],
+            errors: Vec::new(),
+        };
+        match lowered.installed_program_par() {
+            Err(RhoNetInstallError::UnmaterializedRule { rule_id, family }) => {
+                assert_eq!(family, "Comm");
+                assert_eq!(rule_id, "rule:rewrite:1:Join");
+            },
+            other => panic!("expected UnmaterializedRule(Comm), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn install_boundary_admits_materialized_and_inline_only_rules() {
+        // Legitimately-inline rules (`StructuralConstructor` / `CongruenceClosure`)
+        // contribute no `Par` yet must NOT block the install — only a diagnostic or
+        // a deferred family does.
+        let lowered = RhoNetLowered {
+            language_fingerprint: "test-fp".to_string(),
+            rules: vec![
+                RhoNetLoweredRule::StructuralConstructor { rule_id: "rule:term:0:A".to_string() },
+                RhoNetLoweredRule::CongruenceClosure { rule_id: "rule:eq:0:Cong".to_string() },
+            ],
+            errors: Vec::new(),
+        };
+        let installed = lowered
+            .installed_program_par()
+            .expect("inline-only rules install as an empty program");
+        assert_eq!(installed.receives.len(), 0);
+        assert_eq!(installed.sends.len(), 0);
     }
 
     #[test]
@@ -1620,7 +1772,9 @@ mod tests {
         // The base rewrite lowered to exactly one persistent 3-ary σ-receiver
         // (k = 2 LHS vars + 1 out channel); the four constructors contribute no
         // installed Par.
-        let installed = plan.installed_rho_net_program_par();
+        let installed = plan
+            .installed_rho_net_program_par()
+            .expect("the clean Swap base-rewrite program installs");
         assert_eq!(installed.receives.len(), 1, "one σ-receiver installed");
         assert_eq!(installed.sends.len(), 0);
         assert_eq!(installed.receives[0].bind_count, 3);

@@ -22,6 +22,14 @@
  * extraction layer): an alternative leaves only by EVIDENCE (here: an explicit
  * "no Rholang equivalent" rejection), never by silent omission.
  *
+ * `Section RhoNetInstallBoundary` (Epic 4 #2011) carries the SAME invariant to the
+ * σ-receiver INSTALL boundary (`rholang-codegen` `RhoNetLowered::installed_program_par`
+ * → `Result<Par, RhoNetInstallError>`): the installed program admits a rule only if
+ * it materialized a contract or is legitimately inline; any unlowered/deferred rule
+ * (`ContextualRewrite`/`Comm`/`NativeSystemProcess`/`Unsupported`) fails the install
+ * CLOSED — by evidence (an install error, at install time), never a silent runtime
+ * no-op after partial execution on the Rho machine.
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
 
@@ -97,3 +105,62 @@ Section RhoLoweringTotalOrRejects.
   Qed.
 
 End RhoLoweringTotalOrRejects.
+
+Section RhoNetInstallBoundary.
+
+  (* Epic 4 #2011: the σ-receiver INSTALL boundary
+     (`RhoNetLowered::installed_program_par`) is fail-closed. A lowered rule either
+     MATERIALIZES an installed contract / is legitimately inline (`blocks_install =
+     false`), or it is a diagnostic / deferred family that installing would SILENTLY
+     DROP (`blocks_install = true`). The Rust boundary returns `Ok` iff no rule
+     blocks — otherwise `Err(RhoNetInstallError)`. This is the runtime-facing dual of
+     the codegen partition above: nothing is silently dropped from the installed
+     program; an incomplete lowering leaves only by EVIDENCE, at install time. *)
+
+  Variable Rule : Type.
+  (* `blocks_install r = true` iff installing would silently omit unlowered work —
+     Rust `ContextualRewrite | Comm | NativeSystemProcess | Unsupported`, or any
+     recorded `RhoNetLoweringError`. `false` for materialized `NativeFold`/
+     `BaseRewrite` and legitimately-inline `StructuralConstructor`/
+     `CongruenceClosure`. *)
+  Variable blocks_install : Rule -> bool.
+
+  (* `installed_program_par` returns Ok iff no rule blocks the install. *)
+  Definition install_ok (rules : list Rule) : bool :=
+    forallb (fun r => negb (blocks_install r)) rules.
+
+  (* FAIL-CLOSED: a successful install proves NO rule was silently dropped. *)
+  Theorem install_ok_drops_nothing : forall rules r,
+    install_ok rules = true -> In r rules -> blocks_install r = false.
+  Proof.
+    intros rules r Hok Hin. unfold install_ok in Hok.
+    rewrite forallb_forall in Hok. specialize (Hok r Hin).
+    rewrite negb_true_iff in Hok. exact Hok.
+  Qed.
+
+  (* VISIBLE AT INSTALL TIME: any blocking rule fails the install closed — the
+     error surfaces at the boundary, never after partial execution. *)
+  Theorem blocking_rule_fails_install_closed : forall rules r,
+    In r rules -> blocks_install r = true -> install_ok rules = false.
+  Proof.
+    intros rules r Hin Hblock. unfold install_ok.
+    destruct (forallb (fun r => negb (blocks_install r)) rules) eqn:E; [| reflexivity].
+    rewrite forallb_forall in E. specialize (E r Hin).
+    rewrite Hblock in E. simpl in E. discriminate E.
+  Qed.
+
+  (* CHARACTERIZATION: install succeeds exactly when every rule is non-blocking. *)
+  Theorem install_ok_iff : forall rules,
+    install_ok rules = true <-> (forall r, In r rules -> blocks_install r = false).
+  Proof.
+    intros rules. unfold install_ok. rewrite forallb_forall.
+    split; intros H r Hin; specialize (H r Hin).
+    - rewrite negb_true_iff in H. exact H.
+    - rewrite negb_true_iff. exact H.
+  Qed.
+
+End RhoNetInstallBoundary.
+
+Print Assumptions install_ok_drops_nothing.
+Print Assumptions blocking_rule_fails_install_closed.
+Print Assumptions install_ok_iff.

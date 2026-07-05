@@ -426,7 +426,13 @@ impl PlannedRhoBackend {
         call: &Par,
         out_channel: &str,
     ) -> Result<RhoObservationReport<RuntimeObservationValue>, String> {
-        let installed = self.plan().installed_rho_net_program_par();
+        // Fail-closed install boundary (Epic 4 #2011): refuse to run a σ-receiver
+        // program that dropped unlowered work, BEFORE any Rho reduction — so an
+        // unsupported lowering surfaces here, never as a silent runtime no-op.
+        let installed = self
+            .plan()
+            .installed_rho_net_program_par()
+            .map_err(|err| err.to_string())?;
         let values =
             run_installed_program_with_call_and_read_runtime_values(&installed, call, out_channel)
                 .await?;

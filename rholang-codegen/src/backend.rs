@@ -16,7 +16,7 @@ use crate::flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates
 use crate::guard_quality::{derive_guard_qualities, RhoGuardDispositionQuality};
 use crate::lower::{lower_language_def, RhoLowering};
 use crate::rho_net::{RhoNetProgram, RhoNetRuleKind, RhoNetValidationError};
-use crate::rho_net_lower::RhoNetLowered;
+use crate::rho_net_lower::{RhoNetInstallError, RhoNetLowered};
 use crate::validate::{RhoValidationError, ValidatedRhoProgram};
 
 /// Runtime disposition kind for a rule not lowered by the scalar Rho AST
@@ -1061,8 +1061,11 @@ impl RhoDefaultBackendPlan {
     }
 
     /// The installable Rho program: every materialized RhoNet contract `Par`
-    /// (`NativeFold` + `BaseRewrite`) parallel-composed into one process.
-    pub fn installed_rho_net_program_par(&self) -> Par {
+    /// (`NativeFold` + `BaseRewrite`) parallel-composed into one process —
+    /// FAIL-CLOSED (Epic 4 #2011). Returns [`RhoNetInstallError`] rather than a
+    /// partial program when any rule is unlowered or diagnostic-flagged, so an
+    /// incomplete σ-receiver program is caught at install time, not at runtime.
+    pub fn installed_rho_net_program_par(&self) -> Result<Par, RhoNetInstallError> {
         self.rho_net_lowered.installed_program_par()
     }
 
