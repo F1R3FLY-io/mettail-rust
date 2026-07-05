@@ -345,6 +345,37 @@ pub struct RuntimeDovetailRuleFiring {
     pub count: usize,
 }
 
+/// A σ sub-term surfaced in a runtime rewrite justification: a constructor label
+/// applied to child sub-terms, in constructor-argument order.
+///
+/// This is the runtime-neutral image of a Dovetail `JustifiedSubterm` (op label
+/// stringified). It is structurally a [`GroundTerm`]-shaped tree, so a runtime
+/// bridge can rebuild it into a reflectable ground term without any Dovetail or
+/// Rho dependency. `constructor` carries whatever op label the e-graph held (for
+/// the generated report path a fully-qualified `"Lang::Cat::Ctor"`); a consumer
+/// that reflects σ maps it to the bare constructor it needs.
+///
+/// [`GroundTerm`]: the Rho-codegen ground-term reflector input; this type mirrors
+/// its `{ constructor, children }` shape without taking that dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeReflectedSubterm {
+    pub constructor: String,
+    pub children: Vec<RuntimeReflectedSubterm>,
+}
+
+/// One rewrite firing's justification projected into the runtime envelope: the
+/// rule label plus the substitution σ that fired it, each σ variable mapped to
+/// its funded-best extracted sub-term (ordered by variable name).
+///
+/// Empty [`rewrite_justifications`](RuntimeDovetailRunReport::rewrite_justifications)
+/// in production `exec` reports (additive, byte-identical). A Rho runtime bridge
+/// reads `sigma` to reflect the matched sub-terms into a σ-injection call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeRewriteJustification {
+    pub rule_label: String,
+    pub sigma: Vec<(String, RuntimeReflectedSubterm)>,
+}
+
 /// Structural validation failure for a runtime-projected Dovetail report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -470,6 +501,13 @@ pub struct RuntimeDovetailRunReport {
     pub terms: Vec<RuntimeDovetailTermRecord>,
     pub derivation_edges: Vec<RuntimeDovetailDerivationEdge>,
     pub rule_firings: Vec<RuntimeDovetailRuleFiring>,
+    /// Per-firing σ justifications: each fired rewrite's label plus the matched
+    /// sub-terms it fired under. Empty in production `exec` reports and every
+    /// existing producer (additive, byte-identical — mirrors the
+    /// [`source_display`](RuntimeDovetailTermRecord::source_display) None-default
+    /// precedent). Populated only when a producer resolves σ provenance for a
+    /// runtime bridge (Epic-4 Rho σ-injection).
+    pub rewrite_justifications: Vec<RuntimeRewriteJustification>,
     pub completeness: RuntimeDovetailCompleteness,
     /// What the [`derivation_edges`](Self::derivation_edges) relation MEANS, so a consumer can
     /// project the right navigable graph. Production `exec` reports and the legacy step-display
@@ -2547,6 +2585,7 @@ mod tests {
                 label: Some("sample-rule".to_string()),
                 count: 2,
             }],
+            rewrite_justifications: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }

@@ -160,6 +160,7 @@ mod tests {
                 }],
                 derivation_edges: Vec::new(),
                 rule_firings: Vec::new(),
+                rewrite_justifications: Vec::new(),
                 completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
                 graph_kind: mettail_runtime::RuntimeDovetailGraphKind::Derivation,
             })

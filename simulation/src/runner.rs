@@ -1526,6 +1526,7 @@ mod tests {
             }],
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
+            rewrite_justifications: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }

@@ -269,6 +269,27 @@ pub struct RuleFiring {
     pub count: usize,
 }
 
+/// Per-firing σ justification: the labeled rewrite rule that fired, the redex
+/// root e-class it rewrote, and the substitution σ (pattern-variable → matched
+/// e-class) under which it fired.
+///
+/// Where [`RuleFiring`] AGGREGATES a rule's firings to a merge count, this
+/// preserves each INDIVIDUAL firing's σ so a downstream runtime bridge can
+/// resolve the matched sub-terms (e.g. reflect them to a Rho value). This is
+/// captured additively during saturation; the [`RuleFiring`] count aggregation
+/// is unchanged. σ carries e-class ids only; resolving each to its funded-best
+/// sub-term is the report layer's job (see
+/// `crate::report::resolve_rewrite_justifications`), where the e-graph is live.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewriteJustification {
+    /// Human-readable rule label. `None` preserves anonymous rule identity.
+    pub rule_label: Option<String>,
+    /// The redex root e-class that was rewritten (canonical after the merge).
+    pub root: EClassId,
+    /// The substitution σ that fired the rule: pattern-variable → matched e-class.
+    pub subst: Subst,
+}
+
 /// Outcome of equality saturation.
 #[must_use = "saturation can stop from node or iteration limits; inspect `outcome` before extracting as if complete"]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,11 +297,21 @@ pub struct SatReport {
     pub outcome: SaturationOutcome,
     pub stats: SatStats,
     pub rule_firings: Vec<RuleFiring>,
+    /// Per-firing σ justifications (rule label + redex root + substitution),
+    /// captured additively alongside [`rule_firings`](Self::rule_firings). Empty
+    /// unless a rewrite fired; the `rule_firings` count aggregation is unchanged.
+    /// One entry per merge-causing match, in firing order.
+    pub rewrite_justifications: Vec<RewriteJustification>,
 }
 
 impl SatReport {
-    fn new(outcome: SaturationOutcome, stats: SatStats, rule_firings: Vec<RuleFiring>) -> Self {
-        SatReport { outcome, stats, rule_firings }
+    fn new(
+        outcome: SaturationOutcome,
+        stats: SatStats,
+        rule_firings: Vec<RuleFiring>,
+        rewrite_justifications: Vec<RewriteJustification>,
+    ) -> Self {
+        SatReport { outcome, stats, rule_firings, rewrite_justifications }
     }
 }
 
@@ -737,6 +768,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         &mut self,
         rule: &RewriteRule<L>,
         matches: Vec<(EClassId, Subst)>,
+        justifications: &mut Vec<RewriteJustification>,
     ) -> RuleApplication {
         let before_nodes = self.node_count();
         let mut rule_merges = 0usize;
@@ -751,6 +783,14 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                 if self.find(root) != self.find(rhs_id) {
                     self.merge(root, rhs_id);
                     rule_merges += 1;
+                    // Capture this firing's σ additively (the count aggregation
+                    // in `record_rule_firing` is unchanged). `subst` is no longer
+                    // borrowed after the RHS instantiation above, so it moves in.
+                    justifications.push(RewriteJustification {
+                        rule_label: rule.label.clone(),
+                        root: self.find(root),
+                        subst,
+                    });
                 }
             } else if self.node_limit_reached() {
                 budget_hit = true;
@@ -772,6 +812,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         rule: &NativeRule<L>,
         matches: Vec<(EClassId, Subst)>,
         dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+        justifications: &mut Vec<RewriteJustification>,
     ) -> RuleApplication {
         let before_nodes = self.node_count();
         let mut rule_merges = 0usize;
@@ -782,6 +823,14 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                     if self.find(root) != self.find(result_id) {
                         self.merge(root, result_id);
                         rule_merges += 1;
+                        // Capture this native firing's σ additively; `subst` is
+                        // no longer borrowed after `dispatch` returned, so it
+                        // moves in.
+                        justifications.push(RewriteJustification {
+                            rule_label: rule.label.clone(),
+                            root: self.find(root),
+                            subst,
+                        });
                     }
                 },
                 None if self.node_limit_reached() => {
@@ -909,6 +958,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     ) -> SatReport {
         let mut stats = SatStats::default();
         let mut rule_firings = Vec::new();
+        let mut rewrite_justifications = Vec::new();
         let rules = compiled.rewrite_rules();
         let native_rules = compiled.native_rules();
         let structural_segments = &compiled.structural_segments;
@@ -941,11 +991,16 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                                     SaturationOutcome::NodeLimit,
                                     stats,
                                     rule_firings,
+                                    rewrite_justifications,
                                 );
                             }
                             search.matches
                         };
-                        let applied = self.apply_structural_matches(&rules[current], matches);
+                        let applied = self.apply_structural_matches(
+                            &rules[current],
+                            matches,
+                            &mut rewrite_justifications,
+                        );
                         if applied.merges > 0 {
                             self.rebuild();
                         }
@@ -961,6 +1016,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                                 SaturationOutcome::NodeLimit,
                                 stats,
                                 rule_firings,
+                                rewrite_justifications,
                             );
                         }
                         if applied.graph_changed && batch_valid {
@@ -975,10 +1031,19 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                     let budget_hit = search.budget_hit;
                     stats.record_rule_search(&search);
                     if budget_hit {
-                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                        return SatReport::new(
+                            SaturationOutcome::NodeLimit,
+                            stats,
+                            rule_firings,
+                            rewrite_justifications,
+                        );
                     }
                     let matches = search.matches;
-                    let applied = self.apply_structural_matches(&rules[rule_idx], matches);
+                    let applied = self.apply_structural_matches(
+                        &rules[rule_idx],
+                        matches,
+                        &mut rewrite_justifications,
+                    );
                     if applied.merges > 0 {
                         self.rebuild();
                     }
@@ -986,7 +1051,12 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                     stats.total_merges += applied.merges;
                     record_rule_firing(&mut rule_firings, &rules[rule_idx].label, applied.merges);
                     if applied.budget_hit {
-                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                        return SatReport::new(
+                            SaturationOutcome::NodeLimit,
+                            stats,
+                            rule_firings,
+                            rewrite_justifications,
+                        );
                     }
                     rule_idx += 1;
                 }
@@ -1016,12 +1086,17 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                                     SaturationOutcome::NodeLimit,
                                     stats,
                                     rule_firings,
+                                    rewrite_justifications,
                                 );
                             }
                             search.matches
                         };
-                        let applied =
-                            self.apply_native_matches(&native_rules[current], matches, dispatch);
+                        let applied = self.apply_native_matches(
+                            &native_rules[current],
+                            matches,
+                            dispatch,
+                            &mut rewrite_justifications,
+                        );
                         if applied.merges > 0 {
                             self.rebuild();
                         }
@@ -1037,6 +1112,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                                 SaturationOutcome::NodeLimit,
                                 stats,
                                 rule_firings,
+                                rewrite_justifications,
                             );
                         }
                         if applied.graph_changed && batch_valid {
@@ -1051,11 +1127,20 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                     let budget_hit = search.budget_hit;
                     stats.record_rule_search(&search);
                     if budget_hit {
-                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                        return SatReport::new(
+                            SaturationOutcome::NodeLimit,
+                            stats,
+                            rule_firings,
+                            rewrite_justifications,
+                        );
                     }
                     let matches = search.matches;
-                    let applied =
-                        self.apply_native_matches(&native_rules[rule_idx], matches, dispatch);
+                    let applied = self.apply_native_matches(
+                        &native_rules[rule_idx],
+                        matches,
+                        dispatch,
+                        &mut rewrite_justifications,
+                    );
                     if applied.merges > 0 {
                         self.rebuild();
                     }
@@ -1067,16 +1152,31 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
                         applied.merges,
                     );
                     if applied.budget_hit {
-                        return SatReport::new(SaturationOutcome::NodeLimit, stats, rule_firings);
+                        return SatReport::new(
+                            SaturationOutcome::NodeLimit,
+                            stats,
+                            rule_firings,
+                            rewrite_justifications,
+                        );
                     }
                     rule_idx += 1;
                 }
             }
             if iter_merges == 0 {
-                return SatReport::new(SaturationOutcome::Converged, stats, rule_firings);
+                return SatReport::new(
+                    SaturationOutcome::Converged,
+                    stats,
+                    rule_firings,
+                    rewrite_justifications,
+                );
             }
         }
-        SatReport::new(SaturationOutcome::IterationLimit, stats, rule_firings)
+        SatReport::new(
+            SaturationOutcome::IterationLimit,
+            stats,
+            rule_firings,
+            rewrite_justifications,
+        )
     }
 }
 

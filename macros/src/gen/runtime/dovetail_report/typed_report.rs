@@ -1385,6 +1385,7 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 terms: __terms,
                 derivation_edges: __derivation_edges,
                 rule_firings: Vec::new(),
+                rewrite_justifications: Vec::new(),
                 completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
                 graph_kind: mettail_runtime::RuntimeDovetailGraphKind::Rewrite,
             };

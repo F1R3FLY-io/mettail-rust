@@ -141,6 +141,7 @@ fn single_root_report(op_display: &str) -> RuntimeDovetailRunReport {
         }],
         derivation_edges: Vec::new(),
         rule_firings: Vec::new(),
+        rewrite_justifications: Vec::new(),
         completeness: RuntimeDovetailCompleteness::Complete,
         graph_kind: RuntimeDovetailGraphKind::Derivation,
     }

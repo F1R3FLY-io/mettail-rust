@@ -420,6 +420,7 @@ mod tests {
                 child_index: 0,
             }],
             rule_firings: Vec::new(),
+            rewrite_justifications: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }

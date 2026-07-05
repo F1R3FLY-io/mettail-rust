@@ -691,6 +691,7 @@ mod tests {
                 }],
                 derivation_edges: Vec::new(),
                 rule_firings: Vec::new(),
+                rewrite_justifications: Vec::new(),
                 completeness: self.completeness,
                 graph_kind: mettail_runtime::RuntimeDovetailGraphKind::Derivation,
             }

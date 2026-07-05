@@ -13,12 +13,12 @@ use std::collections::HashSet;
 use std::fmt;
 
 use dovetail::extract::ExtractionCompleteness;
-use dovetail::report::DovetailRunReport;
+use dovetail::report::{DovetailRunReport, JustifiedSubterm, ResolvedRewriteJustification};
 use mettail_runtime::{
     AscentResults, Language, RuntimeBackend, RuntimeBackendCapability, RuntimeBackendReport,
     RuntimeDovetailCompleteness, RuntimeDovetailDerivationEdge, RuntimeDovetailGraphKind,
     RuntimeDovetailReportError, RuntimeDovetailRuleFiring, RuntimeDovetailRunReport,
-    RuntimeDovetailTermRecord, SeedFacts,
+    RuntimeDovetailTermRecord, RuntimeReflectedSubterm, RuntimeRewriteJustification, SeedFacts,
     Term, TermType, VarTypeInfo, WeightedRewriteSeed, WeightedSeedId,
 };
 
@@ -74,6 +74,14 @@ where
                 count: firing.count,
             })
             .collect(),
+        // Additive σ provenance: empty for every existing producer (the report's
+        // `rewrite_justifications` default empty), so production `exec` reports
+        // stay byte-identical. Non-empty only when a producer resolved σ.
+        rewrite_justifications: report
+            .rewrite_justifications
+            .iter()
+            .map(project_rewrite_justification)
+            .collect(),
         completeness: match report.completeness {
             ExtractionCompleteness::Complete => RuntimeDovetailCompleteness::Complete,
             ExtractionCompleteness::BoundedByCycleCut => {
@@ -84,6 +92,36 @@ where
         // rewrite-graph producer builds its `Rewrite` report separately (in generated code), not
         // through this projection.
         graph_kind: RuntimeDovetailGraphKind::Derivation,
+    }
+}
+
+/// Project one resolved σ justification into the runtime envelope. An anonymous
+/// rule (`None` label) projects to the empty label string.
+fn project_rewrite_justification<L>(
+    justification: &ResolvedRewriteJustification<L>,
+) -> RuntimeRewriteJustification
+where
+    L: fmt::Display,
+{
+    RuntimeRewriteJustification {
+        rule_label: justification.rule_label.clone().unwrap_or_default(),
+        sigma: justification
+            .sigma
+            .iter()
+            .map(|(var, subterm)| (var.clone(), project_reflected_subterm(subterm)))
+            .collect(),
+    }
+}
+
+/// Project one extracted σ sub-term tree into the runtime-neutral structural
+/// term (`Display` renders the op label; children recurse in order).
+fn project_reflected_subterm<L>(subterm: &JustifiedSubterm<L>) -> RuntimeReflectedSubterm
+where
+    L: fmt::Display,
+{
+    RuntimeReflectedSubterm {
+        constructor: subterm.op.to_string(),
+        children: subterm.children.iter().map(project_reflected_subterm).collect(),
     }
 }
 
@@ -224,6 +262,7 @@ where
         terms,
         derivation_edges: Vec::new(),
         rule_firings: Vec::new(),
+        rewrite_justifications: Vec::new(),
         completeness: RuntimeDovetailCompleteness::Complete,
         graph_kind: RuntimeDovetailGraphKind::Derivation,
     };
@@ -808,6 +847,7 @@ mod tests {
             }],
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
+            rewrite_justifications: Vec::new(),
             completeness: RuntimeDovetailCompleteness::BoundedByCycleCut,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }
@@ -893,6 +933,57 @@ mod tests {
         assert!(projected.terms[0].is_root);
         assert_eq!(projected.derivation_edges.len(), 2);
         assert!(projected.term_by_key(&projected.roots[0]).is_some());
+        // Additivity guard: a no-rewrite report projects to EMPTY σ justifications,
+        // so existing scalar/rhocalc reports are byte-identical under the field.
+        assert!(projected.rewrite_justifications.is_empty());
+    }
+
+    #[test]
+    fn project_swap_step_surfaces_sigma_justification() {
+        use dovetail::report::{
+            report_from_extraction_with_rule_firings, resolve_rewrite_justifications,
+        };
+        use dovetail::rules::{Pattern, RewriteRule};
+
+        // Saturate the Swap→Pair demo redex on the EGraph<String> path (bare op
+        // labels), exactly the SWAP_DEMO_FRAGMENT shape:
+        // `SwapStep . |- (Swap x y) ~> (Pair y x)` over `Swap(A, B)`.
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("A".to_string()));
+        let b = eg.add(ENode::leaf("B".to_string()));
+        let swap = eg.add(ENode::new("Swap".to_string(), vec![a, b]));
+        let rule = RewriteRule {
+            lhs: Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            rhs: Pattern::app("Pair".to_string(), vec![Pattern::var("y"), Pattern::var("x")]),
+            label: Some("SwapStep".to_string()),
+        };
+        let sat = eg.saturate(&[rule], 64);
+
+        // Resolve σ against the live e-graph, thread it through the report, project.
+        let resolved =
+            resolve_rewrite_justifications(&eg, &sat.rewrite_justifications, |_| TropicalWeight(0.0));
+        let mut extractor = Extractor::new(&eg, |_| TropicalWeight(0.0));
+        let extracted = extractor.derivations(eg.find(swap)).collect_checked();
+        let mut report = report_from_extraction_with_rule_firings(extracted, sat.rule_firings);
+        report.rewrite_justifications = resolved;
+
+        let projected = project_dovetail_report(&report);
+        assert_eq!(projected.rewrite_justifications.len(), 1);
+        let justification = &projected.rewrite_justifications[0];
+        assert_eq!(justification.rule_label, "SwapStep");
+        assert_eq!(
+            justification.sigma,
+            vec![
+                (
+                    "x".to_string(),
+                    RuntimeReflectedSubterm { constructor: "A".to_string(), children: Vec::new() }
+                ),
+                (
+                    "y".to_string(),
+                    RuntimeReflectedSubterm { constructor: "B".to_string(), children: Vec::new() }
+                ),
+            ]
+        );
     }
 
     #[test]

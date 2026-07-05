@@ -10,10 +10,10 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::egraph::EClassId;
-use crate::extract::{Derivation, Extraction, ExtractionCompleteness};
-use crate::key::ContentKey;
-use crate::rules::RuleFiring;
+use crate::egraph::{EClassId, EGraph, ENode};
+use crate::extract::{Derivation, Extraction, ExtractionCompleteness, Extractor, MonotoneBestOrder};
+use crate::key::{ContentKey, SemanticHash};
+use crate::rules::{RewriteJustification, RuleFiring};
 
 /// One unique derivation node in a Dovetail report.
 ///
@@ -43,6 +43,32 @@ pub struct DovetailDerivationEdge {
     pub child_index: usize,
 }
 
+/// A σ sub-term extracted to funded-best structural form: the operator label
+/// (`L` — the same op label the e-graph carries, e.g. a `"Lang::Cat::Ctor"`
+/// String) and the extracted child sub-terms in child order. This is the
+/// substrate-neutral image of one [`Derivation`] node with weights and keys
+/// dropped, retaining only what a downstream reflector needs to rebuild the term.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JustifiedSubterm<L> {
+    pub op: L,
+    pub children: Vec<JustifiedSubterm<L>>,
+}
+
+/// A rewrite firing's justification with each σ variable resolved to its
+/// funded-best extracted sub-term.
+///
+/// Where [`crate::rules::RewriteJustification`] carries σ as bare e-class ids
+/// (cheap to capture during saturation), this carries the RESOLVED sub-terms —
+/// produced by [`resolve_rewrite_justifications`] while the e-graph is still
+/// live. `sigma` is ordered deterministically by variable name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedRewriteJustification<L> {
+    /// Human-readable rule label (`None` for an anonymous rule).
+    pub rule_label: Option<String>,
+    /// σ resolved to funded-best sub-terms, ordered by variable name.
+    pub sigma: Vec<(String, JustifiedSubterm<L>)>,
+}
+
 /// Checked, runtime-facing artifact for an extraction run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DovetailRunReport<L, W> {
@@ -57,6 +83,11 @@ pub struct DovetailRunReport<L, W> {
     /// Aggregated labels for Dovetail rules that produced at least one merge
     /// before extraction.
     pub rule_firings: Vec<RuleFiring>,
+    /// Per-firing σ justifications with each σ variable resolved to its
+    /// funded-best sub-term. Empty unless populated by
+    /// [`resolve_rewrite_justifications`] (additive; existing producers leave it
+    /// empty and stay byte-identical downstream).
+    pub rewrite_justifications: Vec<ResolvedRewriteJustification<L>>,
     /// Whether the extraction is exhaustive or bounded by a detected cycle.
     pub completeness: ExtractionCompleteness,
 }
@@ -117,6 +148,9 @@ where
         terms: Vec::new(),
         derivation_edges: Vec::new(),
         rule_firings,
+        // Additive, empty by default: a producer that wants σ provenance sets
+        // this via `resolve_rewrite_justifications` where the e-graph is live.
+        rewrite_justifications: Vec::new(),
         completeness: extraction.completeness,
     };
     let mut seen: HashMap<ContentKey, usize> = HashMap::new();
@@ -174,6 +208,70 @@ where
     }
 
     ordinal
+}
+
+/// A funded-best [`Derivation`] tree projected to a [`JustifiedSubterm`]: keep
+/// the op label and child structure, drop weights and keys.
+fn derivation_to_subterm<L, W>(derivation: &Derivation<L, W>) -> JustifiedSubterm<L>
+where
+    L: Clone,
+{
+    JustifiedSubterm {
+        op: derivation.op.clone(),
+        children: derivation
+            .children
+            .iter()
+            .map(|child| derivation_to_subterm(child))
+            .collect(),
+    }
+}
+
+/// Resolve the substrate-level [`RewriteJustification`]s captured during
+/// saturation into [`ResolvedRewriteJustification`]s, extracting each σ e-class
+/// to its funded-best sub-term.
+///
+/// This MUST run while `eg` is still live (extraction walks the e-graph). It
+/// reuses the exact same [`Extractor::funded_best`] machinery the runtime report
+/// uses for root normal forms, so no new extraction path is introduced. `weigh`
+/// is the same cost model the caller extracts roots under (e.g. the constant-zero
+/// weight the generated report producer uses); it only orders equal-cost
+/// alternatives, never prunes. Each firing's `sigma` is ordered deterministically
+/// by variable name. A σ variable whose class has no funded-best derivation
+/// (defensive; a matched class always has at least one node) is omitted rather
+/// than fabricated.
+pub fn resolve_rewrite_justifications<L, W, F>(
+    eg: &EGraph<L>,
+    justifications: &[RewriteJustification],
+    weigh: F,
+) -> Vec<ResolvedRewriteJustification<L>>
+where
+    L: Clone + Eq + std::hash::Hash + SemanticHash,
+    W: MonotoneBestOrder + crate::wta::CommutativeStarSemiring,
+    F: Fn(&ENode<L>) -> W,
+{
+    let mut extractor = Extractor::new(eg, weigh);
+    let mut resolved = Vec::with_capacity(justifications.len());
+    for justification in justifications {
+        // Deterministic σ order (the source `Subst` is a HashMap): sort by name.
+        let mut bindings: Vec<(&String, EClassId)> = justification
+            .subst
+            .iter()
+            .map(|(name, &class)| (name, class))
+            .collect();
+        bindings.sort_by(|a, b| a.0.cmp(b.0));
+
+        let mut sigma = Vec::with_capacity(bindings.len());
+        for (name, class) in bindings {
+            if let Some(derivation) = extractor.funded_best(eg.find(class)).value {
+                sigma.push((name.clone(), derivation_to_subterm(&derivation)));
+            }
+        }
+        resolved.push(ResolvedRewriteJustification {
+            rule_label: justification.rule_label.clone(),
+            sigma,
+        });
+    }
+    resolved
 }
 
 #[cfg(test)]
@@ -290,6 +388,74 @@ mod tests {
         let report = report_from_extraction_with_rule_firings(extracted, vec![firing.clone()]);
 
         assert_eq!(report.rule_firings, vec![firing]);
+    }
+
+    #[test]
+    fn swap_step_captures_and_resolves_sigma_justification() {
+        use crate::rules::{Pattern, RewriteRule};
+
+        // The Swap→Pair demo: `SwapStep . |- (Swap x y) ~> (Pair y x)` over the
+        // ground redex `Swap(A, B)`. This is the exact shape of
+        // `SWAP_DEMO_FRAGMENT` in the Epic-4 runtime demo, lowered by hand as
+        // e-nodes (bare op labels A/B/Swap/Pair).
+        let mut eg = EGraph::<String>::new();
+        let a = eg.add(ENode::leaf("A".into()));
+        let b = eg.add(ENode::leaf("B".into()));
+        let swap = eg.add(ENode::new("Swap".into(), vec![a, b]));
+
+        let rule = RewriteRule {
+            lhs: Pattern::app("Swap".into(), vec![Pattern::var("x"), Pattern::var("y")]),
+            rhs: Pattern::app("Pair".into(), vec![Pattern::var("y"), Pattern::var("x")]),
+            label: Some("SwapStep".into()),
+        };
+        let sat = eg.saturate(&[rule], 64);
+
+        // The firing is captured additively, one justification, with σ carrying
+        // the matched e-classes (x ↦ A, y ↦ B) — NOT collapsed to a count.
+        assert_eq!(sat.rule_firings, vec![RuleFiring { label: Some("SwapStep".into()), count: 1 }]);
+        assert_eq!(sat.rewrite_justifications.len(), 1);
+        let justification = &sat.rewrite_justifications[0];
+        assert_eq!(justification.rule_label, Some("SwapStep".to_string()));
+        assert_eq!(eg.find(justification.root), eg.find(swap));
+        assert_eq!(
+            justification.subst.get("x").map(|&c| eg.find(c)),
+            Some(eg.find(a))
+        );
+        assert_eq!(
+            justification.subst.get("y").map(|&c| eg.find(c)),
+            Some(eg.find(b))
+        );
+
+        // Resolving σ against the live e-graph extracts each variable's
+        // funded-best sub-term (the nullary A / B constructors), ordered by name.
+        let resolved =
+            resolve_rewrite_justifications(&eg, &sat.rewrite_justifications, |_| TropicalWeight(0.0));
+        assert_eq!(resolved.len(), 1);
+        let resolved = &resolved[0];
+        assert_eq!(resolved.rule_label, Some("SwapStep".to_string()));
+        assert_eq!(
+            resolved.sigma,
+            vec![
+                ("x".to_string(), JustifiedSubterm { op: "A".to_string(), children: Vec::new() }),
+                ("y".to_string(), JustifiedSubterm { op: "B".to_string(), children: Vec::new() }),
+            ]
+        );
+    }
+
+    #[test]
+    fn report_without_firings_has_empty_rewrite_justifications() {
+        // Additivity guard at the dovetail level: an extraction with no rewrites
+        // carries no σ justifications, so the new field defaults empty.
+        let mut eg = EGraph::<String>::new();
+        let x = eg.add(ENode::leaf("x".into()));
+        let y = eg.add(ENode::leaf("y".into()));
+        let pair = eg.add(ENode::new("pair".into(), vec![x, y]));
+        let sat = eg.saturate(&[], 16);
+        assert!(sat.rewrite_justifications.is_empty());
+
+        let mut extractor = Extractor::new(&eg, weigh);
+        let report = report_from_extraction(extractor.derivations(pair).collect_checked());
+        assert!(report.rewrite_justifications.is_empty());
     }
 
     #[test]
