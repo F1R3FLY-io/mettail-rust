@@ -609,6 +609,41 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             > {
                 #body
             }
+
+            /// The RhoNet planning artifact for this generated language — its
+            /// planned channels, rule identities, RHS-template fingerprints, and
+            /// semantic-predicate obligations
+            /// ([`RhoNetProgram`](mettail_rholang_codegen::RhoNetProgram)).
+            ///
+            /// Derived from the generated `definition_source` exactly as the
+            /// production installer does (`reconstruct_language_def` →
+            /// `lower_language_def` → `RhoNetProgram::from_language_def`), so a
+            /// caller reads a generated language's RhoNet metadata directly
+            /// without hand-reconstructing its `LanguageDef` (item #2030).
+            pub fn rho_net_program() -> ::core::result::Result<
+                ::mettail_rholang_codegen::RhoNetProgram,
+                ::std::string::String,
+            > {
+                let __source = <#language_struct as mettail_runtime::Language>::metadata(
+                    &#language_struct,
+                )
+                .definition_source()
+                .ok_or_else(|| ::std::format!(
+                    "language {} has no definition source for its RhoNet program",
+                    #language_lit,
+                ))?;
+                let __def = ::mettail_rholang_codegen::reconstruct_language_def(__source)
+                    .map_err(|__err| ::std::format!(
+                        "language {} definition source did not reconstruct: {}",
+                        #language_lit, __err,
+                    ))?;
+                let __lowering = ::mettail_rholang_codegen::lower_language_def(&__def);
+                ::core::result::Result::Ok(
+                    ::mettail_rholang_codegen::RhoNetProgram::from_language_def(
+                        &__def, &__lowering,
+                    ),
+                )
+            }
         }
     }
 }
@@ -718,5 +753,86 @@ mod tests {
         assert!(tokens.contains("rho_net_invocation_from_dovetail_to"));
         assert!(tokens.contains("injection sites"));
         assert!(!tokens.contains("term_contract_call"));
+    }
+
+    /// The Swap→Pair fixture reused by the #2030/#2033 codegen-surface tests.
+    fn swap_net_fixture() -> LanguageDef {
+        parse(
+            r#"
+                name: SwapSurfaceGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                }
+                equations {}
+                rewrites { SwapStep . |- (Swap x y) ~> (Pair y x) ; }
+            "#,
+        )
+    }
+
+    #[test]
+    fn generated_rho_net_invocation_exposes_rho_net_program_accessor() {
+        // #2030: every generated language exposes its RhoNet planning artifact
+        // (planned channels, rule identities, RHS templates, semantic predicates)
+        // directly via `rho_net_program()`, derived from the definition source.
+        let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
+        assert!(tokens.contains("fn rho_net_program"));
+        assert!(tokens.contains("RhoNetProgram"));
+        assert!(tokens.contains("from_language_def"));
+        assert!(tokens.contains("reconstruct_language_def"));
+    }
+
+    #[test]
+    fn generated_rho_codegen_surface_is_deterministic() {
+        // #2033: regenerating the same language definition yields byte-identical
+        // generated code (reproducible builds; guards against map-iteration or
+        // other nondeterministic emission in the injection-site derivation).
+        let language = swap_net_fixture();
+        assert_eq!(
+            generate_rho_net_invocation(&language).to_string(),
+            generate_rho_net_invocation(&language).to_string(),
+            "generated Rho-net invocation surface must be deterministic"
+        );
+        assert_eq!(
+            generate_rho_scalar_invocation(&language).to_string(),
+            generate_rho_scalar_invocation(&language).to_string(),
+            "generated Rho scalar invocation surface must be deterministic"
+        );
+    }
+
+    /// Whether a token stream USES `name` as a path/ident anywhere (recursing into
+    /// groups). A doc comment that merely NAMES the crate in prose is a string
+    /// literal, not an `Ident`, so it is correctly ignored — only real code use is
+    /// flagged.
+    fn token_stream_uses_ident(tokens: &proc_macro2::TokenStream, name: &str) -> bool {
+        tokens.clone().into_iter().any(|tree| match tree {
+            proc_macro2::TokenTree::Ident(ident) => ident == name,
+            proc_macro2::TokenTree::Group(group) => token_stream_uses_ident(&group.stream(), name),
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn generated_rho_codegen_surface_takes_no_runtime_dependency() {
+        // #2031/#2033: generated language code USES the codegen crate
+        // (`mettail_rholang_codegen`) and the runtime-neutral `mettail_runtime`,
+        // but NEVER the Rho runtime crate — so a generated language crate takes no
+        // `mettail-rholang-runtime` dependency (Cargo enforces the boundary
+        // structurally; this guards the generated-token level). Checks Ident USE,
+        // not prose — the scalar helper's doc cross-reference to the runtime adapter
+        // that consumes its output is legitimate and must not trip the gate.
+        let language = swap_net_fixture();
+        for tokens in [
+            generate_rho_net_invocation(&language),
+            generate_rho_scalar_invocation(&language),
+        ] {
+            assert!(
+                !token_stream_uses_ident(&tokens, "mettail_rholang_runtime"),
+                "generated code must not USE the Rho runtime crate as a path"
+            );
+        }
     }
 }

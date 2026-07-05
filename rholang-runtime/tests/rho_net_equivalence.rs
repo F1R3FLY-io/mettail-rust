@@ -31,7 +31,7 @@ use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence,
+    RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract, PlannedRhoBackend, RhoMachineInvocation,
@@ -215,4 +215,24 @@ async fn injection_fails_closed_when_no_rewrite_fires() {
         error.contains("no rewrite justification to fire"),
         "the fail-closed error must name the missing justification, got: {error}"
     );
+}
+
+#[test]
+fn swap_demo_exposes_its_rho_net_program_directly() {
+    // Epic 6 #2030: a generated language exposes its RhoNet planning artifact —
+    // planned channels + rule identities — DIRECTLY via `rho_net_program()`,
+    // without the caller reconstructing the `LanguageDef` by hand.
+    let program =
+        SwapDemoLanguage::rho_net_program().expect("SwapDemo exposes its RhoNet program");
+    let swap_rule = program
+        .rules
+        .iter()
+        .find(|rule| rule.label.as_deref() == Some("SwapStep"))
+        .expect("the SwapStep base rewrite is a planned RhoNet rule");
+    assert_eq!(swap_rule.kind, RhoNetRuleKind::BaseRewrite);
+    assert!(
+        !swap_rule.input_channels.is_empty(),
+        "the planned σ-receiver rule carries a source channel"
+    );
+    assert!(!program.channels.is_empty(), "the program plans at least one channel");
 }
