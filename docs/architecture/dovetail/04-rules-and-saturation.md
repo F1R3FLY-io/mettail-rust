@@ -158,6 +158,11 @@ consumption; for direct Dovetail consumers it means no rewrite edge is added.
 
 ## Associative-Commutative Matching
 
+> The **positional set automaton** ([14 — Positional Set-Automaton Matching](14-positional-set-automaton-matching.md))
+> accelerates the *structural* fragment by compiling patterns once and dispatching
+> by root symbol+arity; AC patterns are excluded from it and keep the lazy,
+> budget-accounted semantics described below.
+
 ![Dovetail AC matching: Ambient's OpenRule over a parallel bag](figures/04-egraph-ac-openrule.svg)
 
 Graphviz source: [figures/04-egraph-ac-openrule.dot](figures/04-egraph-ac-openrule.dot).

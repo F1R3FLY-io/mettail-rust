@@ -40,6 +40,7 @@ For implementers:
 7. [Binder-Congruence Handler](11-binder-congruence-handler.md)
 8. [Native-Fold Reduction](12-native-fold-reduction.md)
 9. [E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md)
+10. [Positional Set-Automaton Matching](14-positional-set-automaton-matching.md)
 10. [Worked Example](09-worked-example.md)
 11. [Engineering Handoff](08-engineering-handoff.md)
 
@@ -94,6 +95,7 @@ the e-graph or extractor internals.
 | [11 - Binder-Congruence Handler](11-binder-congruence-handler.md) | How does Dovetail evaluate Ambient's binders and freshness equations capture-safely (float-then-AC-reduce), and why is that in-engine rather than host-routed? |
 | [12 - Native-Fold Reduction](12-native-fold-reduction.md) | How does Dovetail reduce a language's `fold` rules (native-computed RHS) in-engine via the typed-`L` op-enum + native-rewrite dispatcher, and how is that funded and proven? |
 | [13 - E-Graph Rewrites vs Datalog Rewrites](13-egraph-vs-datalog-rewrites.md) | How does Dovetail's e-graph equality-saturation model of rewriting differ from the retired Ascent engine's Datalog term-relation model, and what does each trade away? |
+| [14 - Positional Set-Automaton Matching](14-positional-set-automaton-matching.md) | How does the positional set automaton compile a rule set once, dispatch candidates by root symbol+arity, exclude AC patterns to the lazy path, and reuse across e-graphs — and what is proven about it? |
 | [References](references.md) | Which local source, test, proof, and design artifacts support the suite? |
 
 ## Architecture at a Glance
