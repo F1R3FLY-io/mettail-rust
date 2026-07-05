@@ -16,6 +16,7 @@
 
 # Source files (alphabetical order, all standalone)
 theories/MsoAutomataEquivalence.v
+theories/PositionalSetAutomatonSound.v
 theories/StochasticNormalization.v
 theories/PataEmptiness.v
 theories/RegisterEquivalence.v
