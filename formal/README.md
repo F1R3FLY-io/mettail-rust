@@ -32,8 +32,8 @@ zero-admission (enforced by `rocq-critical-zero-admission`; ~154 `.v` across the
 | TLA+ / Apalache | `formal/tla/{rho_machine,prattail_wpda,rho_settlement}` | 3 | Rho-machine COMM scheduling, WPDA control domain, per-purse settlement commutation |
 | mCRL2 + Maude | `formal/process/` (generated from `rho_comm_slice.json`) | — | Rho COMM schedule / guarded-join non-consumption |
 | Why3 + Creusot | `why3-dovetail-budget`, `creusot-dovetail-budget` | — | **Dovetail** budget obligations |
-| Sage | — | 0 | not present — planned RhoNet small-state exploration (#2049) |
-| Wolfram | — | 0 | not present — planned (#2049) |
+| Sage | tool: `/usr/bin/sage`; models in sibling `f1r3node-cost-accounted-rho-calc/formal/sage/` | tool + pattern ready | cost-accounting models (settlement / resource-exhaustion / budget-admission) establish the Sage pattern; RhoNet small-state exploration is the #2049 opportunity (no *RhoNet-specific* Sage model in this worktree yet) |
+| Wolfram | tool: `/usr/local/bin/{wolfram,math,MathKernel,WolframKernel}`; models in sibling `f1r3node-rust-dev/formal/wolfram/` | tool + pattern ready | fork-choice / finalized-floor models establish the Wolfram pattern; RhoNet small-state exploration is the #2049 opportunity (no *RhoNet-specific* Wolfram model in this worktree yet) |
 
 `make -C formal check` routes through the same capped target, so the default
 formal verification entry point is protected as well. `check-capped` uses
