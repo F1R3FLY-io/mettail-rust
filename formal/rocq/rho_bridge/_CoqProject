@@ -27,6 +27,7 @@ theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v
 theories/RhoCommScheduleFamily.v
 theories/LinearCommCorrespondence.v
+theories/EndToEndCommCorrespondence.v
 theories/RhoGroundingAndNames.v
 theories/RhoObservationFingerprint.v
 theories/AmbiguityWitnessEnumeration.v
