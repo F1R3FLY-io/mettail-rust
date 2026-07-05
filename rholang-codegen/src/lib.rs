@@ -54,6 +54,17 @@
 /// so codegen and runtime observation decode the same nominal bag ABI.
 pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 
+/// Stable Rho AST ABI prefix identifying a reflected constructor term.
+///
+/// A base rewrite's RHS constructor (and any ground σ argument) reflects to a
+/// tagged list `EList[GPrivate("mettail.term.{fingerprint}.{label}"), children…]`
+/// (see [`rho_net_lower::reflect_ground_term_par`] and the internal
+/// `reflect_term_par`). The unforgeable `GPrivate` head carries this prefix so a
+/// reflected term is collision-free with any user `GString` data and with the
+/// rhocalc bag ABI ([`RHOCALC_BAG_ABI_TAG`]). Both the codegen tag builder and
+/// the runtime decoder key on this single constant so the ABI cannot drift.
+pub const REFLECTED_TERM_ABI_PREFIX: &str = "mettail.term.";
+
 /// Reconstruct a generated language's exact macro-time augmented `LanguageDef`
 /// from its `LanguageMetadata::definition_source()`.
 ///
@@ -117,7 +128,8 @@ pub use rho_net::{
     RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
 pub use rho_net_lower::{
-    RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
+    reflect_ground_term_par, term_contract_call, GroundTerm, RhoNetLowered, RhoNetLoweredRule,
+    RhoNetLoweringError, UnsupportedFamily,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

@@ -55,6 +55,11 @@ source-oracle = []
 [dependencies]
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
 models = { workspace = true }
+# Decode a reflected-term ABI tag string out of a private name's protobuf `id`
+# (`decode_reflected_term`): `GPrivateBuilder::new_par_from_string` sets
+# `id == <String as prost::Message>::encode_to_vec()`, so `String::decode` is its
+# exact inverse. Same `prost` version (0.14) f1r3node-rust's `models` uses.
+prost = "0.14"
 rholang = { workspace = true }
 rho-pure-eval = { workspace = true }
 rspace_plus_plus = { workspace = true }
@@ -90,6 +95,11 @@ required-features = ["rhocalc-runtime"]
 [[test]]
 name = "rho_structured_ast_send"
 path = "tests/rho_structured_ast_send.rs"
+required-features = ["runtime-report"]
+
+[[test]]
+name = "rho_net_injection_demo"
+path = "tests/rho_net_injection_demo.rs"
 required-features = ["runtime-report"]
 
 [[test]]

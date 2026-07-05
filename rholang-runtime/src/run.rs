@@ -21,6 +21,8 @@ use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuati
 use models::rust::rholang::implicits::GPrivateBuilder;
 #[cfg(feature = "source-oracle")]
 use models::rust::utils::new_freevar_par;
+#[cfg(feature = "runtime-report")]
+use prost::Message;
 
 use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
@@ -184,6 +186,58 @@ fn decode_rhocalc_bag(
     Some(counts.into_iter().collect())
 }
 
+/// Recover the UTF-8 tag string carried by a private-name `Par`, when that name
+/// was built by `GPrivateBuilder::new_par_from_string(s)`.
+///
+/// That builder sets the unforgeable's `id` to `s.encode_to_vec()`, i.e.
+/// `<String as prost::Message>` — protobuf field 1, length-delimited. `String::
+/// decode` is that builder's exact inverse, so this needs no direct knowledge of
+/// the wire layout. Returns `None` for any `Par` that is not exactly one
+/// `GPrivate` unforgeable, or whose `id` is not a valid encoded string (e.g. a
+/// `GPrivate` created by `new_par` from a random UUID still decodes, but its tag
+/// simply will not carry the reflected-term prefix).
+#[cfg(feature = "runtime-report")]
+fn private_name_tag(par: &Par) -> Option<String> {
+    if !par_has_only_ground_value_fields(par) || !par.exprs.is_empty() {
+        return None;
+    }
+    let [unforgeable] = par.unforgeables.as_slice() else {
+        return None;
+    };
+    match unforgeable.unf_instance.as_ref()? {
+        UnfInstance::GPrivateBody(value) => String::decode(value.id.as_slice()).ok(),
+        _ => None,
+    }
+}
+
+/// Decode a reflected constructor term list into a structural
+/// [`RuntimeObservationValue::Term`], mirroring [`decode_rhocalc_bag`].
+///
+/// The reflected-term ABI (codegen `reflect_ground_term_par` / the RHS reflector)
+/// is `EList[GPrivate("mettail.term.{fingerprint}.{label}"), children…]`. This
+/// returns `None` unless the list's head is a private name whose tag carries the
+/// shared [`crate::REFLECTED_TERM_ABI_PREFIX`]. The fingerprint
+/// (`mettail-langdef-v1:<hex>`) contains no `.` and a constructor label is a
+/// dot-free identifier, so the final `.` of the remainder separates fingerprint
+/// from label. Each child is decoded through the same
+/// [`par_as_runtime_observation_value`] entry point, so a nested reflected term
+/// (a σ argument that is itself a constructor) decodes recursively.
+#[cfg(feature = "runtime-report")]
+fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservationValue> {
+    let (head, children) = list.ps.split_first()?;
+    let tag = private_name_tag(head)?;
+    let suffix = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX)?;
+    let (_fingerprint, label) = suffix.rsplit_once('.')?;
+    if label.is_empty() {
+        return None;
+    }
+    let children = children
+        .iter()
+        .map(par_as_runtime_observation_value)
+        .collect::<Option<Vec<_>>>()?;
+    Some(RuntimeObservationValue::Term { constructor: label.to_string(), children })
+}
+
 /// Pull one closed Rho ground value out of a `Par`.
 ///
 /// This deliberately rejects arbitrary process bodies. Runtime observations are
@@ -212,7 +266,13 @@ pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationV
             scale: value.scale,
         }),
         ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
-            if let Some(entries) = decode_rhocalc_bag(list) {
+            // Try the reflected-term ABI first (head = a `mettail.term.` private
+            // name), then the rhocalc bag ABI (head = the bag tag), else a plain
+            // list. The three head shapes are disjoint, so ordering only decides
+            // which decoder claims a match, never correctness.
+            if let Some(term) = decode_reflected_term(list) {
+                Some(term)
+            } else if let Some(entries) = decode_rhocalc_bag(list) {
                 Some(RuntimeObservationValue::Bag(entries))
             } else {
                 Some(RuntimeObservationValue::List(decode_runtime_values(&list.ps)?))
@@ -688,6 +748,30 @@ pub async fn run_validated_program_with_call_and_read_runtime_values(
     .await
 }
 
+/// Build an in-memory `RhoRuntime`, inject an installed Rho-net program composed
+/// with a dynamic σ-injection call, and return every closed Rho ground value left
+/// resting on the quoted channel `@"<out_channel>"`.
+///
+/// This is the runtime side of the Epic 4 injection bridge's CRITICAL composition
+/// step. A language's base-rewrite σ-receivers live in its **installed Rho-net
+/// program** (`RhoDefaultBackendPlan::installed_rho_net_program_par`), NOT in the
+/// scalar `validated_program`, so a σ injection only fires when it is composed
+/// against the installed program (`installed.append(call)` — mirroring
+/// `run_validated_program_with_call`'s `par.append(call)` and the reactive
+/// stepper's `contracts.append(call)`). Without this composition the injection
+/// would reach no contract and OUT would be empty — a silent false pass. It
+/// mirrors [`run_validated_program_with_call_and_read_runtime_values`] but takes
+/// the raw installed program `Par` rather than a `ValidatedRhoProgram`.
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_and_read_runtime_values(
+    installed_program: &Par,
+    call: &Par,
+    out_channel: &str,
+) -> Result<Vec<RuntimeObservationValue>, String> {
+    let composed = installed_program.append(call.clone());
+    run_par_and_read_ground(&composed, out_channel, par_as_runtime_observation_value).await
+}
+
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every ground boolean left resting on the quoted
 /// channel `@"<out_channel>"`.
@@ -856,4 +940,83 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
         );
     }
     Ok(result)
+}
+
+#[cfg(all(test, feature = "runtime-report"))]
+mod tests {
+    use super::*;
+    use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm};
+    use models::rust::utils::{new_elist_par, new_gint_par, new_gstring_par};
+
+    /// The R-1 ABI round-trip (no Rho machine): reflecting a ground constructor
+    /// term and decoding it back through the public observation entry point
+    /// reconstructs the exact structural `Term`. This is the decoder counterpart
+    /// of codegen's `reflect_ground_term_par_reflects_ground_pair_to_tagged_elist`.
+    #[test]
+    fn reflect_then_decode_round_trips_ground_pair() {
+        let fp = "mettail-langdef-v1:0011223344556677";
+        // Pair(B, A) over nullary A, B — the Swap→Pair demo's normal form.
+        let pair =
+            GroundTerm::new("Pair", vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")]);
+        let par = reflect_ground_term_par(&pair, fp);
+
+        let decoded = par_as_runtime_observation_value(&par)
+            .expect("a reflected ground term must decode to a structural Term");
+        assert_eq!(
+            decoded,
+            RuntimeObservationValue::Term {
+                constructor: "Pair".to_string(),
+                children: vec![
+                    RuntimeObservationValue::Term {
+                        constructor: "B".to_string(),
+                        children: Vec::new(),
+                    },
+                    RuntimeObservationValue::Term {
+                        constructor: "A".to_string(),
+                        children: Vec::new(),
+                    },
+                ],
+            }
+        );
+    }
+
+    /// A nullary reflected term (a lone head tag, no children) decodes to a
+    /// childless `Term`, and does NOT get misread as a 1-element list or a bag.
+    #[test]
+    fn reflect_then_decode_round_trips_nullary_constructor() {
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let par = reflect_ground_term_par(&GroundTerm::nullary("A"), fp);
+        assert_eq!(
+            par_as_runtime_observation_value(&par),
+            Some(RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            })
+        );
+    }
+
+    /// The reflected-term hook does not disturb the plain-list decode path: an
+    /// `EList` whose head is an ordinary ground value (not a `mettail.term.`
+    /// private name) still decodes as a `List`.
+    #[test]
+    fn plain_list_is_not_misread_as_a_reflected_term() {
+        let list = new_elist_par(
+            vec![
+                new_gint_par(1, Vec::new(), false),
+                new_gstring_par("two".to_string(), Vec::new(), false),
+            ],
+            Vec::new(),
+            false,
+            None,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(
+            par_as_runtime_observation_value(&list),
+            Some(RuntimeObservationValue::List(vec![
+                RuntimeObservationValue::Int(1),
+                RuntimeObservationValue::Text("two".to_string()),
+            ]))
+        );
+    }
 }

@@ -40,6 +40,7 @@ use crate::run::{
 };
 #[cfg(feature = "runtime-report")]
 use crate::run::{
+    run_installed_program_with_call_and_read_runtime_values,
     run_validated_program_and_read_runtime_value_and_string_channels,
     run_validated_program_and_read_runtime_values,
     run_validated_program_with_call_and_read_runtime_values,
@@ -404,6 +405,31 @@ impl PlannedRhoBackend {
         let values = self
             .run_with_call_and_read_runtime_values(call, out_channel)
             .await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+
+    /// Run this backend's **installed Rho-net program** — its base-rewrite
+    /// σ-receivers and native-fold contracts
+    /// ([`RhoDefaultBackendPlan::installed_rho_net_program_par`]) — composed with a
+    /// dynamic σ-injection `call`, and return a typed observation report for
+    /// closed Rho ground values resting on a quoted output channel.
+    ///
+    /// This is the Epic 4 injection-bridge execution surface. Unlike
+    /// [`run_with_call_and_observe_runtime_values`](Self::run_with_call_and_observe_runtime_values),
+    /// which composes the call against the scalar `program()` and therefore never
+    /// installs the σ-receivers, this installs the σ-receiver program so a
+    /// hand-built (or, in a later slice, Dovetail-report-derived) σ injection
+    /// actually fires its receiver and lands the reflected RHS on the out channel.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_rho_net_with_call_and_observe_runtime_values(
+        &self,
+        call: &Par,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<RuntimeObservationValue>, String> {
+        let installed = self.plan().installed_rho_net_program_par();
+        let values =
+            run_installed_program_with_call_and_read_runtime_values(&installed, call, out_channel)
+                .await?;
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
 }

@@ -67,7 +67,7 @@ pub use backend::{
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
 };
-pub use mettail_rholang_codegen::RHOCALC_BAG_ABI_TAG;
+pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
 #[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
     dovetail_rho_backed_rhocalc, lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term,

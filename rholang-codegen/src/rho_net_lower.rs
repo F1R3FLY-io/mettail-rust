@@ -494,7 +494,94 @@ pub(crate) fn lower_rhs(
 /// unforgeable (not a `GString`), it is collision-free with any user `GString`
 /// term data. Mirrors the rhocalc bag ABI tag ([`crate::RHOCALC_BAG_ABI_TAG`]).
 fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -> String {
-    format!("mettail.term.{language_fingerprint}.{constructor_label}")
+    format!(
+        "{}{language_fingerprint}.{constructor_label}",
+        crate::REFLECTED_TERM_ABI_PREFIX
+    )
+}
+
+/// A ground (variable-free) constructor term: a constructor label applied to
+/// ground children. This is the caller-facing input to
+/// [`reflect_ground_term_par`] — the closed value a runtime injection supplies as
+/// a σ argument. Because dovetail has already matched the LHS, every σ argument
+/// is a fully-instantiated ground term, so this representation carries no bound
+/// variables (unlike an RHS pattern, which does).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroundTerm {
+    /// The constructor label (a grammar term's label, e.g. `Pair`), reflected
+    /// verbatim into the unforgeable tag via [`reflect_tag`].
+    pub constructor: String,
+    /// The ground children, in constructor-argument order.
+    pub children: Vec<GroundTerm>,
+}
+
+impl GroundTerm {
+    /// A constructor applied to ground children.
+    pub fn new(constructor: impl Into<String>, children: Vec<GroundTerm>) -> Self {
+        Self { constructor: constructor.into(), children }
+    }
+
+    /// A nullary constructor (no children), e.g. the `A`/`B` operands of
+    /// `Swap(A, B)`.
+    pub fn nullary(constructor: impl Into<String>) -> Self {
+        Self::new(constructor, Vec::new())
+    }
+}
+
+/// Reflect a GROUND constructor term to a normalized `Par` value under the SAME
+/// constructor reflection ABI as the internal RHS reflector `reflect_term_par`:
+///
+/// ```text
+/// ⟦f(t₁,…,tₙ)⟧ = EList[ GPrivate(reflect_tag(f)), ⟦t₁⟧, …, ⟦tₙ⟧ ]
+/// ```
+///
+/// A ground term binds no σ-tuple variable, so it reflects to a leaf-free nest of
+/// tagged `EList`s with no `BoundVar` (the one difference from the RHS reflector,
+/// whose variable occurrences become σ-tuple De Bruijn indices). The `GPrivate`
+/// head tag is built exactly like the RHS reflector via
+/// [`GPrivateBuilder::new_par_from_string`] over the SHARED [`reflect_tag`], and
+/// each `EList`'s `locally_free` is the union of the tag's and every child's —
+/// so a ground σ argument is byte-for-byte the value a lowered RHS constructor of
+/// the same shape would emit, and the runtime `decode_reflected_term` counterpart
+/// decodes both identically.
+pub fn reflect_ground_term_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    let tag =
+        GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
+    let mut elements = Vec::with_capacity(term.children.len() + 1);
+    let mut locally_free = tag.locally_free.clone();
+    elements.push(tag);
+    for child in &term.children {
+        let child = reflect_ground_term_par(child, language_fingerprint);
+        locally_free = union(locally_free, child.locally_free.clone());
+        elements.push(child);
+    }
+    new_elist_par(elements, locally_free.clone(), false, None, locally_free, false)
+}
+
+/// Build the flat σ-injection call for a base rewrite's σ-receiver:
+/// `channel_name!(arg₀, …, arg_{k-1}, @"out_channel")` as normalized `rhoapi::Par`.
+///
+/// This mirrors [`crate::RhoAstSend::contract_call`]'s shape — the SAME shape the
+/// proven scalar operator path uses — but carries already-reflected `Par` σ
+/// arguments (each an [`reflect_ground_term_par`] tagged `EList`) rather than
+/// [`crate::RhoAstLiteral`] scalars, which cannot hold a `Par`. The `k` σ
+/// arguments MUST be supplied in the σ-receiver's canonical first-occurrence LHS
+/// variable order (the order `lower_lhs_vars` collects them), and the out channel
+/// is appended last as a quoted-name channel (a `GString` `Par`, exactly how
+/// `contract_call` lowers its `RhoAstLiteral::QuotedChannel` return channel), so
+/// the σ-receiver's formal-`k` out channel (`BoundVar(0)`) sends the reflected RHS
+/// there.
+pub fn term_contract_call(channel_name: &str, mut args: Vec<Par>, out_channel: &str) -> Par {
+    args.push(new_gstring_par(out_channel.to_string(), Vec::new(), false));
+    new_send_par(
+        new_gstring_par(channel_name.to_string(), Vec::new(), false),
+        args,
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    )
 }
 
 /// Reflect an RHS pattern term to a normalized `Par` value under the constructor
@@ -1257,6 +1344,167 @@ mod tests {
                 .iter()
                 .any(|error| matches!(error, RhoNetLoweringError::RuleSourceDrift { .. })),
             "faithful re-derivation must not report rule-source drift"
+        );
+    }
+
+    /// The Swap→Pair demo language: nullary `A`/`B`, binary constructors
+    /// `Pair`/`Swap` (all non-scalar `Proc`, so all four are rejected and covered
+    /// by structural Rho-AST dispositions), and the base rewrite `Swap(x, y) ~>
+    /// Pair(y, x)` that lowers to the σ-receiver the runtime bridge injects into.
+    const SWAP_DEMO_FRAGMENT: &str = r#"
+        name: SwapDemo,
+        options {
+            emit_simulator: false,
+            emit_blockly: false,
+        },
+        types {
+            Proc
+        },
+        terms {
+            A . |- "A" : Proc ;
+            B . |- "B" : Proc ;
+            Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+            Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+        },
+        equations {},
+        rewrites {
+            SwapStep . |- (Swap x y) ~> (Pair y x) ;
+        }
+    "#;
+
+    /// `reflect_ground_term_par` reflects a ground constructor tree to the tagged
+    /// `EList` ABI, sharing `reflect_tag` with the RHS reflector: the reflection
+    /// of the ground `Pair(B, A)` is exactly the value the `Swap` σ-receiver emits
+    /// once `a ↦ A`, `b ↦ B` are substituted into the reflected RHS `Pair(b, a)`.
+    #[test]
+    fn reflect_ground_term_par_reflects_ground_pair_to_tagged_elist() {
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let pair = GroundTerm::new(
+            "Pair",
+            vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")],
+        );
+        let par = reflect_ground_term_par(&pair, fp);
+
+        let outer = elist_body(&par);
+        assert_eq!(outer.ps.len(), 3, "head tag + two ground children");
+        assert_eq!(
+            outer.ps[0],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Pair")),
+            "head is the shared unforgeable Pair reflection tag"
+        );
+
+        let b = elist_body(&outer.ps[1]);
+        assert_eq!(b.ps.len(), 1, "nullary B is a lone head tag");
+        assert_eq!(
+            b.ps[0],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.B"))
+        );
+        let a = elist_body(&outer.ps[2]);
+        assert_eq!(a.ps.len(), 1, "nullary A is a lone head tag");
+        assert_eq!(
+            a.ps[0],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.A"))
+        );
+
+        // Ground reflection binds no σ variable: no BoundVar leaves anywhere and
+        // empty locally_free (byte-identical to a lowered ground RHS constructor).
+        assert!(par.locally_free.is_empty());
+        assert_eq!(boundvar_index(&par), None);
+    }
+
+    /// `term_contract_call` builds `chan!(arg₀, …, @"out")`: a single flat send on
+    /// `GString(chan)` whose data is the σ arguments in first-occurrence order with
+    /// the quoted out channel appended last (mirroring `RhoAstSend::contract_call`).
+    #[test]
+    fn term_contract_call_builds_flat_send_with_quoted_out_channel() {
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let arg_a = reflect_ground_term_par(&GroundTerm::nullary("A"), fp);
+        let arg_b = reflect_ground_term_par(&GroundTerm::nullary("B"), fp);
+        let call = term_contract_call("sa:pattern/demo", vec![arg_a.clone(), arg_b.clone()], "OUT");
+
+        assert_eq!(call.sends.len(), 1, "exactly one flat injection send");
+        assert!(call.receives.is_empty());
+        let send = &call.sends[0];
+        assert!(!send.persistent, "the injection call is a one-shot send");
+        assert_eq!(
+            send.chan.as_ref().expect("send channel"),
+            &new_gstring_par("sa:pattern/demo".to_string(), Vec::new(), false),
+            "channel is the σ-receiver's source name"
+        );
+        assert_eq!(send.data.len(), 3, "two σ args + the out channel");
+        assert_eq!(send.data[0], arg_a, "first σ arg in first-occurrence order");
+        assert_eq!(send.data[1], arg_b, "second σ arg in first-occurrence order");
+        assert_eq!(
+            send.data[2],
+            new_gstring_par("OUT".to_string(), Vec::new(), false),
+            "out channel appended last as a quoted-name channel"
+        );
+    }
+
+    /// The Swap→Pair language passes the Rho-default flip gate (its four
+    /// non-scalar constructors are rejected and covered by structural Rho-AST
+    /// dispositions), and its installed Rho-net program is exactly the one
+    /// persistent `(k+1)`-ary σ-receiver for the base rewrite `SwapStep`. This is
+    /// the plan the R-2 runtime demo injects into; deriving the σ source channel
+    /// from `input_channels.first()` here mirrors what the demo does.
+    #[test]
+    fn swap_language_plans_to_installed_sigma_receiver() {
+        use crate::backend::{
+            plan_rho_default_backend, suggest_rejected_rule_dispositions,
+            RhoDefaultBackendRequirements,
+        };
+        use crate::{RhoCoverageEvidence, RhoGuardCoverageEvidence};
+
+        let def = syn::parse_str::<LanguageDef>(SWAP_DEMO_FRAGMENT).expect("Swap fragment parses");
+        let lowering = lower_language_def(&def);
+        // All four constructors are non-scalar → rejected, none lowered.
+        assert_eq!(lowering.lowered, Vec::<String>::new());
+        assert_eq!(lowering.rejected, vec!["A", "B", "Pair", "Swap"]);
+
+        let dispositions = suggest_rejected_rule_dispositions(&def, &lowering);
+        let requirements = RhoDefaultBackendRequirements {
+            coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
+            guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+        };
+        let plan = plan_rho_default_backend(&def, requirements)
+            .unwrap_or_else(|err| panic!("Swap language must flip to Rho: {:?}", err.decision));
+        assert_eq!(plan.language_name(), "SwapDemo");
+
+        // The base rewrite lowered to exactly one persistent 3-ary σ-receiver
+        // (k = 2 LHS vars + 1 out channel); the four constructors contribute no
+        // installed Par.
+        let installed = plan.installed_rho_net_program_par();
+        assert_eq!(installed.receives.len(), 1, "one σ-receiver installed");
+        assert_eq!(installed.sends.len(), 0);
+        assert_eq!(installed.receives[0].bind_count, 3);
+        assert!(installed.receives[0].persistent);
+
+        // The σ-receiver's source channel is the base rewrite's first input
+        // channel — the name the runtime demo sends the injection to.
+        let swap_rule = plan
+            .rho_net_program()
+            .rules
+            .iter()
+            .find(|rule| rule.label.as_deref() == Some("SwapStep"))
+            .expect("SwapStep base rewrite must be planned");
+        assert_eq!(swap_rule.kind, RhoNetRuleKind::BaseRewrite);
+        let channel = swap_rule
+            .input_channels
+            .first()
+            .expect("σ-receiver source channel");
+        assert!(
+            channel.starts_with("sa:pattern/"),
+            "σ source is the LHS pattern-trace channel, got {channel:?}"
+        );
+
+        // No lowering diagnostics for the well-formed base rewrite, and the flip
+        // decision is unblocked.
+        assert!(
+            !plan.rho_net_lowered().errors().iter().any(|error| matches!(
+                error,
+                RhoNetLoweringError::UnsupportedFamily { rule_id, .. } if rule_id.contains("SwapStep")
+            )),
+            "the well-formed Swap base rewrite must not be fail-closed"
         );
     }
 

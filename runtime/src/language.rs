@@ -125,6 +125,15 @@ pub enum RuntimeObservationValue {
     Set(Vec<RuntimeObservationValue>),
     Map(Vec<(RuntimeObservationValue, RuntimeObservationValue)>),
     Bag(Vec<(RuntimeObservationValue, usize)>),
+    /// A structurally-decoded reflected constructor term: a constructor label
+    /// applied to already-decoded child observations, in constructor-argument
+    /// order. This is the decoded image of the Rho constructor-reflection ABI
+    /// `EList[GPrivate("mettail.term.{fingerprint}.{label}"), children…]` emitted
+    /// by a base rewrite's σ-receiver (see the codegen `reflect_ground_term_par` /
+    /// the runtime `decode_reflected_term`). Unlike the flat [`TermDisplay`], it
+    /// preserves the full tree so a runtime observation can be compared for exact
+    /// structural equality against a term's reflected normal form.
+    Term { constructor: String, children: Vec<RuntimeObservationValue> },
 }
 
 impl fmt::Display for RuntimeObservationValue {
@@ -180,6 +189,13 @@ impl fmt::Display for RuntimeObservationValue {
                     write!(f, "{} * {}", value, count)?;
                 }
                 write!(f, "}}")
+            },
+            RuntimeObservationValue::Term { constructor, children } => {
+                write!(f, "{constructor}")?;
+                if !children.is_empty() {
+                    fmt_observation_sequence(f, "(", children, ")")?;
+                }
+                Ok(())
             },
         }
     }
