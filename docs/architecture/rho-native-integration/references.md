@@ -69,6 +69,64 @@ F1r3node repository documentation:
 Used for: the implementation-facing behavior of Rholang sends, receives,
 contracts, joins, guards, parallel composition, and RhoRuntime evaluation.
 
+## Knotted-Topoi Program (North-Star Sources)
+
+### KNOTTED-TOPOI-2026
+
+L. G. Meredith. 2026. "Knotted Topoi: the lift of the knotted set-theoretic
+universe, and fully abstract denotational semantics for the category of
+graph-structured lambda theories." Manuscript, June 2026.
+
+- `../publications/knotted-topoi/knotted-topoi.tex`
+
+Used for: the declared north-star operational-to-denotational construction. It
+fixes the MeTTaIL-to-core-rho desugaring schema, the location channels
+`c(ℓ) = ⌜ℓ⌝`, the context-labelled operational correspondence (Proposition and
+Obligation "opcorr"), freshness-by-quoting, persistence-by-reflection, equations
+as structural congruence, and the channel-intension freedom that licenses
+set-automaton-assisted matching. This is the primary source for
+[Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md).
+
+### KNOTTED-UNIVERSE-2026
+
+L. G. Meredith. 2026. "A Knotted Universe: a new notion of reflective set
+theories." Manuscript, 2026.
+
+Used for: the two-sorted reflective set-theory foundation (red and black copies,
+each colour's atoms the other's sets), the colour-swap involution, and the
+risk-ledger accounting the knotted-topoi paper lifts one categorical level.
+
+### QUOTING-COLOUR-SWAP-2026
+
+L. G. Meredith. 2026. "Quoting is Colour-Swap: a model of the rho calculus in the
+knotted universe." Manuscript, 2026.
+
+Used for: the fully abstract rho-calculus denotation, context-bisimulation as a
+congruence via idem-pushout (Leifer-Milner) context labels, the behaviour
+functor and its final coalgebra, and the reflection idiom for persistent
+installation of receivers without replication.
+
+### OPTIMAL-CHANNEL-NAMING-2026
+
+L. G. Meredith. 2026. "Optimal Channel Naming for Compositional Rewrite
+Translations via Set Automaton Partial Evaluation." F1R3FLY.io, 2026.
+
+Used for: the optimal (symbol-once, condition O1) set-automaton channel-naming
+scheme; the pattern-receive unfolding into nested single-name receives with
+name-equality guards (its Section 2.2); and the statement that the optimal
+scheme and the verbatim-location scheme induce the same context-labelled
+transition system.
+
+### SET-AUTOMATON-MATCHING-2022
+
+M. Bouwman and R. Erkens. 2022. "Term rewriting based on set automaton
+matching." arXiv:2202.08687.
+[arXiv](https://arxiv.org/abs/2202.08687).
+
+Used for: the set-automaton matching algorithm underlying the optimal
+channel-naming scheme, and the host-side match that the corrected
+set-automaton-assisted lowering model uses to produce a substitution.
+
 ## Tuple Spaces, RSpace, and Dataflow
 
 ### LINDA-1985

@@ -66,6 +66,7 @@ For implementers:
 4. [Verification and Rollout](07-verification-and-rollout.md)
 5. [Production Runtime Backend Completion Guide](08-production-runtime-backend-completion.md)
 6. [Runtime Invocation Migration](12-runtime-invocation-migration.md)
+7. [Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md)
 
 For reviewers checking claims and citations:
 
@@ -218,6 +219,7 @@ runtime values are normalized AST artifacts, and the executable form is
 | [10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md) | When does a reduction run sequentially vs trampoline, and how does the Tier-3 held-fold contract close the boundary? |
 | [11 — Reactive COMM Stepper](11-reactive-comm-stepper.md) | How does `step` single-step COMM reductions on the Rho machine, lock-free and zero-cost when off? |
 | [12 — Runtime Invocation Migration](12-runtime-invocation-migration.md) | How do downstream crates migrate from the legacy `RhoBackendInvocation` constructors to the `RhoMachineInvocation` / `RhoBackendInvocation` split? |
+| [13 — Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md) | Which operational invariants does the north-star paper require, and is host-side matching plus Rho injection a faithful realization? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

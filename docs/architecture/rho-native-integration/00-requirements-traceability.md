@@ -53,6 +53,7 @@ a completed mechanized result.
 | Ensure citations exist and are accurately represented. | [References](references.md) records process-calculus, tuple-space, rewrite-system, equality-saturation, weighted-extraction, formal-method, and repository-local sources, with DOI links where available. |
 | Link citations to DOIs where available. | DOI links are included for Rho calculus, π-calculus, join calculus, Linda, Huet confluence, and equality saturation in [References](references.md). |
 | Tie documentation to repository-local design and proof sources. | [References](references.md) includes Dovetail design docs, the Rholang target design, Rho-flip design docs, Dovetail formal theories, Rho bridge formal theories, and the formal coverage matrix. |
+| Extract operational invariants from the north-star paper and settle the matching-execution-locus question. | [Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md) extracts the context-labelled-transition-system invariants from [KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026), maps each to the `rholang-codegen` lowering and the `formal/rocq/rho_bridge` suite, and records the evidence-grounded verdict that host-side (set-automaton) matching plus Rho `σ`-injection is a faithful realization. |
 
 ## Consistency Conditions
 
