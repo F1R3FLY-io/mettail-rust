@@ -308,6 +308,36 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
+
+            // P1 `@`-PROJECTION ISOLATION (Plan a8b32275): the SIBLING of the sep
+            // prologue. Wired BEFORE the sep prologue at both string entries
+            // (mutually-exclusive by input shape: a leading sigil `σ` vs a
+            // depth-0 separator list). OFF / not-in-set / no-shape ⇒ empty ⇒
+            // BYTE-IDENTICAL.
+            let proj_helper_ident =
+                runtime::wpda_codegen::facade::proj_isolation_helper_ident(&cat_str);
+            let proj_enabled = runtime::wpda_codegen::facade::projection_iso_shape(
+                language,
+                &cat_str,
+                &sep_categories_ordered,
+            )
+            .is_some();
+            let proj_prologue_single = if proj_enabled {
+                runtime::wpda_codegen::facade::emit_projection_isolation_prologue(
+                    &proj_helper_ident,
+                    runtime::wpda_codegen::facade::SepSeam::Single,
+                )
+            } else {
+                quote! {}
+            };
+            let proj_prologue_all = if proj_enabled {
+                runtime::wpda_codegen::facade::emit_projection_isolation_prologue(
+                    &proj_helper_ident,
+                    runtime::wpda_codegen::facade::SepSeam::All,
+                )
+            } else {
+                quote! {}
+            };
             let parse_fn = format_ident!("parse_{}", cat);
             let _parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
@@ -459,6 +489,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// existing token-slice path.
                 pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
+                    #proj_prologue_single
                     #sep_prologue_single
                     let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
@@ -710,6 +741,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     ParseError,
                 > {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
+                    #proj_prologue_all
                     #sep_prologue_all
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().

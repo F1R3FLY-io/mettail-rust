@@ -27,7 +27,7 @@
 
 use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
-use mettail_ast::types::TypeExpr;
+use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -650,6 +650,743 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// P1 `@`-PROJECTION ISOLATION+COMBINE CODEGEN (Plan a8b32275, 2026-07-05) —
+// the SIBLING of the P2 `.*sep` isolation above (ROOT AXIS-@ exponential-killer).
+// Gate: `super::forks::PROJ_ISOLATION_COMBINE` + `PROJ_ISOLATION_CATEGORIES`.
+//
+// Difference from `.*sep`: rather than splitting a list at a separator and
+// cartesian-combining SEGMENTS, projection isolation matches each `σ`-led
+// frame-variant's grammar-derived Literal/Operand skeleton, extracts each
+// cross-cat OPERAND by a bracket-depth scan, sub-parses it in isolation
+// (recursing), and WRAPS the readings in the surface enum ctor. The shared
+// semantic-key dedup (`semantic_hash` normalizes fold variants to canonical
+// form) collapses over-produced fold-equivalents to EXACTLY the monolithic set.
+// ════════════════════════════════════════════════════════════════════════
+
+/// One slot in an `@`-projection / framed-list frame-variant's grammar-derived
+/// skeleton.
+enum ProjSlot {
+    /// A fixed literal token (`@`, `Nil`, `!`, `(`, `)`, …).
+    Lit(String),
+    /// A cross-cat SCALAR operand `p:Category` — extracted by bracket-depth scan
+    /// and sub-parsed via `Category::parse_via_wpda_all_with_weights` (recurses).
+    /// Constructed as an `Arc<Category>` ctor field.
+    Operand { category: String },
+    /// A `.*sep(sep)` LIST operand `xs:Vec(Element)` (P4 framing, Plan a8b32275).
+    /// The bracket-delimited region is split at the depth-0 single-byte `separator`
+    /// and each element re-lexed + sub-parsed via
+    /// `Element::parse_via_wpda_all_with_weights` (recurses through this prologue —
+    /// so deep-`@` polyadic args linearize), then cartesian-combined into a
+    /// `Vec<Element>` ctor field. This is what frames the polyadic sends
+    /// (`n!(a, bs.*sep)`), query binds (`lhs<-n!?(args.*sep)`), and polyadic binds
+    /// (`lhs, lhss.*sep <-n`) whose comma-lists carried the residual `dᵏ` blowup.
+    SepList { element_category: String, separator: String },
+}
+
+/// One `σ`-led frame-variant the projection helper linearizes: a surface enum
+/// constructor whose syntax begins with a NON-ident sigil literal and contains
+/// ≥1 cross-cat operand.
+struct ProjVariant {
+    /// Surface enum-constructor label (e.g. `"POutputNil"` / `"NQuoteShort"`).
+    label: String,
+    /// The grammar-derived Literal/Operand skeleton (source order), slot 0 = σ.
+    slots: Vec<ProjSlot>,
+}
+
+/// Grammar-derived shape of an `@`-projection category: the σ-led frame-variants.
+pub(crate) struct ProjIsoShape {
+    /// `src_idx` of the RESULT category (this `@`-projection category).
+    result_src_idx: u16,
+    /// Frame-variants, ordered most-specific first (more fixed literals first),
+    /// so the scan/dedup elects the specific keyword-send (`@Nil!(q)`) before the
+    /// general `@p!(q)` — matching the monolithic rule-order preference.
+    variants: Vec<ProjVariant>,
+}
+
+/// Derive the [`ProjIsoShape`] for `cat_name`, or `None` when the category has no
+/// isolation-eligible `@`-projection rule (grammar-derived — single source of
+/// truth). Accepts every rule whose syntax pattern is a pure Literal/Param
+/// sequence beginning with a NON-ident sigil and carrying ≥1 `Base`-typed Param.
+/// Rules with a `.*sep`/`#opt`/binder operand (`Op`/non-`Simple` param) are NOT
+/// projection shapes (they fall through to the monolithic body / the sep helper).
+fn derive_projection_iso_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<ProjIsoShape> {
+    let src_idx_of =
+        |name: &str| -> Option<u16> { categories.iter().position(|c| c == name).map(|i| i as u16) };
+    let result_src_idx = src_idx_of(cat_name)?;
+
+    let is_ident_shaped = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
+
+    let mut variants: Vec<ProjVariant> = Vec::new();
+
+    for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern) else {
+            continue;
+        };
+        if sp.is_empty() {
+            continue;
+        }
+        // ELIGIBILITY (relaxed for P4 framing, Plan a8b32275): a rule joins the
+        // projection helper iff EITHER
+        //   (a) slot 0 is a NON-ident sigil literal — the `@`/`(`/`*`/`-`-led
+        //       projection shapes (`@Nil!(q)`, `@(p)`, `*n`, …), OR
+        //   (b) it carries exactly one `.*sep` LIST operand over an ORDERED `Vec`
+        //       collection — the FRAMED-LIST shapes whose comma-lists carried the
+        //       residual `dᵏ` blowup (`n!(a, bs.*sep)`, `lhs<-n!?(args.*sep)`,
+        //       `lhs, lhss.*sep <-n`). These start with a scalar OPERAND, not a
+        //       sigil, so the sigil gate alone would miss them.
+        // `HashBag`/`HashSet`/`HashMap`/binder collections are NOT ordered lists
+        // and are handled elsewhere (collection codegen) — excluded below.
+        let vec_sep_count = sp
+            .iter()
+            .filter(|e| {
+                matches!(e, SyntaxExpr::Op(PatternOp::Sep { collection, .. })
+                    if tc.iter().any(|tp| matches!(tp,
+                        TermParam::Simple { name, ty: TypeExpr::Collection { coll_type: CollectionType::Vec, .. } }
+                            if name == collection)))
+            })
+            .count();
+        let sigil_led = matches!(&sp[0], SyntaxExpr::Literal(lead) if !is_ident_shaped(lead));
+        // Reject any Sep that is NOT a single ordered-`Vec` list (multiple lists,
+        // or a HashBag/Map list) — not framed-list-isolation-eligible.
+        let total_sep = sp
+            .iter()
+            .filter(|e| matches!(e, SyntaxExpr::Op(PatternOp::Sep { .. })))
+            .count();
+        if total_sep != vec_sep_count || vec_sep_count > 1 {
+            continue;
+        }
+        // A category that the DEDICATED `.*sep` helper owns
+        // (`SEP_ISOLATION_CATEGORIES`, e.g. `ForRow`'s `&`-join) delegates ALL its
+        // list shapes to that (validated, landed) helper — the projection helper
+        // takes only its sigil-led shapes there (ForRow has none ⇒ no proj helper
+        // for ForRow, unchanged). This keeps the two helpers disjoint (proj runs
+        // first, declines, sep handles it) and avoids double-handling the `&`-list.
+        let sep_owned = super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name);
+        if !(sigil_led || (vec_sep_count == 1 && !sep_owned)) {
+            continue;
+        }
+        // Build the Literal / scalar-Operand / SepList skeleton; any `Opt` op or
+        // non-`Base`/non-`Vec` (binder/HashBag) param makes the rule NOT a
+        // framed-projection shape → skip (monolithic / collection codegen owns it).
+        let mut slots: Vec<ProjSlot> = Vec::with_capacity(sp.len());
+        let mut operand_count = 0usize;
+        let mut shape_ok = true;
+        for e in sp.iter() {
+            match e {
+                SyntaxExpr::Literal(l) => slots.push(ProjSlot::Lit(l.clone())),
+                SyntaxExpr::Param(p) => {
+                    let cat = tc.iter().find_map(|tp| match tp {
+                        TermParam::Simple { name, ty } if name == p => sep_base_ty(ty),
+                        _ => None,
+                    });
+                    match cat {
+                        Some(c) if src_idx_of(&c).is_some() => {
+                            slots.push(ProjSlot::Operand { category: c });
+                            operand_count += 1;
+                        }
+                        _ => {
+                            shape_ok = false;
+                            break;
+                        }
+                    }
+                }
+                SyntaxExpr::Op(PatternOp::Sep { collection, separator, .. }) => {
+                    // Element category = the inner type of the `Vec(elem)` list.
+                    let elem_cat = tc.iter().find_map(|tp| match tp {
+                        TermParam::Simple {
+                            name,
+                            ty: TypeExpr::Collection { coll_type: CollectionType::Vec, element },
+                        } if name == collection => sep_base_ty(element),
+                        _ => None,
+                    });
+                    // Single-byte ASCII separator (the string split matches one byte).
+                    match elem_cat {
+                        Some(c)
+                            if src_idx_of(&c).is_some()
+                                && separator.len() == 1
+                                && separator.is_ascii() =>
+                        {
+                            slots.push(ProjSlot::SepList {
+                                element_category: c,
+                                separator: separator.clone(),
+                            });
+                            operand_count += 1;
+                        }
+                        _ => {
+                            shape_ok = false;
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    shape_ok = false;
+                    break;
+                }
+            }
+        }
+        if !shape_ok || operand_count == 0 {
+            continue;
+        }
+        variants.push(ProjVariant { label: normalized.label.to_string(), slots });
+    }
+
+    if variants.is_empty() {
+        return None;
+    }
+    // Most-specific first: more fixed-literal slots ⇒ earlier (so `@Nil!(q)`
+    // beats `@p!(q)`); the semantic-key dedup keeps the min-weight (earliest)
+    // representative, matching the monolithic specific-rule preference.
+    variants.sort_by(|a, b| {
+        let lits = |v: &ProjVariant| {
+            v.slots.iter().filter(|s| matches!(s, ProjSlot::Lit(_))).count()
+        };
+        lits(b).cmp(&lits(a)).then_with(|| a.label.cmp(&b.label))
+    });
+    Some(ProjIsoShape { result_src_idx, variants })
+}
+
+/// The module-scope identifier of the projection-isolation helper for `cat_name`.
+pub(crate) fn proj_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__mettail_wpda_proj_isolate_all_{}", cat_name)
+}
+
+/// The gated `@`-projection isolation shape for `cat_name`: `Some` iff the master
+/// switch is ON, the category is in the include set, AND a shape is derivable.
+pub(crate) fn projection_iso_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<ProjIsoShape> {
+    if super::forks::PROJ_ISOLATION_COMBINE
+        && super::forks::PROJ_ISOLATION_CATEGORIES.contains(&cat_name)
+    {
+        derive_projection_iso_shape(language, cat_name, categories)
+    } else {
+        None
+    }
+}
+
+/// Emit the guarded string-entry prologue that calls the projection-isolation
+/// helper with the RAW input string (before `lex_dag`). Runtime A/B:
+/// `PRATTAIL_NO_PROJ_ISOLATION` forces the monolithic path without a rebuild.
+/// Wired BEFORE the sep-isolation prologue (mutually-exclusive by input shape).
+pub(crate) fn emit_projection_isolation_prologue(
+    helper_name: &proc_macro2::Ident,
+    seam: SepSeam,
+) -> TokenStream {
+    match seam {
+        SepSeam::Single => quote! {
+            // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — single winner.
+            if std::env::var_os("PRATTAIL_NO_PROJ_ISOLATION").is_none() {
+                if let Some((__piso_terms, __piso_weights)) = #helper_name(input) {
+                    if let Some((__t, _)) = __piso_terms
+                        .into_iter()
+                        .zip(__piso_weights.into_iter())
+                        .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
+                    {
+                        return Ok(__t);
+                    }
+                }
+            }
+        },
+        SepSeam::All => quote! {
+            // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — full alt set.
+            if std::env::var_os("PRATTAIL_NO_PROJ_ISOLATION").is_none() {
+                if let Some(__piso) = #helper_name(input) {
+                    return Ok(__piso);
+                }
+            }
+        },
+    }
+}
+
+/// Emit the nested per-operand recursion + cartesian construction arm for one
+/// projection variant (called from `emit_projection_isolation`). Each operand is
+/// sub-parsed via its own `parse_via_wpda_all_with_weights` string entry; the
+/// readings are cartesian-combined, ⊗-weighted, and wrapped in the surface ctor.
+fn emit_proj_variant_arm(
+    cat_ident: &proc_macro2::Ident,
+    variant: &ProjVariant,
+    variant_idx: usize,
+) -> TokenStream {
+    let label_ident = format_ident!("{}", variant.label);
+    let variant_idx_lit = variant_idx as u16;
+
+    // Emit the runtime skeleton (a slice of `__Slot`) for the matcher. A
+    // `SepList` operand extracts the SAME bracket-delimited region as a scalar
+    // `Op` (delimited by the next literal); the SPLIT into elements happens in
+    // the arm below — so the runtime matcher treats both as `__Slot::Op`.
+    let slot_exprs: Vec<TokenStream> = variant
+        .slots
+        .iter()
+        .map(|s| match s {
+            ProjSlot::Lit(l) => quote! { __Slot::Lit(#l) },
+            ProjSlot::Operand { .. } | ProjSlot::SepList { .. } => quote! { __Slot::Op },
+        })
+        .collect();
+
+    // Operand-bearing slots in source order (= enum ctor field order). `__ops`
+    // (from the matcher) has one range per operand-bearing slot, in this order.
+    enum OpKind<'a> {
+        Scalar(&'a str),
+        Sep { element: &'a str, sep_byte: u8 },
+    }
+    let op_slots: Vec<OpKind> = variant
+        .slots
+        .iter()
+        .filter_map(|s| match s {
+            ProjSlot::Operand { category } => Some(OpKind::Scalar(category)),
+            ProjSlot::SepList { element_category, separator } => Some(OpKind::Sep {
+                element: element_category,
+                sep_byte: separator.as_bytes()[0],
+            }),
+            ProjSlot::Lit(_) => None,
+        })
+        .collect();
+    let n_ops = op_slots.len();
+
+    let label_str = variant.label.clone();
+    // Bind each operand: a `Scalar` sub-parses the whole region; a `Sep` splits
+    // the region at the depth-0 separator, sub-parses each element, and cartesian-
+    // combines into `Vec<Element>` combos. Both bind a `__op{oi}` : Vec<(value,
+    // weight)> where `value` is `Term` (scalar) or `Vec<Element>` (list).
+    let mut parse_binds: Vec<TokenStream> = Vec::with_capacity(n_ops);
+    for (oi, slot) in op_slots.iter().enumerate() {
+        let pairs_id = format_ident!("__op{}", oi);
+        match slot {
+            OpKind::Scalar(cat) => {
+                let ocat = format_ident!("{}", cat);
+                let ocat_str = cat.to_string();
+                parse_binds.push(quote! {
+                    let #pairs_id: Vec<(#ocat, __W)> = {
+                        let (__s, __e) = __ops[#oi];
+                        let __seg = input[__s..__e].trim();
+                        if __GRIND_DIAG {
+                            eprintln!("[PISO]   v{} {} op{}:{} scalar seg={:?}",
+                                #variant_idx_lit, #label_str, #oi, #ocat_str, __seg);
+                        }
+                        if __seg.is_empty() { break '__variant; }
+                        let (__t, __w) = match #ocat::parse_via_wpda_all_with_weights(__seg) {
+                            Ok(__v) => __v,
+                            Err(_) => {
+                                if __GRIND_DIAG {
+                                    eprintln!("[PISO]   v{} {} op{} SUBPARSE-ERR ⇒ decline",
+                                        #variant_idx_lit, #label_str, #oi);
+                                }
+                                break '__variant;
+                            }
+                        };
+                        if __t.is_empty() { break '__variant; }
+                        __t.into_iter().zip(__w.into_iter()).collect()
+                    };
+                });
+            }
+            OpKind::Sep { element, sep_byte } => {
+                let ecat = format_ident!("{}", element);
+                let ecat_str = element.to_string();
+                let sb = *sep_byte;
+                parse_binds.push(quote! {
+                    let #pairs_id: Vec<(Vec<#ecat>, __W)> = {
+                        let (__s, __e) = __ops[#oi];
+                        let __region = input[__s..__e].trim();
+                        if __GRIND_DIAG {
+                            eprintln!("[PISO]   v{} {} op{}:{}.*sep region={:?}",
+                                #variant_idx_lit, #label_str, #oi, #ecat_str, __region);
+                        }
+                        if __region.is_empty() { break '__variant; }
+                        let __rb = __region.as_bytes();
+                        let __rn = __rb.len();
+                        // Split the region at depth-0 `sep_byte` (bracket-aware).
+                        let mut __seg_ranges: Vec<(usize, usize)> = Vec::new();
+                        {
+                            let mut __depth: i32 = 0;
+                            let mut __start = 0usize;
+                            let mut __i = 0usize;
+                            while __i < __rn {
+                                match __rb[__i] {
+                                    b'(' | b'[' | b'{' => __depth += 1,
+                                    b')' | b']' | b'}' => __depth -= 1,
+                                    __c if __depth == 0 && __c == #sb => {
+                                        __seg_ranges.push((__start, __i));
+                                        __start = __i + 1;
+                                    }
+                                    _ => {}
+                                }
+                                __i += 1;
+                            }
+                            __seg_ranges.push((__start, __rn));
+                        }
+                        // Isolated per-element re-lex + parse (recurses).
+                        let mut __per_seg: Vec<(Vec<#ecat>, Vec<__W>)> =
+                            Vec::with_capacity(__seg_ranges.len());
+                        for &(__rs, __re) in &__seg_ranges {
+                            let __eseg = __region[__rs..__re].trim();
+                            if __eseg.is_empty() { break '__variant; }
+                            let (__et, __ew) =
+                                match #ecat::parse_via_wpda_all_with_weights(__eseg) {
+                                    Ok(__v) => __v,
+                                    Err(_) => {
+                                        if __GRIND_DIAG {
+                                            eprintln!("[PISO]   v{} {} op{} SEP-ELEM-ERR seg={:?} ⇒ decline",
+                                                #variant_idx_lit, #label_str, #oi, __eseg);
+                                        }
+                                        break '__variant;
+                                    }
+                                };
+                            if __et.is_empty() { break '__variant; }
+                            __per_seg.push((__et, __ew));
+                        }
+                        // Cartesian combine element readings into `Vec<Element>`.
+                        let mut __combos: Vec<(Vec<#ecat>, __W)> =
+                            vec![(Vec::new(), <__W as Semiring>::one())];
+                        for (__alts, __ws) in &__per_seg {
+                            let mut __next: Vec<(Vec<#ecat>, __W)> =
+                                Vec::with_capacity(__combos.len() * __alts.len().max(1));
+                            for (__pre, __pw) in &__combos {
+                                for (__a, __aw) in __alts.iter().zip(__ws.iter()) {
+                                    if __next.len() >= __REALIZE_CAP {
+                                        // Too many genuine combos to materialize
+                                        // here ⇒ decline (monolithic authoritative).
+                                        break '__variant;
+                                    }
+                                    let mut __v = __pre.clone();
+                                    __v.push(__a.clone());
+                                    __next.push((__v, Semiring::times(__pw, __aw)));
+                                }
+                            }
+                            __combos = __next;
+                        }
+                        __combos
+                    };
+                });
+            }
+        }
+        parse_binds.push(quote! {
+            if #pairs_id.is_empty() {
+                if __GRIND_DIAG {
+                    eprintln!("[PISO]   v{} {} op{} EMPTY ⇒ decline",
+                        #variant_idx_lit, #label_str, #oi);
+                }
+                break '__variant;
+            }
+        });
+    }
+
+    // Ctor arg per operand slot: scalar ⇒ `Arc<T>`, list ⇒ `Vec<Element>`.
+    let ctor_args: Vec<TokenStream> = op_slots
+        .iter()
+        .enumerate()
+        .map(|(oi, slot)| {
+            let a = format_ident!("__a{}", oi);
+            match slot {
+                OpKind::Scalar(_) => quote! { std::sync::Arc::new(#a.clone()) },
+                OpKind::Sep { .. } => quote! { #a.clone() },
+            }
+        })
+        .collect();
+    // ⊗ (times) fold of the per-operand weights + the framing weight.
+    let mut weight_expr = quote! { __framing };
+    for oi in 0..n_ops {
+        let wa = format_ident!("__wa{}", oi);
+        weight_expr = quote! { Semiring::times(&#weight_expr, #wa) };
+    }
+    let mut body = quote! {
+        if __candidates.len() >= __REALIZE_CAP {
+            return None;
+        }
+        let __framing = __W::from_cost(0.0, __RESULT_SRC_IDX, #variant_idx_lit);
+        __candidates.push((
+            #cat_ident::#label_ident( #(#ctor_args),* ),
+            #weight_expr,
+        ));
+    };
+    // Nest the loops from innermost (last operand) outward. Each `__op{oi}` is a
+    // Vec<(value, weight)>; `__a{oi}` binds the value, `__wa{oi}` the weight.
+    for oi in (0..n_ops).rev() {
+        let a = format_ident!("__a{}", oi);
+        let wa = format_ident!("__wa{}", oi);
+        let pairs_id = format_ident!("__op{}", oi);
+        body = quote! {
+            for (#a, #wa) in #pairs_id.iter() {
+                #body
+            }
+        };
+    }
+
+    quote! {
+        {
+            // Match this variant's skeleton; extract operand ranges.
+            const __SKEL: &[__Slot] = &[ #(#slot_exprs),* ];
+            '__variant: {
+                let Some(__ops) = __proj_skeleton_match(__bytes, __n, __SKEL) else {
+                    if __GRIND_DIAG {
+                        eprintln!("[PISO]   v{} {} SKEL no-match", #variant_idx_lit, #label_str);
+                    }
+                    break '__variant;
+                };
+                if __GRIND_DIAG {
+                    eprintln!("[PISO]   v{} {} SKEL matched ops={:?}",
+                        #variant_idx_lit, #label_str, __ops);
+                }
+                #(#parse_binds)*
+                #body
+            }
+        }
+    }
+}
+
+/// Emit the shared per-category STRING-level projection-isolation helper
+/// `__mettail_wpda_proj_isolate_all_<Cat>(input: &str)`.
+///
+/// It matches each σ-led frame-variant's grammar-derived skeleton against the raw
+/// input, extracts each cross-cat operand by a bracket-depth scan, sub-parses each
+/// through the OPERAND category's own `parse_via_wpda_all_with_weights` string
+/// entry (fresh lex + walker from ROOT — RECURSES through this prologue), wraps the
+/// cartesian-combined readings in the surface enum ctor, then dedups by semantic
+/// key + ⊕-min + weight-sort (mirroring the monolithic `_all` finalize). `None` ⇒
+/// NOT-APPLICABLE (no σ / no variant matches) or ANY sub-parse failure ⇒ the caller
+/// falls through to the UNMODIFIED monolithic body (byte-identical — RT-4).
+fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShape) -> TokenStream {
+    let helper_name = proj_isolation_helper_ident(&cat_ident.to_string());
+    let result_src_idx = shape.result_src_idx;
+    let variant_arms: Vec<TokenStream> = shape
+        .variants
+        .iter()
+        .enumerate()
+        .map(|(vi, v)| emit_proj_variant_arm(cat_ident, v, vi))
+        .collect();
+
+    quote! {
+        /// P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275): STRING-level
+        /// divide-and-conquer `@`-projection linearizer for the `#cat_ident`
+        /// category. See `emit_projection_isolation` in the macro for the
+        /// full rationale.
+        #[allow(
+            non_snake_case,
+            unused_assignments,
+            unused_variables,
+            clippy::needless_range_loop,
+            clippy::manual_is_ascii_check
+        )]
+        fn #helper_name(
+            input: &str,
+        ) -> Option<(
+            Vec<#cat_ident>,
+            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+        )> {
+            use mettail_prattail::automata::semiring::Semiring;
+            type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
+            const __REALIZE_CAP: usize = 64;
+            const __RESULT_SRC_IDX: u16 = #result_src_idx;
+            // Throwaway runtime diagnostic gate (env `GRIND_DIAG`); zero-cost when
+            // unset. Traces helper entry, per-variant skeleton match, per-operand
+            // sub-parse segment, and the return disposition.
+            let __GRIND_DIAG = std::env::var_os("GRIND_DIAG").is_some();
+
+            // One skeleton slot: a fixed literal token or a cross-cat operand hole.
+            enum __Slot {
+                Lit(&'static str),
+                Op,
+            }
+            fn __is_word(c: u8) -> bool {
+                c.is_ascii_alphanumeric() || c == b'_'
+            }
+            /// Match `skel` against `bytes[0..n]`, returning the byte-range of each
+            /// `Op` slot, or `None` if the skeleton does not match. Operands are
+            /// delimited by the NEXT literal at bracket-depth 0 (standard ASCII
+            /// brackets `([{`/`)]}`; multi-char collection delimiters balance via
+            /// their `{`/`}` component). A depth-0 close that is NOT the delimiter
+            /// ⇒ unbalanced ⇒ `None` (this variant does not match).
+            fn __proj_skeleton_match(
+                bytes: &[u8],
+                n: usize,
+                skel: &[__Slot],
+            ) -> Option<Vec<(usize, usize)>> {
+                let mut i = 0usize;
+                let mut ops: Vec<(usize, usize)> = Vec::new();
+                let mut k = 0usize;
+                while k < skel.len() {
+                    while i < n && bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    match &skel[k] {
+                        __Slot::Lit(l) => {
+                            let lb = l.as_bytes();
+                            if i + lb.len() > n || &bytes[i..i + lb.len()] != lb {
+                                return None;
+                            }
+                            if lb.iter().all(|&c| __is_word(c)) {
+                                let before_ok = i == 0 || !__is_word(bytes[i - 1]);
+                                let after_ok =
+                                    i + lb.len() == n || !__is_word(bytes[i + lb.len()]);
+                                if !(before_ok && after_ok) {
+                                    return None;
+                                }
+                            }
+                            i += lb.len();
+                            k += 1;
+                        }
+                        __Slot::Op => {
+                            // The delimiter = the next literal slot's text (if any).
+                            let next_lit: Option<&'static str> =
+                                skel[k + 1..].iter().find_map(|s| match s {
+                                    __Slot::Lit(l) => Some(*l),
+                                    __Slot::Op => None,
+                                });
+                            let start = i;
+                            match next_lit {
+                                None => {
+                                    // Last slot: operand runs to end of input.
+                                    ops.push((start, n));
+                                    i = n;
+                                    k += 1;
+                                }
+                                Some(l) => {
+                                    let lb = l.as_bytes();
+                                    let identish = lb.iter().all(|&c| __is_word(c));
+                                    let mut depth: i32 = 0;
+                                    let mut j = start;
+                                    let mut found: Option<usize> = None;
+                                    while j < n {
+                                        let c = bytes[j];
+                                        // Depth-0 delimiter match (checked BEFORE
+                                        // adjusting depth for this char, so a close
+                                        // bracket delimiter matches at its own pos).
+                                        if depth == 0
+                                            && j + lb.len() <= n
+                                            && &bytes[j..j + lb.len()] == lb
+                                        {
+                                            let wb = !identish
+                                                || ((j == 0 || !__is_word(bytes[j - 1]))
+                                                    && (j + lb.len() == n
+                                                        || !__is_word(bytes[j + lb.len()])));
+                                            if wb {
+                                                found = Some(j);
+                                                break;
+                                            }
+                                        }
+                                        match c {
+                                            b'(' | b'[' | b'{' => depth += 1,
+                                            b')' | b']' | b'}' => {
+                                                if depth == 0 {
+                                                    // Unbalanced close before the
+                                                    // delimiter ⇒ no match.
+                                                    return None;
+                                                }
+                                                depth -= 1;
+                                            }
+                                            _ => {}
+                                        }
+                                        j += 1;
+                                    }
+                                    let end = found?;
+                                    ops.push((start, end));
+                                    i = end;
+                                    // Advance PAST this `Op` slot so the next
+                                    // iteration matches the delimiter `Lit` slot
+                                    // (which sits at `bytes[end..]`). Without this
+                                    // increment, `k` would stay on the `Op` slot,
+                                    // re-scan from `i = end`, immediately re-find the
+                                    // delimiter at position `end` (a zero-width
+                                    // operand), and loop forever — the hang that
+                                    // afflicts every non-trailing operand (`Op`
+                                    // followed by more `Lit`/`Op` slots).
+                                    k += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                // The whole input must be consumed (a `_all` entry is total).
+                while i < n && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if i != n {
+                    return None;
+                }
+                Some(ops)
+            }
+
+            let input = input.trim();
+            let __bytes = input.as_bytes();
+            let __n = __bytes.len();
+            if __n == 0 {
+                return None;
+            }
+            if __GRIND_DIAG {
+                eprintln!(
+                    "[PISO] ENTER {} n={} input={:?}",
+                    stringify!(#cat_ident), __n, input,
+                );
+            }
+
+            let mut __candidates: Vec<(#cat_ident, __W)> = Vec::new();
+            #(#variant_arms)*
+
+            if __candidates.is_empty() {
+                if __GRIND_DIAG {
+                    eprintln!(
+                        "[PISO] RETURN None {} input={:?} (no variant produced a reading ⇒ fall through to monolithic)",
+                        stringify!(#cat_ident), input,
+                    );
+                }
+                return None;
+            }
+            if __GRIND_DIAG {
+                eprintln!(
+                    "[PISO] {} input={:?} raw_candidates={}",
+                    stringify!(#cat_ident), input, __candidates.len(),
+                );
+            }
+
+            // FINALIZE like the monolithic `_all`: dedup by semantic key,
+            // ⊕-min representative, weight-sort.
+            let mut __seen: std::collections::HashMap<Vec<u8>, usize> =
+                std::collections::HashMap::with_capacity(__candidates.len());
+            let mut __out_terms: Vec<#cat_ident> = Vec::new();
+            let mut __out_weights: Vec<__W> = Vec::new();
+            for (__term, __w) in __candidates {
+                let __key = {
+                    let mut __h = __MettailWpdaSemanticKeyHasher::default();
+                    __term.semantic_hash(&mut __h);
+                    __h.into_key()
+                };
+                if let Some(&__idx) = __seen.get(&__key) {
+                    if __w < __out_weights[__idx] {
+                        __out_terms[__idx] = __term;
+                        __out_weights[__idx] = __w;
+                    }
+                } else {
+                    __seen.insert(__key, __out_terms.len());
+                    __out_terms.push(__term);
+                    __out_weights.push(__w);
+                }
+            }
+            let mut __paired: Vec<_> =
+                __out_terms.into_iter().zip(__out_weights.into_iter()).collect();
+            __paired.sort_by(|(_, __a), (_, __b)| __a.cmp(__b));
+            let (__out_terms, __out_weights): (Vec<_>, Vec<_>) = __paired.into_iter().unzip();
+            if __GRIND_DIAG {
+                eprintln!(
+                    "[PISO] RETURN Some {} input={:?} readings={}",
+                    stringify!(#cat_ident), input, __out_terms.len(),
+                );
+            }
+            Some((__out_terms, __out_weights))
+        }
+    }
+}
+
 /// Emit per-category `parse_<Cat>_via_wpda` wrappers plus the shared
 /// `WpdaParseError` type.
 pub(crate) fn emit_parse_fns(
@@ -693,6 +1430,19 @@ pub(crate) fn emit_parse_fns(
         // BYTE-IDENTICAL.
         let sep_helper_fns = match sep_isolation_shape(language, cat_name, categories) {
             Some(shape) => emit_sep_isolation(&cat_ident, &shape),
+            None => quote! {},
+        };
+
+        // ── P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275, 2026-07-05) ──
+        //
+        // The SIBLING of the `.*sep` helper above: when this category is an
+        // isolation-enabled `@`-projection shape, emit the module-scope helper
+        // `__mettail_wpda_proj_isolate_all_<Cat>`. Its guarded PROLOGUES live at
+        // the same STRING parse entries (`gen/mod.rs`), wired BEFORE the sep
+        // prologue (mutually-exclusive by input shape). OFF / not-in-set /
+        // no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
+        let proj_helper_fns = match projection_iso_shape(language, cat_name, categories) {
+            Some(shape) => emit_projection_isolation(&cat_ident, &shape),
             None => quote! {},
         };
 
@@ -932,6 +1682,12 @@ pub(crate) fn emit_parse_fns(
             // constructor arms). Emitted ONLY when this category is a `.*sep`
             // category in `SEP_ISOLATION_CATEGORIES`; empty otherwise.
             #sep_helper_fns
+
+            // P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275): the per-category
+            // `__mettail_wpda_proj_isolate_all_<Cat>` helper. Emitted ONLY when this
+            // category is an `@`-projection category in `PROJ_ISOLATION_CATEGORIES`;
+            // empty otherwise.
+            #proj_helper_fns
 
             /// WPDS-runtime parser for the `#cat_ident` category.
             ///

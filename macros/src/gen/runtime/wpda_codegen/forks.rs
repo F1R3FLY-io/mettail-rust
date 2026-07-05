@@ -302,6 +302,77 @@ pub(crate) const SEP_ISOLATION_COMBINE: bool = true;
 /// Expanded to every `.*sep` category at P4.
 pub(crate) const SEP_ISOLATION_CATEGORIES: &[&str] = &["ForRow"];
 
+/// PROJ_ISOLATION_COMBINE — the `@`-PROJECTION DIVIDE-AND-CONQUER isolation+combine
+/// facade fast-path (Plan a8b32275, 2026-07-05, session da0842dc). Master
+/// compile-time kill-switch (same convention as [`SEP_ISOLATION_COMBINE`]): folds a
+/// guarded PROLOGUE into the generated `Cat::parse_via_wpda` and
+/// `Cat::parse_via_wpda_all_with_weights` string parse entries for every category
+/// named in [`PROJ_ISOLATION_CATEGORIES`], BEFORE the sep-isolation prologue
+/// (mutually-exclusive by input shape: a leading sigil `σ` vs a depth-0 separator
+/// list).
+///
+/// ## The defect it ships the fix for (AXIS-@ — the exponential-killer)
+/// An `@`-projection category (rules `σ [open] p:D [close] [tail] : C`, σ a
+/// non-ident sigil, `p:D` a NESTED cross-cat operand — rhocalc `NQuote @(p)`,
+/// `NQuoteShort @p`, `POutputShort @p!(q)`, `POutputNil @Nil!(q)`) parsed
+/// MONOLITHICALLY re-enters the SAME walker for the inner `p` while the `@`-prefix
+/// CrossCatLhs/Projection cohort accumulates on the edge-stack, so the frontier
+/// forks `base-11` per nesting level — nested `@Nil!(@Nil!(…))` explodes
+/// EXPONENTIALLY (Stage-0 measured mono peak 20→197→2241→26061 for d=1..4, base~11;
+/// `proc_display` roundtrip times out). Stage-0 (a15ec630, re-confirmed this
+/// session) PROVED that extracting the inner operand and parsing it in a TRULY
+/// ISOLATED sub-parse (fresh `new_for_category(D)` from ROOT — NO CrossCatLhs
+/// accumulation, inner base-2 not base-11) then WRAPPING each inner reading × the
+/// matching frame-variant is BOTH (a) exactly LINEAR (Σ = leaf + d·frame, ratios
+/// →1.0, 283× at d=4) AND (b) SOUND — the isolated+combined alt SET EXACTLY equals
+/// the monolithic set incl the genuine `2^d` keyword-vs-freevar floor (raw==distinct
+/// per level, combine peak BOUNDED at the constant frame, NOT the `11^d` frontier).
+///
+/// ## The fix (this feature)
+/// Before each facade's `WpdaWalker::new_for_category`, a guarded prologue calls the
+/// emitted per-category helper `__mettail_wpda_proj_isolate_all_<Cat>`. The helper
+/// (i) matches each `σ`-led frame-variant's grammar-derived Literal/Param skeleton
+/// against the RAW input via a bracket-depth scan, (ii) extracts each cross-cat
+/// operand substring, (iii) sub-parses each through its OWN category's
+/// `parse_via_wpda_all_with_weights` string entry (fresh walker from ROOT — which
+/// RECURSES through this same prologue for deeper levels), (iv) cartesian-combines
+/// the per-operand readings into `Cat` terms via the surface enum ctor, folding
+/// operand weights with the ⊗ semiring product, and (v) dedups by semantic key +
+/// ⊕-min-selects + weight-sorts (mirroring the monolithic `_all` finalize). It
+/// returns `Some((terms, weights))` on success, `None` for NOT-APPLICABLE (no
+/// leading sigil / no variant matches) or ANY sub-parse failure — in which case the
+/// facade falls through to the UNMODIFIED monolithic body (byte-identical; the
+/// monolithic path stays authoritative — RT-4).
+///
+/// ## Generality (no per-language / per-rule hardcode)
+/// The shape is derived from the grammar IR (`GrammarRule.syntax_pattern`: a leading
+/// `Literal(σ)` with `σ` NON-ident, plus `Param(p)` slots with `TypeExpr::Base(D)`) —
+/// the SAME classification the walker uses. Bracket delimiters come from structural
+/// parens + the language's collection delimiters.
+///
+/// ## Kill-switch / A-B
+/// When `false`, NO prologue and NO helper is emitted for ANY category —
+/// byte-identical (every generated `wpda.rs` md5 == baseline). The per-category
+/// include set [`PROJ_ISOLATION_CATEGORIES`] gates WHICH categories opt in (EMPTY =
+/// byte-identical even with the master switch `true` — the P1 plumbing checkpoint).
+/// The runtime env `PRATTAIL_NO_PROJ_ISOLATION` forces the emitted prologue to
+/// return early (reproduces the monolithic path) WITHOUT a rebuild — the causal A/B
+/// control.
+///
+/// FV: `formal/rocq/prattail_wpda_runtime/theories/ProjectionIsolation.v` (T1
+/// combine_equals_monolithic … T8 isolation_preserves_full_ambiguity … T10 composes;
+/// model `SepReconvergence.v`; zero-admission).
+pub(crate) const PROJ_ISOLATION_COMBINE: bool = true;
+
+/// Per-result-category INCLUDE set for [`PROJ_ISOLATION_COMBINE`] (mirrors the
+/// [`SEP_ISOLATION_CATEGORIES`] convention). An `@`-projection category is given the
+/// isolation+combine prologue + helper ONLY when its name appears here AND
+/// [`PROJ_ISOLATION_COMBINE`] is `true` AND a `ProjIsoShape` is derivable for it.
+/// EMPTY ⇒ byte-identical (P1 plumbing checkpoint). Expanded to
+/// `{"Name","Proc","InputBind","ForRow"}` at P4 (the DECISIVE `@`-nesting flip).
+pub(crate) const PROJ_ISOLATION_CATEGORIES: &[&str] =
+    &["Name", "Proc", "InputBind", "ForRow"];
+
 /// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
 /// 2026-07-03). The general, evidence-based first-token lexical-compatibility
 /// FILTER at the cross-cat `Proc` (and any category's) PROJECTION fork.
